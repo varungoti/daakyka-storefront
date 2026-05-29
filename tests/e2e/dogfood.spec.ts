@@ -78,9 +78,12 @@ test.describe("Dogfood — interactive flows", () => {
   test("search dialog opens and returns results", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("button", { name: /search/i }).click();
-    await expect(page.getByRole("dialog")).toBeVisible();
-    await page.getByRole("textbox").fill("scrub");
-    await expect(page.locator("article, a[href*='/products/']").first()).toBeVisible({
+    const dialog = page.getByRole("dialog", { name: "Search products" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByText("Searching...")).toBeHidden({ timeout: 15000 });
+    await expect(dialog.locator("a[href*='/products/']").first()).toBeVisible();
+    await dialog.getByPlaceholder("Search scrubs, colors, fabrics...").fill("navy");
+    await expect(dialog.locator("a[href*='/products/']").first()).toBeVisible({
       timeout: 10000,
     });
     await page.screenshot({ path: "dogfood-output/screenshots/search-dialog.png" });

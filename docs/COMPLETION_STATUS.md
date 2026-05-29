@@ -1,6 +1,6 @@
 # DAAKYKA Storefront — 101% Completion Status
 
-**Last verified:** 2026-05-29 — `dogfood-output/COMPLETION.json` (`npm run verify:101` exit 0)
+**Last verified:** 2026-05-29 — staging full gate + live AR try-on (`mode: ar-tryon` on https://storefront-nu-woad.vercel.app)
 
 This document maps the [master plan Part 19 acceptance criteria](../Proposal/DAAKYKA_AUTONOMOUS_STORE_MASTER_PLAN.md) to implementation status.
 
@@ -11,8 +11,8 @@ This document maps the [master plan Part 19 acceptance criteria](../Proposal/DAA
 | **Code & features** | **101%** | All planned MVP phases built |
 | **Automated QA** | **101%** | 195 tests + full predeploy gate green |
 | **Production hardening** | **101%** | Env, headers, rate limits, admin guard, body limits |
-| **Live integrations** | **Blocked** | Shopify, Brevo, WATI need credentials |
-| **Staging deploy** | **✅ Verified** | https://storefront-nu-woad.vercel.app — probe + 122 remote E2E tests passed |
+| **Live integrations** | **Partial** | AR try-on wired via tunnel; Shopify/Brevo/WATI/Fireworks need credentials |
+| **Staging deploy** | **✅ Verified** | https://storefront-nu-woad.vercel.app — probe + 224 remote tests; AR studio live |
 | **Manual QA** | **Pending** | Cross-browser/mobile pass on staging URL |
 
 ---

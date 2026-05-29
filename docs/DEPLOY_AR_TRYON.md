@@ -2,7 +2,18 @@
 
 CPU-based MediaPipe try-on for `/mix-and-match/studio`. First request can take ~60–90s on cold start; cached requests are fast.
 
-## Option A — Railway (recommended)
+## Option A — Quick staging tunnel (dev machine)
+
+When Railway/Render credentials are not ready, wire local Docker to Vercel staging:
+
+```bash
+docker compose up -d ar-tryon
+node scripts/wire-ar-staging.mjs
+```
+
+Keep the script running — the Cloudflare quick tunnel has no uptime guarantee. Use Railway or Render for production.
+
+## Option B — Railway (recommended for production)
 
 1. Log in locally: `railway login`
 2. From `services/ar-tryon`:
@@ -22,14 +33,14 @@ CPU-based MediaPipe try-on for `/mix-and-match/studio`. First request can take ~
 
 Add `RAILWAY_TOKEN` to GitHub repo secrets. Pushes to `services/ar-tryon/**` trigger `.github/workflows/deploy-ar-tryon.yml`.
 
-## Option B — Render
+## Option C — Render
 
 1. [Render Dashboard](https://dashboard.render.com) → **New** → **Blueprint**
 2. Connect `varungoti/daakyka-storefront`
 3. Set root to `services/ar-tryon` (uses `render.yaml`)
 4. Deploy and copy the service URL into Vercel as `AR_TRYON_SERVICE_URL`
 
-## Option C — Local Docker (dev)
+## Option D — Local Docker (dev)
 
 ```bash
 docker compose up -d ar-tryon

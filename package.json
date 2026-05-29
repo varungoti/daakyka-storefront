@@ -21,6 +21,7 @@
     "verify:predeploy": "node scripts/predeploy-verify.mjs",
     "check:deploy-env": "node scripts/check-deploy-env.mjs",
     "go-live:check": "node scripts/go-live-check.mjs",
+    "wire:ar-staging": "node scripts/wire-ar-staging.mjs",
     "bootstrap:staging": "node scripts/bootstrap-staging.mjs",
     "probe:deploy": "node scripts/probe-deploy.mjs",
     "audit:lighthouse": "node scripts/lighthouse-audit.mjs",
