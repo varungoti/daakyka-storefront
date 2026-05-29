@@ -101,18 +101,32 @@ export function HeroSection({ content, trustStats }: HeroSectionProps) {
 
         <div className="animate-scale-in relative mx-auto w-full max-w-md lg:max-w-none">
           <div className="absolute inset-x-6 top-6 bottom-6 rounded-full bg-brand/10 blur-3xl" />
-          <div className="relative aspect-[4/5] overflow-hidden rounded-[2rem] border border-white/70 bg-white shadow-[0_24px_80px_rgba(91,46,255,0.18)]">
-            <Image
-              src={marketingMedia.heroMain}
-              alt="Healthcare professionals wearing DAAKYKA scrubs"
-              fill
-              priority
-              fetchPriority="high"
-              quality={75}
-              className="object-cover"
-              sizes="(max-width: 1024px) 100vw, 40vw"
-            />
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_80%,rgba(91,46,255,0.15),transparent_55%)]" />
+          <div className="relative mx-auto aspect-[4/5] max-w-lg">
+            <div className="absolute bottom-[8%] left-1/2 h-8 w-[72%] -translate-x-1/2 rounded-[100%] bg-brand/25 blur-2xl" />
+            <div className="absolute bottom-[6%] left-1/2 h-3 w-[68%] -translate-x-1/2 rounded-full border border-brand/20 bg-[linear-gradient(180deg,rgba(91,46,255,0.35),rgba(91,46,255,0.05))] shadow-[0_0_40px_rgba(91,46,255,0.35)]" />
+            <div className="relative flex h-full items-end justify-center gap-1 px-4 pb-[10%] md:gap-3">
+              <div className="relative h-[88%] w-[46%] overflow-hidden rounded-[1.5rem] border border-white/80 bg-white shadow-[0_20px_50px_rgba(91,46,255,0.15)]">
+                <Image
+                  src={marketingMedia.heroSecondary}
+                  alt="Healthcare professional in DAAKYKA scrubs"
+                  fill
+                  className="object-cover object-top"
+                  sizes="(max-width: 1024px) 42vw, 18vw"
+                />
+              </div>
+              <div className="relative h-[94%] w-[48%] overflow-hidden rounded-[1.5rem] border border-white/80 bg-white shadow-[0_24px_60px_rgba(91,46,255,0.2)]">
+                <Image
+                  src={marketingMedia.heroMain}
+                  alt="Healthcare team in DAAKYKA scrubs"
+                  fill
+                  priority
+                  fetchPriority="high"
+                  quality={75}
+                  className="object-cover object-top"
+                  sizes="(max-width: 1024px) 44vw, 20vw"
+                />
+              </div>
+            </div>
           </div>
         </div>
 

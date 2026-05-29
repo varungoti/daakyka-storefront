@@ -104,8 +104,9 @@ export const scrubMedia = {
 
 /** Homepage & marketing — daakyka brand first, scrubs for product context */
 export const marketingMedia = {
-  heroMain: daakykaAsset(`images/why.jpg`),
-  heroSecondary: scrubMedia.nursePortrait,
+  /** Dual-model hero — healthcare professionals in scrubs */
+  heroMain: pexelsPhoto(4173251, imageWidths.hero),
+  heroSecondary: pexelsPhoto(5327656, imageWidths.hero),
   heroAvatars: [
     pexelsPhoto(5327656, imageWidths.avatar),
     pexelsPhoto(6129685, imageWidths.avatar),

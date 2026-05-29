@@ -1,5 +1,6 @@
 "use client";
 
+import { AiFitScanPanel } from "@/components/mix-match/ai-fit-scan-panel";
 import { MixMatchControls } from "@/components/mix-match/mix-match-controls";
 import { MixMatchVisualizer } from "@/components/mix-match/mix-match-visualizer";
 import { Button } from "@/components/ui/button";
@@ -12,13 +13,14 @@ import {
   bottomStyleOptions,
   type MixMatchConfig,
 } from "@/data/mix-match";
+import type { TryOnGender } from "@/lib/outfit/types";
 import { ArrowRight, Check } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
 const checklist = [
   "3D Live Preview",
-  "AR Try-On Studio",
+  "AI Fit Scan",
   "Custom Embroidery",
   "Perfect Fit Guarantee",
 ];
@@ -32,6 +34,8 @@ const previewImages: Record<string, string> = {
 
 export function MixMatchSection() {
   const [config, setConfig] = useState<MixMatchConfig>(defaultMixMatchConfig);
+  const [gender, setGender] = useState<TryOnGender>("female");
+  const [scanning, setScanning] = useState(false);
 
   const tintHex = mixMatchColors.find((c) => c.name === config.color)?.hex;
   const topLabel = topStyleOptions.find((o) => o.id === config.topStyle)?.label ?? "";
@@ -55,7 +59,7 @@ export function MixMatchSection() {
       </div>
 
       <div className="relative mx-auto max-w-7xl px-4 lg:px-8">
-        <div className="grid gap-10 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1.05fr)] xl:items-start xl:gap-8">
+        <div className="grid gap-10 2xl:grid-cols-[minmax(0,0.82fr)_minmax(0,0.95fr)_minmax(0,1fr)_minmax(0,0.72fr)] xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1.05fr)] xl:items-start xl:gap-8">
           {/* Left — mockup copy block */}
           <div className="space-y-6 xl:sticky xl:top-28">
             <div>
@@ -91,7 +95,7 @@ export function MixMatchSection() {
               </Link>
               <Link href="/mix-and-match">
                 <Button variant="outline" size="lg">
-                  Classic Builder
+                  Learn More
                 </Button>
               </Link>
             </div>
@@ -116,12 +120,31 @@ export function MixMatchSection() {
             fabric={config.fabric}
             color={config.color}
             embroideryName={config.embroideryName}
+            layout="studio"
             onTopChange={(id) => update("topStyle", id)}
             onBottomChange={(id) => update("bottomStyle", id)}
             onFabricChange={(id) => update("fabric", id)}
             onColorChange={(name) => update("color", name)}
             onEmbroideryChange={(name) => update("embroideryName", name)}
           />
+
+          <div className="hidden 2xl:block">
+            <AiFitScanPanel
+              gender={gender}
+              onGenderChange={setGender}
+              scanning={scanning}
+              onScan={() => {
+                setScanning(true);
+                window.setTimeout(() => setScanning(false), 1200);
+              }}
+            />
+            <Link
+              href="/mix-and-match/studio"
+              className="mt-4 block text-center text-sm font-semibold text-brand hover:underline"
+            >
+              Open full try-on studio →
+            </Link>
+          </div>
         </div>
       </div>
     </section>

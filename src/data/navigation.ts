@@ -4,11 +4,10 @@ export const announcementItems = brand.announcementMessages;
 
 export const mainNav = [
   { label: "Shop", href: "/shop" },
-  { label: "Mix & Match", href: "/mix-and-match" },
-  { label: "Institutional", href: "/institutional" },
+  { label: "Mix & Match", href: "/mix-and-match/studio" },
   { label: "Fabric Tech", href: "/fabric-technology" },
+  { label: "Collections", href: "/collections" },
   { label: "About", href: "/about" },
-  { label: "Contact", href: "/contact" },
 ];
 
 export const shopCategories = [
