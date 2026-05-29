@@ -120,6 +120,18 @@ Credential-blocked for production go-live: Shopify, Brevo, WATI, Postgres deploy
 - **Phase 7 QA** — 194 automated tests, CI, dogfood, hardening, verify:101 ✅
 - **Next** — Staging deploy + live credentials + manual cross-browser QA
 
+### Hermes Agent (Vercel)
+
+Hermes runs inline on Vercel — no separate server required. See `docs/HERMES_VERCEL.md`.
+
+```env
+HERMES_RUNTIME_INLINE=1
+FIREWORKS_API_KEY=fw_...
+HERMES_DEFAULT_MODE=SUGGEST_ONLY
+```
+
+Health: `GET /api/hermes/runtime/health` · Admin: `/admin/hermes`
+
 ### Cart Modes
 - **Demo mode** (default): localStorage cart
 - **Shopify mode**: set Shopify env vars — cart uses Storefront API and Shopify checkout

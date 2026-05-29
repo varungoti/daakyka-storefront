@@ -1,0 +1,25 @@
+# Deploy AR try-on to Railway when RAILWAY_TOKEN is configured in repo secrets.
+name: Deploy AR Try-On
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - "services/ar-tryon/**"
+
+jobs:
+  deploy:
+    if: ${{ secrets.RAILWAY_TOKEN != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy ar-tryon service
+        working-directory: services/ar-tryon
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: railway up --service ar-tryon --detach

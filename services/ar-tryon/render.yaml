@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: daakyka-ar-tryon
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: AR_TRYON_PORT
+        value: "8080"

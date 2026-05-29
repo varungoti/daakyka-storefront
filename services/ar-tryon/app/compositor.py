@@ -12,6 +12,25 @@ import mediapipe as mp
 import numpy as np
 from PIL import Image
 
+_POSE: mp.solutions.pose.Pose | None = None
+
+
+def get_pose_detector() -> mp.solutions.pose.Pose:
+    global _POSE
+    if _POSE is None:
+        _POSE = mp.solutions.pose.Pose(
+            static_image_mode=True,
+            model_complexity=1,
+            min_detection_confidence=0.5,
+        )
+    return _POSE
+
+
+def warmup_pose_model() -> None:
+    """Load MediaPipe weights once at process start to avoid first-request latency."""
+    blank = np.zeros((256, 192, 3), dtype=np.uint8)
+    detect_torso(blank)
+
 
 @dataclass
 class TorsoBounds:
@@ -57,13 +76,8 @@ def fetch_image_bgr(url: str, timeout: float = 15.0) -> np.ndarray:
 def detect_torso(frame_bgr: np.ndarray) -> TorsoBounds | None:
     h, w, _ = frame_bgr.shape
     rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-
-    with mp.solutions.pose.Pose(
-        static_image_mode=True,
-        model_complexity=1,
-        min_detection_confidence=0.5,
-    ) as pose:
-        results = pose.process(rgb)
+    pose = get_pose_detector()
+    results = pose.process(rgb)
 
     if not results.pose_landmarks:
         return None

@@ -7,6 +7,9 @@
     },
     "src/app/api/cron/hermes/route.ts": {
       "maxDuration": 120
+    },
+    "src/app/api/outfit/try-on/route.ts": {
+      "maxDuration": 120
     }
   },
   "crons": [

@@ -26,7 +26,7 @@ export async function callArTryOnService(
         bottom_handle: payload.bottomHandle,
         color: payload.color,
       }),
-      signal: AbortSignal.timeout(45_000),
+      signal: AbortSignal.timeout(120_000),
     });
 
     if (!response.ok) return null;

@@ -7,7 +7,7 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, HttpUrl
 
-from app.compositor import compose_tryon_from_urls
+from app.compositor import compose_tryon_from_urls, warmup_pose_model
 
 app = FastAPI(
     title="DAAKYKA AR Try-On Service",
@@ -16,6 +16,12 @@ app = FastAPI(
 )
 
 CACHE: dict[str, str] = {}
+
+
+@app.on_event("startup")
+async def startup_warmup() -> None:
+    warmup_pose_model()
+
 
 AVATAR_PRESETS = {
     "male": "https://images.pexels.com/photos/5327656/pexels-photo-5327656.jpeg?auto=compress&cs=tinysrgb&w=800",
