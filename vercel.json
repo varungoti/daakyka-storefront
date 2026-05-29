@@ -1,5 +1,5 @@
 {
-  "buildCommand": "prisma generate && prisma migrate deploy && tsx prisma/seed.ts && next build",
+  "buildCommand": "node scripts/vercel-build.mjs",
   "installCommand": "npm ci",
   "functions": {
     "src/app/api/hermes/runtime/tasks/route.ts": {

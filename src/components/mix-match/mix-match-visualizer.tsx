@@ -1,6 +1,8 @@
 "use client";
 
+import { GenderModelToggle } from "@/components/mix-match/gender-model-toggle";
 import { cn } from "@/lib/utils";
+import type { TryOnGender } from "@/lib/outfit/types";
 import { RotateCcw } from "lucide-react";
 import Image from "next/image";
 import { useRef, useState } from "react";
@@ -22,6 +24,8 @@ interface MixMatchVisualizerProps {
   loading?: boolean;
   modeLabel?: string;
   genderLabel?: string;
+  gender?: TryOnGender;
+  onGenderChange?: (gender: TryOnGender) => void;
 }
 
 export function MixMatchVisualizer({
@@ -37,6 +41,8 @@ export function MixMatchVisualizer({
   loading = false,
   modeLabel,
   genderLabel,
+  gender,
+  onGenderChange,
 }: MixMatchVisualizerProps) {
   const [rotation, setRotation] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -64,6 +70,8 @@ export function MixMatchVisualizer({
       <div className="configurator-stage relative overflow-hidden rounded-[2rem] px-6 pb-8 pt-10">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_85%,rgba(91,46,255,0.35),transparent_55%)]" />
         <div className="pointer-events-none absolute left-1/2 top-[62%] h-40 w-40 -translate-x-1/2 rounded-full bg-brand/20 blur-3xl" />
+        <div className="pointer-events-none absolute left-1/2 top-[38%] h-56 w-56 -translate-x-1/2 rounded-full border border-brand/15 opacity-60" />
+        <div className="pointer-events-none absolute left-1/2 top-[44%] h-72 w-72 -translate-x-1/2 rounded-full border border-brand/10 opacity-40" />
 
         <div
           className="relative mx-auto aspect-[3/4] w-full max-w-[320px] cursor-grab touch-none active:cursor-grabbing"
@@ -132,6 +140,14 @@ export function MixMatchVisualizer({
           </div>
         </div>
       </div>
+
+      {gender && onGenderChange && (
+        <GenderModelToggle
+          gender={gender}
+          onGenderChange={onGenderChange}
+          className="mt-4 max-w-[320px] mx-auto"
+        />
+      )}
 
       <div className="mt-4 rounded-2xl border border-border bg-white/90 p-4 text-center shadow-sm backdrop-blur-sm">
         <p className="font-display text-sm font-bold text-ink">Live Set Preview</p>

@@ -188,3 +188,9 @@ export const tryOnAvatars = {
   male: pexelsPhoto(5327656, imageWidths.gallery),
   female: pexelsPhoto(4173251, imageWidths.gallery),
 } as const;
+
+/** Full-body models for homepage mix-and-match visualizer */
+export const mixMatchModels = {
+  female: pexelsPhoto(4173251, imageWidths.hero),
+  male: pexelsPhoto(5327656, imageWidths.hero),
+} as const;

@@ -1,7 +1,6 @@
 "use client";
 
 import { AddToCartButton } from "@/components/cart/add-to-cart-button";
-import { AiFitScanPanel } from "@/components/mix-match/ai-fit-scan-panel";
 import { MixMatchControls } from "@/components/mix-match/mix-match-controls";
 import {
   applyFavoriteToConfig,
@@ -38,7 +37,6 @@ export function MixMatchStudioBuilder({ products }: MixMatchStudioBuilderProps) 
   const { addToCart, openCart, isLoading } = useCart();
   const [config, setConfig] = useState<MixMatchConfig>(defaultMixMatchConfig);
   const [gender, setGender] = useState<TryOnGender>("female");
-  const [scanning, setScanning] = useState(false);
 
   const resolved = useMemo(
     () => resolveMixMatchProducts(products, config),
@@ -100,11 +98,6 @@ export function MixMatchStudioBuilder({ products }: MixMatchStudioBuilderProps) 
     }
   };
 
-  const handleScan = () => {
-    setScanning(true);
-    window.setTimeout(() => setScanning(false), 1200);
-  };
-
   const handleAddSet = async () => {
     if (!resolved.topProduct || !resolved.bottomProduct || !resolved.topVariant || !resolved.bottomVariant) {
       return;
@@ -130,7 +123,7 @@ export function MixMatchStudioBuilder({ products }: MixMatchStudioBuilderProps) 
 
   return (
     <div className="space-y-8">
-      <div className="grid gap-8 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,0.85fr)] xl:items-start">
+      <div className="grid gap-8 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,1.05fr)] xl:items-start">
         <div className="space-y-6 xl:sticky xl:top-28">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.22em] text-brand">Outfit Studio</p>
@@ -146,7 +139,7 @@ export function MixMatchStudioBuilder({ products }: MixMatchStudioBuilderProps) 
           <ul className="space-y-3">
             {[
               "3D Live Preview",
-              "AI Fit Scan (preset avatars)",
+              "Male & Female Models",
               "Custom Embroidery Preview",
               "Perfect Fit Guarantee",
             ].map((item) => (
@@ -202,7 +195,9 @@ export function MixMatchStudioBuilder({ products }: MixMatchStudioBuilderProps) 
           embroideryName={config.embroideryName || undefined}
           tintHex={tintHex}
           loading={tryOnLoading}
-          genderLabel={gender}
+          gender={gender}
+          onGenderChange={setGender}
+          genderLabel={gender === "male" ? "Male model" : "Female model"}
           modeLabel={
             result?.mode === "ar-tryon"
               ? "AR try-on render"
@@ -210,29 +205,22 @@ export function MixMatchStudioBuilder({ products }: MixMatchStudioBuilderProps) 
           }
         />
 
-        <MixMatchControls
-          layout="studio"
-          topStyle={config.topStyle}
-          bottomStyle={config.bottomStyle}
-          fabric={config.fabric}
-          color={config.color}
-          size={config.size}
-          embroideryName={config.embroideryName}
-          showSize
-          onTopChange={(id) => update("topStyle", id)}
-          onBottomChange={(id) => update("bottomStyle", id)}
-          onFabricChange={(id) => update("fabric", id)}
-          onColorChange={(name) => update("color", name)}
-          onSizeChange={(size) => update("size", size)}
-          onEmbroideryChange={(name) => update("embroideryName", name)}
-        />
-
         <div className="space-y-5 xl:sticky xl:top-28">
-          <AiFitScanPanel
-            gender={gender}
-            onGenderChange={setGender}
-            onScan={handleScan}
-            scanning={scanning}
+          <MixMatchControls
+            layout="studio"
+            topStyle={config.topStyle}
+            bottomStyle={config.bottomStyle}
+            fabric={config.fabric}
+            color={config.color}
+            size={config.size}
+            embroideryName={config.embroideryName}
+            showSize
+            onTopChange={(id) => update("topStyle", id)}
+            onBottomChange={(id) => update("bottomStyle", id)}
+            onFabricChange={(id) => update("fabric", id)}
+            onColorChange={(name) => update("color", name)}
+            onSizeChange={(size) => update("size", size)}
+            onEmbroideryChange={(name) => update("embroideryName", name)}
           />
           <MixMatchFavoritesPanel
             onApplyProduct={applyFavorite}
