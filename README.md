@@ -1,36 +1,128 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# DAAKYKA Apparels Storefront
+
+Premium headless medical commerce storefront for DAAKYKA Apparels.
+
+## Stack
+
+- **Next.js 16** (App Router)
+- **React 19**
+- **Tailwind CSS v4**
+- **Framer Motion**
+- **Prisma 7** + SQLite (local) / Postgres (production)
+- **Lucide React** (icons)
 
 ## Getting Started
 
-First, run the development server:
-
 ```bash
+npm install
+cp .env.local.example .env
+docker compose up -d
+npm run db:setup
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- Storefront: http://localhost:3000
+- Admin panel: http://localhost:3000/admin/login
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Default admin credentials (change after first login):
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- Email: `varungoti@gmail.com`
+- Password: `Daakyka@2026` (change after first login; swap to client credentials via env — see `docs/ADMIN_CREDENTIALS.md`)
 
-## Learn More
+## Scripts
 
-To learn more about Next.js, take a look at the following resources:
+| Command | Description |
+|---|---|
+| `npm run dev` | Start development server |
+| `npm run build` | Generate Prisma client + production build |
+| `npm run start` | Start production server |
+| `npm run test` | Unit + integration tests |
+| `npm run test:smoke` | HTTP smoke tests (server required) |
+| `npm run test:e2e` | Core Playwright E2E (server required) |
+| `npm run test:dogfood` | Full exploratory crawl (51 tests) |
+| `npm run verify` | Lint + test + build |
+| `npm run verify:101` | **101% gate** — predeploy + Lighthouse |
+| `npm run verify:staging:full` | Live staging probe + smoke + E2E + dogfood |
+| `npm run verify:predeploy` | Pre-deploy gate (build + smoke + e2e + dogfood) |
+| `npm run verify:staging` | Smoke + E2E against deployed URL |
+| `npm run verify:staging:full` | Probe + smoke + E2E + dogfood on live staging |
+| `npm run go-live:check` | Env checklist + next steps for staging/production |
+| `npm run bootstrap:staging` | Generate staging secrets + env template |
+| `npm run check:deploy-env` | Validate staging env vars before deploy |
+| `npm run probe:deploy` | Post-deploy health + security probe |
+| `npm run audit:lighthouse` | Lighthouse scores for key pages |
+| `npm run lint` | Run ESLint |
+| `npm run db:migrate` | Apply database migrations |
+| `npm run db:seed` | Seed admin user, homepage sections, blog posts |
+| `npm run db:setup` | Migrate + seed in one step |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Environment
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Copy `.env.local.example` to `.env` (or `.env.local`):
 
-## Deploy on Vercel
+```env
+DATABASE_URL="file:./dev.db"
+AUTH_SECRET=your-long-random-secret
+ADMIN_SEED_EMAIL=varungoti@gmail.com
+ADMIN_SEED_PASSWORD=change-me
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN=your-store.myshopify.com
+NEXT_PUBLIC_SHOPIFY_STOREFRONT_ACCESS_TOKEN=your-token
+NEXT_PUBLIC_USD_TO_INR_RATE=83
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Admin Panel (Phase 3)
+
+| Route | Purpose |
+|---|---|
+| `/admin/dashboard` | Overview widgets + recent activity |
+| `/admin/homepage` | Edit hero copy |
+| `/admin/blog` | Blog CMS (create, edit, publish) |
+| `/admin/bulk-orders` | Manage hospital/team lead enquiries |
+| `/admin/audit-logs` | Admin action history |
+
+RBAC roles: Super Admin, Store Owner, Marketing Admin, SEO Manager, Content Editor, Bulk Order Manager, Viewer.
+
+## Project Structure
+
+- `src/app/` — Storefront + admin routes
+- `src/components/home/` — Homepage sections
+- `src/components/admin/` — Admin UI
+- `src/lib/` — Auth, DB, Shopify, CMS helpers
+- `prisma/` — Schema, migrations, seed
+
+## Design Reference
+
+Layout follows mockup images in `/Source Images` and the master plan at `/Proposal/DAAKYKA_AUTONOMOUS_STORE_MASTER_PLAN.md`.
+
+**Docs:** `docs/COMPLETION_STATUS.md`, `docs/HANDOVER.md`, `docs/HARDENING.md`, `docs/LAUNCH_CHECKLIST.md`, ...
+
+## 101% Completion
+
+All planned features, hardening, and **194 automated tests** are complete. Run:
+
+```bash
+npm run verify:101
+```
+
+Credential-blocked for production go-live: Shopify, Brevo, WATI, Postgres deploy. See `docs/COMPLETION_STATUS.md`.
+
+**Note:** AI Fit Scan is intentionally excluded from the current build.
+
+## Phase Status
+
+- **Phase 1** — Storefront MVP ✅
+- **Phase 2** — Advanced storefront (cart, search, wishlist, mix & match, blog, fabric tech) ✅
+- **Phase 3** — Admin panel (auth, RBAC, CMS, bulk orders, audit logs) ✅
+- **Phase 4** — Engagement engine (journeys, campaigns, SEO manager, intelligence) ✅
+- **Phase 5** — Hermes agent on Vercel (inline runtime + Fireworks) ✅
+- **Part 10 SEO** — 21 guide pages + `/guides` hub + fabric-tech redirects ✅
+- **Phase 7 QA** — 194 automated tests, CI, dogfood, hardening, verify:101 ✅
+- **Next** — Staging deploy + live credentials + manual cross-browser QA
+
+### Cart Modes
+- **Demo mode** (default): localStorage cart
+- **Shopify mode**: set Shopify env vars — cart uses Storefront API and Shopify checkout
+
+### Currency
+- Base currency: **INR (₹)** with USD toggle in header

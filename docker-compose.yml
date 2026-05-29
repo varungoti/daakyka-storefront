@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: daakyka
+      POSTGRES_PASSWORD: daakyka
+      POSTGRES_DB: daakyka_dev
+    volumes:
+      - daakyka_pg_data:/var/lib/postgresql/data
+
+  hermes:
+    build: ./services/hermes
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      HERMES_PORT: 8787
+      FIREWORKS_API_KEY: ${FIREWORKS_API_KEY:-}
+
+  ar-tryon:
+    build: ./services/ar-tryon
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      AR_TRYON_PORT: 8080
+
+volumes:
+  daakyka_pg_data:

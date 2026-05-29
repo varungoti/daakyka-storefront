@@ -1,0 +1,144 @@
+name: Storefront Verify
+
+on:
+  push:
+    branches: [main, master, staging]
+  pull_request:
+    branches: [main, master, staging]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: daakyka
+          POSTGRES_PASSWORD: daakyka
+          POSTGRES_DB: daakyka_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U daakyka -d daakyka_dev"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup database
+        run: npm run db:setup
+        env:
+          DATABASE_URL: "postgresql://daakyka:daakyka@localhost:5432/daakyka_dev"
+          AUTH_SECRET: ci-test-auth-secret-min-32-chars-long
+          ADMIN_SEED_EMAIL: varungoti@gmail.com
+          ADMIN_SEED_PASSWORD: Daakyka@2026
+
+      - name: Lint, test, and build
+        run: npm run verify
+        env:
+          DATABASE_URL: "postgresql://daakyka:daakyka@localhost:5432/daakyka_dev"
+          AUTH_SECRET: ci-test-auth-secret-min-32-chars-long
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: verify
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: daakyka
+          POSTGRES_PASSWORD: daakyka
+          POSTGRES_DB: daakyka_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U daakyka -d daakyka_dev"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup database
+        run: npm run db:setup
+        env:
+          DATABASE_URL: "postgresql://daakyka:daakyka@localhost:5432/daakyka_dev"
+          AUTH_SECRET: ci-test-auth-secret-min-32-chars-long
+          ADMIN_SEED_EMAIL: varungoti@gmail.com
+          ADMIN_SEED_PASSWORD: Daakyka@2026
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build and start server
+        run: |
+          npm run build
+          npm run start &
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3000 > /dev/null; then
+              echo "Server ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Server failed to start"
+          exit 1
+        env:
+          DATABASE_URL: "postgresql://daakyka:daakyka@localhost:5432/daakyka_dev"
+          AUTH_SECRET: ci-test-auth-secret-min-32-chars-long
+          PORT: "3000"
+          DISABLE_RATE_LIMIT: "1"
+          NEXT_PUBLIC_SITE_URL: "http://localhost:3000"
+
+      - name: Smoke tests
+        run: npm run test:smoke
+        env:
+          TEST_BASE_URL: http://localhost:3000
+
+      - name: Core E2E tests
+        run: npm run test:e2e
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+
+      - name: Dogfood E2E tests
+        run: npm run test:dogfood
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+          DISABLE_RATE_LIMIT: "1"
+
+  staging-probe:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Probe live staging
+        run: npm run probe:deploy -- --staging
+        env:
+          TEST_BASE_URL: https://storefront-nu-woad.vercel.app

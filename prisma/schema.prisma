@@ -1,0 +1,399 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  STORE_OWNER
+  MARKETING_ADMIN
+  SEO_MANAGER
+  CONTENT_EDITOR
+  BULK_ORDER_MANAGER
+  VIEWER
+}
+
+enum BulkLeadStatus {
+  NEW
+  CONTACTED
+  QUOTED
+  WON
+  LOST
+}
+
+enum BlogStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum TemplateChannel {
+  EMAIL
+  WHATSAPP
+}
+
+enum CampaignStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SCHEDULED
+  SENT
+  CANCELLED
+}
+
+enum ContactEnquiryType {
+  GENERAL
+  BULK_ORDER
+  INSTITUTIONAL
+  SUPPORT
+}
+
+enum JourneyStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+}
+
+enum JourneyStepChannel {
+  EMAIL
+  WHATSAPP
+  ADMIN_NOTIFICATION
+}
+
+enum HermesTaskStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum HermesApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum IntegrationProvider {
+  BREVO
+  WATI
+  SHOPIFY
+  HERMES
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  name         String
+  passwordHash String
+  role         AdminRole  @default(VIEWER)
+  active       Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  auditLogs    AuditLog[]
+}
+
+model BulkOrderLead {
+  id               String         @id @default(cuid())
+  organization     String
+  contactPerson    String
+  email            String
+  phone            String
+  city             String?
+  staffCount       Int?
+  productsRequired String?
+  colorsRequired   String?
+  sizesRequired    String?
+  logoEmbroidery   Boolean        @default(false)
+  deliveryTimeline String?
+  notes            String?
+  status           BulkLeadStatus @default(NEW)
+  consentGiven     Boolean        @default(false)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+}
+
+model HomepageSection {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  title     String
+  enabled   Boolean  @default(true)
+  sortOrder Int      @default(0)
+  content   String
+  updatedAt DateTime @updatedAt
+}
+
+model BlogPostRecord {
+  id          String     @id @default(cuid())
+  slug        String     @unique
+  title       String
+  excerpt     String
+  category    String
+  author      String
+  publishedAt DateTime
+  readTime    String
+  image       String
+  content     String
+  status      BlogStatus @default(DRAFT)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String?
+  metadata  String?
+  createdAt DateTime @default(now())
+}
+
+model NewsletterSubscriber {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  source       String   @default("footer")
+  consentGiven Boolean  @default(true)
+  createdAt    DateTime @default(now())
+}
+
+model CustomerSegment {
+  id          String     @id @default(cuid())
+  name        String
+  slug        String     @unique
+  description String?
+  criteria    String
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  campaigns   Campaign[]
+}
+
+model MessageTemplate {
+  id        String          @id @default(cuid())
+  name      String
+  channel   TemplateChannel
+  subject   String?
+  body      String
+  variables String?
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  campaigns Campaign[]
+  journeySteps JourneyStep[]
+}
+
+model Campaign {
+  id          String           @id @default(cuid())
+  name        String
+  channel     TemplateChannel
+  status      CampaignStatus   @default(DRAFT)
+  segmentId   String?
+  segment     CustomerSegment? @relation(fields: [segmentId], references: [id], onDelete: SetNull)
+  templateId  String?
+  template    MessageTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  scheduledAt DateTime?
+  notes       String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model TestimonialRecord {
+  id        String   @id @default(cuid())
+  quote     String
+  name      String
+  title     String
+  rating    Int      @default(5)
+  avatar    String
+  featured  Boolean  @default(false)
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ContactEnquiry {
+  id        String             @id @default(cuid())
+  name      String
+  email     String
+  phone     String?
+  organization String?
+  type      ContactEnquiryType @default(GENERAL)
+  message   String
+  status    String             @default("NEW")
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+}
+
+model CustomerJourney {
+  id          String        @id @default(cuid())
+  name        String
+  slug        String        @unique
+  description String?
+  trigger     String
+  status      JourneyStatus @default(DRAFT)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  steps       JourneyStep[]
+  events      JourneyEvent[]
+  enrollments JourneyEnrollment[]
+}
+
+model JourneyStep {
+  id         String             @id @default(cuid())
+  journeyId  String
+  journey    CustomerJourney    @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  sortOrder  Int
+  name       String
+  delayHours Int                @default(0)
+  channel    JourneyStepChannel
+  templateId String?
+  template   MessageTemplate?   @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  notes      String?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+}
+
+model IntegrationSetting {
+  id        String              @id @default(cuid())
+  provider  IntegrationProvider @unique
+  enabled   Boolean             @default(false)
+  config    String              @default("{}")
+  updatedAt DateTime            @updatedAt
+}
+
+model HermesTask {
+  id          String           @id @default(cuid())
+  type        String
+  status      HermesTaskStatus @default(PENDING)
+  mode        String           @default("SUGGEST_ONLY")
+  input       String?
+  output      String?
+  createdAt   DateTime         @default(now())
+  completedAt DateTime?
+  approvals   HermesApproval[]
+}
+
+model HermesApproval {
+  id         String               @id @default(cuid())
+  taskId     String?
+  task       HermesTask?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  type       String
+  title      String
+  summary    String
+  payload    String
+  status     HermesApprovalStatus @default(PENDING)
+  reviewedBy String?
+  reviewedAt DateTime?
+  createdAt  DateTime             @default(now())
+}
+
+model JourneyEvent {
+  id        String          @id @default(cuid())
+  journeyId String
+  journey   CustomerJourney @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  stepId    String?
+  trigger   String
+  channel   String
+  recipient String?
+  status    String          @default("queued")
+  metadata  String?
+  createdAt DateTime        @default(now())
+}
+
+model AdminNotification {
+  id        String   @id @default(cuid())
+  title     String
+  body      String
+  type      String
+  read      Boolean  @default(false)
+  metadata  String?
+  createdAt DateTime @default(now())
+}
+
+model SeoPageRecord {
+  id              String   @id @default(cuid())
+  path            String   @unique
+  title           String
+  metaDescription String
+  h1              String?
+  status          String   @default("ok")
+  issues          String?
+  updatedAt       DateTime @updatedAt
+}
+
+model OfferRecommendation {
+  id          String   @id @default(cuid())
+  name        String
+  type        String
+  description String
+  active      Boolean  @default(true)
+  config      String   @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model MarketSnapshot {
+  id          String   @id @default(cuid())
+  competitor  String
+  category    String
+  observation String
+  capturedAt  DateTime @default(now())
+}
+
+model JourneyEnrollment {
+  id          String           @id @default(cuid())
+  journeyId   String
+  journey     CustomerJourney  @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  email       String?
+  phone       String?
+  currentStep Int              @default(0)
+  context     String           @default("{}")
+  nextRunAt   DateTime?
+  status      EnrollmentStatus @default(ACTIVE)
+  trigger     String
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([nextRunAt, status])
+}
+
+model CartAbandonmentEvent {
+  id        String   @id @default(cuid())
+  email     String?
+  cartId    String?
+  subtotal  Float?
+  itemCount Int      @default(0)
+  metadata  String?
+  recovered Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model OrderEvent {
+  id         String   @id @default(cuid())
+  externalId String?  @unique
+  email      String?
+  phone      String?
+  total      Float?
+  status     String   @default("created")
+  source     String   @default("shopify")
+  metadata   String?
+  createdAt  DateTime @default(now())
+}
+
+model ProductViewEvent {
+  id            String   @id @default(cuid())
+  productHandle String
+  productName   String?
+  sessionId     String?
+  createdAt     DateTime @default(now())
+
+  @@index([productHandle, createdAt])
+}
