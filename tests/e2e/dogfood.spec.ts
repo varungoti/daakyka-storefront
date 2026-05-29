@@ -190,6 +190,75 @@ test.describe("Dogfood — interactive flows", () => {
   });
 });
 
+test.describe("Dogfood — Hermes & AR APIs", () => {
+  test("Hermes runtime health reports inline Vercel runtime", async ({ request }) => {
+    const response = await request.get("/api/hermes/runtime/health");
+    expect(response.ok()).toBeTruthy();
+    const body = (await response.json()) as {
+      ok: boolean;
+      service: string;
+      inline: boolean;
+      mode: string;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.service).toBe("daakyka-hermes");
+    expect(body.inline).toBe(true);
+    expect(body.mode).toBe("SUGGEST_ONLY");
+  });
+
+  test("try-on API returns valid preview payload", async ({ request }) => {
+    const topImageUrl =
+      "https://images.unsplash.com/photo-1666887360684-8082fc98ebd2?auto=format&fit=crop&w=800&q=80";
+    const response = await request.post("/api/outfit/try-on", {
+      data: { gender: "female", topImageUrl, color: "Navy" },
+    });
+    expect(response.ok()).toBeTruthy();
+    const body = (await response.json()) as {
+      ok: boolean;
+      mode: string;
+      resultImageUrl: string;
+    };
+    expect(body.ok).toBe(true);
+    expect(["ar-tryon", "fallback"]).toContain(body.mode);
+    expect(body.resultImageUrl).toMatch(/^https?:\/\/|data:image\//);
+  });
+
+  test("Hermes admin dispatches task to approval queue", async ({ page }) => {
+    test.setTimeout(90_000);
+    await page.goto("/admin/login");
+    await page.getByLabel(/email/i).fill(ADMIN_EMAIL);
+    await page.getByLabel(/password/i).fill(ADMIN_PASSWORD);
+    await page.getByRole("button", { name: /sign in|log in/i }).click();
+    await expect(page).toHaveURL(/\/admin\/dashboard/, { timeout: 15000 });
+
+    await page.goto("/admin/hermes");
+    await expect(page.getByRole("heading", { name: /Hermes Agent/i })).toBeVisible();
+    await expect(page.getByText(/Vercel inline|HTTP runtime|Connected/i)).toBeVisible();
+
+    await page.getByRole("button", { name: /daily seo health scan/i }).click();
+    await expect(page.getByRole("button", { name: /running/i })).toBeHidden({ timeout: 45_000 });
+
+    await expect(
+      page.locator("section").filter({ hasText: "Approval Queue" }).getByText(/PENDING|daily|seo/i).first(),
+    ).toBeVisible({ timeout: 15000 });
+
+    await page.screenshot({ path: "dogfood-output/screenshots/admin-hermes-task.png", fullPage: true });
+  });
+
+  test("integrations page shows Hermes configured", async ({ page }) => {
+    await page.goto("/admin/login");
+    await page.getByLabel(/email/i).fill(ADMIN_EMAIL);
+    await page.getByLabel(/password/i).fill(ADMIN_PASSWORD);
+    await page.getByRole("button", { name: /sign in|log in/i }).click();
+    await expect(page).toHaveURL(/\/admin\/dashboard/, { timeout: 15000 });
+
+    await page.goto("/admin/integrations");
+    await expect(page.getByText(/Hermes Agent/i)).toBeVisible();
+    await expect(page.getByText(/configured/i).first()).toBeVisible();
+    await page.screenshot({ path: "dogfood-output/screenshots/admin-integrations.png", fullPage: true });
+  });
+});
+
 test.describe("Dogfood — admin tour", () => {
   const adminRoutes = [
     "/admin/dashboard",

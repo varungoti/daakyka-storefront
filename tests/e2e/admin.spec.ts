@@ -95,7 +95,7 @@ test.describe("Admin E2E", () => {
     });
   });
 
-  test("VIEWER role cannot access blog CMS or users API", async ({ page, request }) => {
+  test("VIEWER role cannot access blog CMS or users API", async ({ page }) => {
     await page.context().clearCookies();
     await page.goto("/admin/login");
     await page.getByLabel(/email/i).fill(VIEWER_EMAIL);
