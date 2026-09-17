@@ -25,8 +25,6 @@ describe("smoke — storefront pages", () => {
     "/sale",
     "/our-story",
     "/account",
-    "/mix-and-match",
-    "/fabric-technology",
     "/bulk-orders",
     "/about",
     "/contact",
@@ -88,6 +86,16 @@ describe("smoke — storefront pages", () => {
     assert.equal(status, 200);
   });
 
+  it("Phase A5: /mix-and-match and /fabric-technology 404 by default (admin-toggleable)", async () => {
+    // Both pages exist but are disabled by default (SiteSetting
+    // pages.mixMatch.enabled / pages.fabricTech.enabled). An admin can
+    // turn either on from /admin/site-controls, at which point this
+    // assertion would need the same override before asserting 200 —
+    // this smoke run exercises the out-of-the-box default.
+    assert.equal(await fetchStatus("/mix-and-match"), 404);
+    assert.equal(await fetchStatus("/fabric-technology"), 404);
+  });
+
   it("homepage includes security headers", async () => {
     const response = await fetch(`${BASE}/`);
     assert.equal(response.status, 200);
@@ -97,16 +105,21 @@ describe("smoke — storefront pages", () => {
   });
 
   it("sitemap includes product PDP URLs", async () => {
+    // The catalog is DB-backed (Phase B3): fetch a real current handle
+    // rather than a hardcoded one from the retired static seed data,
+    // which no longer matches prisma/seed-catalog.ts's slugs.
+    const products = await fetchJson<{ products: { handle: string }[] }>("/api/products");
+    assert.ok(products.products.length > 0, "expected at least one product to check against");
     const response = await fetch(`${BASE}/sitemap.xml`);
     assert.equal(response.status, 200);
     const xml = await response.text();
-    assert.match(xml, /\/products\/v-neck-top-lilac/);
+    assert.match(xml, new RegExp(`/products/${products.products[0].handle}`));
   });
 
   it("health endpoint reports catalog source", async () => {
     const body = await fetchJson<{ status: string; catalog: string }>("/api/health");
     assert.equal(body.status, "ok");
-    assert.ok(["seed", "shopify"].includes(body.catalog));
+    assert.ok(["db", "seed"].includes(body.catalog), `unexpected catalog source: ${body.catalog}`);
   });
 
   it("admin API rejects unauthenticated requests", async () => {
