@@ -6,6 +6,7 @@ import { GET as getHealth } from "@/app/api/health/route";
 import { POST as postNewsletter } from "@/app/api/newsletter/subscribe/route";
 import { POST as postLogin } from "@/app/api/auth/login/route";
 import { verifyPassword } from "@/lib/auth/password";
+import { DEFAULT_ADMIN_SEED_EMAIL } from "@/lib/auth/seed-defaults";
 import { db } from "@/lib/db";
 import { GET as getCronJourneys } from "@/app/api/cron/journeys/route";
 import { GET as getCronCampaigns } from "@/app/api/cron/campaigns/route";
@@ -80,9 +81,16 @@ describe("API integration", () => {
       assert.equal(response.status, 401);
     });
 
-    it("verifies seed admin password hash", async () => {
-      const email = (process.env.ADMIN_SEED_EMAIL ?? "varungoti@gmail.com").toLowerCase();
-      const password = process.env.ADMIN_SEED_PASSWORD ?? "Daakyka@2026";
+    it("verifies seed admin password hash", async (t) => {
+      // prisma/seed.ts generates a random password when ADMIN_SEED_PASSWORD
+      // isn't set, so there's nothing to verify against in that case —
+      // skip rather than guess at a since-removed hardcoded default.
+      const password = process.env.ADMIN_SEED_PASSWORD;
+      if (!password) {
+        t.skip("ADMIN_SEED_PASSWORD not set in this environment");
+        return;
+      }
+      const email = (process.env.ADMIN_SEED_EMAIL ?? DEFAULT_ADMIN_SEED_EMAIL).toLowerCase();
       const user = await db.user.findUnique({ where: { email } });
       assert.ok(user, "seed admin user must exist — run npm run db:seed");
       const valid = await verifyPassword(password, user.passwordHash);

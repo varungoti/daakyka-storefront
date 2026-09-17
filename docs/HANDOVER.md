@@ -32,7 +32,7 @@ npm run dev
 ```
 
 Admin: `http://localhost:3000/admin/login`  
-Seed: `varungoti@gmail.com` / `Daakyka@2026` — see [ADMIN_CREDENTIALS.md](./ADMIN_CREDENTIALS.md) to swap client credentials later.
+`npm run db:setup` prints the admin login it creates — see [ADMIN_CREDENTIALS.md](./ADMIN_CREDENTIALS.md) for how credentials are seeded and rotated.
 
 ## Documentation Index
 

@@ -8,7 +8,7 @@ Premium headless medical commerce storefront for DAAKYKA Apparels.
 - **React 19**
 - **Tailwind CSS v4**
 - **Framer Motion**
-- **Prisma 7** + SQLite (local) / Postgres (production)
+- **Prisma 7** + Postgres (local via `docker compose up -d postgres`, and production)
 - **Lucide React** (icons)
 
 ## Getting Started
@@ -24,10 +24,12 @@ npm run dev
 - Storefront: http://localhost:3000
 - Admin panel: http://localhost:3000/admin/login
 
-Default admin credentials (change after first login):
-
-- Email: `varungoti@gmail.com`
-- Password: `Daakyka@2026` (change after first login; swap to client credentials via env — see `docs/ADMIN_CREDENTIALS.md`)
+`npm run db:setup` prints the admin login it just created (from your
+`.env`'s `ADMIN_SEED_EMAIL` / `ADMIN_SEED_PASSWORD`, or a randomly
+generated password if you left `ADMIN_SEED_PASSWORD` unset). See
+`docs/ADMIN_CREDENTIALS.md` for how this works and how to rotate it —
+on Vercel, a real `ADMIN_SEED_PASSWORD` is required before the first
+deploy will even build.
 
 ## Scripts
 

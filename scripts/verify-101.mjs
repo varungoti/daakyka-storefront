@@ -6,9 +6,15 @@
 import { spawn, spawnSync, execSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { randomBytes } from "node:crypto";
 
 const PORT = process.env.PORT ?? "3000";
 const BASE = `http://localhost:${PORT}`;
+
+// Only used for this local run's throwaway database/server; never the
+// value that ends up on a real deploy (prisma/seed.ts refuses a known
+// default or an unset password on Vercel regardless).
+const generatedAdminPassword = randomBytes(12).toString("base64url");
 
 const env = {
   ...process.env,
@@ -22,8 +28,8 @@ const env = {
     process.env.DATABASE_URL ??
     "postgresql://daakyka:daakyka@localhost:5432/daakyka_dev",
   NEXT_PUBLIC_SITE_URL: process.env.NEXT_PUBLIC_SITE_URL ?? BASE,
-  ADMIN_SEED_EMAIL: process.env.ADMIN_SEED_EMAIL ?? "varungoti@gmail.com",
-  ADMIN_SEED_PASSWORD: process.env.ADMIN_SEED_PASSWORD ?? "Daakyka@2026",
+  ADMIN_SEED_EMAIL: process.env.ADMIN_SEED_EMAIL ?? "admin@example.com",
+  ADMIN_SEED_PASSWORD: process.env.ADMIN_SEED_PASSWORD ?? generatedAdminPassword,
   CRON_SECRET: process.env.CRON_SECRET ?? "predeploy-cron-secret",
 };
 

@@ -1,48 +1,69 @@
 # Admin Credentials
 
-## Current test setup
+## How the admin account is created
 
-| Account | Email | Default password | Role |
-|---------|-------|------------------|------|
-| **Primary admin** | `varungoti@gmail.com` | `Daakyka@2026` | SUPER_ADMIN |
-| RBAC test viewer | `varungoti+viewer@gmail.com` | `Daakyka@Viewer2026` | VIEWER |
+`prisma/seed.ts` runs on every deploy (and via `npm run db:setup` locally)
+and is **create-only**: it bootstraps the SUPER_ADMIN account the first
+time it finds none, and never touches an existing user's password, role,
+or active status again. A password rotation happens through `/admin/users`
+or the admin's own account settings, not by redeploying.
 
-The viewer address is a Gmail **+alias** — mail goes to the same inbox as `varungoti@gmail.com`, but it is a separate login in the admin panel for automated RBAC tests.
+- `ADMIN_SEED_EMAIL` — the admin's login email (defaults to
+  `admin@example.com` if unset; not a secret, just an identifier).
+- `ADMIN_SEED_PASSWORD` — **required**. On Vercel (staging or production),
+  the build fails outright if this is unset or matches a known
+  default/weak password — see `src/lib/auth/seed-defaults.ts`'s
+  `INSECURE_SEED_PASSWORDS`. Generate one with `openssl rand -base64 18`.
+- `VIEWER_SEED_EMAIL` / `VIEWER_SEED_PASSWORD` — optional; the read-only
+  VIEWER account is only created when **both** are set.
 
-Login: `/admin/login` on staging or local.
+Set these in Vercel → Project → Settings → Environment Variables before
+the first deploy. Local development reads the same vars from `.env`
+(copy `.env.local.example`); if `ADMIN_SEED_PASSWORD` is left unset
+locally, `prisma/seed.ts` generates a random one and prints it once to
+the terminal — it is never written to a file or committed.
 
----
+## Local development login
 
-## Swapping to client credentials later
+Whatever you put in your own `.env`'s `ADMIN_SEED_EMAIL` /
+`ADMIN_SEED_PASSWORD` (or the password printed by `npm run db:seed` if
+you left it unset). Login: `/admin/login`.
 
-You can switch from your test email to the client’s admin without code changes.
+## Rotating or replacing the admin later
 
-### Option A — Environment variables (recommended before go-live)
+### Option A — New admin, then remove the old one
 
-1. Set in Vercel (or local `.env`):
-   - `ADMIN_SEED_EMAIL=client@example.com`
-   - `ADMIN_SEED_PASSWORD=<strong-password>`
-2. Redeploy (build runs `tsx prisma/seed.ts`, which upserts the super admin).
-3. Log in as the client email and deactivate old test users under `/admin/users`.
+1. Ask a current SUPER_ADMIN to invite the new admin from `/admin/users`
+   (or, until that flow exists, set `ADMIN_SEED_EMAIL` to the new address
+   and redeploy — this only *creates* the new user, it won't touch any
+   existing one).
+2. Log in as the new admin and deactivate the old account under
+   `/admin/users`.
 
-### Option B — Admin panel only
+### Option B — Rotate your own password
 
-1. Log in as super admin.
-2. Go to `/admin/users` — change roles or deactivate test accounts.
-3. Use **Account settings** / password change flow if exposed, or create a new SUPER_ADMIN for the client and deactivate yours.
+Use the account settings / change-password flow once it's available
+(tracked in the release plan). Until then, a SUPER_ADMIN can deactivate
+an account and re-invite.
 
-### Option C — Production handover
+### Option C — Handover to a client
 
-1. Client creates their password via seed env on first deploy to production.
-2. Remove or disable `varungoti@gmail.com` and `varungoti+viewer@gmail.com` in `/admin/users`.
-3. Rotate `AUTH_SECRET` if test/staging secrets were shared.
+1. Set `ADMIN_SEED_EMAIL` / `ADMIN_SEED_PASSWORD` to the client's own
+   values in Vercel and redeploy — this creates their account without
+   touching yours.
+2. Have the client log in and deactivate every test/handover account
+   under `/admin/users`.
+3. Rotate `AUTH_SECRET` if it was ever shared outside your team (this
+   invalidates all existing sessions).
 
----
+## Where this is implemented
 
-## Where defaults are defined
+- `src/lib/auth/seed-defaults.ts` — fallback email and the insecure-password
+  deny-list
+- `prisma/seed.ts` — `resolveAdminSeedPassword()` and the create-only user
+  upserts
+- `src/lib/env.ts` — refuses to boot in production without a valid
+  `ADMIN_SEED_PASSWORD`, as a second line of defense
 
-- `src/lib/auth/seed-defaults.ts` — fallback emails/passwords
-- `prisma/seed.ts` — creates users on `npm run db:setup` and every Vercel build
-- Override anytime with `ADMIN_SEED_EMAIL`, `ADMIN_SEED_PASSWORD`, `VIEWER_SEED_EMAIL`, `VIEWER_SEED_PASSWORD`
-
-Legacy seed users (`admin@daakyka.com`, `viewer@daakyka.com`) are **deactivated** automatically on re-seed.
+Legacy seed users (`admin@daakyka.com`, `viewer@daakyka.com`) are
+deactivated automatically on every re-seed.

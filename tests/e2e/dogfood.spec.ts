@@ -1,13 +1,9 @@
 import { test, expect } from "@playwright/test";
 import { seoLandingPages } from "@/data/seo-landing-pages";
 
-import {
-  DEFAULT_ADMIN_SEED_EMAIL,
-  DEFAULT_ADMIN_SEED_PASSWORD,
-} from "@/lib/auth/seed-defaults";
+import { resolveAdminCredentials } from "./helpers/admin-credentials";
 
-const ADMIN_EMAIL = process.env.ADMIN_SEED_EMAIL ?? DEFAULT_ADMIN_SEED_EMAIL;
-const ADMIN_PASSWORD = process.env.ADMIN_SEED_PASSWORD ?? DEFAULT_ADMIN_SEED_PASSWORD;
+const { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } = resolveAdminCredentials();
 
 const STOREFRONT_ROUTES = [
   "/",

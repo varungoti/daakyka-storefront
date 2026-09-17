@@ -1,3 +1,8 @@
+// Relative import, not the "@/" alias: next.config.ts imports validateEnv
+// from this file through its own transpile-config pipeline, which doesn't
+// resolve tsconfig path aliases the way the main Next.js app build does.
+import { isInsecureSeedPassword } from "./auth/seed-defaults";
+
 function isShopifyConfigured(): boolean {
   return Boolean(
     process.env.NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN &&
@@ -64,6 +69,25 @@ export function validateEnv(): void {
       throw new Error(
         "SHOPIFY_WEBHOOK_SECRET must be set when Shopify Storefront is configured",
       );
+    }
+
+    const adminSeedPassword = process.env.ADMIN_SEED_PASSWORD;
+    if (!adminSeedPassword || isInsecureSeedPassword(adminSeedPassword)) {
+      throw new Error(
+        "ADMIN_SEED_PASSWORD must be set to a unique password of at least 12 characters " +
+          "in production (not a known default) — prisma/seed.ts also enforces this at build time.",
+      );
+    }
+
+    if (!process.env.NEXT_PUBLIC_SITE_URL?.startsWith("https://")) {
+      throw new Error(
+        "NEXT_PUBLIC_SITE_URL must be set to your production https:// URL — it also controls " +
+          "whether the admin session cookie is marked Secure.",
+      );
+    }
+
+    if (process.env.BREVO_API_KEY && !process.env.BREVO_FROM_EMAIL) {
+      throw new Error("BREVO_FROM_EMAIL must be set when BREVO_API_KEY is configured");
     }
     return;
   }

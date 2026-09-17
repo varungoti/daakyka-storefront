@@ -1,16 +1,14 @@
 import { test, expect } from "@playwright/test";
 
-import {
-  DEFAULT_ADMIN_SEED_EMAIL,
-  DEFAULT_ADMIN_SEED_PASSWORD,
-  DEFAULT_VIEWER_SEED_EMAIL,
-  DEFAULT_VIEWER_SEED_PASSWORD,
-} from "@/lib/auth/seed-defaults";
+import { resolveAdminCredentials } from "./helpers/admin-credentials";
 
-const ADMIN_EMAIL = process.env.ADMIN_SEED_EMAIL ?? DEFAULT_ADMIN_SEED_EMAIL;
-const ADMIN_PASSWORD = process.env.ADMIN_SEED_PASSWORD ?? DEFAULT_ADMIN_SEED_PASSWORD;
-const VIEWER_EMAIL = process.env.VIEWER_SEED_EMAIL ?? DEFAULT_VIEWER_SEED_EMAIL;
-const VIEWER_PASSWORD = process.env.VIEWER_SEED_PASSWORD ?? DEFAULT_VIEWER_SEED_PASSWORD;
+const { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } = resolveAdminCredentials();
+// The viewer account is opt-in (prisma/seed.ts only creates it when both
+// VIEWER_SEED_EMAIL and VIEWER_SEED_PASSWORD are set), so there's no
+// default to fall back to — the viewer-only test below skips itself
+// when these aren't configured for this run.
+const VIEWER_EMAIL = process.env.VIEWER_SEED_EMAIL;
+const VIEWER_PASSWORD = process.env.VIEWER_SEED_PASSWORD;
 
 async function loginAsAdmin(page: import("@playwright/test").Page) {
   await page.goto("/admin/login");
@@ -96,10 +94,14 @@ test.describe("Admin E2E", () => {
   });
 
   test("VIEWER role cannot access blog CMS or users API", async ({ page }) => {
+    test.skip(
+      !VIEWER_EMAIL || !VIEWER_PASSWORD,
+      "VIEWER_SEED_EMAIL/VIEWER_SEED_PASSWORD not set — viewer account was not seeded",
+    );
     await page.context().clearCookies();
     await page.goto("/admin/login");
-    await page.getByLabel(/email/i).fill(VIEWER_EMAIL);
-    await page.getByLabel(/password/i).fill(VIEWER_PASSWORD);
+    await page.getByLabel(/email/i).fill(VIEWER_EMAIL!);
+    await page.getByLabel(/password/i).fill(VIEWER_PASSWORD!);
     await page.getByRole("button", { name: /sign in|log in/i }).click();
     await expect(page).toHaveURL(/\/admin\/dashboard/, { timeout: 15000 });
 

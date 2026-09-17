@@ -1,12 +1,9 @@
 import "dotenv/config";
+import { randomBytes } from "node:crypto";
 import { blogMedia, testimonialAvatars } from "../src/data/media/catalog";
 import { createPrismaClient } from "../src/lib/create-prisma-client";
-import {
-  DEFAULT_ADMIN_SEED_EMAIL,
-  DEFAULT_ADMIN_SEED_PASSWORD,
-  DEFAULT_VIEWER_SEED_EMAIL,
-  DEFAULT_VIEWER_SEED_PASSWORD,
-} from "../src/lib/auth/seed-defaults";
+import { DEFAULT_ADMIN_SEED_EMAIL, isInsecureSeedPassword } from "../src/lib/auth/seed-defaults";
+import { isVercel } from "../src/lib/env";
 import bcrypt from "bcryptjs";
 
 const prisma = createPrismaClient();
@@ -109,36 +106,101 @@ const seedBlogPosts = [
   },
 ];
 
-async function main() {
-  const email = process.env.ADMIN_SEED_EMAIL ?? DEFAULT_ADMIN_SEED_EMAIL;
-  const password = process.env.ADMIN_SEED_PASSWORD ?? DEFAULT_ADMIN_SEED_PASSWORD;
-  const passwordHash = await bcrypt.hash(password, 12);
+/**
+ * Resolves the password to seed the SUPER_ADMIN account with.
+ *
+ * On Vercel (preview or production), ADMIN_SEED_PASSWORD must be set to
+ * a real, non-default password — the build fails loudly rather than
+ * silently falling back to a value that's ever appeared in docs, git
+ * history, or another deploy's logs. Locally, an unset password is
+ * generated at random instead of reusing a fixed default, so
+ * "forgetting" to set one can't quietly leave a known password behind.
+ */
+function resolveAdminSeedPassword(): string {
+  const explicit = process.env.ADMIN_SEED_PASSWORD;
 
+  if (isVercel()) {
+    if (!explicit) {
+      throw new Error(
+        "ADMIN_SEED_PASSWORD must be set in this Vercel project's environment variables " +
+          "before deploying — see docs/GO_LIVE_RUNBOOK.md. Generate one with " +
+          "`openssl rand -base64 18`.",
+      );
+    }
+    if (isInsecureSeedPassword(explicit)) {
+      throw new Error(
+        "ADMIN_SEED_PASSWORD is too short or matches a known default/leaked password. " +
+          "Set a unique password of at least 12 characters.",
+      );
+    }
+    return explicit;
+  }
+
+  if (explicit) {
+    if (isInsecureSeedPassword(explicit)) {
+      console.warn(
+        "[seed] ADMIN_SEED_PASSWORD matches a known default/weak password — fine for local " +
+          "development, but this value must never be used for a staging or production deploy.",
+      );
+    }
+    return explicit;
+  }
+
+  return randomBytes(12).toString("base64url");
+}
+
+async function main() {
+  const email = (process.env.ADMIN_SEED_EMAIL ?? DEFAULT_ADMIN_SEED_EMAIL).toLowerCase();
+  const password = resolveAdminSeedPassword();
+  const existingAdmin = await prisma.user.findUnique({ where: { email } });
+
+  // Create-only: an existing user's password, role, and active status are
+  // never touched by re-seeding. A password rotation or deactivation must
+  // happen through the admin UI, not by redeploying.
   await prisma.user.upsert({
     where: { email },
-    update: { passwordHash, role: "SUPER_ADMIN", active: true, name: "Super Admin" },
+    update: {},
     create: {
       email,
       name: "Super Admin",
-      passwordHash,
+      passwordHash: await bcrypt.hash(password, 12),
       role: "SUPER_ADMIN",
     },
   });
 
-  const viewerEmail = process.env.VIEWER_SEED_EMAIL ?? DEFAULT_VIEWER_SEED_EMAIL;
-  const viewerPassword = process.env.VIEWER_SEED_PASSWORD ?? DEFAULT_VIEWER_SEED_PASSWORD;
-  const viewerHash = await bcrypt.hash(viewerPassword, 12);
+  if (!existingAdmin) {
+    console.log("Created admin user.");
+    if (!isVercel()) {
+      // Only useful to print for a fresh local create — an existing
+      // account's real password is whatever it was already set to, and
+      // printing this value in Vercel's build log would leak it there.
+      console.log(`Admin login: ${email}`);
+      console.log(`Admin password: ${password}`);
+    }
+  } else {
+    console.log(`Admin user already exists: ${email} (password unchanged).`);
+  }
 
-  await prisma.user.upsert({
-    where: { email: viewerEmail },
-    update: { role: "VIEWER", passwordHash: viewerHash, active: true },
-    create: {
-      email: viewerEmail,
-      name: "Read-only Viewer",
-      passwordHash: viewerHash,
-      role: "VIEWER",
-    },
-  });
+  const viewerEmail = process.env.VIEWER_SEED_EMAIL;
+  const viewerPassword = process.env.VIEWER_SEED_PASSWORD;
+
+  if (viewerEmail && viewerPassword) {
+    if (isVercel() && isInsecureSeedPassword(viewerPassword)) {
+      throw new Error(
+        "VIEWER_SEED_PASSWORD is too short or matches a known default/leaked password.",
+      );
+    }
+    await prisma.user.upsert({
+      where: { email: viewerEmail.toLowerCase() },
+      update: {},
+      create: {
+        email: viewerEmail.toLowerCase(),
+        name: "Read-only Viewer",
+        passwordHash: await bcrypt.hash(viewerPassword, 12),
+        role: "VIEWER",
+      },
+    });
+  }
 
   for (const legacyEmail of ["admin@daakyka.com", "viewer@daakyka.com"]) {
     await prisma.user.updateMany({
@@ -147,14 +209,14 @@ async function main() {
     });
   }
 
+  // Create-only from here down: homepage sections, blog posts, SEO
+  // records and testimonials are all editable from /admin, and a
+  // re-seed (which happens on every deploy) must never clobber those
+  // edits. A record is only ever written once, on first creation.
   for (const section of defaultHomepageSections) {
     await prisma.homepageSection.upsert({
       where: { key: section.key },
-      update: {
-        title: section.title,
-        sortOrder: section.sortOrder,
-        content: JSON.stringify(section.content),
-      },
+      update: {},
       create: {
         key: section.key,
         title: section.title,
@@ -167,15 +229,7 @@ async function main() {
   for (const post of seedBlogPosts) {
     await prisma.blogPostRecord.upsert({
       where: { slug: post.slug },
-      update: {
-        title: post.title,
-        excerpt: post.excerpt,
-        category: post.category,
-        author: post.author,
-        readTime: post.readTime,
-        image: post.image,
-        status: post.status,
-      },
+      update: {},
       create: {
         ...post,
         content: JSON.stringify(post.content),
@@ -230,12 +284,7 @@ async function main() {
     const existing = await prisma.testimonialRecord.findFirst({
       where: { name: testimonial.name },
     });
-    if (existing) {
-      await prisma.testimonialRecord.update({
-        where: { id: existing.id },
-        data: testimonial,
-      });
-    } else {
+    if (!existing) {
       await prisma.testimonialRecord.create({ data: testimonial });
     }
   }
@@ -485,7 +534,7 @@ async function main() {
   for (const page of seoPages) {
     await prisma.seoPageRecord.upsert({
       where: { path: page.path },
-      update: { title: page.title, metaDescription: page.metaDescription, h1: page.h1, status: page.status },
+      update: {},
       create: { ...page, issues: "[]" },
     });
   }
@@ -523,8 +572,6 @@ async function main() {
   }
 
   console.log("Database seeded successfully.");
-  console.log(`Admin login: ${email}`);
-  console.log(`Admin password: ${password}`);
 }
 
 main()

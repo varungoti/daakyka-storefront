@@ -9,11 +9,22 @@
 const isProduction = process.argv.includes("--production");
 
 console.log("\nDAAKYKA Storefront — Go-Live Check\n");
-console.log("Code & automated QA: 101% complete (see docs/COMPLETION_STATUS.md)\n");
 
 const required = {
-  staging: ["DATABASE_URL", "AUTH_SECRET", "CRON_SECRET", "NEXT_PUBLIC_SITE_URL"],
-  production: ["DATABASE_URL", "AUTH_SECRET", "CRON_SECRET", "NEXT_PUBLIC_SITE_URL"],
+  staging: [
+    "DATABASE_URL",
+    "AUTH_SECRET",
+    "CRON_SECRET",
+    "NEXT_PUBLIC_SITE_URL",
+    "ADMIN_SEED_PASSWORD",
+  ],
+  production: [
+    "DATABASE_URL",
+    "AUTH_SECRET",
+    "CRON_SECRET",
+    "NEXT_PUBLIC_SITE_URL",
+    "ADMIN_SEED_PASSWORD",
+  ],
 };
 
 const optional = {

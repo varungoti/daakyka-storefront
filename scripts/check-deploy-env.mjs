@@ -4,7 +4,29 @@
  */
 const isProduction = process.argv.includes("--production");
 
-const required = ["DATABASE_URL", "AUTH_SECRET", "CRON_SECRET", "NEXT_PUBLIC_SITE_URL"];
+// Kept in sync with src/lib/auth/seed-defaults.ts's INSECURE_SEED_PASSWORDS
+// (duplicated rather than imported: this script runs via plain `node`,
+// before any TypeScript loader is available).
+const INSECURE_SEED_PASSWORDS = new Set([
+  "Daakyka@2026",
+  "Daakyka@Viewer2026",
+  "password",
+  "changeme",
+  "admin",
+  "admin123",
+]);
+
+function isInsecureSeedPassword(password) {
+  return password.length < 12 || INSECURE_SEED_PASSWORDS.has(password);
+}
+
+const required = [
+  "DATABASE_URL",
+  "AUTH_SECRET",
+  "CRON_SECRET",
+  "NEXT_PUBLIC_SITE_URL",
+  "ADMIN_SEED_PASSWORD",
+];
 
 const errors = [];
 
@@ -20,6 +42,14 @@ for (const key of required) {
   if (key === "DATABASE_URL" && isProduction && value.startsWith("file:")) {
     errors.push("DATABASE_URL must be Postgres in production (not SQLite file:)");
   }
+  if (key === "ADMIN_SEED_PASSWORD" && isInsecureSeedPassword(value)) {
+    errors.push(
+      "ADMIN_SEED_PASSWORD is too short or matches a known default/leaked password",
+    );
+  }
+  if (key === "NEXT_PUBLIC_SITE_URL" && isProduction && !value.startsWith("https://")) {
+    errors.push("NEXT_PUBLIC_SITE_URL must be an https:// URL in production");
+  }
 }
 
 if (!isProduction && process.env.NEXT_PUBLIC_ALLOW_INDEXING !== "false") {
@@ -32,6 +62,10 @@ const shopifyConfigured =
 
 if (shopifyConfigured && !process.env.SHOPIFY_WEBHOOK_SECRET) {
   errors.push("SHOPIFY_WEBHOOK_SECRET required when Shopify Storefront is configured");
+}
+
+if (process.env.BREVO_API_KEY && !process.env.BREVO_FROM_EMAIL) {
+  errors.push("BREVO_FROM_EMAIL required when BREVO_API_KEY is configured");
 }
 
 if (errors.length > 0) {

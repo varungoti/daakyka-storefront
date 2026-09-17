@@ -7,6 +7,17 @@ on:
     branches: [main, master, staging]
   workflow_dispatch:
 
+# Shared across every job below so the database is always seeded with the
+# same admin credentials the e2e specs then log in with. This value is
+# CI-only — the same throwaway Postgres container is destroyed at the end
+# of the job — and is deliberately NOT the documented local-dev default,
+# so it can never be mistaken for (or double as) a real deploy's secret.
+env:
+  DATABASE_URL: "postgresql://daakyka:daakyka@localhost:5432/daakyka_dev"
+  AUTH_SECRET: ci-test-auth-secret-min-32-chars-long
+  ADMIN_SEED_EMAIL: ci-admin@example.com
+  ADMIN_SEED_PASSWORD: ci-only-admin-password-not-a-real-secret
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -37,17 +48,9 @@ jobs:
 
       - name: Setup database
         run: npm run db:setup
-        env:
-          DATABASE_URL: "postgresql://daakyka:daakyka@localhost:5432/daakyka_dev"
-          AUTH_SECRET: ci-test-auth-secret-min-32-chars-long
-          ADMIN_SEED_EMAIL: varungoti@gmail.com
-          ADMIN_SEED_PASSWORD: Daakyka@2026
 
-      - name: Lint, test, and build
+      - name: Lint, typecheck, test, and build
         run: npm run verify
-        env:
-          DATABASE_URL: "postgresql://daakyka:daakyka@localhost:5432/daakyka_dev"
-          AUTH_SECRET: ci-test-auth-secret-min-32-chars-long
 
   e2e:
     runs-on: ubuntu-latest
@@ -79,11 +82,6 @@ jobs:
 
       - name: Setup database
         run: npm run db:setup
-        env:
-          DATABASE_URL: "postgresql://daakyka:daakyka@localhost:5432/daakyka_dev"
-          AUTH_SECRET: ci-test-auth-secret-min-32-chars-long
-          ADMIN_SEED_EMAIL: varungoti@gmail.com
-          ADMIN_SEED_PASSWORD: Daakyka@2026
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
@@ -102,8 +100,6 @@ jobs:
           echo "Server failed to start"
           exit 1
         env:
-          DATABASE_URL: "postgresql://daakyka:daakyka@localhost:5432/daakyka_dev"
-          AUTH_SECRET: ci-test-auth-secret-min-32-chars-long
           PORT: "3000"
           DISABLE_RATE_LIMIT: "1"
           NEXT_PUBLIC_SITE_URL: "http://localhost:3000"

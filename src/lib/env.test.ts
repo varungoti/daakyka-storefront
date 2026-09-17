@@ -6,7 +6,7 @@ import {
   getClientIp,
   resetRateLimits,
 } from "@/lib/security/rate-limit";
-import { setNodeEnv } from "../../tests/helpers/env";
+import { setNodeEnv, withEnv } from "../../tests/helpers/env";
 
 describe("env validation", () => {
   it("allows indexing by default in non-preview environments", () => {
@@ -32,6 +32,58 @@ describe("env validation", () => {
     setNodeEnv("development");
     assert.doesNotThrow(() => validateEnv());
     setNodeEnv(originalNodeEnv);
+  });
+
+  // A full set of otherwise-valid production env vars, used as the base
+  // for the strict-mode tests below so each one only varies the field
+  // it's actually testing.
+  const validProductionEnv = {
+    VERCEL_ENV: "production",
+    AUTH_SECRET: "a".repeat(32),
+    DATABASE_URL: "postgresql://user:pass@host:5432/db",
+    CRON_SECRET: "cron-secret",
+    ADMIN_SEED_PASSWORD: "a-genuinely-unique-password-123",
+    NEXT_PUBLIC_SITE_URL: "https://daakyka.com",
+    NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN: undefined,
+    NEXT_PUBLIC_SHOPIFY_STOREFRONT_ACCESS_TOKEN: undefined,
+    BREVO_API_KEY: undefined,
+    BREVO_FROM_EMAIL: undefined,
+  };
+
+  it("does not throw validateEnv in production with a complete, safe config", async () => {
+    await withEnv(validProductionEnv, () => {
+      assert.doesNotThrow(() => validateEnv());
+    });
+  });
+
+  it("throws in production when ADMIN_SEED_PASSWORD is unset", async () => {
+    await withEnv({ ...validProductionEnv, ADMIN_SEED_PASSWORD: undefined }, () => {
+      assert.throws(() => validateEnv(), /ADMIN_SEED_PASSWORD/);
+    });
+  });
+
+  it("throws in production when ADMIN_SEED_PASSWORD is a known default", async () => {
+    await withEnv({ ...validProductionEnv, ADMIN_SEED_PASSWORD: "Daakyka@2026" }, () => {
+      assert.throws(() => validateEnv(), /ADMIN_SEED_PASSWORD/);
+    });
+  });
+
+  it("throws in production when NEXT_PUBLIC_SITE_URL is missing or not https", async () => {
+    await withEnv({ ...validProductionEnv, NEXT_PUBLIC_SITE_URL: undefined }, () => {
+      assert.throws(() => validateEnv(), /NEXT_PUBLIC_SITE_URL/);
+    });
+    await withEnv({ ...validProductionEnv, NEXT_PUBLIC_SITE_URL: "http://daakyka.com" }, () => {
+      assert.throws(() => validateEnv(), /NEXT_PUBLIC_SITE_URL/);
+    });
+  });
+
+  it("throws in production when BREVO_API_KEY is set without BREVO_FROM_EMAIL", async () => {
+    await withEnv(
+      { ...validProductionEnv, BREVO_API_KEY: "test-key", BREVO_FROM_EMAIL: undefined },
+      () => {
+        assert.throws(() => validateEnv(), /BREVO_FROM_EMAIL/);
+      },
+    );
   });
 });
 
