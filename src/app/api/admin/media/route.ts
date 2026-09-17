@@ -2,12 +2,46 @@ import { NextResponse } from "next/server";
 import { MediaSource, MediaUsage } from "@/generated/prisma/client";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { db } from "@/lib/db";
 import { saveMediaAsset, StorageNotConfiguredForMediaError } from "@/lib/media/store";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 
 const ALLOWED_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const MEDIA_USAGE_VALUES = new Set<string>(Object.values(MediaUsage));
+const MAX_LIST_LIMIT = 60;
+
+/**
+ * Lists recent media assets, optionally filtered by usage — backs the
+ * simple "pick an existing image" picker used by the categories admin
+ * form (Phase B2). The full media library grid (filters, replace,
+ * regenerate) is a separate, later admin screen; this is intentionally
+ * minimal.
+ */
+export async function GET(request: Request) {
+  const { error } = await requireAdminPermission("media:manage");
+  if (error) return error;
+
+  const url = new URL(request.url);
+  const usageParam = url.searchParams.get("usage");
+  if (usageParam && !MEDIA_USAGE_VALUES.has(usageParam)) {
+    return NextResponse.json(
+      { error: `usage must be one of: ${[...MEDIA_USAGE_VALUES].join(", ")}` },
+      { status: 400 },
+    );
+  }
+
+  const limitParam = Number(url.searchParams.get("limit"));
+  const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, MAX_LIST_LIMIT) : 24;
+
+  const assets = await db.mediaAsset.findMany({
+    where: usageParam ? { usage: usageParam as MediaUsage } : undefined,
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
+
+  return NextResponse.json({ assets });
+}
 
 /**
  * Registers a new uploaded media asset.
