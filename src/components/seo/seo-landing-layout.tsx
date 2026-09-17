@@ -1,5 +1,6 @@
 import { ProductCard } from "@/components/ui/product-card";
 import { Button } from "@/components/ui/button";
+import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { JsonLdScript } from "@/components/seo/json-ld-script";
 import { breadcrumbJsonLd, siteUrlBase } from "@/lib/seo/json-ld";
 import {
@@ -61,84 +62,76 @@ export function SeoLandingLayout({
         </div>
       </nav>
 
-      <section className="bg-alt-surface py-16 md:py-20">
-        <div className="mx-auto max-w-4xl px-4 text-center lg:px-8">
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">DAAKYKA Guides</p>
-          <h1 className="mt-3 font-display text-4xl font-bold text-ink md:text-5xl">{page.h1}</h1>
-          <p className="mx-auto mt-5 max-w-2xl text-base leading-relaxed text-muted">{page.intro}</p>
-          <div className="mt-8 flex flex-wrap justify-center gap-3">
-            <Link href={page.shopHref}>
-              <Button size="lg">
-                {page.shopLabel}
-                <ArrowRight size={18} />
+      <PageHeroBand innerClassName="max-w-4xl text-center">
+        <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">DAAKYKA Guides</p>
+        <h1 className="mt-3 font-display text-4xl font-bold text-ink md:text-5xl">{page.h1}</h1>
+        <p className="mx-auto mt-5 max-w-2xl text-base leading-relaxed text-muted">{page.intro}</p>
+        <div className="mt-8 flex flex-wrap justify-center gap-3">
+          <Link href={page.shopHref}>
+            <Button size="lg">
+              {page.shopLabel}
+              <ArrowRight size={18} />
+            </Button>
+          </Link>
+          {page.secondaryHref && page.secondaryLabel && (
+            <Link href={page.secondaryHref}>
+              <Button variant="outline" size="lg">
+                {page.secondaryLabel}
               </Button>
             </Link>
-            {page.secondaryHref && page.secondaryLabel && (
-              <Link href={page.secondaryHref}>
-                <Button variant="outline" size="lg">
-                  {page.secondaryLabel}
-                </Button>
-              </Link>
-            )}
-          </div>
+          )}
         </div>
-      </section>
+      </PageHeroBand>
 
-      <section className="py-16">
-        <div className="mx-auto max-w-4xl px-4 lg:px-8">
-          <h2 className="font-display text-2xl font-bold text-ink">Why DAAKYKA</h2>
-          <ul className="mt-6 grid gap-3 sm:grid-cols-2">
-            {page.bullets.map((bullet) => (
-              <li
-                key={bullet}
-                className="flex items-start gap-3 rounded-2xl border border-border bg-surface p-4 text-sm text-muted"
-              >
-                <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-trust" />
-                {bullet}
-              </li>
-            ))}
-          </ul>
-        </div>
-      </section>
+      <PageContentSection innerClassName="max-w-4xl">
+        <h2 className="font-display text-2xl font-bold text-ink">Why DAAKYKA</h2>
+        <ul className="mt-6 grid gap-3 sm:grid-cols-2">
+          {page.bullets.map((bullet) => (
+            <li
+              key={bullet}
+              className="flex items-start gap-3 rounded-2xl border border-border bg-surface p-4 text-sm text-muted"
+            >
+              <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-trust" />
+              {bullet}
+            </li>
+          ))}
+        </ul>
+      </PageContentSection>
 
       {page.buyingGuide && page.buyingGuide.length > 0 && (
-        <section className="border-y border-border bg-alt-surface py-16">
-          <div className="mx-auto max-w-4xl px-4 lg:px-8">
-            <h2 className="font-display text-2xl font-bold text-ink">Buying Guide</h2>
-            <ol className="mt-6 space-y-4">
-              {page.buyingGuide.map((step, index) => (
-                <li key={step} className="flex gap-4 text-sm leading-relaxed text-muted">
-                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand/10 text-xs font-bold text-brand">
-                    {index + 1}
-                  </span>
-                  {step}
-                </li>
-              ))}
-            </ol>
-          </div>
-        </section>
+        <PageContentSection variant="alt" innerClassName="max-w-4xl">
+          <h2 className="font-display text-2xl font-bold text-ink">Buying Guide</h2>
+          <ol className="mt-6 space-y-4">
+            {page.buyingGuide.map((step, index) => (
+              <li key={step} className="flex gap-4 text-sm leading-relaxed text-muted">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand/10 text-xs font-bold text-brand">
+                  {index + 1}
+                </span>
+                {step}
+              </li>
+            ))}
+          </ol>
+        </PageContentSection>
       )}
 
       {products.length > 0 && (
-        <section className="py-16">
-          <div className="mx-auto max-w-6xl px-4 lg:px-8">
-            <div className="flex flex-wrap items-end justify-between gap-4">
-              <h2 className="font-display text-2xl font-bold text-ink">Shop Recommended Scrubs</h2>
-              <Link href="/shop" className="text-sm font-semibold text-brand hover:underline">
-                View all products
-              </Link>
-            </div>
-            <div className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-              {products.slice(0, 4).map((product) => (
-                <ProductCard key={product.id} product={product} />
-              ))}
-            </div>
+        <PageContentSection innerClassName="max-w-6xl">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <h2 className="font-display text-2xl font-bold text-ink">Shop Recommended Scrubs</h2>
+            <Link href="/shop" className="text-sm font-semibold text-brand hover:underline">
+              View all products
+            </Link>
           </div>
-        </section>
+          <div className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {products.slice(0, 4).map((product) => (
+              <ProductCard key={product.id} product={product} />
+            ))}
+          </div>
+        </PageContentSection>
       )}
 
-      <section className="border-t border-border bg-surface py-12">
-        <div className="mx-auto grid max-w-6xl gap-4 px-4 sm:grid-cols-2 lg:grid-cols-4 lg:px-8">
+      <PageContentSection variant="alt" innerClassName="max-w-6xl">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {trustItems.slice(0, 4).map((item) => (
             <div key={item.title} className="rounded-2xl border border-border bg-surface-muted p-4 text-center">
               <p className="font-semibold text-ink">{item.title}</p>
@@ -146,91 +139,87 @@ export function SeoLandingLayout({
             </div>
           ))}
         </div>
-      </section>
+      </PageContentSection>
 
       {(related.guides.length > 0 || related.collections.length > 0 || relatedPosts.length > 0) && (
-        <section className="border-t border-border py-16">
-          <div className="mx-auto max-w-6xl px-4 lg:px-8">
-            <h2 className="font-display text-2xl font-bold text-ink">Related Resources</h2>
-            <div className="mt-8 grid gap-8 md:grid-cols-3">
-              {related.guides.length > 0 && (
-                <div>
-                  <h3 className="text-xs font-bold uppercase tracking-wide text-brand">Guides</h3>
-                  <ul className="mt-4 space-y-2">
-                    {related.guides.map((guide) => (
-                      <li key={guide.slug}>
-                        <Link
-                          href={`/guides/${guide.slug}`}
-                          className="text-sm font-medium text-ink hover:text-brand"
-                        >
-                          {guide.title}
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {related.collections.length > 0 && (
-                <div>
-                  <h3 className="text-xs font-bold uppercase tracking-wide text-brand">Collections</h3>
-                  <ul className="mt-4 space-y-2">
-                    {related.collections.map((collection) => (
-                      <li key={collection.handle}>
-                        <Link
-                          href={`/collections/${collection.handle}`}
-                          className="text-sm font-medium text-ink hover:text-brand"
-                        >
-                          {collection.title}
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {relatedPosts.length > 0 && (
-                <div>
-                  <h3 className="text-xs font-bold uppercase tracking-wide text-brand">From the Journal</h3>
-                  <ul className="mt-4 space-y-2">
-                    {relatedPosts.map((post) => (
-                      <li key={post.slug}>
-                        <Link
-                          href={`/blog/${post.slug}`}
-                          className="text-sm font-medium text-ink hover:text-brand"
-                        >
-                          {post.title}
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
+        <PageContentSection innerClassName="max-w-6xl">
+          <h2 className="font-display text-2xl font-bold text-ink">Related Resources</h2>
+          <div className="mt-8 grid gap-8 md:grid-cols-3">
+            {related.guides.length > 0 && (
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wide text-brand">Guides</h3>
+                <ul className="mt-4 space-y-2">
+                  {related.guides.map((guide) => (
+                    <li key={guide.slug}>
+                      <Link
+                        href={`/guides/${guide.slug}`}
+                        className="text-sm font-medium text-ink hover:text-brand"
+                      >
+                        {guide.title}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {related.collections.length > 0 && (
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wide text-brand">Collections</h3>
+                <ul className="mt-4 space-y-2">
+                  {related.collections.map((collection) => (
+                    <li key={collection.handle}>
+                      <Link
+                        href={`/collections/${collection.handle}`}
+                        className="text-sm font-medium text-ink hover:text-brand"
+                      >
+                        {collection.title}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {relatedPosts.length > 0 && (
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wide text-brand">From the Journal</h3>
+                <ul className="mt-4 space-y-2">
+                  {relatedPosts.map((post) => (
+                    <li key={post.slug}>
+                      <Link
+                        href={`/blog/${post.slug}`}
+                        className="text-sm font-medium text-ink hover:text-brand"
+                      >
+                        {post.title}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
-        </section>
+        </PageContentSection>
       )}
 
-      <section className="border-t border-border bg-alt-surface py-16">
-        <div className="mx-auto max-w-3xl px-4 lg:px-8">
-          <h2 className="font-display text-2xl font-bold text-ink">Frequently Asked Questions</h2>
-          <dl className="mt-8 space-y-6">
-            {page.faqs.map((faq) => (
-              <div key={faq.question}>
-                <dt className="font-semibold text-ink">{faq.question}</dt>
-                <dd className="mt-2 text-sm leading-relaxed text-muted">{faq.answer}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      </section>
+      <PageContentSection variant="alt" innerClassName="max-w-3xl">
+        <h2 className="font-display text-2xl font-bold text-ink">Frequently Asked Questions</h2>
+        <dl className="mt-8 space-y-6">
+          {page.faqs.map((faq) => (
+            <div key={faq.question}>
+              <dt className="font-semibold text-ink">{faq.question}</dt>
+              <dd className="mt-2 text-sm leading-relaxed text-muted">{faq.answer}</dd>
+            </div>
+          ))}
+        </dl>
+      </PageContentSection>
 
-      <section className="py-12 text-center">
+      <PageContentSection innerClassName="text-center" className="py-8 md:py-10">
         <Link href={page.shopHref}>
           <Button size="lg">
             {page.shopLabel}
             <ArrowRight size={18} />
           </Button>
         </Link>
-      </section>
+      </PageContentSection>
     </>
   );
 }

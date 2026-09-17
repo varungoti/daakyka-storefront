@@ -238,6 +238,62 @@ describe("API integration", () => {
         }),
       );
       assert.equal(response.status, 200);
+      const body = (await response.json()) as { id: string };
+      await db.bulkOrderLead.delete({ where: { id: body.id } }).catch(() => {});
+    });
+
+    // Phase C7: organisationType + categoryInterest are additive fields —
+    // both directions (present and omitted) must keep working.
+    it("accepts and stores organizationType and categoryInterest when provided", async () => {
+      const response = await postBulkOrder(
+        new Request("http://localhost/api/bulk-orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            organization: "Test School",
+            contactPerson: "Ms Test",
+            email: `bulk-org-type-${Date.now()}@example.com`,
+            phone: "9876543210",
+            consentGiven: true,
+            organizationType: "SCHOOL",
+            categoryInterest: ["School Uniforms", "Sports Uniforms"],
+          }),
+        }),
+      );
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as { id: string };
+
+      const stored = await db.bulkOrderLead.findUnique({ where: { id: body.id } });
+      assert.ok(stored, "expected the lead to be persisted");
+      assert.equal(stored?.organizationType, "SCHOOL");
+      assert.deepEqual(stored?.categoryInterest, ["School Uniforms", "Sports Uniforms"]);
+
+      await db.bulkOrderLead.delete({ where: { id: body.id } });
+    });
+
+    it("still accepts an enquiry that omits organizationType/categoryInterest (backward compatible)", async () => {
+      const response = await postBulkOrder(
+        new Request("http://localhost/api/bulk-orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            organization: "Legacy Client Co",
+            contactPerson: "Mr Legacy",
+            email: `bulk-legacy-${Date.now()}@example.com`,
+            phone: "9876543210",
+            consentGiven: true,
+          }),
+        }),
+      );
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as { id: string };
+
+      const stored = await db.bulkOrderLead.findUnique({ where: { id: body.id } });
+      assert.ok(stored, "expected the lead to be persisted");
+      assert.equal(stored?.organizationType, null);
+      assert.deepEqual(stored?.categoryInterest, []);
+
+      await db.bulkOrderLead.delete({ where: { id: body.id } });
     });
   });
 

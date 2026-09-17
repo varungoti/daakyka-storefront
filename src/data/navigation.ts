@@ -6,8 +6,10 @@ export const announcementItems = brand.announcementMessages;
 // plus SiteSetting flags — see src/lib/navigation/get-navigation.ts. Fabric
 // Tech and Mix & Match are hidden by default (admin toggle in
 // /admin/site-controls) and are intentionally absent from that nav tree.
-// When enabled they still appear in the footer (see footerLinks below),
-// gated through isPageEnabled() at render time.
+// When enabled they still appear in the footer, gated through
+// isPageEnabled() — see src/lib/navigation/get-footer-links.ts (Phase C6),
+// which replaced the old static `footerLinks` export that used to live
+// here.
 
 export const colorFilters = [
   { name: "Lilac Purple", hex: "#C4B5FD" },
@@ -63,36 +65,3 @@ export const trustItems = [
     description: "24/7 live support",
   },
 ];
-
-export const footerLinks = {
-  shop: [
-    { label: "All Scrubs", href: "/shop" },
-    { label: "Collections", href: "/collections" },
-    { label: "For Hospitals", href: "/for-hospitals" },
-    { label: "School Uniforms", href: "/school-uniforms" },
-    { label: "Kids Wear", href: "/kids-wear" },
-    { label: "Medical Scrubs", href: "/medical-scrubs" },
-    { label: "Doctor Scrubs", href: "/doctor-scrubs" },
-    { label: "Mix & Match", href: "/mix-and-match" },
-  ],
-  company: [
-    { label: "About Us", href: "/about" },
-    { label: "Our Story", href: "/our-story" },
-    { label: "Guides", href: "/guides" },
-    { label: "Fabric Technology", href: "/fabric-technology" },
-    { label: "Blog", href: "/blog" },
-    { label: "Contact", href: "/contact" },
-  ],
-  support: [
-    { label: "Contact", href: "/contact" },
-    { label: "Size Guide", href: "/size-guide" },
-    { label: "Shipping", href: "/shipping" },
-    { label: "Returns", href: "/returns" },
-    { label: "Bulk Orders", href: "/bulk-orders" },
-  ],
-  legal: [
-    { label: "Privacy Policy", href: "/privacy-policy" },
-    { label: "Terms of Service", href: "/terms" },
-    { label: "Accessibility", href: "/accessibility" },
-  ],
-};

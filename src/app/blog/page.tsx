@@ -1,4 +1,6 @@
 import { getPublishedBlogPosts } from "@/lib/blog";
+import { SectionHeading } from "@/components/ui/section-heading";
+import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { ArrowRight } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -14,20 +16,18 @@ export default async function BlogPage() {
 
   return (
     <>
-      <section className="border-b border-border bg-alt-surface py-16 md:py-20">
-        <div className="mx-auto max-w-[1320px] px-4 text-center lg:px-8">
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">From Our Journal</p>
-          <h1 className="mt-3 font-display text-4xl font-bold text-ink md:text-5xl">
-            Style, Fit & Fabric Insights
-          </h1>
-          <p className="mx-auto mt-4 max-w-2xl text-muted">
-            Guides and stories for healthcare professionals who care about what they wear.
-          </p>
-        </div>
-      </section>
+      <PageHeroBand innerClassName="max-w-2xl text-center">
+        <SectionHeading
+          eyebrow="From Our Journal"
+          title="Style, Fit & Fabric Insights"
+          description="Guides and stories for healthcare professionals who care about what they wear."
+          align="center"
+          titleAs="h1"
+        />
+      </PageHeroBand>
 
-      <section className="py-16">
-        <div className="mx-auto grid max-w-[1320px] gap-8 px-4 md:grid-cols-2 lg:grid-cols-3 lg:px-8">
+      <PageContentSection>
+        <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
           {blogPosts.map((post) => (
             <Link
               key={post.slug}
@@ -51,7 +51,7 @@ export default async function BlogPage() {
             </Link>
           ))}
         </div>
-      </section>
+      </PageContentSection>
     </>
   );
 }

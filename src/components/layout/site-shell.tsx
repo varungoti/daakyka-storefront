@@ -14,18 +14,24 @@ export function SiteShell({
   children,
   fabricTechEnabled,
   mixMatchEnabled,
+  saleEnabled,
   announcementMessages,
   contactPhone,
   contactWhatsapp,
+  contactEmail,
+  contactAddress,
   bulkCtaEnabled,
   navigation,
 }: {
   children: React.ReactNode;
   fabricTechEnabled: boolean;
   mixMatchEnabled: boolean;
+  saleEnabled: boolean;
   announcementMessages: string[];
   contactPhone: string;
   contactWhatsapp: string;
+  contactEmail: string;
+  contactAddress: string;
   bulkCtaEnabled: boolean;
   navigation: NavigationTree;
 }) {
@@ -53,7 +59,15 @@ export function SiteShell({
       <main id="main-content" className="flex-1">
         {children}
       </main>
-      <Footer fabricTechEnabled={fabricTechEnabled} mixMatchEnabled={mixMatchEnabled} />
+      <Footer
+        fabricTechEnabled={fabricTechEnabled}
+        mixMatchEnabled={mixMatchEnabled}
+        saleEnabled={saleEnabled}
+        contactPhone={contactPhone}
+        contactWhatsapp={contactWhatsapp}
+        contactEmail={contactEmail}
+        contactAddress={contactAddress}
+      />
       <WhatsAppFab />
       <CartDrawer />
       <CartAbandonTracker />

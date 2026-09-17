@@ -124,6 +124,11 @@ model BulkOrderLead {
   notes            String?
   status           BulkLeadStatus @default(NEW)
   consentGiven     Boolean        @default(false)
+  // Phase C7: which kind of organisation is enquiring, and which product
+  // categories they're interested in. Both nullable/defaulted so existing
+  // rows and older client payloads that omit them keep working.
+  organizationType String?
+  categoryInterest String[]       @default([])
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 }

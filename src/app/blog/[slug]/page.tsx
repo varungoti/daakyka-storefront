@@ -1,4 +1,5 @@
 import { getBlogPostBySlug, getPublishedBlogPosts } from "@/lib/blog";
+import { PageContentSection } from "@/components/ui/page-shell";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -46,8 +47,8 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
         </div>
       </section>
 
-      <article className="py-16">
-        <div className="mx-auto max-w-3xl px-4 lg:px-8">
+      <PageContentSection innerClassName="max-w-3xl">
+        <article>
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">
             {post.category}
           </p>
@@ -70,8 +71,8 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
               </p>
             ))}
           </div>
-        </div>
-      </article>
+        </article>
+      </PageContentSection>
     </>
   );
 }

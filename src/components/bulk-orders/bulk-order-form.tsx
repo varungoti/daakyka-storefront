@@ -5,6 +5,22 @@ import { HoneypotField } from "@/components/ui/honeypot-field";
 import { HONEYPOT_FIELD_NAME } from "@/lib/validation/honeypot";
 import { useState } from "react";
 
+const ORGANIZATION_TYPES = [
+  { value: "HOSPITAL", label: "Hospital" },
+  { value: "SCHOOL", label: "School" },
+  { value: "CORPORATE", label: "Corporate" },
+  { value: "OTHER", label: "Other" },
+] as const;
+
+const CATEGORY_INTEREST_OPTIONS = [
+  "Scrubs & Hospital Wear",
+  "Hospital Linens",
+  "School Uniforms",
+  "Sports Uniforms",
+  "Corporate Wear",
+  "Kids Wear",
+];
+
 export function BulkOrderForm() {
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [error, setError] = useState("");
@@ -17,6 +33,7 @@ export function BulkOrderForm() {
     setError("");
 
     const form = new FormData(formElement);
+    const categoryInterest = form.getAll("categoryInterest").map(String);
     const payload = {
       organization: form.get("organization"),
       contactPerson: form.get("contactPerson"),
@@ -30,6 +47,8 @@ export function BulkOrderForm() {
       logoEmbroidery: form.get("logoEmbroidery") === "on",
       deliveryTimeline: form.get("deliveryTimeline") || undefined,
       notes: form.get("notes") || undefined,
+      organizationType: form.get("organizationType") || undefined,
+      categoryInterest: categoryInterest.length > 0 ? categoryInterest : undefined,
       consentGiven: form.get("consentGiven") === "on",
       [HONEYPOT_FIELD_NAME]: form.get(HONEYPOT_FIELD_NAME) || undefined,
     };
@@ -81,6 +100,40 @@ export function BulkOrderForm() {
       <div className="grid gap-4 md:grid-cols-2">
         <FormField label="City" name="city" />
         <FormField label="Number of Staff" name="staffCount" type="number" />
+      </div>
+      <div>
+        <label htmlFor="organizationType" className="mb-2 block text-sm font-semibold text-ink">
+          Organisation Type
+        </label>
+        <select
+          id="organizationType"
+          name="organizationType"
+          defaultValue=""
+          className="w-full rounded-2xl border border-border px-4 py-3 text-sm outline-none focus:border-brand"
+        >
+          <option value="">Select organisation type</option>
+          {ORGANIZATION_TYPES.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div>
+        <span className="mb-2 block text-sm font-semibold text-ink">Categories of Interest</span>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {CATEGORY_INTEREST_OPTIONS.map((option) => (
+            <label key={option} className="flex items-center gap-2 text-sm text-muted">
+              <input
+                type="checkbox"
+                name="categoryInterest"
+                value={option}
+                className="h-4 w-4 rounded border-border text-brand"
+              />
+              {option}
+            </label>
+          ))}
+        </div>
       </div>
       <FormField label="Products Required" name="productsRequired" placeholder="Tops, joggers, sets..." />
       <div className="grid gap-4 md:grid-cols-2">

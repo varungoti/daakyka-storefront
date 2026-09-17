@@ -1,5 +1,7 @@
 import { BulkOrderForm } from "@/components/bulk-orders/bulk-order-form";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
+import { brand } from "@/data/brand";
 import { Building2, MessageCircle, ShieldCheck, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -12,24 +14,22 @@ export const metadata: Metadata = {
 export default function BulkOrdersPage() {
   return (
     <>
-      <section className="border-b border-border bg-alt-surface py-16 md:py-20">
-        <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
-          <SectionHeading
-            eyebrow="B2B"
-            title="Uniforms for Healthcare Teams"
-            description="Department-wise uniform planning, logo embroidery, color standardization, and bulk pricing for hospitals, clinics, and nursing colleges."
-            align="center"
-          />
-          <div className="mt-10 grid gap-4 md:grid-cols-3">
-            <BenefitCard icon={Building2} title="Hospital Programs" text="Standardized uniforms across departments with brand consistency." />
-            <BenefitCard icon={Users} title="Bulk Pricing" text="Volume-based pricing for teams of any size." />
-            <BenefitCard icon={ShieldCheck} title="Quality Assurance" text="Premium fabrics with fit confidence for every role." />
-          </div>
+      <PageHeroBand>
+        <SectionHeading
+          eyebrow="B2B"
+          title="Uniforms for Healthcare Teams"
+          description="Department-wise uniform planning, logo embroidery, color standardization, and bulk pricing for hospitals, clinics, and nursing colleges."
+          align="center"
+        />
+        <div className="mt-10 grid gap-4 md:grid-cols-3">
+          <BenefitCard icon={Building2} title="Hospital Programs" text="Standardized uniforms across departments with brand consistency." />
+          <BenefitCard icon={Users} title="Bulk Pricing" text="Volume-based pricing for teams of any size." />
+          <BenefitCard icon={ShieldCheck} title="Quality Assurance" text="Premium fabrics with fit confidence for every role." />
         </div>
-      </section>
+      </PageHeroBand>
 
-      <section className="py-16">
-        <div className="mx-auto grid max-w-[1320px] gap-10 px-4 lg:grid-cols-[1fr_420px] lg:px-8">
+      <PageContentSection>
+        <div className="grid gap-10 lg:grid-cols-[1fr_420px]">
           <div>
             <h2 className="font-display text-2xl font-bold text-ink">Request a Bulk Quote</h2>
             <p className="mt-2 text-muted">
@@ -47,9 +47,10 @@ export default function BulkOrdersPage() {
                 Prefer to chat? Reach our bulk orders team directly on WhatsApp.
               </p>
               <Link
-                href="https://wa.me/919876543210?text=Hi%20DAAKYKA%2C%20I%27d%20like%20a%20bulk%20uniform%20quote."
+                href={`https://wa.me/?text=${encodeURIComponent(brand.web.whatsappMessage)}`}
                 target="_blank"
-                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-trust px-4 py-3 text-sm font-semibold text-white hover:opacity-90"
+                rel="noopener noreferrer"
+                className="mt-4 inline-flex items-center gap-2 rounded-md bg-trust px-4 py-3 text-sm font-semibold text-white hover:opacity-90"
               >
                 <MessageCircle size={18} />
                 Chat on WhatsApp
@@ -66,7 +67,7 @@ export default function BulkOrdersPage() {
             </div>
           </aside>
         </div>
-      </section>
+      </PageContentSection>
     </>
   );
 }

@@ -28,6 +28,7 @@ export default async function AdminBulkOrdersPage() {
               <th className="px-4 py-3">Organization</th>
               <th className="px-4 py-3">Contact</th>
               <th className="px-4 py-3">Staff</th>
+              <th className="px-4 py-3">Type / Interests</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">Submitted</th>
             </tr>
@@ -46,6 +47,14 @@ export default async function AdminBulkOrdersPage() {
                   <p className="text-muted">{lead.phone}</p>
                 </td>
                 <td className="px-4 py-4">{lead.staffCount ?? "—"}</td>
+                <td className="px-4 py-4">
+                  <p className="text-ink">{lead.organizationType ?? "—"}</p>
+                  {lead.categoryInterest.length > 0 && (
+                    <p className="mt-1 max-w-xs text-xs text-muted">
+                      {lead.categoryInterest.join(", ")}
+                    </p>
+                  )}
+                </td>
                 <td className="px-4 py-4">
                   <BulkLeadStatusSelect leadId={lead.id} currentStatus={lead.status} />
                 </td>

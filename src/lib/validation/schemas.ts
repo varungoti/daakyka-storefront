@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+// Phase C7: kept as a plain string (not a Prisma enum) so the field stays
+// additive/backward-compatible — older clients that omit it are unaffected.
+export const bulkOrderOrganizationTypes = ["HOSPITAL", "SCHOOL", "CORPORATE", "OTHER"] as const;
+
 export const bulkOrderSchema = z.object({
   organization: z.string().min(2, "Organization name is required").max(200),
   contactPerson: z.string().min(2, "Contact person is required").max(120),
@@ -13,6 +17,8 @@ export const bulkOrderSchema = z.object({
   logoEmbroidery: z.boolean().default(false),
   deliveryTimeline: z.string().max(200).optional(),
   notes: z.string().max(2000).optional(),
+  organizationType: z.enum(bulkOrderOrganizationTypes).optional(),
+  categoryInterest: z.array(z.string().trim().min(1).max(60)).max(20).optional(),
   consentGiven: z
     .boolean()
     .refine((value) => value === true, { message: "You must agree to be contacted" }),

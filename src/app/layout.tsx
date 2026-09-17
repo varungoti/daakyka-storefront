@@ -7,7 +7,7 @@ import { SiteShell } from "@/components/layout/site-shell";
 import { GlobalJsonLd } from "@/components/seo/global-json-ld";
 import { isIndexingAllowed } from "@/lib/env";
 import { getNavigation } from "@/lib/navigation/get-navigation";
-import { getSetting, isPageEnabled } from "@/lib/settings";
+import { getSetting, isPageEnabled, isSaleEnabled } from "@/lib/settings";
 import "./globals.css";
 
 const outfit = Outfit({
@@ -48,17 +48,23 @@ export default async function RootLayout({
   const [
     fabricTechEnabled,
     mixMatchEnabled,
+    saleEnabled,
     announcementMessages,
     contactPhone,
     contactWhatsapp,
+    contactEmail,
+    contactAddress,
     bulkCtaEnabled,
     navigation,
   ] = await Promise.all([
     isPageEnabled("fabricTech"),
     isPageEnabled("mixMatch"),
+    isSaleEnabled(),
     getSetting("announcement.messages"),
     getSetting("contact.phone"),
     getSetting("contact.whatsapp"),
+    getSetting("contact.email"),
+    getSetting("contact.address"),
     getSetting("header.bulkCta.enabled"),
     getNavigation(),
   ]);
@@ -77,9 +83,12 @@ export default async function RootLayout({
               <SiteShell
                 fabricTechEnabled={fabricTechEnabled}
                 mixMatchEnabled={mixMatchEnabled}
+                saleEnabled={saleEnabled}
                 announcementMessages={announcementMessages}
                 contactPhone={contactPhone}
                 contactWhatsapp={contactWhatsapp}
+                contactEmail={contactEmail}
+                contactAddress={contactAddress}
                 bulkCtaEnabled={bulkCtaEnabled}
                 navigation={navigation}
               >
