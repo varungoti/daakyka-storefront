@@ -33,8 +33,15 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files — the *.example templates are meant to be committed so a
+# fresh clone can `cp .env.local.example .env`; only real env files with
+# actual secrets are ignored.
+.env
+.env.local
+.env.*.local
+.env.staging
+.env.production
+!.env*.example
 
 # vercel
 .vercel

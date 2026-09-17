@@ -52,4 +52,9 @@ POST /predict
 
 ## Future: OutfitAnyone GPU
 
-When GPU infra is ready, add `services/outfit-anyone/` as an optional backend and switch via env `TRYON_BACKEND=ar|outfit-anyone`.
+Deferred — no GPU infrastructure yet, and the earlier `services/outfit-anyone/`
+scaffold has been removed as dead code (never wired into docker-compose,
+Vercel, or CI). See `docs/superpowers/specs/2026-05-29-mix-match-outfit-hermes-design.md`
+for the original design if this is revisited; a future implementation would
+add a new service directory and switch via an env flag such as
+`TRYON_BACKEND=ar|outfit-anyone`.
