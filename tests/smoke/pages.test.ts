@@ -19,10 +19,15 @@ describe("smoke — storefront pages", () => {
   const staticPages = [
     "/",
     "/shop",
+    "/for-hospitals",
+    "/school-uniforms",
+    "/kids-wear",
+    "/sale",
+    "/our-story",
+    "/account",
     "/mix-and-match",
     "/fabric-technology",
     "/bulk-orders",
-    "/institutional",
     "/about",
     "/contact",
     "/blog",
@@ -65,6 +70,22 @@ describe("smoke — storefront pages", () => {
   it("SEO redirect /doctor-scrubs → guide", async () => {
     const response = await fetch(`${BASE}/doctor-scrubs`, { redirect: "manual" });
     assert.ok(response.status === 308 || response.status === 307 || response.status === 200);
+  });
+
+  it("Phase C3: /hospital-uniforms and /institutional 301/308 redirect to /for-hospitals", async () => {
+    for (const path of ["/hospital-uniforms", "/institutional"]) {
+      const response = await fetch(`${BASE}${path}`, { redirect: "manual" });
+      assert.ok(
+        response.status === 308 || response.status === 301,
+        `${path} should permanently redirect, got ${response.status}`,
+      );
+      assert.equal(response.headers.get("location"), "/for-hospitals");
+    }
+  });
+
+  it("Phase C3: /category/[slug] resolves for a real seeded category", async () => {
+    const status = await fetchStatus("/category/for-hospitals");
+    assert.equal(status, 200);
   });
 
   it("homepage includes security headers", async () => {
