@@ -31,6 +31,7 @@ export function ProductCard({ product, className }: ProductCardProps) {
             alt={product.name}
             fill
             quality={75}
+            unoptimized={product.image.endsWith(".svg")}
             className="object-cover transition-transform duration-500 group-hover:scale-105"
             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
           />

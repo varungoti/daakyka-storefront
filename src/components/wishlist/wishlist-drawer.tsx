@@ -80,6 +80,7 @@ export function WishlistDrawer() {
                           src={product.image}
                           alt={product.name}
                           fill
+                          unoptimized={product.image.endsWith(".svg")}
                           className="object-cover"
                           sizes="80px"
                         />

@@ -1,6 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { filterProducts, countByCategory } from "@/lib/shop/filters";
+import {
+  countByCategory,
+  defaultShopFilters,
+  filterProducts,
+} from "@/lib/shop/filters";
+import { PRICE_FILTER_MAX_INR } from "@/lib/currency/config";
 import type { Product } from "@/lib/types";
 
 const mockProducts: Product[] = [
@@ -132,5 +137,66 @@ describe("countByCategory", () => {
     assert.equal(counts.tops, 1);
     assert.equal(counts.bottoms, 1);
     assert.equal(counts.sets, 1);
+  });
+});
+
+describe("defaultShopFilters (v1 5.5 fix)", () => {
+  it("defaults priceMax to the top of the filter's own range, so nothing is hidden until the shopper narrows it", () => {
+    assert.equal(defaultShopFilters.priceMax, PRICE_FILTER_MAX_INR);
+    // A product priced above the old lower "default max" (8999) must
+    // still be visible by default.
+    const expensiveProduct: Product = {
+      ...mockProducts[0],
+      id: "expensive",
+      handle: "expensive",
+      price: 10499,
+    };
+    const result = filterProducts([expensiveProduct], defaultShopFilters);
+    assert.equal(result.length, 1);
+  });
+});
+
+describe("filterProducts with category descendants (Phase B3)", () => {
+  const hospitalProducts: Product[] = [
+    { ...mockProducts[0], id: "scrub-1", handle: "scrub-1", category: "scrub-sets" },
+    { ...mockProducts[1], id: "bedsheet-1", handle: "bedsheet-1", category: "bedsheets" },
+    { ...mockProducts[2], id: "school-1", handle: "school-1", category: "school-shirts" },
+  ];
+
+  const categoryDescendants: Record<string, string[]> = {
+    "for-hospitals": ["for-hospitals", "scrub-sets", "hospital-linens", "bedsheets"],
+    "scrub-sets": ["scrub-sets"],
+    "school-shirts": ["school-shirts"],
+  };
+
+  it("matches a parent category's descendants when a descendants map is provided", () => {
+    const result = filterProducts(
+      hospitalProducts,
+      { ...defaultShopFilters, category: "for-hospitals" },
+      categoryDescendants,
+    );
+    assert.equal(result.length, 2);
+    assert.deepEqual(
+      result.map((p) => p.handle).sort(),
+      ["bedsheet-1", "scrub-1"],
+    );
+  });
+
+  it("still matches an exact leaf category via the descendants map", () => {
+    const result = filterProducts(
+      hospitalProducts,
+      { ...defaultShopFilters, category: "scrub-sets" },
+      categoryDescendants,
+    );
+    assert.equal(result.length, 1);
+    assert.equal(result[0].handle, "scrub-1");
+  });
+
+  it("falls back to an exact-slug match when no descendants map is given", () => {
+    const result = filterProducts(hospitalProducts, {
+      ...defaultShopFilters,
+      category: "for-hospitals",
+    });
+    assert.equal(result.length, 0, "without a descendants map, 'for-hospitals' matches nothing directly");
   });
 });

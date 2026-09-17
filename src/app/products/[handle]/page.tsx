@@ -49,7 +49,12 @@ export default async function ProductPage({ params }: ProductPageProps) {
 
   return (
     <>
-      <JsonLdScript data={productJsonLd(product)} />
+      <JsonLdScript
+        data={productJsonLd({
+          ...product,
+          images: product.images?.map((img) => img.url),
+        })}
+      />
       <JsonLdScript
         data={breadcrumbJsonLd([
           { name: "Home", url: base },

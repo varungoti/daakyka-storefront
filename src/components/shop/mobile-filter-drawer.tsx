@@ -1,6 +1,6 @@
 "use client";
 
-import { ShopFiltersPanel } from "@/components/shop/shop-filters-panel";
+import { ShopFiltersPanel, type ShopFilterCategory } from "@/components/shop/shop-filters-panel";
 import type { ShopFilters } from "@/lib/shop/filters";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
@@ -11,6 +11,7 @@ interface MobileFilterDrawerProps {
   onClose: () => void;
   filters: ShopFilters;
   onChange: (filters: ShopFilters) => void;
+  categories: ShopFilterCategory[];
   categoryCounts: Record<string, number>;
   totalCount: number;
 }
@@ -20,6 +21,7 @@ export function MobileFilterDrawer({
   onClose,
   filters,
   onChange,
+  categories,
   categoryCounts,
   totalCount,
 }: MobileFilterDrawerProps) {
@@ -61,6 +63,7 @@ export function MobileFilterDrawer({
             <ShopFiltersPanel
               filters={filters}
               onChange={onChange}
+              categories={categories}
               categoryCounts={categoryCounts}
               totalCount={totalCount}
               showHeading={false}

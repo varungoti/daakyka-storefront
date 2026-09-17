@@ -15,7 +15,9 @@ interface ProductDetailProps {
 
 export function ProductDetail({ product }: ProductDetailProps) {
   const { formatPrice } = useCurrency();
-  const gallery = product.images?.length ? product.images : [product.image];
+  const gallery = product.images?.length
+    ? product.images.map((img) => img.url)
+    : [product.image];
   const [activeImage, setActiveImage] = useState(gallery[0]);
   const [selectedVariantId, setSelectedVariantId] = useState(
     product.defaultVariantId ?? product.variants?.[0]?.id ?? "",
@@ -61,6 +63,7 @@ export function ProductDetail({ product }: ProductDetailProps) {
             alt={product.name}
             fill
             priority
+            unoptimized={displayImage.endsWith(".svg")}
             className="object-cover"
             sizes="(max-width: 1024px) 100vw, 50vw"
           />
@@ -83,6 +86,7 @@ export function ProductDetail({ product }: ProductDetailProps) {
                   src={image}
                   alt={`${product.name} view ${index + 1}`}
                   fill
+                  unoptimized={image.endsWith(".svg")}
                   className="object-cover"
                   sizes="80px"
                 />

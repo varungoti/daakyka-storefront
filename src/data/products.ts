@@ -8,7 +8,7 @@ function withVariants(product: Product): Product {
     ...product,
     available: true,
     defaultVariantId,
-    images: gallery,
+    images: gallery.map((url) => ({ url, alt: product.name })),
     variants: product.sizes.map((size) => ({
       id: `seed-${product.id}-${size.toLowerCase()}`,
       title: `${size} / ${product.colorName}`,

@@ -1,4 +1,4 @@
-import { PRICE_FILTER_DEFAULT_MAX_INR } from "@/lib/currency/config";
+import { PRICE_FILTER_MAX_INR } from "@/lib/currency/config";
 
 import type { FabricTech, Product } from "@/lib/types";
 
@@ -18,22 +18,32 @@ export interface ShopFilters {
   sort: SortOption;
 }
 
+// The default must be the top of the filter's own range, not some lower
+// "typical" cutoff — a lower default silently hides any real product
+// priced above it until the shopper manually drags the slider (v1 5.5).
 export const defaultShopFilters: ShopFilters = {
   colors: [],
   sizes: [],
   fabrics: [],
-  priceMax: PRICE_FILTER_DEFAULT_MAX_INR,
+  priceMax: PRICE_FILTER_MAX_INR,
   sort: "featured",
 };
 
 export function filterProducts(
   products: Product[],
   filters: ShopFilters,
+  /** Maps a category slug to itself plus every descendant slug, so
+   * selecting a parent category (e.g. "for-hospitals") also matches
+   * products filed under its sub-categories. Omit for an exact-slug
+   * match only (the pre-Phase-B3 behaviour, and what the unit tests
+   * below exercise). */
+  categoryDescendants?: Record<string, string[]>,
 ): Product[] {
   let result = [...products];
 
   if (filters.category) {
-    result = result.filter((product) => product.category === filters.category);
+    const allowed = categoryDescendants?.[filters.category] ?? [filters.category];
+    result = result.filter((product) => allowed.includes(product.category));
   }
 
   if (filters.colors.length > 0) {

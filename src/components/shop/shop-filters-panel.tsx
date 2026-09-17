@@ -4,7 +4,6 @@ import { useCurrency } from "@/context/currency-provider";
 import {
   colorFilters,
   fabricFilters,
-  shopCategories,
   sizeFilters,
 } from "@/data/navigation";
 import {
@@ -14,9 +13,15 @@ import {
 import type { ShopFilters } from "@/lib/shop/filters";
 import { cn } from "@/lib/utils";
 
+export interface ShopFilterCategory {
+  slug: string;
+  name: string;
+}
+
 interface ShopFiltersPanelProps {
   filters: ShopFilters;
   onChange: (filters: ShopFilters) => void;
+  categories: ShopFilterCategory[];
   categoryCounts: Record<string, number>;
   totalCount: number;
   showHeading?: boolean;
@@ -25,6 +30,7 @@ interface ShopFiltersPanelProps {
 export function ShopFiltersPanel({
   filters,
   onChange,
+  categories,
   categoryCounts,
   totalCount,
   showHeading = true,
@@ -75,7 +81,7 @@ export function ShopFiltersPanel({
               <span className="text-muted">{totalCount}</span>
             </button>
           </li>
-          {shopCategories.map((category) => (
+          {categories.map((category) => (
             <li key={category.slug}>
               <button
                 type="button"
@@ -87,10 +93,8 @@ export function ShopFiltersPanel({
                     : "text-ink hover:bg-lilac/40",
                 )}
               >
-                {category.label}
-                <span className="text-muted">
-                  {categoryCounts[category.slug] ?? category.count}
-                </span>
+                {category.name}
+                <span className="text-muted">{categoryCounts[category.slug] ?? 0}</span>
               </button>
             </li>
           ))}

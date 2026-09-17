@@ -2,7 +2,7 @@
 
 import { MobileFilterDrawer } from "@/components/shop/mobile-filter-drawer";
 import { ProductGrid } from "@/components/shop/product-grid";
-import { ShopFiltersPanel } from "@/components/shop/shop-filters-panel";
+import { ShopFiltersPanel, type ShopFilterCategory } from "@/components/shop/shop-filters-panel";
 import {
   ShopFeatureCards,
   ShopMixMatchPromo,
@@ -14,11 +14,30 @@ import {
   filterProducts,
   type ShopFilters,
 } from "@/lib/shop/filters";
+import type { CategoryTreeNode } from "@/lib/products";
 import type { Product } from "@/lib/types";
 import type { Testimonial } from "@/lib/types";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useMemo, useState } from "react";
+
+function flattenSlugs(node: CategoryTreeNode): string[] {
+  return [node.slug, ...node.children.flatMap(flattenSlugs)];
+}
+
+/** Maps every category slug in the tree (at any depth) to itself plus
+ * every one of its descendant slugs, so filtering by a top-level
+ * category (e.g. "for-hospitals") also matches products filed under its
+ * sub-categories. */
+function buildCategoryDescendants(categories: CategoryTreeNode[]): Record<string, string[]> {
+  const map: Record<string, string[]> = {};
+  const visit = (node: CategoryTreeNode) => {
+    map[node.slug] = flattenSlugs(node);
+    node.children.forEach(visit);
+  };
+  categories.forEach(visit);
+  return map;
+}
 
 const TestimonialsSection = dynamic(
   () =>
@@ -31,6 +50,7 @@ const TestimonialsSection = dynamic(
 interface ShopPageContentProps {
   products: Product[];
   testimonials: Testimonial[];
+  categories?: CategoryTreeNode[];
   initialCategory?: string;
   initialQuery?: string;
   fabricTechEnabled?: boolean;
@@ -40,6 +60,7 @@ interface ShopPageContentProps {
 export function ShopPageContent({
   products,
   testimonials,
+  categories = [],
   initialCategory,
   initialQuery,
   fabricTechEnabled = false,
@@ -52,10 +73,24 @@ export function ShopPageContent({
   const [query, setQuery] = useState(initialQuery ?? "");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
-  const categoryCounts = useMemo(() => countByCategory(products), [products]);
+  const categoryDescendants = useMemo(() => buildCategoryDescendants(categories), [categories]);
+
+  const filterCategories = useMemo<ShopFilterCategory[]>(
+    () => categories.filter((c) => c.showInMenu).map((c) => ({ slug: c.slug, name: c.name })),
+    [categories],
+  );
+
+  const categoryCounts = useMemo(() => {
+    const leafCounts = countByCategory(products);
+    const counts: Record<string, number> = {};
+    for (const [slug, descendants] of Object.entries(categoryDescendants)) {
+      counts[slug] = descendants.reduce((sum, s) => sum + (leafCounts[s] ?? 0), 0);
+    }
+    return counts;
+  }, [products, categoryDescendants]);
 
   const filteredProducts = useMemo(() => {
-    const result = filterProducts(products, filters);
+    const result = filterProducts(products, filters, categoryDescendants);
     const q = query.trim().toLowerCase();
     if (!q) return result;
     return result.filter(
@@ -64,7 +99,7 @@ export function ShopPageContent({
         product.colorName.toLowerCase().includes(q) ||
         product.category.toLowerCase().includes(q),
     );
-  }, [filters, products, query]);
+  }, [filters, products, query, categoryDescendants]);
 
   return (
     <>
@@ -96,6 +131,7 @@ export function ShopPageContent({
             <ShopFiltersPanel
               filters={filters}
               onChange={setFilters}
+              categories={filterCategories}
               categoryCounts={categoryCounts}
               totalCount={products.length}
             />
@@ -117,6 +153,7 @@ export function ShopPageContent({
         onClose={() => setMobileFiltersOpen(false)}
         filters={filters}
         onChange={setFilters}
+        categories={filterCategories}
         categoryCounts={categoryCounts}
         totalCount={products.length}
       />

@@ -184,7 +184,10 @@ export function mapShopifyProduct(product: ShopifyProduct): Product {
       product.featuredImage?.url ??
       product.images.edges[0]?.node.url ??
       productImage(product.handle),
-    images: product.images.edges.map(({ node }) => node.url),
+    images: product.images.edges.map(({ node }) => ({
+      url: node.url,
+      alt: node.altText ?? undefined,
+    })),
     badge: inferBadge(product.tags),
     variants,
     defaultVariantId: firstVariant?.id,

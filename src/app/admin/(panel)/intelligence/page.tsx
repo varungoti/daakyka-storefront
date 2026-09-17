@@ -38,8 +38,8 @@ export default async function AdminIntelligencePage() {
       <div>
         <h1 className="font-display text-3xl font-bold text-ink">Product Intelligence</h1>
         <p className="text-muted">
-          Catalog insights from {source === "shopify" ? "live Shopify" : "seed catalog"} — expand
-          with analytics when connected.
+          Catalog insights from {source === "db" ? "the database catalog" : "the seed catalog"} —
+          expand with analytics when connected.
         </p>
       </div>
 

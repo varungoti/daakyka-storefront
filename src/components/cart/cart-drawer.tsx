@@ -89,6 +89,7 @@ export function CartDrawer() {
                           src={line.image}
                           alt={line.productTitle}
                           fill
+                          unoptimized={line.image.endsWith(".svg")}
                           className="object-cover"
                           sizes="80px"
                         />

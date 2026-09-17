@@ -6,13 +6,14 @@ export type FabricTech =
   | "moisture-wicking"
   | "eco-flex";
 
-export type ProductCategory =
-  | "tops"
-  | "bottoms"
-  | "sets"
-  | "jackets"
-  | "accessories"
-  | "bespoke";
+/**
+ * A category "slug" — historically a fixed union of the old seed
+ * catalog's categories (tops/bottoms/sets/...), now widened to any
+ * string so it can hold a real `Category.slug` from the database (Phase
+ * B3). Existing literal usages ("tops", "bespoke", etc.) are still valid
+ * strings, so this widening is source-compatible everywhere it's used.
+ */
+export type ProductCategory = string;
 
 export interface ProductColor {
   name: string;
@@ -27,6 +28,22 @@ export interface ProductVariant {
   available: boolean;
   selectedOptions: { name: string; value: string }[];
   image?: string;
+  /** Stock on hand for this variant. Undefined for sources (Shopify, the
+   * legacy seed data) that don't track it — only DB-backed variants
+   * (Phase B3) populate this. */
+  stock?: number;
+  /** DB variant id / SKU-bearing size + colour, when available. */
+  size?: string;
+  color?: string;
+  colorHex?: string;
+}
+
+export interface ProductImage {
+  url: string;
+  alt?: string;
+  /** Colour this image belongs to, for a colour-specific gallery. Absent
+   * means "shown for every colour" (e.g. a shared placeholder). */
+  color?: string;
 }
 
 export interface Product {
@@ -44,13 +61,26 @@ export interface Product {
   sizes: string[];
   fabricTech: FabricTech[];
   image: string;
-  images?: string[];
+  images?: ProductImage[];
   badge?: "best-seller" | "new";
-  gender?: "men" | "women" | "unisex";
+  gender?: string;
   variants?: ProductVariant[];
   defaultVariantId?: string;
   shopifyProductId?: string;
   available?: boolean;
+  // --- Phase B3: DB-backed catalog fields (all optional so existing
+  // Shopify-mapped and legacy-seed products keep type-checking without
+  // populating them) ---
+  categorySlug?: string;
+  categoryName?: string;
+  section?: "HOSPITAL" | "SCHOOL" | "KIDS" | "GENERAL";
+  onSale?: boolean;
+  ratingAverage?: number;
+  fabric?: string;
+  care?: string;
+  featured?: boolean;
+  isNew?: boolean;
+  tags?: string[];
 }
 
 export interface CartLine {

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1000" role="img" aria-label="Product image placeholder">
+  <rect width="800" height="1000" fill="#F1F0F4"/>
+  <g fill="none" stroke="#D4D2DC" stroke-width="6" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M300 210
+             L340 160
+             Q400 120 460 160
+             L500 210
+             L560 250
+             L520 320
+             L480 300
+             L480 820
+             Q400 850 320 820
+             L320 300
+             L280 320
+             L240 250
+             Z" fill="#E7E5ED"/>
+    <line x1="400" y1="230" x2="400" y2="790"/>
+  </g>
+</svg>

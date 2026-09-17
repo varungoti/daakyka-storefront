@@ -28,7 +28,7 @@ describe("API integration", () => {
         integrations: { provider: string; status: string }[];
       };
       assert.equal(body.status, "ok");
-      assert.ok(["seed", "shopify"].includes(body.catalog));
+      assert.ok(["db", "seed"].includes(body.catalog));
       assert.ok(body.integrations.length >= 4);
     });
   });
