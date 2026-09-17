@@ -19,6 +19,7 @@ import type { Product } from "@/lib/types";
 import type { Testimonial } from "@/lib/types";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 
 function flattenSlugs(node: CategoryTreeNode): string[] {
@@ -47,6 +48,13 @@ const TestimonialsSection = dynamic(
   { loading: () => <div className="min-h-[320px]" aria-hidden /> },
 );
 
+interface ShopPageHeading {
+  eyebrow?: string;
+  title: string;
+  description?: string;
+  breadcrumbLabel?: string;
+}
+
 interface ShopPageContentProps {
   products: Product[];
   testimonials: Testimonial[];
@@ -55,6 +63,16 @@ interface ShopPageContentProps {
   initialQuery?: string;
   fabricTechEnabled?: boolean;
   mixMatchEnabled?: boolean;
+  /** Overrides the "Shop All Scrubs" hero copy — used by /category/[slug]
+   * (Phase C3) to scope this same filterable grid to one category. */
+  heading?: ShopPageHeading;
+  /** Hides the trust bar / testimonials / feature cards below the grid —
+   * used by the narrower /category/[slug] page. Defaults to true (/shop's
+   * existing behavior). */
+  showExtras?: boolean;
+  /** Syncs `category`, `q`, and `sort` to the URL via router.replace as
+   * they change (Phase C3 fix for v1 5.5). Defaults to true. */
+  syncUrl?: boolean;
 }
 
 export function ShopPageContent({
@@ -65,13 +83,42 @@ export function ShopPageContent({
   initialQuery,
   fabricTechEnabled = false,
   mixMatchEnabled = false,
+  heading,
+  showExtras = true,
+  syncUrl = true,
 }: ShopPageContentProps) {
-  const [filters, setFilters] = useState<ShopFilters>({
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const [filters, setFiltersState] = useState<ShopFilters>({
     ...defaultShopFilters,
     category: initialCategory,
+    sort: (searchParams?.get("sort") as ShopFilters["sort"]) || defaultShopFilters.sort,
   });
-  const [query, setQuery] = useState(initialQuery ?? "");
+  const [query, setQueryState] = useState(initialQuery ?? "");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+
+  const syncParams = (next: { category?: string; q?: string; sort?: string }) => {
+    if (!syncUrl) return;
+    const params = new URLSearchParams(searchParams?.toString());
+    for (const [key, value] of Object.entries(next)) {
+      if (value) params.set(key, value);
+      else params.delete(key);
+    }
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  };
+
+  const setFilters = (next: ShopFilters) => {
+    setFiltersState(next);
+    syncParams({ category: next.category, sort: next.sort === "featured" ? undefined : next.sort });
+  };
+
+  const setQuery = (next: string) => {
+    setQueryState(next);
+    syncParams({ q: next || undefined });
+  };
 
   const categoryDescendants = useMemo(() => buildCategoryDescendants(categories), [categories]);
 
@@ -101,6 +148,13 @@ export function ShopPageContent({
     );
   }, [filters, products, query, categoryDescendants]);
 
+  const pageTitle = heading?.title ?? "Shop All Scrubs";
+  const pageEyebrow = heading?.eyebrow ?? "Browse";
+  const pageDescription =
+    heading?.description ??
+    "Premium medical apparel with advanced filters for color, size, fabric technology, and price — built for long shifts and demanding care environments.";
+  const breadcrumbLabel = heading?.breadcrumbLabel ?? "Shop";
+
   return (
     <>
       <section className="border-b border-border bg-alt-surface py-10 md:py-14">
@@ -110,17 +164,14 @@ export function ShopPageContent({
               Home
             </Link>
             <span className="mx-2">›</span>
-            <span className="font-semibold text-ink">Shop</span>
+            <span className="font-semibold text-ink">{breadcrumbLabel}</span>
           </nav>
           <div className="max-w-2xl">
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">Browse</p>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">{pageEyebrow}</p>
             <h1 className="mt-2 font-display text-4xl font-bold tracking-tight text-ink md:text-5xl">
-              Shop All Scrubs
+              {pageTitle}
             </h1>
-            <p className="mt-3 text-base leading-relaxed text-muted">
-              Premium medical apparel with advanced filters for color, size, fabric technology, and
-              price — built for long shifts and demanding care environments.
-            </p>
+            <p className="mt-3 text-base leading-relaxed text-muted">{pageDescription}</p>
           </div>
         </div>
       </section>
@@ -158,10 +209,14 @@ export function ShopPageContent({
         totalCount={products.length}
       />
 
-      <ShopMixMatchPromo mixMatchEnabled={mixMatchEnabled} />
-      <TrustBar />
-      <TestimonialsSection testimonials={testimonials} />
-      <ShopFeatureCards fabricTechEnabled={fabricTechEnabled} />
+      {showExtras && (
+        <>
+          <ShopMixMatchPromo mixMatchEnabled={mixMatchEnabled} />
+          <TrustBar />
+          <TestimonialsSection testimonials={testimonials} />
+          <ShopFeatureCards fabricTechEnabled={fabricTechEnabled} />
+        </>
+      )}
     </>
   );
 }

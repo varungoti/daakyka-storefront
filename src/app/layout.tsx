@@ -6,6 +6,7 @@ import { CartProvider } from "@/context/cart-provider";
 import { SiteShell } from "@/components/layout/site-shell";
 import { GlobalJsonLd } from "@/components/seo/global-json-ld";
 import { isIndexingAllowed } from "@/lib/env";
+import { getNavigation } from "@/lib/navigation/get-navigation";
 import { getSetting, isPageEnabled } from "@/lib/settings";
 import "./globals.css";
 
@@ -44,10 +45,22 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const [fabricTechEnabled, mixMatchEnabled, announcementMessages] = await Promise.all([
+  const [
+    fabricTechEnabled,
+    mixMatchEnabled,
+    announcementMessages,
+    contactPhone,
+    contactWhatsapp,
+    bulkCtaEnabled,
+    navigation,
+  ] = await Promise.all([
     isPageEnabled("fabricTech"),
     isPageEnabled("mixMatch"),
     getSetting("announcement.messages"),
+    getSetting("contact.phone"),
+    getSetting("contact.whatsapp"),
+    getSetting("header.bulkCta.enabled"),
+    getNavigation(),
   ]);
 
   return (
@@ -65,6 +78,10 @@ export default async function RootLayout({
                 fabricTechEnabled={fabricTechEnabled}
                 mixMatchEnabled={mixMatchEnabled}
                 announcementMessages={announcementMessages}
+                contactPhone={contactPhone}
+                contactWhatsapp={contactWhatsapp}
+                bulkCtaEnabled={bulkCtaEnabled}
+                navigation={navigation}
               >
                 {children}
               </SiteShell>

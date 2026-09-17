@@ -1,26 +1,36 @@
 import type { MetadataRoute } from "next";
 import { collectionPages, seoLandingPages } from "@/data/seo-landing-pages";
 import { getPublishedBlogPosts } from "@/lib/blog";
-import { getProducts } from "@/lib/products/index";
+import { getCategoryTree, getProducts } from "@/lib/products/index";
 import { siteUrlBase } from "@/lib/seo/json-ld";
-import { isPageEnabled } from "@/lib/settings";
+import { isPageEnabled, isSaleEnabled } from "@/lib/settings";
+
+function flattenCategorySlugs(nodes: Awaited<ReturnType<typeof getCategoryTree>>): string[] {
+  return nodes.flatMap((node) => [node.slug, ...flattenCategorySlugs(node.children)]);
+}
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = siteUrlBase();
   const now = new Date();
-  const [fabricTechEnabled, mixMatchEnabled] = await Promise.all([
+  const [fabricTechEnabled, mixMatchEnabled, saleEnabled, categoryTree] = await Promise.all([
     isPageEnabled("fabricTech"),
     isPageEnabled("mixMatch"),
+    isSaleEnabled(),
+    getCategoryTree(),
   ]);
 
   const staticRoutes = [
     "",
     "/shop",
     "/shop/bespoke",
+    "/for-hospitals",
+    "/school-uniforms",
+    "/kids-wear",
+    ...(saleEnabled ? ["/sale"] : []),
     ...(mixMatchEnabled ? ["/mix-and-match"] : []),
     ...(fabricTechEnabled ? ["/fabric-technology"] : []),
     "/bulk-orders",
-    "/institutional",
+    "/our-story",
     "/about",
     "/contact",
     "/blog",
@@ -35,12 +45,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     "/science-of-the-scrub",
     "/scrubs-for-men",
     "/scrubs-for-women",
-    "/hospital-uniforms",
     "/custom-embroidered-scrubs",
     "/medical-scrubs",
     "/nurse-uniforms",
   ];
 
+  const categorySlugs = flattenCategorySlugs(categoryTree);
   const posts = await getPublishedBlogPosts();
   const products = await getProducts();
 
@@ -50,6 +60,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       lastModified: now,
       changeFrequency: "weekly" as const,
       priority: path === "" ? 1 : 0.8,
+    })),
+    ...categorySlugs.map((slug) => ({
+      url: `${base}/category/${slug}`,
+      lastModified: now,
+      changeFrequency: "weekly" as const,
+      priority: 0.7,
     })),
     ...products.map((product) => ({
       url: `${base}/products/${product.handle}`,

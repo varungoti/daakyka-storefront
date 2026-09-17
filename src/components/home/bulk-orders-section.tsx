@@ -53,7 +53,7 @@ export function BulkOrdersSection() {
                     <ArrowRight size={18} />
                   </Button>
                 </Link>
-                <Link href="/institutional">
+                <Link href="/for-hospitals">
                   <Button variant="outline" size="lg">
                     Institutional Solutions
                   </Button>

@@ -1,12 +1,13 @@
 "use client";
 
-import { AnnouncementBar } from "@/components/layout/announcement-bar";
+import { UtilityBar } from "@/components/layout/announcement-bar";
 import { Footer } from "@/components/layout/footer";
 import { Header } from "@/components/layout/header";
 import { WhatsAppFab } from "@/components/layout/whatsapp-fab";
 import { CartDrawer } from "@/components/cart/cart-drawer";
 import { CartAbandonTracker } from "@/components/cart/cart-abandon-tracker";
 import { WishlistDrawer } from "@/components/wishlist/wishlist-drawer";
+import type { NavigationTree } from "@/lib/navigation/get-navigation";
 import { usePathname } from "next/navigation";
 
 export function SiteShell({
@@ -14,11 +15,19 @@ export function SiteShell({
   fabricTechEnabled,
   mixMatchEnabled,
   announcementMessages,
+  contactPhone,
+  contactWhatsapp,
+  bulkCtaEnabled,
+  navigation,
 }: {
   children: React.ReactNode;
   fabricTechEnabled: boolean;
   mixMatchEnabled: boolean;
   announcementMessages: string[];
+  contactPhone: string;
+  contactWhatsapp: string;
+  bulkCtaEnabled: boolean;
+  navigation: NavigationTree;
 }) {
   const pathname = usePathname();
 
@@ -34,8 +43,13 @@ export function SiteShell({
       >
         Skip to main content
       </a>
-      <AnnouncementBar messages={announcementMessages} />
-      <Header />
+      <UtilityBar
+        messages={announcementMessages}
+        phone={contactPhone}
+        whatsapp={contactWhatsapp}
+        bulkCtaEnabled={bulkCtaEnabled}
+      />
+      <Header navigation={navigation} />
       <main id="main-content" className="flex-1">
         {children}
       </main>

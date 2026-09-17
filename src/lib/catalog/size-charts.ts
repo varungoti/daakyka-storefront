@@ -1,9 +1,9 @@
-import { revalidateTag } from "next/cache";
+import { revalidateTag, unstable_cache } from "next/cache";
 import { z } from "zod";
 import { logAuditEvent } from "@/lib/auth/audit";
 import { db } from "@/lib/db";
 import { CATEGORIES_CACHE_TAG, PRODUCTS_CACHE_TAG } from "@/lib/products";
-import type { Prisma, SizeChart } from "@/generated/prisma/client";
+import type { CategorySection, Prisma, SizeChart } from "@/generated/prisma/client";
 
 /**
  * Phase B2: admin CRUD for `SizeChart` — a simple table (column headers +
@@ -199,4 +199,97 @@ export async function deleteSizeChart(id: string, userId: string): Promise<void>
   });
 
   revalidateCatalog();
+}
+
+// ---------------------------------------------------------------------------
+// Public storefront read (Phase C3: /size-guide)
+// ---------------------------------------------------------------------------
+
+export interface SizeChartForDisplay {
+  id: string;
+  name: string;
+  unit: (typeof sizeChartUnitValues)[number];
+  columns: string[];
+  rows: (string | number)[][];
+  notes: string | null;
+}
+
+export interface SizeChartSectionGroup {
+  section: CategorySection;
+  charts: SizeChartForDisplay[];
+}
+
+/** A SizeChart's `rows` is stored as JSON and, in practice, comes from two
+ * different writers with two different shapes: the Phase E1 seed writes
+ * an array of `{ column: value }` objects (see
+ * src/data/catalog/draft-catalog.ts), while the admin CRUD's zod schema
+ * (sizeChartInputSchema above) expects an array of arrays already in
+ * column order. Normalize both into arrays-in-column-order so the
+ * storefront table can render either without crashing. */
+function normalizeRows(columns: string[], rawRows: unknown): (string | number)[][] {
+  if (!Array.isArray(rawRows)) return [];
+  return rawRows.map((row) => {
+    if (Array.isArray(row)) return row as (string | number)[];
+    if (row && typeof row === "object") {
+      return columns.map((column) => {
+        const value = (row as Record<string, unknown>)[column];
+        return typeof value === "number" || typeof value === "string" ? value : "";
+      });
+    }
+    return [];
+  });
+}
+
+async function fetchSizeChartsForDisplay(): Promise<SizeChartSectionGroup[]> {
+  const categories = await db.category.findMany({
+    where: { active: true, sizeChartId: { not: null } },
+    select: { section: true, sizeChart: true },
+  });
+
+  const bySection = new Map<CategorySection, Map<string, SizeChartForDisplay>>();
+  for (const category of categories) {
+    if (!category.sizeChart) continue;
+    const columns = Array.isArray(category.sizeChart.columns)
+      ? (category.sizeChart.columns as string[])
+      : [];
+    const chart: SizeChartForDisplay = {
+      id: category.sizeChart.id,
+      name: category.sizeChart.name,
+      unit: category.sizeChart.unit,
+      columns,
+      rows: normalizeRows(columns, category.sizeChart.rows),
+      notes: category.sizeChart.notes,
+    };
+    if (!bySection.has(category.section)) bySection.set(category.section, new Map());
+    bySection.get(category.section)!.set(chart.id, chart);
+  }
+
+  const sectionOrder: CategorySection[] = ["HOSPITAL", "SCHOOL", "KIDS", "GENERAL"];
+  return sectionOrder
+    .filter((section) => bySection.has(section))
+    .map((section) => ({
+      section,
+      charts: [...bySection.get(section)!.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    }));
+}
+
+const cachedSizeChartsForDisplay = unstable_cache(fetchSizeChartsForDisplay, ["size-charts-display"], {
+  tags: [CATEGORIES_CACHE_TAG],
+});
+
+/** Every active category's size chart, grouped by CategorySection, for
+ * the public /size-guide page. Falls back to an empty array (rather than
+ * throwing) when the DB is unavailable or unstable_cache has no request
+ * scope to attach to — the page renders its static fit-tips content
+ * either way. */
+export async function getSizeChartsForDisplay(): Promise<SizeChartSectionGroup[]> {
+  try {
+    return await cachedSizeChartsForDisplay();
+  } catch {
+    try {
+      return await fetchSizeChartsForDisplay();
+    } catch {
+      return [];
+    }
+  }
 }

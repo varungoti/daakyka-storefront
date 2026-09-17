@@ -69,9 +69,9 @@ export function HeroSection({ content, trustStats, mixMatchEnabled = false }: He
                 <ArrowRight size={18} />
               </Button>
             </Link>
-            <Link href={mixMatchEnabled ? "/mix-and-match/studio" : "/shop"}>
+            <Link href={mixMatchEnabled ? "/mix-and-match/studio" : "/for-hospitals"}>
               <Button variant="outline" size="lg" className="min-w-[170px]">
-                {mixMatchEnabled ? content.secondaryCta : "Shop Now"}
+                {mixMatchEnabled ? content.secondaryCta : "For Hospitals"}
               </Button>
             </Link>
           </div>
@@ -89,12 +89,14 @@ export function HeroSection({ content, trustStats, mixMatchEnabled = false }: He
               ))}
             </div>
             <div>
-              <div className="flex items-center gap-1">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <Star key={i} size={14} className="fill-amber-400 text-amber-400" />
-                ))}
-                <span className="ml-1 text-sm font-bold text-ink">{content.rating}</span>
-              </div>
+              {content.rating && (
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <Star key={i} size={14} className="fill-amber-400 text-amber-400" />
+                  ))}
+                  <span className="ml-1 text-sm font-bold text-ink">{content.rating}</span>
+                </div>
+              )}
               <p className="text-xs text-muted">{content.ratingLabel}</p>
             </div>
           </div>

@@ -66,11 +66,22 @@ const nextConfig: NextConfig = {
   },
   async redirects() {
     return [
-      ...seoLandingPages.map((page) => ({
-        source: page.path,
-        destination: `/guides/${page.slug}`,
-        permanent: true,
-      })),
+      // Phase C3: /hospital-uniforms and /institutional now point at the
+      // real /for-hospitals section landing page instead of their old
+      // destinations (a guide page, and a standalone page respectively —
+      // both removed). The "hospital-uniforms" SEO landing page config
+      // still exists and still renders at /guides/hospital-uniforms; it's
+      // excluded here so its own path-based redirect below doesn't
+      // conflict with this one.
+      { source: "/hospital-uniforms", destination: "/for-hospitals", permanent: true },
+      { source: "/institutional", destination: "/for-hospitals", permanent: true },
+      ...seoLandingPages
+        .filter((page) => page.slug !== "hospital-uniforms")
+        .map((page) => ({
+          source: page.path,
+          destination: `/guides/${page.slug}`,
+          permanent: true,
+        })),
       ...fabricSeoRedirects.map((redirect) => ({
         source: redirect.path,
         destination: redirect.destination,

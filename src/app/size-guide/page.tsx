@@ -1,5 +1,6 @@
 import { SectionHeading } from "@/components/ui/section-heading";
-import { fitTips, menSizeGuide, womenSizeGuide } from "@/data/size-guide";
+import { fitTips } from "@/data/size-guide";
+import { getSizeChartsForDisplay, type SizeChartForDisplay } from "@/lib/catalog/size-charts";
 import { isPageEnabled } from "@/lib/settings";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -7,11 +8,21 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Size Guide",
   description:
-    "Find your perfect fit with DAAKYKA size charts, fit tips, and measurement guidance for medical scrubs.",
+    "Find your perfect fit with DAAKYKA size charts, fit tips, and measurement guidance for hospital, school, and kids' apparel.",
+};
+
+const SECTION_LABELS: Record<string, string> = {
+  HOSPITAL: "For Hospitals",
+  SCHOOL: "School Uniforms",
+  KIDS: "Kids Wear",
+  GENERAL: "General",
 };
 
 export default async function SizeGuidePage() {
-  const mixMatchEnabled = await isPageEnabled("mixMatch");
+  const [mixMatchEnabled, sectionGroups] = await Promise.all([
+    isPageEnabled("mixMatch"),
+    getSizeChartsForDisplay(),
+  ]);
 
   return (
     <>
@@ -22,16 +33,31 @@ export default async function SizeGuidePage() {
             Size Guide
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-muted">
-            Measure once, choose confidently. Use our charts to find the best size for tops and
-            bottoms.
+            Measure once, choose confidently. Use our charts to find the best size across our
+            hospital, school, and kids&apos; ranges.
           </p>
         </div>
       </section>
 
       <section className="py-16">
         <div className="mx-auto max-w-[1320px] space-y-16 px-4 lg:px-8">
-          <SizeTable title="Women's Size Chart" rows={womenSizeGuide} />
-          <SizeTable title="Men's Size Chart" rows={menSizeGuide} />
+          {sectionGroups.length > 0 ? (
+            sectionGroups.map((group) => (
+              <div key={group.section} className="space-y-8">
+                <SectionHeading
+                  eyebrow={SECTION_LABELS[group.section] ?? group.section}
+                  title={`${SECTION_LABELS[group.section] ?? group.section} Size Charts`}
+                />
+                {group.charts.map((chart) => (
+                  <SizeTable key={chart.id} chart={chart} />
+                ))}
+              </div>
+            ))
+          ) : (
+            <div className="rounded-[2rem] border border-dashed border-border bg-surface-muted p-8 text-center text-muted">
+              Size charts are being finalized — check back soon, or contact support for measurements.
+            </div>
+          )}
 
           <div>
             <SectionHeading
@@ -55,7 +81,9 @@ export default async function SizeGuidePage() {
           <div className="rounded-[2rem] border border-border bg-surface-muted p-8 text-center">
             <p className="font-display text-2xl font-bold text-ink">Still unsure?</p>
             <p className="mt-2 text-muted">
-              Build your set with our Mix & Match tool or contact support for team sizing help.
+              {mixMatchEnabled
+                ? "Build your set with our Mix & Match tool or contact support for team sizing help."
+                : "Contact support for team sizing help, or browse the shop for your fit."}
             </p>
             <div className="mt-6 flex flex-wrap justify-center gap-4">
               {mixMatchEnabled ? (
@@ -87,42 +115,41 @@ export default async function SizeGuidePage() {
   );
 }
 
-function SizeTable({
-  title,
-  rows,
-}: {
-  title: string;
-  rows: typeof womenSizeGuide;
-}) {
+function SizeTable({ chart }: { chart: SizeChartForDisplay }) {
   return (
     <div className="overflow-hidden rounded-[2rem] border border-border bg-surface-elevated">
       <div className="border-b border-border px-6 py-5">
-        <h2 className="font-display text-2xl font-bold text-ink">{title}</h2>
+        <h3 className="font-display text-xl font-bold text-ink">{chart.name}</h3>
+        <p className="text-xs uppercase tracking-wide text-muted">Measurements in {chart.unit === "IN" ? "inches" : "centimeters"}</p>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full text-left text-sm">
           <thead className="bg-surface-muted text-xs uppercase tracking-wide text-muted">
             <tr>
-              <th className="px-6 py-4">Size</th>
-              <th className="px-6 py-4">Chest</th>
-              <th className="px-6 py-4">Waist</th>
-              <th className="px-6 py-4">Hip</th>
-              <th className="px-6 py-4">Inseam</th>
+              {chart.columns.map((column) => (
+                <th key={column} className="px-6 py-4">
+                  {column}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <tr key={row.size} className="border-t border-border">
-                <td className="px-6 py-4 font-semibold text-brand">{row.size}</td>
-                <td className="px-6 py-4 text-muted">{row.chest}</td>
-                <td className="px-6 py-4 text-muted">{row.waist}</td>
-                <td className="px-6 py-4 text-muted">{row.hip}</td>
-                <td className="px-6 py-4 text-muted">{row.inseam}</td>
+            {chart.rows.map((row, index) => (
+              <tr key={index} className="border-t border-border">
+                {row.map((cell, cellIndex) => (
+                  <td
+                    key={cellIndex}
+                    className={cellIndex === 0 ? "px-6 py-4 font-semibold text-brand" : "px-6 py-4 text-muted"}
+                  >
+                    {cell}
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {chart.notes && <p className="border-t border-border px-6 py-4 text-xs text-muted">{chart.notes}</p>}
     </div>
   );
 }

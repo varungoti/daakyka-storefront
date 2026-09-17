@@ -53,6 +53,7 @@ export interface CategoryTreeNode {
   section: "HOSPITAL" | "SCHOOL" | "KIDS" | "GENERAL";
   sortOrder: number;
   showInMenu: boolean;
+  image: { url: string; alt: string | null } | null;
   children: CategoryTreeNode[];
 }
 
@@ -190,6 +191,7 @@ interface FlatCategory {
   parentId: string | null;
   sortOrder: number;
   showInMenu: boolean;
+  image: { url: string; alt: string | null } | null;
 }
 
 async function fetchActiveCategoriesFlat(): Promise<FlatCategory[]> {
@@ -204,6 +206,7 @@ async function fetchActiveCategoriesFlat(): Promise<FlatCategory[]> {
       parentId: true,
       sortOrder: true,
       showInMenu: true,
+      image: { select: { url: true, alt: true } },
     },
     orderBy: { sortOrder: "asc" },
   });
@@ -221,6 +224,7 @@ function buildCategoryTree(flat: FlatCategory[]): CategoryTreeNode[] {
         section: c.section,
         sortOrder: c.sortOrder,
         showInMenu: c.showInMenu,
+        image: c.image,
         children: [],
       },
     ]),

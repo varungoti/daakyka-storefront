@@ -140,10 +140,16 @@ export default function AboutPage() {
           </div>
           <div className="mt-10 flex flex-wrap justify-center gap-4">
             <Link
-              href="/institutional"
+              href="/for-hospitals"
               className="rounded-full bg-brand px-6 py-3 text-sm font-semibold text-white transition hover:bg-brand-violet"
             >
               Institutional Solutions
+            </Link>
+            <Link
+              href="/our-story"
+              className="rounded-full border border-border px-6 py-3 text-sm font-semibold text-ink transition hover:border-brand hover:text-brand"
+            >
+              Read Our Story
             </Link>
             <Link
               href="/contact"

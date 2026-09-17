@@ -21,14 +21,18 @@ export interface TrustStatsContent {
 
 const defaultHero: HeroContent = {
   eyebrow: "Welcome to DAAKYKA",
-  headline: "The Future of Medical Commerce",
-  subheadline: "Futuristic. Functional. Flawless.",
+  headline: "Expertly Designed, Meticulously Crafted",
+  subheadline: "Quality Uniforms & Linens for Pan India",
   description:
-    "Premium scrubs engineered with advanced fabric technology for healthcare professionals who do more.",
+    "Hospital linens, medical scrubs, school uniforms, and corporate wear by Babaji Enterprises — Hyderabad-based, Pan India delivery.",
   primaryCta: "Shop All Scrubs",
   secondaryCta: "Build Your Fit",
-  rating: "4.9/5",
-  ratingLabel: "Trusted by 20,000+ healthcare professionals",
+  // Phase C3: no fabricated star rating or follower count — these were
+  // unverifiable claims flagged for removal. ratingLabel now carries a
+  // real, verifiable fact instead of a rating; HeroSection only renders
+  // the star row when `rating` is non-empty.
+  rating: "",
+  ratingLabel: "Hyderabad-Based · 9+ Years of Trusted Manufacturing",
 };
 
 const defaultAnnouncement: AnnouncementContent = {
@@ -41,8 +45,8 @@ const defaultAnnouncement: AnnouncementContent = {
 
 const defaultTrustStats: TrustStatsContent = {
   stats: [
-    { value: "20,000+", label: "Healthcare Professionals" },
-    { value: "4.9/5", label: "Customer Rating" },
+    { value: "9+", label: "Years Manufacturing" },
+    { value: "Pan India", label: "Delivery & Fulfillment" },
     { value: "100%", label: "Secure Checkout" },
   ],
 };

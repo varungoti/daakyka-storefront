@@ -381,7 +381,7 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     ],
     shopHref: "/bulk-orders",
     shopLabel: "Request Bulk Quote",
-    secondaryHref: "/institutional",
+    secondaryHref: "/for-hospitals",
     secondaryLabel: "Institutional Solutions",
   },
   {
@@ -577,7 +577,7 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     ],
     shopHref: "/doctor-scrubs",
     shopLabel: "Shop Doctor Scrubs",
-    secondaryHref: "/hospital-uniforms",
+    secondaryHref: "/for-hospitals",
     secondaryLabel: "Hospital Uniforms",
     relatedGuides: ["doctor-scrubs", "nurse-uniforms", "hospital-uniforms"],
     relatedCollections: ["hospital-teams"],
@@ -678,7 +678,7 @@ export const collectionPages = [
     handle: "hospital-teams",
     title: "Hospital Teams",
     description: "Institutional uniforms and linens for healthcare organizations.",
-    shopHref: "/hospital-uniforms",
+    shopHref: "/for-hospitals",
   },
   {
     handle: "bespoke",

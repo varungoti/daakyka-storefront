@@ -29,14 +29,17 @@ const defaultHomepageSections = [
     sortOrder: 1,
     content: {
       eyebrow: "Welcome to DAAKYKA",
-      headline: "The Future of Medical Commerce",
-      subheadline: "Futuristic. Functional. Flawless.",
+      headline: "Expertly Designed, Meticulously Crafted",
+      subheadline: "Quality Uniforms & Linens for Pan India",
       description:
-        "Premium scrubs engineered with advanced fabric technology for healthcare professionals who do more.",
+        "Hospital linens, medical scrubs, school uniforms, and corporate wear by Babaji Enterprises — Hyderabad-based, Pan India delivery.",
       primaryCta: "Shop All Scrubs",
       secondaryCta: "Build Your Fit",
-      rating: "4.9/5",
-      ratingLabel: "Trusted by 20,000+ healthcare professionals",
+      // Phase C3: no fabricated star rating or follower count (removed
+      // unverifiable claims) — ratingLabel carries a real, verifiable
+      // fact instead.
+      rating: "",
+      ratingLabel: "Hyderabad-Based · 9+ Years of Trusted Manufacturing",
     },
   },
   {
@@ -45,8 +48,8 @@ const defaultHomepageSections = [
     sortOrder: 2,
     content: {
       stats: [
-        { value: "20,000+", label: "Healthcare Professionals" },
-        { value: "4.9/5", label: "Customer Rating" },
+        { value: "9+", label: "Years Manufacturing" },
+        { value: "Pan India", label: "Delivery & Fulfillment" },
         { value: "100%", label: "Secure Checkout" },
       ],
     },

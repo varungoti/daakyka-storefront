@@ -1,53 +1,110 @@
-import { BestSellersSection } from "@/components/home/best-sellers-section";
-import { BespokeSection } from "@/components/home/bespoke-section";
 import { BulkOrdersSection } from "@/components/home/bulk-orders-section";
-import { HeroFeatureStrip, HeroSection } from "@/components/home/hero-section";
-import { InsightsStrip } from "@/components/home/insights-strip";
-import { JournalSection } from "@/components/home/journal-section";
+import { FeaturedProductsGrid } from "@/components/home/featured-products-grid";
+import { HeroSection } from "@/components/home/hero-section";
 import { OffersStrip } from "@/components/home/offers-strip";
-import { ScienceSection } from "@/components/home/science-section";
-import { ShopByCategorySection } from "@/components/home/shop-by-category-section";
+import { SectionFeatureBand } from "@/components/home/section-feature-band";
+import { ShopByCategorySection, type ShopByCategoryTile } from "@/components/home/shop-by-category-section";
 import { TestimonialsSection } from "@/components/home/testimonials-section";
 import { TrustBar } from "@/components/layout/trust-bar";
 import { getHeroContent, getTrustStatsContent } from "@/lib/homepage";
-import { getBestSellers } from "@/lib/products";
-import { isPageEnabled } from "@/lib/settings";
+import { getCategoryTree, getProducts } from "@/lib/products";
+import { isSaleEnabled } from "@/lib/settings";
 import { getTestimonials } from "@/lib/testimonials";
-import dynamic from "next/dynamic";
+import { GraduationCap, HeartPulse } from "lucide-react";
 
-const MixMatchSection = dynamic(
-  () =>
-    import("@/components/home/mix-match-section").then((mod) => ({
-      default: mod.MixMatchSection,
-    })),
-  { loading: () => <div className="min-h-[360px]" aria-hidden /> },
-);
-
+/**
+ * Phase C3: the new store home — "shop now", not "brand story" (that
+ * moved to /our-story). Section order follows the approved plan:
+ * hero -> shop-by-category tiles -> best sellers/new arrivals grids ->
+ * For Hospitals / School Uniforms feature bands -> bulk enquiry band ->
+ * testimonials -> a values row.
+ */
 export default async function HomePage() {
-  const [bestSellers, heroContent, trustStats, testimonials, mixMatchEnabled, fabricTechEnabled] =
-    await Promise.all([
-      getBestSellers(),
-      getHeroContent(),
-      getTrustStatsContent(),
-      getTestimonials(),
-      isPageEnabled("mixMatch"),
-      isPageEnabled("fabricTech"),
-    ]);
+  const [categoryTree, saleEnabled, heroContent, trustStats, testimonials] = await Promise.all([
+    getCategoryTree(),
+    isSaleEnabled(),
+    getHeroContent(),
+    getTrustStatsContent(),
+    getTestimonials(),
+  ]);
+
+  const topLevelMenu = categoryTree.filter((category) => category.showInMenu);
+  const findTopLevel = (slug: string) => topLevelMenu.find((category) => category.slug === slug);
+
+  const hospitalsCategory = findTopLevel("for-hospitals");
+  const schoolCategory = findTopLevel("school-uniforms");
+  const kidsCategory = findTopLevel("kids-wear");
+
+  const categoryTiles: ShopByCategoryTile[] = [];
+  if (hospitalsCategory) {
+    categoryTiles.push({
+      title: hospitalsCategory.name,
+      href: "/for-hospitals",
+      image: hospitalsCategory.image?.url ?? null,
+    });
+  }
+  if (schoolCategory) {
+    categoryTiles.push({
+      title: schoolCategory.name,
+      href: "/school-uniforms",
+      image: schoolCategory.image?.url ?? null,
+    });
+  }
+  if (kidsCategory) {
+    categoryTiles.push({
+      title: kidsCategory.name,
+      href: "/kids-wear",
+      image: kidsCategory.image?.url ?? null,
+    });
+  }
+  if (saleEnabled) {
+    categoryTiles.push({ title: "Sale", href: "/sale", image: null, cta: "Shop Sale" });
+  }
+
+  const [bestSellers, newArrivalsRaw, hospitalProducts, schoolProducts] = await Promise.all([
+    getProducts({ featured: true, limit: 8 }),
+    getProducts({ limit: 12 }),
+    hospitalsCategory ? getProducts({ categorySlug: "for-hospitals", limit: 4 }) : Promise.resolve([]),
+    schoolCategory ? getProducts({ categorySlug: "school-uniforms", limit: 4 }) : Promise.resolve([]),
+  ]);
+
+  const newArrivals = newArrivalsRaw.filter((product) => product.isNew).slice(0, 8);
 
   return (
     <>
-      <HeroSection content={heroContent} trustStats={trustStats.stats} mixMatchEnabled={mixMatchEnabled} />
-      <HeroFeatureStrip />
+      <HeroSection content={heroContent} trustStats={trustStats.stats} />
       <OffersStrip />
-      <BestSellersSection products={bestSellers} />
-      <ShopByCategorySection fabricTechEnabled={fabricTechEnabled} />
-      {mixMatchEnabled ? <MixMatchSection /> : null}
-      <BespokeSection />
-      <ScienceSection fabricTechEnabled={fabricTechEnabled} />
-      <TestimonialsSection testimonials={testimonials} />
-      <InsightsStrip fabricTechEnabled={fabricTechEnabled} />
+      <ShopByCategorySection categories={categoryTiles} />
+      <FeaturedProductsGrid eyebrow="Curated For You" title="Best Sellers" products={bestSellers} />
+      {newArrivals.length > 0 && (
+        <FeaturedProductsGrid
+          eyebrow="Just In"
+          title="New Arrivals"
+          products={newArrivals}
+          className="bg-background py-12 md:py-16"
+        />
+      )}
+      <SectionFeatureBand
+        icon={HeartPulse}
+        eyebrow="For Hospitals"
+        title="Scrubs, Gowns & Hospital Linens"
+        description="Hygienic, durable apparel and linens built for demanding healthcare environments."
+        products={hospitalProducts}
+        browseHref="/for-hospitals"
+        browseLabel="Browse Hospital Range"
+      />
+      <SectionFeatureBand
+        icon={GraduationCap}
+        eyebrow="School Uniforms"
+        title="Uniforms Built for the Classroom and Beyond"
+        description="Shirts, tunics, trousers, blazers, and sportswear reflecting institutional pride."
+        products={schoolProducts}
+        browseHref="/school-uniforms"
+        browseLabel="Browse School Range"
+        variant="alt"
+      />
       <BulkOrdersSection />
-      <JournalSection />
+      <TestimonialsSection testimonials={testimonials} />
       <TrustBar />
     </>
   );

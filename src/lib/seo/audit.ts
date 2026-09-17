@@ -1,6 +1,6 @@
 import { brand } from "@/data/brand";
 import { seoLandingPages } from "@/data/seo-landing-pages";
-import { isPageEnabled } from "@/lib/settings";
+import { isPageEnabled, isSaleEnabled } from "@/lib/settings";
 
 export interface SeoPageAudit {
   path: string;
@@ -17,13 +17,23 @@ const staticPages: Omit<SeoPageAudit, "status" | "issues">[] = [
   { path: "/mix-and-match", title: "Mix & Match Builder", metaDescription: "Build your perfect scrub set with live preview, fabric selection, and personalization.", h1: "Create Your Perfect Fit" },
   { path: "/fabric-technology", title: "Fabric Technology", metaDescription: "Explore 4-way stretch, liquid repellent, anti-microbial, and sustainable fabric technologies.", h1: "The Science Behind The Scrub" },
   { path: "/bulk-orders", title: "Bulk Orders", metaDescription: "Hospital and institutional uniform quotes with logo embroidery and Pan India delivery.", h1: "Uniforms for Healthcare Teams" },
-  { path: "/institutional", title: "Institutional Solutions", metaDescription: "Hospital linens, school uniforms, sports kits, and corporate wear by Babaji Enterprises.", h1: "Uniforms & Linens for Every Sector" },
+  { path: "/for-hospitals", title: "For Hospitals", metaDescription: "Scrubs, patient gowns, staff uniforms, and hospital linens by Babaji Enterprises — Pan India delivery.", h1: "Uniforms & Linens for Hospitals" },
+  { path: "/school-uniforms", title: "School Uniforms", metaDescription: "Shirts, tunics, trousers, skirts, blazers, and sportswear for schools by DAAKYKA Apparels.", h1: "School Uniforms" },
+  { path: "/kids-wear", title: "Kids Wear", metaDescription: "Everyday kids' wear — T-shirts, joggers, frocks, co-ords, and hoodies from DAAKYKA Apparels.", h1: "Kids Wear" },
+  { path: "/our-story", title: "Our Story", metaDescription: `${brand.name} by ${brand.legalName} — ${brand.tagline}. ${brand.description}`, h1: brand.tagline },
   { path: "/about", title: "About Us", metaDescription: `${brand.name} by ${brand.legalName} — ${brand.tagline}.`, h1: brand.tagline },
   { path: "/contact", title: "Contact", metaDescription: `Contact ${brand.name} — ${brand.location.city}. Pan India institutional uniforms.`, h1: "Contact DAAKYKA" },
   { path: "/blog", title: "Journal", metaDescription: "Style, fit, and fabric insights for healthcare professionals.", h1: "From Our Journal" },
   { path: "/guides", title: "Medical Apparel Guides", metaDescription: "Buying guides, fabric science, and hospital uniform resources from DAAKYKA Apparels.", h1: "Medical Apparel Guides" },
   { path: "/size-guide", title: "Size Guide", metaDescription: "Find your perfect scrub fit with DAAKYKA size guide.", h1: "Size Guide" },
 ];
+
+const saleAuditEntry: Omit<SeoPageAudit, "status" | "issues"> = {
+  path: "/sale",
+  title: "Sale — DAAKYKA Apparels",
+  metaDescription: "Discounted medical scrubs, uniforms, and apparel from DAAKYKA Apparels while stocks last.",
+  h1: "Sale",
+};
 
 export function auditSeoPage(page: Omit<SeoPageAudit, "status" | "issues">): SeoPageAudit {
   const issues: string[] = [];
@@ -57,16 +67,19 @@ export async function getStaticSeoAudits(): Promise<SeoPageAudit[]> {
     h1: page.h1,
   }));
 
-  const [fabricTechEnabled, mixMatchEnabled] = await Promise.all([
+  const [fabricTechEnabled, mixMatchEnabled, saleEnabled] = await Promise.all([
     isPageEnabled("fabricTech"),
     isPageEnabled("mixMatch"),
+    isSaleEnabled(),
   ]);
 
-  const pages = [...staticPages, ...guidePages].filter((page) => {
-    if (page.path === "/fabric-technology") return fabricTechEnabled;
-    if (page.path === "/mix-and-match") return mixMatchEnabled;
-    return true;
-  });
+  const pages = [...staticPages, ...guidePages, ...(saleEnabled ? [saleAuditEntry] : [])].filter(
+    (page) => {
+      if (page.path === "/fabric-technology") return fabricTechEnabled;
+      if (page.path === "/mix-and-match") return mixMatchEnabled;
+      return true;
+    },
+  );
 
   return pages.map(auditSeoPage);
 }

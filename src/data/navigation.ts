@@ -2,24 +2,12 @@ import { brand } from "@/data/brand";
 
 export const announcementItems = brand.announcementMessages;
 
-// Fabric Tech and Mix & Match are hidden by default (admin toggle in
-// /admin/site-controls) and are intentionally absent from mainNav. When
-// enabled they still appear in the footer (see footerLinks below), gated
-// through isPageEnabled() at render time.
-export const mainNav = [
-  { label: "Shop", href: "/shop" },
-  { label: "Collections", href: "/collections" },
-  { label: "About", href: "/about" },
-];
-
-export const shopCategories = [
-  { label: "Tops", count: 24, slug: "tops" },
-  { label: "Bottoms", count: 18, slug: "bottoms" },
-  { label: "Sets", count: 16, slug: "sets" },
-  { label: "Jackets", count: 8, slug: "jackets" },
-  { label: "Accessories", count: 10, slug: "accessories" },
-  { label: "Bespoke Collection", count: 6, slug: "bespoke" },
-];
+// Phase C2: the header's main nav is now built from the DB category tree
+// plus SiteSetting flags — see src/lib/navigation/get-navigation.ts. Fabric
+// Tech and Mix & Match are hidden by default (admin toggle in
+// /admin/site-controls) and are intentionally absent from that nav tree.
+// When enabled they still appear in the footer (see footerLinks below),
+// gated through isPageEnabled() at render time.
 
 export const colorFilters = [
   { name: "Lilac Purple", hex: "#C4B5FD" },
@@ -80,16 +68,17 @@ export const footerLinks = {
   shop: [
     { label: "All Scrubs", href: "/shop" },
     { label: "Collections", href: "/collections" },
+    { label: "For Hospitals", href: "/for-hospitals" },
+    { label: "School Uniforms", href: "/school-uniforms" },
+    { label: "Kids Wear", href: "/kids-wear" },
     { label: "Medical Scrubs", href: "/medical-scrubs" },
     { label: "Doctor Scrubs", href: "/doctor-scrubs" },
-    { label: "Hospital Uniforms", href: "/hospital-uniforms" },
-    { label: "Tops", href: "/scrub-tops" },
     { label: "Mix & Match", href: "/mix-and-match" },
   ],
   company: [
     { label: "About Us", href: "/about" },
+    { label: "Our Story", href: "/our-story" },
     { label: "Guides", href: "/guides" },
-    { label: "Institutional", href: "/institutional" },
     { label: "Fabric Technology", href: "/fabric-technology" },
     { label: "Blog", href: "/blog" },
     { label: "Contact", href: "/contact" },

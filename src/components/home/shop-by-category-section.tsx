@@ -1,52 +1,26 @@
-import { categoryMedia, scrubMedia } from "@/data/media/catalog";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { ArrowRight } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 
-interface CategoryTile {
+export interface ShopByCategoryTile {
   title: string;
   href: string;
-  image: string;
+  image: string | null;
   cta?: string;
 }
 
-const baseCategories: CategoryTile[] = [
-  {
-    title: "Tops",
-    href: "/shop?category=tops",
-    image: categoryMedia.tops,
-  },
-  {
-    title: "Bottoms",
-    href: "/shop?category=bottoms",
-    image: categoryMedia.bottoms,
-  },
-  {
-    title: "Sets",
-    href: "/shop?category=sets",
-    image: categoryMedia.sets,
-  },
-  {
-    title: "Bespoke",
-    href: "/shop/bespoke",
-    image: categoryMedia.bespoke,
-    cta: "Customize Now",
-  },
-];
-
-const stretchCollectionTile: CategoryTile = {
-  title: "Stretch Collection",
-  href: "/fabric-technology/4-way-stretch",
-  image: scrubMedia.zipLilac,
-};
-
-export function ShopByCategorySection({
-  fabricTechEnabled = false,
-}: {
-  fabricTechEnabled?: boolean;
-}) {
-  const categories = fabricTechEnabled ? [...baseCategories, stretchCollectionTile] : baseCategories;
+/**
+ * Phase C3: the new store home's "shop by category" tiles — built from
+ * the top-level DB category tree (For Hospitals / School Uniforms / Kids
+ * Wear) plus an optional Sale tile, instead of the old hardcoded
+ * tops/bottoms/sets/bespoke seed categories. `image` is null until Phase
+ * E3 (AI image generation) populates a MediaAsset for the category, in
+ * which case a neutral placeholder tile is shown instead of a broken
+ * <Image>.
+ */
+export function ShopByCategorySection({ categories }: { categories: ShopByCategoryTile[] }) {
+  if (categories.length === 0) return null;
 
   return (
     <section className="bg-background py-12 md:py-16">
@@ -54,24 +28,28 @@ export function ShopByCategorySection({
         <SectionHeading
           eyebrow="Browse"
           title="Shop by Category"
-          description="Explore performance-engineered medical apparel by category."
+          description="Everything you need for hospitals, schools, and everyday kids' wear."
         />
 
-        <div className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {categories.map((category) => (
             <Link
-              key={category.title}
+              key={category.href}
               href={category.href}
-              className="hover:border-brand hover:shadow-sm transition-colors group relative overflow-hidden rounded-3xl"
+              className="hover:border-brand hover:shadow-sm transition-colors group relative overflow-hidden rounded-3xl border border-border"
             >
-              <div className="relative aspect-[4/5]">
-                <Image
-                  src={category.image}
-                  alt={`${category.title} — DAAKYKA medical scrubs`}
-                  fill
-                  className="object-cover transition duration-500 group-hover:scale-105"
-                  sizes="(max-width: 768px) 100vw, 33vw"
-                />
+              <div className="relative aspect-[4/5] bg-lilac/30">
+                {category.image ? (
+                  <Image
+                    src={category.image}
+                    alt={`${category.title} — DAAKYKA Apparels`}
+                    fill
+                    className="object-cover transition duration-500 group-hover:scale-105"
+                    sizes="(max-width: 768px) 100vw, 25vw"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-lilac/60 to-lavender/60" />
+                )}
                 <div className="absolute inset-0 bg-gradient-to-t from-ink/70 via-ink/20 to-transparent" />
                 <div className="absolute bottom-0 left-0 right-0 p-6">
                   <h3 className="font-display text-2xl font-bold text-white">
