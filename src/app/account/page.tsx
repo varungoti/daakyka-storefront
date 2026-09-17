@@ -1,42 +1,85 @@
-import { Button } from "@/components/ui/button";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { AccountTabs } from "@/components/account/account-tabs";
+import { getCustomerSession } from "@/lib/customer-auth/session";
+import { db } from "@/lib/db";
 import type { Metadata } from "next";
-import Link from "next/link";
+import { redirect } from "next/navigation";
 
 export const metadata: Metadata = {
-  title: "Account",
-  description: "Sign in to your DAAKYKA Apparels account to track orders, wishlists, and reviews.",
+  title: "My Account",
+  description: "Manage your DAAKYKA Apparels orders, addresses, reviews, and profile.",
 };
 
-/**
- * Phase C2 stub: the header's account icon needs somewhere to link to
- * that doesn't 404. Full customer accounts (register/login/orders/
- * addresses/reviews) are Phase D1 — not built yet.
- */
-export default function AccountPage() {
+export default async function AccountPage() {
+  const session = await getCustomerSession();
+  if (!session) {
+    redirect("/account/login?returnTo=/account");
+  }
+
+  const [customer, addresses, reviews] = await Promise.all([
+    db.customer.findUnique({
+      where: { id: session.id },
+      select: { id: true, email: true, name: true, phone: true, emailVerifiedAt: true },
+    }),
+    db.customerAddress.findMany({
+      where: { customerId: session.id },
+      orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
+    }),
+    db.review.findMany({
+      where: { customerId: session.id },
+      orderBy: { createdAt: "desc" },
+      include: { product: { select: { name: true, slug: true } } },
+    }),
+  ]);
+
+  if (!customer) {
+    redirect("/account/login?returnTo=/account");
+  }
+
   return (
     <>
       <PageHeroBand innerClassName="max-w-2xl text-center">
         <SectionHeading
           eyebrow="Account"
-          title="Customer Accounts Are Coming Soon"
-          description="Order tracking, saved addresses, wishlists, and reviews will live here shortly. Until then, checkout works as a guest and our team is happy to help with anything else."
+          title={`Welcome back, ${customer.name.split(" ")[0]}`}
+          description="Manage your orders, addresses, reviews, and profile."
           align="center"
           titleAs="h1"
         />
       </PageHeroBand>
-      <PageContentSection className="text-center">
-        <div className="flex flex-wrap justify-center gap-4">
-          <Link href="/shop">
-            <Button size="lg">Continue Shopping</Button>
-          </Link>
-          <Link href="/contact">
-            <Button variant="outline" size="lg">
-              Contact Support
-            </Button>
-          </Link>
-        </div>
+      <PageContentSection>
+        <AccountTabs
+          customer={{
+            id: customer.id,
+            email: customer.email,
+            name: customer.name,
+            phone: customer.phone,
+            emailVerified: Boolean(customer.emailVerifiedAt),
+          }}
+          initialAddresses={addresses.map((address) => ({
+            id: address.id,
+            label: address.label,
+            line1: address.line1,
+            line2: address.line2,
+            city: address.city,
+            state: address.state,
+            postalCode: address.postalCode,
+            country: address.country,
+            phone: address.phone,
+            isDefault: address.isDefault,
+          }))}
+          initialReviews={reviews.map((review) => ({
+            id: review.id,
+            rating: review.rating,
+            title: review.title,
+            body: review.body,
+            status: review.status,
+            createdAt: review.createdAt.toISOString(),
+            productName: review.product.name,
+            productSlug: review.product.slug,
+          }))}
+        />
       </PageContentSection>
     </>
   );

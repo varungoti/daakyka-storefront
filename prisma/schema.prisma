@@ -632,6 +632,7 @@ model Customer {
   active           Boolean           @default(true)
   failedLoginCount Int               @default(0)
   lockedUntil      DateTime?
+  lastFailedLoginAt DateTime?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
   addresses        CustomerAddress[]
