@@ -13,10 +13,15 @@ export async function callArTryOnService(
   const baseUrl = getArTryOnServiceUrl();
   if (!baseUrl) return null;
 
+  const apiKey = process.env.AR_TRYON_API_KEY;
+
   try {
     const response = await fetch(`${baseUrl}/predict`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      },
       body: JSON.stringify({
         gender: payload.gender,
         top_garment_url: payload.topImageUrl,
@@ -26,7 +31,10 @@ export async function callArTryOnService(
         bottom_handle: payload.bottomHandle,
         color: payload.color,
       }),
-      signal: AbortSignal.timeout(120_000),
+      // Comfortably under the route's own maxDuration (vercel.json) so
+      // this route's catch block can still return a graceful fallback
+      // response instead of Vercel killing the function outright.
+      signal: AbortSignal.timeout(100_000),
     });
 
     if (!response.ok) return null;

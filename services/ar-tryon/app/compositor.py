@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import cv2
 import httpx
@@ -13,6 +14,35 @@ import numpy as np
 from PIL import Image
 
 _POSE: mp.solutions.pose.Pose | None = None
+
+# Kept in sync with storefront/src/lib/security/image-hosts.ts's
+# TRUSTED_IMAGE_HOSTS. The Next.js route already rejects an
+# untrusted topImageUrl/bottomImageUrl before it ever reaches this
+# service, but this service can also be called directly (it has no
+# auth requirement when AR_TRYON_API_KEY is unset), so it enforces the
+# same allowlist itself rather than trusting the caller.
+ALLOWED_IMAGE_HOSTS = {
+    "images.unsplash.com",
+    "images.pexels.com",
+    "daakyka.com",
+    "cdn.shopify.com",
+}
+
+MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+class UntrustedImageHostError(ValueError):
+    pass
+
+
+class ImageTooLargeError(ValueError):
+    pass
+
+
+def validate_image_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in ALLOWED_IMAGE_HOSTS:
+        raise UntrustedImageHostError(f"Image host is not allowed: {url}")
 
 
 def get_pose_detector() -> mp.solutions.pose.Pose:
@@ -62,11 +92,26 @@ class TorsoBounds:
         return float(np.linalg.norm(np.array(self.shoulders_center) - np.array(self.hips_center)))
 
 
-def fetch_image_bgr(url: str, timeout: float = 15.0) -> np.ndarray:
-    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-        response = client.get(url)
-        response.raise_for_status()
-        data = np.frombuffer(response.content, dtype=np.uint8)
+def fetch_image_bgr(url: str, timeout: float = 10.0) -> np.ndarray:
+    validate_image_url(url)
+    # follow_redirects=False: a redirect to an untrusted or internal host
+    # would otherwise bypass validate_image_url entirely.
+    with httpx.Client(timeout=timeout, follow_redirects=False) as client:
+        with client.stream("GET", url) as response:
+            response.raise_for_status()
+            content_length = response.headers.get("content-length")
+            if content_length is not None and int(content_length) > MAX_IMAGE_BYTES:
+                raise ImageTooLargeError(f"Image exceeds {MAX_IMAGE_BYTES} bytes: {url}")
+
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in response.iter_bytes():
+                total += len(chunk)
+                if total > MAX_IMAGE_BYTES:
+                    raise ImageTooLargeError(f"Image exceeds {MAX_IMAGE_BYTES} bytes: {url}")
+                chunks.append(chunk)
+
+        data = np.frombuffer(b"".join(chunks), dtype=np.uint8)
         image = cv2.imdecode(data, cv2.IMREAD_COLOR)
         if image is None:
             raise ValueError(f"Could not decode image from {url}")

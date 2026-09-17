@@ -15,7 +15,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 
-ENV AR_TRYON_PORT=8080
+RUN useradd --create-home --uid 1000 appuser
+USER appuser
+
 EXPOSE 8080
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Railway/Render inject $PORT at runtime; fall back to 8080 for plain
+# `docker compose up` locally. Needs a shell for the variable
+# substitution, so this can't be the exec-form JSON array.
+CMD sh -c 'uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}'

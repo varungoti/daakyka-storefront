@@ -23,11 +23,16 @@ Keep the script running — the Cloudflare quick tunnel has no uptime guarantee.
    railway domain
    ```
 3. Copy the public URL (e.g. `https://ar-tryon-production.up.railway.app`)
-4. In **Vercel → storefront → Environment Variables**:
+4. Set an API key on the Railway service too (`railway variables set AR_TRYON_API_KEY=...`)
+   — once this service has a public URL, anyone who finds it can burn
+   your compute without one; `docker compose up -d ar-tryon` locally
+   stays unauthenticated since it's never set there.
+5. In **Vercel → storefront → Environment Variables**:
    ```env
    AR_TRYON_SERVICE_URL=https://YOUR-RAILWAY-URL
+   AR_TRYON_API_KEY=<same value as step 4>
    ```
-5. Redeploy storefront (or wait for next deploy)
+6. Redeploy storefront (or wait for next deploy)
 
 ### GitHub Actions (optional)
 
@@ -38,7 +43,10 @@ Add `RAILWAY_TOKEN` to GitHub repo secrets. Pushes to `services/ar-tryon/**` tri
 1. [Render Dashboard](https://dashboard.render.com) → **New** → **Blueprint**
 2. Connect `varungoti/daakyka-storefront`
 3. Set root to `services/ar-tryon` (uses `render.yaml`)
-4. Deploy and copy the service URL into Vercel as `AR_TRYON_SERVICE_URL`
+4. Set `AR_TRYON_API_KEY` in the Render service's environment (marked
+   `sync: false` in `render.yaml`, so Render will prompt for it)
+5. Deploy and copy the service URL into Vercel as `AR_TRYON_SERVICE_URL`,
+   plus the same `AR_TRYON_API_KEY`
 
 ## Option D — Local Docker (dev)
 
@@ -60,6 +68,15 @@ Studio: `/mix-and-match/studio` — preview should return `mode: "ar-tryon"` in 
 
 ## Timeouts
 
-- Storefront proxy: **120s** (`service-client.ts`)
+- Storefront proxy: **100s** (`service-client.ts`) — kept under the
+  Vercel function's own limit so a slow/hung AR service still gets a
+  graceful fallback response instead of Vercel killing the function
 - Vercel function: **120s** (`vercel.json` → `/api/outfit/try-on`)
 - Railway healthcheck: **120s** (`railway.toml`)
+
+## Image URL allowlist
+
+The service only fetches `top_garment_url`/`bottom_garment_url`/`avatar_url`
+from hosts in `ALLOWED_IMAGE_HOSTS` (`app/compositor.py`), kept in sync with
+`storefront/src/lib/security/image-hosts.ts`. Add a host to both places if a
+new product image CDN is introduced.

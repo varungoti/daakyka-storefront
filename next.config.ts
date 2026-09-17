@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 import { fabricSeoRedirects, seoLandingPages } from "./src/data/seo-landing-pages";
 import { validateEnv } from "./src/lib/env";
+import { TRUSTED_IMAGE_HOSTS } from "./src/lib/security/image-hosts";
 
 validateEnv();
 
@@ -29,24 +30,10 @@ const nextConfig: NextConfig = {
   images: {
     formats: ["image/webp"],
     minimumCacheTTL: 60 * 60 * 24 * 30,
-    remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "images.unsplash.com",
-      },
-      {
-        protocol: "https",
-        hostname: "images.pexels.com",
-      },
-      {
-        protocol: "https",
-        hostname: "daakyka.com",
-      },
-      {
-        protocol: "https",
-        hostname: "cdn.shopify.com",
-      },
-    ],
+    remotePatterns: TRUSTED_IMAGE_HOSTS.map((hostname) => ({
+      protocol: "https" as const,
+      hostname,
+    })),
   },
   async redirects() {
     return [
