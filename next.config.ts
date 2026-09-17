@@ -5,6 +5,33 @@ import { TRUSTED_IMAGE_HOSTS } from "./src/lib/security/image-hosts";
 
 validateEnv();
 
+// A pragmatic CSP, not the fully strict nonce-based one: this app
+// relies on inline style="" attributes throughout (dynamic tint
+// colors, etc.) and next/font injects an inline <style> block for
+// @font-face rules, so style-src needs 'unsafe-inline'. script-src
+// also allows 'unsafe-inline' rather than a per-request nonce, since
+// Next's App Router streams inline hydration scripts
+// (self.__next_f.push(...)) that a strict nonce-based CSP would need
+// threaded through proxy.ts on every route (not just /admin) to avoid
+// breaking hydration — a larger, riskier change tracked separately.
+// This still blocks the most common injection payloads: loading a
+// remote <script src="https://evil.example">, framing the site
+// (frame-ancestors, redundant with X-Frame-Options for older
+// browsers), <object>/<embed>, and form submissions to another origin.
+const imageSources = TRUSTED_IMAGE_HOSTS.map((host) => `https://${host}`).join(" ");
+const contentSecurityPolicy = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline'",
+  `img-src 'self' data: blob: ${imageSources}`,
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "object-src 'none'",
+].join("; ");
+
 const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -14,6 +41,7 @@ const securityHeaders = [
     value: "camera=(), microphone=(), geolocation=()",
   },
   { key: "X-DNS-Prefetch-Control", value: "on" },
+  { key: "Content-Security-Policy", value: contentSecurityPolicy },
 ];
 
 if (process.env.VERCEL_ENV === "production") {
