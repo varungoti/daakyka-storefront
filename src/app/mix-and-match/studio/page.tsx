@@ -26,7 +26,7 @@ export default async function MixMatchStudioPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.22em] text-brand">Beta · Noindex</p>
-            <h1 className="mt-2 font-display text-4xl font-extrabold text-ink md:text-5xl">
+            <h1 className="mt-2 font-display text-4xl font-bold text-ink md:text-5xl">
               Virtual Try-On Studio
             </h1>
             <p className="mt-3 max-w-2xl text-muted">

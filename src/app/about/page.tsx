@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 export default function AboutPage() {
   return (
     <>
-      <section className="border-b border-border bg-section-page-header py-20">
+      <section className="border-b border-border bg-alt-surface py-20">
         <div className="mx-auto max-w-4xl px-4 text-center lg:px-8">
           <SectionHeading
             eyebrow="Our Story"
@@ -41,7 +41,7 @@ export default function AboutPage() {
       </section>
 
       <section className="py-20">
-        <div className="mx-auto max-w-7xl px-4 lg:px-8">
+        <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
           <SectionHeading
             eyebrow="Leadership"
             title="Meet the Founders"
@@ -81,8 +81,8 @@ export default function AboutPage() {
         </div>
       </section>
 
-      <section className="border-y border-border bg-section-alt py-20">
-        <div className="mx-auto max-w-7xl px-4 lg:px-8">
+      <section className="border-y border-border bg-alt-surface py-20">
+        <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
           <SectionHeading
             eyebrow="Why DAAKYKA"
             title="What Sets Us Apart"
@@ -106,7 +106,7 @@ export default function AboutPage() {
       <ClientLogosStrip />
 
       <section className="py-20">
-        <div className="mx-auto max-w-7xl px-4 lg:px-8">
+        <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
           <div className="grid items-center gap-10 lg:grid-cols-2">
             <div className="relative aspect-[4/3] overflow-hidden rounded-[2rem] border border-border">
               <Image

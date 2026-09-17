@@ -61,10 +61,10 @@ export function SeoLandingLayout({
         </div>
       </nav>
 
-      <section className="bg-section-page-header py-16 md:py-20">
+      <section className="bg-alt-surface py-16 md:py-20">
         <div className="mx-auto max-w-4xl px-4 text-center lg:px-8">
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">DAAKYKA Guides</p>
-          <h1 className="mt-3 font-display text-4xl font-extrabold text-ink md:text-5xl">{page.h1}</h1>
+          <h1 className="mt-3 font-display text-4xl font-bold text-ink md:text-5xl">{page.h1}</h1>
           <p className="mx-auto mt-5 max-w-2xl text-base leading-relaxed text-muted">{page.intro}</p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <Link href={page.shopHref}>
@@ -102,7 +102,7 @@ export function SeoLandingLayout({
       </section>
 
       {page.buyingGuide && page.buyingGuide.length > 0 && (
-        <section className="border-y border-border bg-section-alt py-16">
+        <section className="border-y border-border bg-alt-surface py-16">
           <div className="mx-auto max-w-4xl px-4 lg:px-8">
             <h2 className="font-display text-2xl font-bold text-ink">Buying Guide</h2>
             <ol className="mt-6 space-y-4">
@@ -209,7 +209,7 @@ export function SeoLandingLayout({
         </section>
       )}
 
-      <section className="border-t border-border bg-section-alt py-16">
+      <section className="border-t border-border bg-alt-surface py-16">
         <div className="mx-auto max-w-3xl px-4 lg:px-8">
           <h2 className="font-display text-2xl font-bold text-ink">Frequently Asked Questions</h2>
           <dl className="mt-8 space-y-6">

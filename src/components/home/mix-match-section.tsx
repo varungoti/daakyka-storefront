@@ -38,20 +38,20 @@ export function MixMatchSection() {
   };
 
   return (
-    <section className="relative overflow-hidden bg-section-mix py-20 md:py-24">
+    <section className="relative overflow-hidden bg-alt-surface py-12 md:py-16">
       <div className="pointer-events-none absolute inset-0">
         <div className="hero-ring animate-breathe absolute -left-20 top-20 h-72 w-72 rounded-full opacity-60" />
         <div className="hero-ring animate-breathe absolute -right-16 bottom-10 h-80 w-80 rounded-full opacity-50 [animation-delay:1.5s]" />
       </div>
 
-      <div className="relative mx-auto max-w-7xl px-4 lg:px-8">
+      <div className="relative mx-auto max-w-[1320px] px-4 lg:px-8">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,0.88fr)_minmax(0,1fr)_minmax(0,1.05fr)] lg:items-start lg:gap-8">
           <div className="space-y-6 lg:sticky lg:top-28">
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.22em] text-brand">
                 Mix & Match 3D Visualizer
               </p>
-              <h2 className="mt-3 font-display text-3xl font-extrabold leading-tight text-ink md:text-4xl">
+              <h2 className="mt-3 font-display text-3xl font-semibold leading-tight text-ink md:text-4xl">
                 Mix, Match & Make It Yours
               </h2>
               <p className="mt-3 text-base leading-relaxed text-muted">

@@ -73,7 +73,7 @@ export function ShopFiltersPanel({
               className={cn(
                 "flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm transition",
                 !filters.category
-                  ? "neon-selected bg-brand/10 font-semibold text-brand"
+                  ? "bg-brand/10 font-semibold text-brand"
                   : "text-ink hover:bg-lilac/40",
               )}
             >
@@ -89,7 +89,7 @@ export function ShopFiltersPanel({
                 className={cn(
                   "flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm transition",
                   filters.category === category.slug
-                    ? "neon-selected bg-brand/10 font-semibold text-brand"
+                    ? "bg-brand/10 font-semibold text-brand"
                     : "text-ink hover:bg-lilac/40",
                 )}
               >
@@ -112,7 +112,7 @@ export function ShopFiltersPanel({
               className={cn(
                 "h-8 w-8 rounded-full border-2 transition",
                 filters.colors.includes(color.name)
-                  ? "neon-selected border-brand scale-110"
+                  ? "border-brand ring-2 ring-offset-2 ring-brand/40 scale-110"
                   : "border-transparent hover:scale-105",
               )}
               style={{ backgroundColor: color.hex }}
@@ -131,7 +131,7 @@ export function ShopFiltersPanel({
               className={cn(
                 "rounded-lg border px-2 py-2 text-xs font-semibold transition",
                 filters.sizes.includes(size)
-                  ? "neon-selected border-brand bg-brand/10 text-brand"
+                  ? "border-brand bg-brand/10 text-brand"
                   : "border-border text-ink hover:border-brand/40",
               )}
             >
@@ -189,7 +189,7 @@ function FilterBlock({
   children: React.ReactNode;
 }) {
   return (
-    <div className="neon-border-hover rounded-2xl border border-border bg-surface-elevated p-5">
+    <div className="hover:border-brand hover:shadow-sm transition-colors rounded-2xl border border-border bg-surface-elevated p-5">
       <p className="mb-4 text-xs font-bold uppercase tracking-[0.15em] text-muted">
         {title}
       </p>

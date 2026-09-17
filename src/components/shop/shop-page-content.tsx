@@ -103,8 +103,8 @@ export function ShopPageContent({
 
   return (
     <>
-      <section className="border-b border-border bg-section-page-header py-10 md:py-14">
-        <div className="mx-auto max-w-7xl px-4 lg:px-8">
+      <section className="border-b border-border bg-alt-surface py-10 md:py-14">
+        <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
           <nav className="mb-6 text-sm text-muted">
             <Link href="/" className="hover:text-brand">
               Home
@@ -114,7 +114,7 @@ export function ShopPageContent({
           </nav>
           <div className="max-w-2xl">
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">Browse</p>
-            <h1 className="mt-2 font-display text-4xl font-extrabold tracking-tight text-ink md:text-5xl">
+            <h1 className="mt-2 font-display text-4xl font-bold tracking-tight text-ink md:text-5xl">
               Shop All Scrubs
             </h1>
             <p className="mt-3 text-base leading-relaxed text-muted">
@@ -126,7 +126,7 @@ export function ShopPageContent({
       </section>
 
       <section className="py-12 md:py-14">
-        <div className="mx-auto grid max-w-7xl gap-10 px-4 lg:grid-cols-[280px_1fr] lg:px-8">
+        <div className="mx-auto grid max-w-[1320px] gap-10 px-4 lg:grid-cols-[280px_1fr] lg:px-8">
           <div className="hidden lg:block">
             <ShopFiltersPanel
               filters={filters}

@@ -20,7 +20,7 @@ export function ProductCard({ product, className }: ProductCardProps) {
   return (
     <article
       className={cn(
-        "group neon-border-hover product-card-surface relative overflow-hidden rounded-3xl border border-border",
+        "group hover:border-brand hover:shadow-sm transition-colors product-card-surface relative overflow-hidden rounded-3xl border border-border",
         className,
       )}
     >

@@ -12,7 +12,7 @@ export function ShopFeatureCards({
 }) {
   return (
     <section className="border-t border-border bg-surface py-20">
-      <div className="mx-auto grid max-w-7xl gap-6 px-4 lg:grid-cols-2 lg:px-8">
+      <div className="mx-auto grid max-w-[1320px] gap-6 px-4 lg:grid-cols-2 lg:px-8">
         {fabricTechEnabled ? (
           <FeatureCard
             eyebrow="Fabric Science"

@@ -30,8 +30,8 @@ const iconMap = {
 export default function InstitutionalPage() {
   return (
     <>
-      <section className="bg-section-page-header py-20">
-        <div className="mx-auto grid max-w-7xl items-center gap-10 px-4 lg:grid-cols-2 lg:px-8">
+      <section className="bg-alt-surface py-20">
+        <div className="mx-auto grid max-w-[1320px] items-center gap-10 px-4 lg:grid-cols-2 lg:px-8">
           <div>
             <SectionHeading
               eyebrow="Institutional Apparel"
@@ -53,7 +53,7 @@ export default function InstitutionalPage() {
       </section>
 
       <section className="pb-12">
-        <div className="mx-auto max-w-7xl px-4 lg:px-8">
+        <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
           <div className="grid gap-6 md:grid-cols-2">
             {brand.specializations.map((item) => {
               const Icon = iconMap[item.icon as keyof typeof iconMap] ?? Building2;
@@ -86,7 +86,7 @@ export default function InstitutionalPage() {
       />
 
       <section className="py-20">
-        <div className="mx-auto max-w-7xl px-4 lg:px-8">
+        <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
           <div className="grid gap-10 lg:grid-cols-2">
             <div>
               <SectionHeading

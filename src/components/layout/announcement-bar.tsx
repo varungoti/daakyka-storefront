@@ -6,8 +6,8 @@ export function AnnouncementBar({ messages }: { messages?: string[] }) {
   const items = messages && messages.length > 0 ? messages : announcementItems;
 
   return (
-    <div className="bg-gradient-to-r from-brand to-brand-violet py-2.5 text-center text-xs font-medium tracking-wide text-white md:text-sm">
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-center gap-x-4 gap-y-1 px-4">
+    <div className="bg-brand-violet py-2.5 text-center text-xs font-medium tracking-wide text-white md:text-sm">
+      <div className="mx-auto flex max-w-[1320px] flex-wrap items-center justify-center gap-x-4 gap-y-1 px-4">
         {items.map((item, index) => (
           <span key={item} className="flex items-center gap-4">
             {item}

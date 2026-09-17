@@ -59,7 +59,7 @@ export function MixMatchBuilder({ products }: MixMatchBuilderProps) {
             <p className="text-xs font-bold uppercase tracking-[0.22em] text-brand">
               Full Configurator
             </p>
-            <h1 className="mt-3 font-display text-3xl font-extrabold leading-tight text-ink md:text-4xl">
+            <h1 className="mt-3 font-display text-3xl font-bold leading-tight text-ink md:text-4xl">
               Mix, Match & Make It Yours
             </h1>
             <p className="mt-3 text-base leading-relaxed text-muted">

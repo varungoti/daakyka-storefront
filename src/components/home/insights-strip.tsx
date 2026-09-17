@@ -15,9 +15,9 @@ export async function InsightsStrip({
   const fourWayStretchHref = fabricTechEnabled ? "/fabric-technology/4-way-stretch" : "/shop";
 
   return (
-    <section className="border-y border-border bg-section-alt py-16">
-      <div className="mx-auto grid max-w-7xl gap-6 px-4 lg:grid-cols-3 lg:px-8">
-        <article className="neon-border-hover overflow-hidden rounded-[2rem] border border-border bg-surface-muted">
+    <section className="border-y border-border bg-alt-surface py-12 md:py-16">
+      <div className="mx-auto grid max-w-[1320px] gap-6 px-4 lg:grid-cols-3 lg:px-8">
+        <article className="hover:border-brand hover:shadow-sm transition-colors overflow-hidden rounded-[2rem] border border-border bg-surface-muted">
           <div className="relative h-48">
             <Image
               src={marketingMedia.insightsFabric}
@@ -44,7 +44,7 @@ export async function InsightsStrip({
           </div>
         </article>
 
-        <article className="neon-border-hover overflow-hidden rounded-[2rem] border border-border bg-surface-muted">
+        <article className="hover:border-brand hover:shadow-sm transition-colors overflow-hidden rounded-[2rem] border border-border bg-surface-muted">
           <div className="relative h-48">
             <Image
               src={marketingMedia.insightsInstitutional}
@@ -71,7 +71,7 @@ export async function InsightsStrip({
           </div>
         </article>
 
-        <article className="neon-border-hover rounded-[2rem] border border-border bg-surface p-6">
+        <article className="hover:border-brand hover:shadow-sm transition-colors rounded-[2rem] border border-border bg-surface p-6">
           <p className="text-xs font-bold uppercase tracking-wide text-brand">From Our Journal</p>
           <h3 className="mt-2 font-display text-xl font-bold text-ink">Latest From The Blog</h3>
           <ul className="mt-5 space-y-4">

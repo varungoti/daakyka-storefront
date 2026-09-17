@@ -21,8 +21,8 @@ export function TrustBar() {
   });
 
   return (
-    <section className="border-y border-border bg-section-alt py-8">
-      <div className="mx-auto grid max-w-7xl grid-cols-2 gap-6 px-4 md:grid-cols-5 lg:px-8">
+    <section className="border-y border-border bg-alt-surface py-8">
+      <div className="mx-auto grid max-w-[1320px] grid-cols-2 gap-6 px-4 md:grid-cols-5 lg:px-8">
         {trustItems.map((item, index) => {
           const Icon = icons[index];
           return (

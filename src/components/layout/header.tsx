@@ -2,7 +2,6 @@
 
 import { useCart } from "@/context/cart-provider";
 import { useWishlist } from "@/context/wishlist-provider";
-import { useTheme } from "@/context/theme-provider";
 import { SearchDialog } from "@/components/search/search-dialog";
 import { CurrencyToggle } from "@/components/layout/currency-toggle";
 import { mainNav } from "@/data/navigation";
@@ -10,10 +9,8 @@ import { cn } from "@/lib/utils";
 import {
   Heart,
   Menu,
-  Moon,
   Search,
   ShoppingBag,
-  Sun,
   User,
   X,
 } from "lucide-react";
@@ -23,7 +20,6 @@ import { useEffect, useState } from "react";
 
 export function Header() {
   const pathname = usePathname();
-  const { theme, toggleTheme } = useTheme();
   const { cart, openCart } = useCart();
   const { count: wishlistCount, openWishlist } = useWishlist();
   const [scrolled, setScrolled] = useState(false);
@@ -65,10 +61,10 @@ export function Header() {
             : "border-transparent bg-background/80 backdrop-blur-md",
         )}
       >
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 lg:px-8">
+        <div className="mx-auto flex max-w-[1320px] items-center justify-between gap-4 px-4 py-4 lg:px-8">
           <Link
             href="/"
-            className="font-display text-lg font-extrabold tracking-tight text-ink md:text-xl"
+            className="font-display text-lg font-bold tracking-tight text-ink md:text-xl"
           >
             DAAKYKA
             <span className="ml-1 font-semibold text-brand">APPARELS</span>
@@ -118,15 +114,6 @@ export function Header() {
             </div>
             <button
               type="button"
-              onClick={toggleTheme}
-              className="hidden items-center gap-2 rounded-full border border-border bg-surface-muted px-3 py-2 text-xs font-semibold text-ink transition hover:border-brand lg:flex"
-              aria-label="Toggle theme"
-            >
-              {theme === "light" ? <Sun size={14} /> : <Moon size={14} />}
-              {theme === "light" ? "Light" : "Dark"}
-            </button>
-            <button
-              type="button"
               className="rounded-full p-2.5 text-ink lg:hidden"
               aria-label={mobileOpen ? "Close menu" : "Open menu"}
               onClick={() => setMobileOpen((open) => !open)}
@@ -172,14 +159,6 @@ export function Header() {
             </nav>
             <div className="space-y-3 border-t border-border p-4">
               <CurrencyToggle />
-              <button
-                type="button"
-                onClick={toggleTheme}
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-border px-4 py-3 text-sm font-semibold"
-              >
-                {theme === "light" ? <Sun size={16} /> : <Moon size={16} />}
-                {theme === "light" ? "Light Mode" : "Dark Mode"}
-              </button>
             </div>
           </div>
         </div>

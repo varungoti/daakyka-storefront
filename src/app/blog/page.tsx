@@ -14,8 +14,8 @@ export default async function BlogPage() {
 
   return (
     <>
-      <section className="border-b border-border bg-section-page-header py-16 md:py-20">
-        <div className="mx-auto max-w-7xl px-4 text-center lg:px-8">
+      <section className="border-b border-border bg-alt-surface py-16 md:py-20">
+        <div className="mx-auto max-w-[1320px] px-4 text-center lg:px-8">
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">From Our Journal</p>
           <h1 className="mt-3 font-display text-4xl font-bold text-ink md:text-5xl">
             Style, Fit & Fabric Insights
@@ -27,12 +27,12 @@ export default async function BlogPage() {
       </section>
 
       <section className="py-16">
-        <div className="mx-auto grid max-w-7xl gap-8 px-4 md:grid-cols-2 lg:grid-cols-3 lg:px-8">
+        <div className="mx-auto grid max-w-[1320px] gap-8 px-4 md:grid-cols-2 lg:grid-cols-3 lg:px-8">
           {blogPosts.map((post) => (
             <Link
               key={post.slug}
               href={`/blog/${post.slug}`}
-              className="neon-border-hover overflow-hidden rounded-[2rem] border border-border bg-surface-elevated"
+              className="hover:border-brand hover:shadow-sm transition-colors overflow-hidden rounded-[2rem] border border-border bg-surface-elevated"
             >
               <div className="relative aspect-[16/10]">
                 <Image src={post.image} alt={post.title} fill className="object-cover" sizes="400px" />

@@ -12,8 +12,8 @@ export const metadata: Metadata = {
 export default function BulkOrdersPage() {
   return (
     <>
-      <section className="border-b border-border bg-section-page-header py-16 md:py-20">
-        <div className="mx-auto max-w-7xl px-4 lg:px-8">
+      <section className="border-b border-border bg-alt-surface py-16 md:py-20">
+        <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
           <SectionHeading
             eyebrow="B2B"
             title="Uniforms for Healthcare Teams"
@@ -29,7 +29,7 @@ export default function BulkOrdersPage() {
       </section>
 
       <section className="py-16">
-        <div className="mx-auto grid max-w-7xl gap-10 px-4 lg:grid-cols-[1fr_420px] lg:px-8">
+        <div className="mx-auto grid max-w-[1320px] gap-10 px-4 lg:grid-cols-[1fr_420px] lg:px-8">
           <div>
             <h2 className="font-display text-2xl font-bold text-ink">Request a Bulk Quote</h2>
             <p className="mt-2 text-muted">

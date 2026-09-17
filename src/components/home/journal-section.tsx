@@ -8,8 +8,8 @@ export async function JournalSection() {
   const posts = (await getPublishedBlogPosts()).slice(0, 3);
 
   return (
-    <section className="bg-section-alt py-20 md:py-24">
-      <div className="mx-auto max-w-7xl px-4 lg:px-8">
+    <section className="bg-alt-surface py-12 md:py-16">
+      <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
         <div className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <SectionHeading
             eyebrow="From Our Journal"
@@ -30,7 +30,7 @@ export async function JournalSection() {
             <Link
               key={post.slug}
               href={`/blog/${post.slug}`}
-              className="neon-border-hover overflow-hidden rounded-[2rem] border border-border bg-surface"
+              className="hover:border-brand hover:shadow-sm transition-colors overflow-hidden rounded-[2rem] border border-border bg-surface"
             >
               <div className="relative aspect-[16/10]">
                 <Image src={post.image} alt={post.title} fill className="object-cover" sizes="400px" />

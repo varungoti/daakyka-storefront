@@ -54,7 +54,7 @@ export function CheckoutPageContent() {
           ))}
         </section>
 
-        <aside className="neon-border-hover h-fit rounded-3xl border border-border bg-surface-elevated p-6">
+        <aside className="hover:border-brand hover:shadow-sm transition-colors h-fit rounded-3xl border border-border bg-surface-elevated p-6">
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted">Subtotal</span>
             <span className="font-display text-2xl font-bold text-ink">{formatPrice(cart.subtotal)}</span>

@@ -46,7 +46,7 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
       <PageContentSection>
         <div className="grid gap-10 lg:grid-cols-[1fr_1.2fr]">
           <div className="space-y-6">
-            <article className="neon-border-hover rounded-3xl border border-border bg-surface-elevated p-6">
+            <article className="hover:border-brand hover:shadow-sm transition-colors rounded-3xl border border-border bg-surface-elevated p-6">
               <div className="flex items-start gap-3">
                 <MapPin className="mt-1 text-brand" size={22} />
                 <div>
@@ -59,7 +59,7 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
               </div>
             </article>
 
-            <article className="neon-border-hover rounded-3xl border border-border bg-surface-elevated p-6">
+            <article className="hover:border-brand hover:shadow-sm transition-colors rounded-3xl border border-border bg-surface-elevated p-6">
               <div className="flex items-start gap-3">
                 <Clock className="mt-1 text-brand" size={22} />
                 <div>
@@ -72,7 +72,7 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
               </div>
             </article>
 
-            <article className="neon-border-hover rounded-3xl border border-border bg-surface-elevated p-6">
+            <article className="hover:border-brand hover:shadow-sm transition-colors rounded-3xl border border-border bg-surface-elevated p-6">
               <div className="flex items-start gap-3">
                 <MessageCircle className="mt-1 text-trust" size={22} />
                 <div>

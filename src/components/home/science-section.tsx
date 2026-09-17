@@ -35,8 +35,8 @@ const scienceCards = [
 
 export function ScienceSection({ fabricTechEnabled = false }: { fabricTechEnabled?: boolean }) {
   return (
-    <section className="bg-section-alt py-20 md:py-24">
-      <div className="mx-auto max-w-7xl px-4 lg:px-8">
+    <section className="bg-alt-surface py-12 md:py-16">
+      <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
         <SectionHeading
           eyebrow="Fabric Technology"
           title="The Science Behind The Scrub"
@@ -49,7 +49,7 @@ export function ScienceSection({ fabricTechEnabled = false }: { fabricTechEnable
           {scienceCards.map((card) => (
             <article
               key={card.title}
-              className="neon-border-hover rounded-3xl border border-border bg-surface-elevated p-6"
+              className="hover:border-brand hover:shadow-sm transition-colors rounded-3xl border border-border bg-surface-elevated p-6"
             >
               <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-lilac/60">
                 <card.icon className="text-brand" size={26} />

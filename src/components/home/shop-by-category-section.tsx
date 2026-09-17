@@ -49,8 +49,8 @@ export function ShopByCategorySection({
   const categories = fabricTechEnabled ? [...baseCategories, stretchCollectionTile] : baseCategories;
 
   return (
-    <section className="bg-background py-20 md:py-24">
-      <div className="mx-auto max-w-7xl px-4 lg:px-8">
+    <section className="bg-background py-12 md:py-16">
+      <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
         <SectionHeading
           eyebrow="Browse"
           title="Shop by Category"
@@ -62,7 +62,7 @@ export function ShopByCategorySection({
             <Link
               key={category.title}
               href={category.href}
-              className="neon-border-hover group relative overflow-hidden rounded-3xl"
+              className="hover:border-brand hover:shadow-sm transition-colors group relative overflow-hidden rounded-3xl"
             >
               <div className="relative aspect-[4/5]">
                 <Image

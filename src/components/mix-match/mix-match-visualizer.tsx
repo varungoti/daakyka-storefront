@@ -68,7 +68,7 @@ export function MixMatchVisualizer({
   return (
     <div className={cn("relative", className)}>
       <div className="configurator-stage relative overflow-hidden rounded-[2rem] px-6 pb-8 pt-10">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_85%,rgba(91,46,255,0.35),transparent_55%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_85%,rgba(138,52,125,0.35),transparent_55%)]" />
         <div className="pointer-events-none absolute left-1/2 top-[62%] h-40 w-40 -translate-x-1/2 rounded-full bg-brand/20 blur-3xl" />
         <div className="pointer-events-none absolute left-1/2 top-[38%] h-56 w-56 -translate-x-1/2 rounded-full border border-brand/15 opacity-60" />
         <div className="pointer-events-none absolute left-1/2 top-[44%] h-72 w-72 -translate-x-1/2 rounded-full border border-brand/10 opacity-40" />

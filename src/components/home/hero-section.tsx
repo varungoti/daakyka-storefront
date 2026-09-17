@@ -17,12 +17,12 @@ interface HeroSectionProps {
 
 export function HeroSection({ content, trustStats, mixMatchEnabled = false }: HeroSectionProps) {
   return (
-    <section className="relative overflow-hidden bg-section-hero">
+    <section className="relative overflow-hidden bg-background">
       <div className="pointer-events-none absolute inset-0">
         <div className="hero-ring animate-breathe absolute left-[8%] top-[12%] h-[340px] w-[340px] rounded-full" />
         <div className="hero-ring animate-breathe absolute right-[12%] top-[18%] h-[420px] w-[420px] rounded-full [animation-delay:2s]" />
         <div className="medical-cross-field absolute inset-0 opacity-[0.35]" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(91,46,255,0.1),transparent_32%),radial-gradient(circle_at_85%_10%,rgba(124,58,237,0.08),transparent_28%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(138,52,125,0.1),transparent_32%),radial-gradient(circle_at_85%_10%,rgba(93,0,163,0.08),transparent_28%)]" />
       </div>
 
       <div className="pointer-events-none absolute left-4 top-1/2 hidden -translate-y-1/2 lg:block xl:left-8">
@@ -32,14 +32,14 @@ export function HeroSection({ content, trustStats, mixMatchEnabled = false }: He
         <div className="mx-auto mt-4 h-16 w-px bg-gradient-to-b from-brand/60 to-transparent" />
       </div>
 
-      <div className="relative mx-auto grid max-w-7xl items-center gap-10 px-4 py-14 lg:grid-cols-[1.05fr_0.95fr_0.55fr] lg:gap-8 lg:px-8 lg:py-20 xl:py-24">
+      <div className="relative mx-auto grid max-w-[1320px] items-center gap-10 px-4 py-12 lg:grid-cols-[1.05fr_0.95fr_0.55fr] lg:gap-8 lg:px-8 md:py-16">
         <div className="animate-fade-up space-y-7 lg:pr-4">
           <span className="inline-flex rounded-full bg-brand px-4 py-1.5 text-[11px] font-bold uppercase tracking-[0.2em] text-white">
             {content.eyebrow}
           </span>
 
           <div className="space-y-4">
-            <h1 className="font-display text-[2.75rem] font-extrabold leading-[1.02] tracking-tight text-ink md:text-6xl xl:text-[3.75rem]">
+            <h1 className="font-display text-[2.75rem] font-bold leading-[1.02] tracking-tight text-ink md:text-6xl xl:text-[3.75rem]">
               {content.headline.includes("Meticulously Crafted") ? (
                 <>
                   Expertly Designed,{" "}
@@ -104,9 +104,9 @@ export function HeroSection({ content, trustStats, mixMatchEnabled = false }: He
           <div className="absolute inset-x-6 top-6 bottom-6 rounded-full bg-brand/10 blur-3xl" />
           <div className="relative mx-auto aspect-[4/5] max-w-lg">
             <div className="absolute bottom-[8%] left-1/2 h-8 w-[72%] -translate-x-1/2 rounded-[100%] bg-brand/25 blur-2xl" />
-            <div className="absolute bottom-[6%] left-1/2 h-3 w-[68%] -translate-x-1/2 rounded-full border border-brand/20 bg-[linear-gradient(180deg,rgba(91,46,255,0.35),rgba(91,46,255,0.05))] shadow-[0_0_40px_rgba(91,46,255,0.35)]" />
+            <div className="absolute bottom-[6%] left-1/2 h-3 w-[68%] -translate-x-1/2 rounded-full border border-brand/20 bg-[linear-gradient(180deg,rgba(138,52,125,0.35),rgba(138,52,125,0.05))] shadow-[0_0_40px_rgba(138,52,125,0.35)]" />
             <div className="relative flex h-full items-end justify-center gap-1 px-4 pb-[10%] md:gap-3">
-              <div className="relative h-[88%] w-[46%] overflow-hidden rounded-[1.5rem] hero-model-frame shadow-[0_20px_50px_rgba(91,46,255,0.15)]">
+              <div className="relative h-[88%] w-[46%] overflow-hidden rounded-[1.5rem] hero-model-frame shadow-[0_20px_50px_rgba(138,52,125,0.15)]">
                 <Image
                   src={marketingMedia.heroSecondary}
                   alt="Healthcare professional in DAAKYKA scrubs"
@@ -115,7 +115,7 @@ export function HeroSection({ content, trustStats, mixMatchEnabled = false }: He
                   sizes="(max-width: 1024px) 42vw, 18vw"
                 />
               </div>
-              <div className="relative h-[94%] w-[48%] overflow-hidden rounded-[1.5rem] hero-model-frame shadow-[0_24px_60px_rgba(91,46,255,0.2)]">
+              <div className="relative h-[94%] w-[48%] overflow-hidden rounded-[1.5rem] hero-model-frame shadow-[0_24px_60px_rgba(138,52,125,0.2)]">
                 <Image
                   src={marketingMedia.heroMain}
                   alt="Healthcare team in DAAKYKA scrubs"
@@ -135,7 +135,7 @@ export function HeroSection({ content, trustStats, mixMatchEnabled = false }: He
           {trustStats.map((stat) => (
             <div
               key={stat.label}
-              className="glass-card neon-border-hover rounded-2xl border border-border px-5 py-4 shadow-sm"
+              className="glass-card hover:border-brand hover:shadow-sm transition-colors rounded-2xl border border-border px-5 py-4 shadow-sm"
             >
               <p className="font-display text-xl font-bold text-brand">{stat.value}</p>
               <p className="mt-1 text-sm text-muted">{stat.label}</p>
@@ -144,11 +144,11 @@ export function HeroSection({ content, trustStats, mixMatchEnabled = false }: He
         </div>
       </div>
 
-      <div className="relative mx-auto mt-8 grid max-w-7xl grid-cols-3 gap-3 px-4 lg:hidden lg:px-8">
+      <div className="relative mx-auto mt-8 grid max-w-[1320px] grid-cols-3 gap-3 px-4 lg:hidden lg:px-8">
         {trustStats.map((stat) => (
           <div
             key={stat.label}
-            className="glass-card neon-border-hover rounded-xl border border-border px-3 py-3 text-center shadow-sm"
+            className="glass-card hover:border-brand hover:shadow-sm transition-colors rounded-xl border border-border px-3 py-3 text-center shadow-sm"
           >
             <p className="font-display text-sm font-bold text-brand">{stat.value}</p>
             <p className="mt-0.5 text-[10px] leading-tight text-muted">{stat.label}</p>
@@ -169,7 +169,7 @@ export function HeroFeatureStrip() {
 
   return (
     <section className="border-y border-border bg-surface-muted py-6 backdrop-blur-sm">
-      <div className="mx-auto grid max-w-7xl grid-cols-2 gap-4 px-4 md:grid-cols-4 lg:px-8">
+      <div className="mx-auto grid max-w-[1320px] grid-cols-2 gap-4 px-4 md:grid-cols-4 lg:px-8">
         {features.map(({ icon: Icon, label, sub }) => (
           <div key={label} className="flex items-center gap-4 rounded-2xl px-3 py-2">
             <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-lilac/70 text-brand">

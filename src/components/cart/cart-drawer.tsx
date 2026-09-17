@@ -168,11 +168,6 @@ export function CartDrawer() {
                 >
                   {mode === "shopify" ? "Checkout" : "Continue to Checkout"}
                 </Button>
-                {mode === "local" && (
-                  <p className="mt-3 text-center text-xs text-muted">
-                    Demo mode — connect Shopify for live checkout.
-                  </p>
-                )}
               </div>
             )}
           </motion.aside>

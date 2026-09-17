@@ -9,7 +9,7 @@ export default function GlobalError({
   reset: () => void;
 }) {
   return (
-    <html lang="en" data-theme="light">
+    <html lang="en">
       <body className="flex min-h-screen items-center justify-center bg-background p-6 font-sans text-ink">
         <div className="max-w-md text-center">
           <h1 className="font-display text-2xl font-bold text-ink">DAAKYKA Apparels</h1>

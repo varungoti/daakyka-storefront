@@ -42,7 +42,7 @@ export function MixMatchFavoritesPanel({
   }
 
   return (
-    <div className="rounded-[1.75rem] border border-border bg-surface-elevated p-5 shadow-[0_20px_60px_rgba(91,46,255,0.06)]">
+    <div className="rounded-[1.75rem] border border-border bg-surface-elevated p-5 shadow-[0_20px_60px_rgba(138,52,125,0.06)]">
       <div className="flex items-center justify-between gap-2">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.12em] text-brand">Your Favorites</p>

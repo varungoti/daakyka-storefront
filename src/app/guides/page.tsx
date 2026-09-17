@@ -17,7 +17,7 @@ export default async function GuidesIndexPage() {
 
   return (
     <>
-      <section className="border-b border-border bg-section-page-header py-16 md:py-20">
+      <section className="border-b border-border bg-alt-surface py-16 md:py-20">
         <div className="mx-auto max-w-4xl px-4 text-center lg:px-8">
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">Knowledge Hub</p>
           <h1 className="mt-3 font-display text-4xl font-bold text-ink md:text-5xl">
@@ -46,7 +46,7 @@ export default async function GuidesIndexPage() {
                   <li key={page.slug}>
                     <Link
                       href={`/fabric-technology/${page.slug}`}
-                      className="neon-border-hover block rounded-2xl border border-border bg-surface p-5"
+                      className="hover:border-brand hover:shadow-sm transition-colors block rounded-2xl border border-border bg-surface p-5"
                     >
                       <p className="text-xs font-bold uppercase tracking-wide text-brand">{page.eyebrow}</p>
                       <p className="mt-2 font-display text-lg font-bold text-ink">{page.title}</p>
@@ -89,7 +89,7 @@ function GuideGroup({
           <li key={page.slug}>
             <Link
               href={`/guides/${page.slug}`}
-              className="neon-border-hover block h-full rounded-2xl border border-border bg-surface p-5"
+              className="hover:border-brand hover:shadow-sm transition-colors block h-full rounded-2xl border border-border bg-surface p-5"
             >
               <p className="font-display text-lg font-bold text-ink">{page.title}</p>
               <p className="mt-2 line-clamp-3 text-sm text-muted">{page.intro}</p>

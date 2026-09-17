@@ -63,8 +63,8 @@ export default async function FabricTechDetailPage({
 
   return (
     <>
-      <section className="border-b border-border bg-section-page-header py-6">
-        <div className="mx-auto max-w-7xl px-4 text-sm text-muted lg:px-8">
+      <section className="border-b border-border bg-alt-surface py-6">
+        <div className="mx-auto max-w-[1320px] px-4 text-sm text-muted lg:px-8">
           <Link href="/" className="hover:text-brand">
             Home
           </Link>
@@ -127,7 +127,7 @@ export default async function FabricTechDetailPage({
       </section>
 
       <section className="border-t border-border bg-surface-elevated py-16">
-        <div className="mx-auto max-w-7xl px-4 lg:px-8">
+        <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
           <h2 className="mb-8 font-display text-2xl font-bold text-ink">
             Shop {page.title} Products
           </h2>

@@ -24,7 +24,7 @@ export default async function MixAndMatchPage() {
           <p className="text-xs font-bold uppercase tracking-[0.22em] text-brand">
             3D Visualizer
           </p>
-          <h1 className="mt-3 font-display text-4xl font-extrabold text-ink md:text-5xl">
+          <h1 className="mt-3 font-display text-4xl font-bold text-ink md:text-5xl">
             Build Your Perfect Scrub Set
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-muted">

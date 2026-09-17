@@ -28,7 +28,7 @@ export default function CollectionsPage() {
             <Link
               key={collection.handle}
               href={`/collections/${collection.handle}`}
-              className="neon-border-hover rounded-[2rem] border border-border bg-surface-elevated p-8 transition"
+              className="hover:border-brand hover:shadow-sm transition-colors rounded-[2rem] border border-border bg-surface-elevated p-8 transition"
             >
               <h2 className="font-display text-2xl font-bold text-ink">{collection.title}</h2>
               <p className="mt-3 text-sm text-muted">{collection.description}</p>

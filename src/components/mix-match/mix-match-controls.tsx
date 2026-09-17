@@ -65,7 +65,7 @@ export function MixMatchControls({
 
   if (layout === "studio") {
     return (
-      <div className="mix-match-panel neon-border-hover space-y-6 rounded-[1.75rem] border border-border bg-surface-elevated p-5 shadow-[0_20px_60px_rgba(91,46,255,0.08)] backdrop-blur-md">
+      <div className="mix-match-panel hover:border-brand hover:shadow-sm transition-colors space-y-6 rounded-[1.75rem] border border-border bg-surface-elevated p-5 shadow-[0_20px_60px_rgba(138,52,125,0.08)] backdrop-blur-md">
         <StudioSection title="1. Choose Top Style" subtitle="Select your neckline silhouette">
           <StyleGrid>
             {topStyleOptions.map((option) => (
@@ -123,7 +123,7 @@ export function MixMatchControls({
   }
 
   return (
-    <div className="mix-match-panel neon-border-hover flex gap-3 rounded-[1.75rem] border border-border bg-surface-elevated p-4 shadow-[0_20px_60px_rgba(91,46,255,0.08)] backdrop-blur-md md:gap-4 md:p-5">
+    <div className="mix-match-panel hover:border-brand hover:shadow-sm transition-colors flex gap-3 rounded-[1.75rem] border border-border bg-surface-elevated p-4 shadow-[0_20px_60px_rgba(138,52,125,0.08)] backdrop-blur-md md:gap-4 md:p-5">
       <div className="flex shrink-0 flex-col gap-1.5">
         {tabs.map(({ id, label, icon: Icon }) => (
           <button
@@ -134,7 +134,7 @@ export function MixMatchControls({
             className={cn(
               "flex h-11 w-11 flex-col items-center justify-center rounded-xl transition-all md:h-12 md:w-12",
               activeTab === id
-                ? "neon-selected bg-brand text-white shadow-md shadow-brand/30"
+                ? "bg-brand text-white shadow-md shadow-brand/30"
                 : "bg-lilac/50 text-muted hover:bg-lilac hover:text-brand",
             )}
           >
@@ -369,8 +369,8 @@ function StyleTile({
       className={cn(
         "relative flex flex-col items-center gap-2 rounded-2xl border px-3 py-4 text-center transition-all",
         selected
-          ? "neon-border-active border-brand bg-brand/5"
-          : "neon-border-hover border-border bg-surface hover:bg-lilac/40",
+          ? "border-brand bg-brand/5 ring-1 ring-brand/20"
+          : "border-border bg-surface hover:border-brand hover:shadow-sm hover:bg-lilac/40",
       )}
     >
       {selected && (

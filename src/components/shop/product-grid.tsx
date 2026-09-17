@@ -41,7 +41,7 @@ export function ProductGrid({
   return (
     <div>
       {showToolbar && (
-        <div className="neon-border-hover mb-6 flex flex-col gap-4 rounded-2xl border border-border bg-surface-elevated px-5 py-4">
+        <div className="hover:border-brand hover:shadow-sm transition-colors mb-6 flex flex-col gap-4 rounded-2xl border border-border bg-surface-elevated px-5 py-4">
           {onSearchQueryChange && (
             <input
               type="search"

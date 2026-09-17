@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { DM_Sans, Outfit } from "next/font/google";
-import { ThemeProvider } from "@/context/theme-provider";
 import { CurrencyProvider } from "@/context/currency-provider";
 import { WishlistProvider } from "@/context/wishlist-provider";
 import { CartProvider } from "@/context/cart-provider";
@@ -52,33 +51,26 @@ export default async function RootLayout({
   ]);
 
   return (
-    <html lang="en" data-theme="light" className={`${outfit.variable} ${dmSans.variable} h-full`} suppressHydrationWarning>
+    <html lang="en" className={`${outfit.variable} ${dmSans.variable} h-full`}>
       <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("daakyka-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();`,
-          }}
-        />
         <link rel="preconnect" href="https://images.pexels.com" />
         <link rel="preconnect" href="https://daakyka.com" />
       </head>
       <body className="min-h-full flex flex-col antialiased">
         <GlobalJsonLd />
-        <ThemeProvider>
-          <CurrencyProvider>
-            <WishlistProvider>
-              <CartProvider>
-                <SiteShell
-                  fabricTechEnabled={fabricTechEnabled}
-                  mixMatchEnabled={mixMatchEnabled}
-                  announcementMessages={announcementMessages}
-                >
-                  {children}
-                </SiteShell>
-              </CartProvider>
-            </WishlistProvider>
-          </CurrencyProvider>
-        </ThemeProvider>
+        <CurrencyProvider>
+          <WishlistProvider>
+            <CartProvider>
+              <SiteShell
+                fabricTechEnabled={fabricTechEnabled}
+                mixMatchEnabled={mixMatchEnabled}
+                announcementMessages={announcementMessages}
+              >
+                {children}
+              </SiteShell>
+            </CartProvider>
+          </WishlistProvider>
+        </CurrencyProvider>
       </body>
     </html>
   );

@@ -17,8 +17,8 @@ export default async function FabricTechnologyPage() {
 
   return (
     <>
-      <section className="border-b border-border bg-section-page-header py-16 md:py-20">
-        <div className="mx-auto max-w-7xl px-4 text-center lg:px-8">
+      <section className="border-b border-border bg-alt-surface py-16 md:py-20">
+        <div className="mx-auto max-w-[1320px] px-4 text-center lg:px-8">
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">
             Performance Engineering
           </p>
@@ -32,12 +32,12 @@ export default async function FabricTechnologyPage() {
       </section>
 
       <section className="py-16">
-        <div className="mx-auto grid max-w-7xl gap-6 px-4 md:grid-cols-2 lg:grid-cols-3 lg:px-8">
+        <div className="mx-auto grid max-w-[1320px] gap-6 px-4 md:grid-cols-2 lg:grid-cols-3 lg:px-8">
           {fabricTechPages.map((page) => (
             <Link
               key={page.slug}
               href={`/fabric-technology/${page.slug}`}
-              className="neon-border-hover rounded-3xl border border-border bg-surface p-8"
+              className="hover:border-brand hover:shadow-sm transition-colors rounded-3xl border border-border bg-surface p-8"
             >
               <p className="text-xs font-bold uppercase tracking-[0.15em] text-brand">
                 {page.eyebrow}

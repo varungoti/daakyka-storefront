@@ -30,8 +30,8 @@ const specIcons = {
 
 export function BulkOrdersSection() {
   return (
-    <section className="bg-surface py-20 md:py-24">
-      <div className="mx-auto max-w-7xl px-4 lg:px-8">
+    <section className="bg-surface py-12 md:py-16">
+      <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
         {/* Primary CTA — mockup hospital teams strip */}
         <div className="overflow-hidden rounded-[2rem] border border-border bg-gradient-to-br from-lilac/50 via-surface to-lavender/70 p-8 shadow-sm md:p-12">
           <div className="grid gap-10 lg:grid-cols-[1.15fr_0.85fr] lg:items-center">
@@ -85,7 +85,7 @@ export function BulkOrdersSection() {
                 <Link
                   key={item.title}
                   href={item.href}
-                  className="neon-border-hover group rounded-2xl border border-border bg-surface-muted p-5 transition"
+                  className="hover:border-brand hover:shadow-sm transition-colors group rounded-2xl border border-border bg-surface-muted p-5 transition"
                 >
                   <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-brand/10 text-brand transition group-hover:bg-brand group-hover:text-white">
                     <Icon size={22} />

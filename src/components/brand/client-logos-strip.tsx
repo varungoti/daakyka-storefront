@@ -12,7 +12,7 @@ export function ClientLogosStrip({
 }: ClientLogosStripProps) {
   return (
     <section className="border-y border-border bg-surface py-16">
-      <div className="mx-auto max-w-7xl px-4 lg:px-8">
+      <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
         <div className="text-center">
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">Our Clients</p>
           <h2 className="mt-3 font-display text-2xl font-bold text-ink md:text-3xl">{title}</h2>

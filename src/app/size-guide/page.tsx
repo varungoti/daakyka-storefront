@@ -15,8 +15,8 @@ export default async function SizeGuidePage() {
 
   return (
     <>
-      <section className="border-b border-border bg-section-page-header py-16 md:py-20">
-        <div className="mx-auto max-w-7xl px-4 text-center lg:px-8">
+      <section className="border-b border-border bg-alt-surface py-16 md:py-20">
+        <div className="mx-auto max-w-[1320px] px-4 text-center lg:px-8">
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">Fit Confidence</p>
           <h1 className="mt-3 font-display text-4xl font-bold text-ink md:text-5xl">
             Size Guide
@@ -29,7 +29,7 @@ export default async function SizeGuidePage() {
       </section>
 
       <section className="py-16">
-        <div className="mx-auto max-w-7xl space-y-16 px-4 lg:px-8">
+        <div className="mx-auto max-w-[1320px] space-y-16 px-4 lg:px-8">
           <SizeTable title="Women's Size Chart" rows={womenSizeGuide} />
           <SizeTable title="Men's Size Chart" rows={menSizeGuide} />
 

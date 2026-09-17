@@ -22,11 +22,11 @@ export function Footer({
 
   return (
     <footer className="border-t border-border bg-background">
-      <div className="mx-auto max-w-7xl px-4 py-16 lg:px-8">
+      <div className="mx-auto max-w-[1320px] px-4 py-16 lg:px-8">
         <div className="grid gap-12 lg:grid-cols-[1.2fr_2fr]">
           <div className="space-y-6">
             <div>
-              <p className="font-display text-2xl font-extrabold text-ink">
+              <p className="font-display text-2xl font-bold text-ink">
                 DAAKYKA <span className="text-brand">APPARELS</span>
               </p>
               <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-brand">
