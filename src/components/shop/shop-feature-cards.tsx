@@ -5,19 +5,25 @@ import { ArrowRight, Crown, Sparkles } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 
-export function ShopFeatureCards() {
+export function ShopFeatureCards({
+  fabricTechEnabled = false,
+}: {
+  fabricTechEnabled?: boolean;
+}) {
   return (
     <section className="border-t border-border bg-surface py-20">
       <div className="mx-auto grid max-w-7xl gap-6 px-4 lg:grid-cols-2 lg:px-8">
-        <FeatureCard
-          eyebrow="Fabric Science"
-          title="The Science of the Scrub"
-          description="Explore layered fabric engineering, performance benefits, and care guidance."
-          href="/fabric-technology"
-          image={marketingMedia.shopFeatureFabric}
-          cta="Explore Fabric Tech"
-          icon={<Sparkles className="text-brand" size={20} />}
-        />
+        {fabricTechEnabled ? (
+          <FeatureCard
+            eyebrow="Fabric Science"
+            title="The Science of the Scrub"
+            description="Explore layered fabric engineering, performance benefits, and care guidance."
+            href="/fabric-technology"
+            image={marketingMedia.shopFeatureFabric}
+            cta="Explore Fabric Tech"
+            icon={<Sparkles className="text-brand" size={20} />}
+          />
+        ) : null}
         <FeatureCard
           eyebrow="Luxury Collection"
           title="Bespoke Collection"
@@ -83,6 +89,7 @@ function FeatureCard({
   );
 }
 
-export function ShopMixMatchPromo() {
+export function ShopMixMatchPromo({ mixMatchEnabled = false }: { mixMatchEnabled?: boolean }) {
+  if (!mixMatchEnabled) return null;
   return <MixMatchSection />;
 }

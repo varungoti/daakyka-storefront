@@ -12,9 +12,10 @@ const avatars = marketingMedia.heroAvatars;
 interface HeroSectionProps {
   content: HeroContent;
   trustStats: { value: string; label: string }[];
+  mixMatchEnabled?: boolean;
 }
 
-export function HeroSection({ content, trustStats }: HeroSectionProps) {
+export function HeroSection({ content, trustStats, mixMatchEnabled = false }: HeroSectionProps) {
   return (
     <section className="relative overflow-hidden bg-section-hero">
       <div className="pointer-events-none absolute inset-0">
@@ -68,9 +69,9 @@ export function HeroSection({ content, trustStats }: HeroSectionProps) {
                 <ArrowRight size={18} />
               </Button>
             </Link>
-            <Link href="/mix-and-match/studio">
+            <Link href={mixMatchEnabled ? "/mix-and-match/studio" : "/shop"}>
               <Button variant="outline" size="lg" className="min-w-[170px]">
-                {content.secondaryCta}
+                {mixMatchEnabled ? content.secondaryCta : "Shop Now"}
               </Button>
             </Link>
           </div>

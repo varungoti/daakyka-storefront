@@ -21,6 +21,7 @@ import {
   Star,
   ScrollText,
   Search,
+  Sliders,
   Tag,
   Users,
 } from "lucide-react";
@@ -46,6 +47,7 @@ const navItems: { href: string; label: string; icon: typeof LayoutDashboard; per
   { href: "/admin/seo", label: "SEO", icon: Search, permission: "seo:manage" },
   { href: "/admin/hermes", label: "Hermes", icon: Bot, permission: "hermes:manage" },
   { href: "/admin/integrations", label: "Integrations", icon: Plug, permission: "integrations:manage" },
+  { href: "/admin/site-controls", label: "Site Controls", icon: Sliders, permission: "settings:manage" },
   { href: "/admin/notifications", label: "Notifications", icon: Bell, permission: "bulk-orders:manage" },
   { href: "/admin/testimonials", label: "Testimonials", icon: MessageSquareQuote, permission: "testimonials:manage" },
   { href: "/admin/users", label: "Users", icon: Users, permission: "users:manage" },

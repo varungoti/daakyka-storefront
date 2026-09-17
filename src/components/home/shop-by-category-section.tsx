@@ -4,7 +4,14 @@ import { ArrowRight } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 
-const categories = [
+interface CategoryTile {
+  title: string;
+  href: string;
+  image: string;
+  cta?: string;
+}
+
+const baseCategories: CategoryTile[] = [
   {
     title: "Tops",
     href: "/shop?category=tops",
@@ -26,14 +33,21 @@ const categories = [
     image: categoryMedia.bespoke,
     cta: "Customize Now",
   },
-  {
-    title: "Stretch Collection",
-    href: "/fabric-technology/4-way-stretch",
-    image: scrubMedia.zipLilac,
-  },
 ];
 
-export function ShopByCategorySection() {
+const stretchCollectionTile: CategoryTile = {
+  title: "Stretch Collection",
+  href: "/fabric-technology/4-way-stretch",
+  image: scrubMedia.zipLilac,
+};
+
+export function ShopByCategorySection({
+  fabricTechEnabled = false,
+}: {
+  fabricTechEnabled?: boolean;
+}) {
+  const categories = fabricTechEnabled ? [...baseCategories, stretchCollectionTile] : baseCategories;
+
   return (
     <section className="bg-background py-20 md:py-24">
       <div className="mx-auto max-w-7xl px-4 lg:px-8">

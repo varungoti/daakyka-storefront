@@ -33,6 +33,8 @@ interface ShopPageContentProps {
   testimonials: Testimonial[];
   initialCategory?: string;
   initialQuery?: string;
+  fabricTechEnabled?: boolean;
+  mixMatchEnabled?: boolean;
 }
 
 export function ShopPageContent({
@@ -40,6 +42,8 @@ export function ShopPageContent({
   testimonials,
   initialCategory,
   initialQuery,
+  fabricTechEnabled = false,
+  mixMatchEnabled = false,
 }: ShopPageContentProps) {
   const [filters, setFilters] = useState<ShopFilters>({
     ...defaultShopFilters,
@@ -117,10 +121,10 @@ export function ShopPageContent({
         totalCount={products.length}
       />
 
-      <ShopMixMatchPromo />
+      <ShopMixMatchPromo mixMatchEnabled={mixMatchEnabled} />
       <TrustBar />
       <TestimonialsSection testimonials={testimonials} />
-      <ShopFeatureCards />
+      <ShopFeatureCards fabricTechEnabled={fabricTechEnabled} />
     </>
   );
 }

@@ -5,8 +5,14 @@ import { ArrowRight, Move } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 
-export async function InsightsStrip() {
+export async function InsightsStrip({
+  fabricTechEnabled = false,
+}: {
+  fabricTechEnabled?: boolean;
+}) {
   const posts = (await getPublishedBlogPosts()).slice(0, 3);
+  const fabricTechHref = fabricTechEnabled ? "/fabric-technology" : "/shop";
+  const fourWayStretchHref = fabricTechEnabled ? "/fabric-technology/4-way-stretch" : "/shop";
 
   return (
     <section className="border-y border-border bg-section-alt py-16">
@@ -29,9 +35,9 @@ export async function InsightsStrip() {
             <p className="mt-2 text-sm text-muted">
               Explore layered fabric engineering and performance benefits.
             </p>
-            <Link href="/fabric-technology" className="mt-4 inline-block">
+            <Link href={fabricTechHref} className="mt-4 inline-block">
               <Button variant="outline" size="sm">
-                Explore Fabric Tech
+                {fabricTechEnabled ? "Explore Fabric Tech" : "Shop Now"}
                 <ArrowRight size={14} />
               </Button>
             </Link>
@@ -56,9 +62,9 @@ export async function InsightsStrip() {
             <p className="mt-2 text-sm text-muted">
               Moves with you in every direction for ultimate comfort during long shifts.
             </p>
-            <Link href="/fabric-technology/4-way-stretch" className="mt-4 inline-block">
+            <Link href={fourWayStretchHref} className="mt-4 inline-block">
               <Button variant="outline" size="sm">
-                Learn More
+                {fabricTechEnabled ? "Learn More" : "Shop Now"}
                 <ArrowRight size={14} />
               </Button>
             </Link>

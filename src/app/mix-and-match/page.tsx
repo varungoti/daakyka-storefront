@@ -1,6 +1,8 @@
 import { MixMatchBuilder } from "@/components/mix-match/mix-match-builder";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { getProducts } from "@/lib/products";
+import { isPageEnabled } from "@/lib/settings";
+import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -9,6 +11,10 @@ export const metadata: Metadata = {
 };
 
 export default async function MixAndMatchPage() {
+  if (!(await isPageEnabled("mixMatch"))) {
+    notFound();
+  }
+
   const products = await getProducts();
 
   return (

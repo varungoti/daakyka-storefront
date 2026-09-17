@@ -2,10 +2,12 @@ import { brand } from "@/data/brand";
 
 export const announcementItems = brand.announcementMessages;
 
+// Fabric Tech and Mix & Match are hidden by default (admin toggle in
+// /admin/site-controls) and are intentionally absent from mainNav. When
+// enabled they still appear in the footer (see footerLinks below), gated
+// through isPageEnabled() at render time.
 export const mainNav = [
   { label: "Shop", href: "/shop" },
-  { label: "Mix & Match", href: "/mix-and-match/studio" },
-  { label: "Fabric Tech", href: "/fabric-technology" },
   { label: "Collections", href: "/collections" },
   { label: "About", href: "/about" },
 ];

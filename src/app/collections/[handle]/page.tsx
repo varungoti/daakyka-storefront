@@ -4,6 +4,7 @@ import { ProductCard } from "@/components/ui/product-card";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { getBestSellers, getProducts } from "@/lib/products";
+import { isPageEnabled } from "@/lib/settings";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -29,6 +30,14 @@ export default async function CollectionPage({ params }: PageProps) {
   if (!collection) notFound();
 
   if ("shopHref" in collection && collection.shopHref && handle !== "best-sellers") {
+    let shopHref = collection.shopHref;
+    if (shopHref.startsWith("/fabric-technology") && !(await isPageEnabled("fabricTech"))) {
+      shopHref = "/shop";
+    }
+    if (shopHref.startsWith("/mix-and-match") && !(await isPageEnabled("mixMatch"))) {
+      shopHref = "/shop";
+    }
+
     return (
       <>
         <PageHeroBand innerClassName="max-w-3xl text-center">
@@ -38,7 +47,7 @@ export default async function CollectionPage({ params }: PageProps) {
             align="center"
             titleAs="h1"
           />
-          <Link href={collection.shopHref} className="mt-8 inline-block">
+          <Link href={shopHref} className="mt-8 inline-block">
             <Button size="lg">Continue to {collection.title}</Button>
           </Link>
         </PageHeroBand>

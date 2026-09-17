@@ -6,7 +6,20 @@ import Link from "next/link";
 
 const socialIcons = [Share2, Globe, Users, Video];
 
-export function Footer() {
+export function Footer({
+  fabricTechEnabled,
+  mixMatchEnabled,
+}: {
+  fabricTechEnabled: boolean;
+  mixMatchEnabled: boolean;
+}) {
+  const shopLinks = footerLinks.shop.filter(
+    (link) => mixMatchEnabled || link.href !== "/mix-and-match",
+  );
+  const companyLinks = footerLinks.company.filter(
+    (link) => fabricTechEnabled || link.href !== "/fabric-technology",
+  );
+
   return (
     <footer className="border-t border-border bg-background">
       <div className="mx-auto max-w-7xl px-4 py-16 lg:px-8">
@@ -47,8 +60,8 @@ export function Footer() {
           </div>
 
           <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
-            <FooterColumn title="Shop" links={footerLinks.shop} />
-            <FooterColumn title="Company" links={footerLinks.company} />
+            <FooterColumn title="Shop" links={shopLinks} />
+            <FooterColumn title="Company" links={companyLinks} />
             <FooterColumn title="Customer Care" links={footerLinks.support} />
             <FooterColumn title="Legal" links={footerLinks.legal} />
           </div>

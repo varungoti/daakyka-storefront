@@ -7,6 +7,7 @@ import { CartProvider } from "@/context/cart-provider";
 import { SiteShell } from "@/components/layout/site-shell";
 import { GlobalJsonLd } from "@/components/seo/global-json-ld";
 import { isIndexingAllowed } from "@/lib/env";
+import { getSetting, isPageEnabled } from "@/lib/settings";
 import "./globals.css";
 
 const outfit = Outfit({
@@ -39,11 +40,17 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const [fabricTechEnabled, mixMatchEnabled, announcementMessages] = await Promise.all([
+    isPageEnabled("fabricTech"),
+    isPageEnabled("mixMatch"),
+    getSetting("announcement.messages"),
+  ]);
+
   return (
     <html lang="en" data-theme="light" className={`${outfit.variable} ${dmSans.variable} h-full`} suppressHydrationWarning>
       <head>
@@ -61,7 +68,13 @@ export default function RootLayout({
           <CurrencyProvider>
             <WishlistProvider>
               <CartProvider>
-                <SiteShell>{children}</SiteShell>
+                <SiteShell
+                  fabricTechEnabled={fabricTechEnabled}
+                  mixMatchEnabled={mixMatchEnabled}
+                  announcementMessages={announcementMessages}
+                >
+                  {children}
+                </SiteShell>
               </CartProvider>
             </WishlistProvider>
           </CurrencyProvider>

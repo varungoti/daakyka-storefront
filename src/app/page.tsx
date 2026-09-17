@@ -11,6 +11,7 @@ import { TestimonialsSection } from "@/components/home/testimonials-section";
 import { TrustBar } from "@/components/layout/trust-bar";
 import { getHeroContent, getTrustStatsContent } from "@/lib/homepage";
 import { getBestSellers } from "@/lib/products";
+import { isPageEnabled } from "@/lib/settings";
 import { getTestimonials } from "@/lib/testimonials";
 import dynamic from "next/dynamic";
 
@@ -23,25 +24,28 @@ const MixMatchSection = dynamic(
 );
 
 export default async function HomePage() {
-  const [bestSellers, heroContent, trustStats, testimonials] = await Promise.all([
-    getBestSellers(),
-    getHeroContent(),
-    getTrustStatsContent(),
-    getTestimonials(),
-  ]);
+  const [bestSellers, heroContent, trustStats, testimonials, mixMatchEnabled, fabricTechEnabled] =
+    await Promise.all([
+      getBestSellers(),
+      getHeroContent(),
+      getTrustStatsContent(),
+      getTestimonials(),
+      isPageEnabled("mixMatch"),
+      isPageEnabled("fabricTech"),
+    ]);
 
   return (
     <>
-      <HeroSection content={heroContent} trustStats={trustStats.stats} />
+      <HeroSection content={heroContent} trustStats={trustStats.stats} mixMatchEnabled={mixMatchEnabled} />
       <HeroFeatureStrip />
       <OffersStrip />
       <BestSellersSection products={bestSellers} />
-      <ShopByCategorySection />
-      <MixMatchSection />
+      <ShopByCategorySection fabricTechEnabled={fabricTechEnabled} />
+      {mixMatchEnabled ? <MixMatchSection /> : null}
       <BespokeSection />
-      <ScienceSection />
+      <ScienceSection fabricTechEnabled={fabricTechEnabled} />
       <TestimonialsSection testimonials={testimonials} />
-      <InsightsStrip />
+      <InsightsStrip fabricTechEnabled={fabricTechEnabled} />
       <BulkOrdersSection />
       <JournalSection />
       <TrustBar />

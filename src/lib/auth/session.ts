@@ -50,8 +50,20 @@ export async function destroySession(): Promise<void> {
 }
 
 export async function getSession(): Promise<SessionUser | null> {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(ADMIN_SESSION_COOKIE)?.value;
+  let token: string | undefined;
+  try {
+    const cookieStore = await cookies();
+    token = cookieStore.get(ADMIN_SESSION_COOKIE)?.value;
+  } catch {
+    // `cookies()` throws when called outside a Next.js request scope —
+    // e.g. an admin route handler invoked directly in a unit/integration
+    // test, or a script, rather than through an actual HTTP request. In a
+    // real request this scope always exists, so this only ever changes
+    // behavior in those out-of-request contexts, where "no cookies
+    // available" and "no session" are equivalent: fail closed to
+    // unauthenticated instead of throwing.
+    return null;
+  }
   if (!token) return null;
 
   try {

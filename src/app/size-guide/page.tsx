@@ -1,5 +1,6 @@
 import { SectionHeading } from "@/components/ui/section-heading";
 import { fitTips, menSizeGuide, womenSizeGuide } from "@/data/size-guide";
+import { isPageEnabled } from "@/lib/settings";
 import type { Metadata } from "next";
 import Link from "next/link";
 
@@ -9,7 +10,9 @@ export const metadata: Metadata = {
     "Find your perfect fit with DAAKYKA size charts, fit tips, and measurement guidance for medical scrubs.",
 };
 
-export default function SizeGuidePage() {
+export default async function SizeGuidePage() {
+  const mixMatchEnabled = await isPageEnabled("mixMatch");
+
   return (
     <>
       <section className="border-b border-border bg-section-page-header py-16 md:py-20">
@@ -55,12 +58,21 @@ export default function SizeGuidePage() {
               Build your set with our Mix & Match tool or contact support for team sizing help.
             </p>
             <div className="mt-6 flex flex-wrap justify-center gap-4">
-              <Link
-                href="/mix-and-match"
-                className="rounded-full bg-brand px-6 py-3 text-sm font-semibold text-white"
-              >
-                Try Mix & Match
-              </Link>
+              {mixMatchEnabled ? (
+                <Link
+                  href="/mix-and-match"
+                  className="rounded-full bg-brand px-6 py-3 text-sm font-semibold text-white"
+                >
+                  Try Mix & Match
+                </Link>
+              ) : (
+                <Link
+                  href="/shop"
+                  className="rounded-full bg-brand px-6 py-3 text-sm font-semibold text-white"
+                >
+                  Shop Now
+                </Link>
+              )}
               <Link
                 href="/contact"
                 className="rounded-full border border-border bg-surface-elevated px-6 py-3 text-sm font-semibold text-ink"

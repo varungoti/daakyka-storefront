@@ -9,7 +9,17 @@ import { CartAbandonTracker } from "@/components/cart/cart-abandon-tracker";
 import { WishlistDrawer } from "@/components/wishlist/wishlist-drawer";
 import { usePathname } from "next/navigation";
 
-export function SiteShell({ children }: { children: React.ReactNode }) {
+export function SiteShell({
+  children,
+  fabricTechEnabled,
+  mixMatchEnabled,
+  announcementMessages,
+}: {
+  children: React.ReactNode;
+  fabricTechEnabled: boolean;
+  mixMatchEnabled: boolean;
+  announcementMessages: string[];
+}) {
   const pathname = usePathname();
 
   if (pathname?.startsWith("/admin")) {
@@ -24,12 +34,12 @@ export function SiteShell({ children }: { children: React.ReactNode }) {
       >
         Skip to main content
       </a>
-      <AnnouncementBar />
+      <AnnouncementBar messages={announcementMessages} />
       <Header />
       <main id="main-content" className="flex-1">
         {children}
       </main>
-      <Footer />
+      <Footer fabricTechEnabled={fabricTechEnabled} mixMatchEnabled={mixMatchEnabled} />
       <WhatsAppFab />
       <CartDrawer />
       <CartAbandonTracker />

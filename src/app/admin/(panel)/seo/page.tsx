@@ -21,7 +21,7 @@ export default async function AdminSeoPage() {
     redirect("/admin/dashboard");
   }
 
-  const staticAudits = getStaticSeoAudits();
+  const staticAudits = await getStaticSeoAudits();
   const blogPosts = await db.blogPostRecord.findMany({
     where: { status: "PUBLISHED" },
     select: { slug: true, title: true, excerpt: true },

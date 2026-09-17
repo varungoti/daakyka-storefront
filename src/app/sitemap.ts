@@ -3,17 +3,22 @@ import { collectionPages, seoLandingPages } from "@/data/seo-landing-pages";
 import { getPublishedBlogPosts } from "@/lib/blog";
 import { getProducts } from "@/lib/products/index";
 import { siteUrlBase } from "@/lib/seo/json-ld";
+import { isPageEnabled } from "@/lib/settings";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = siteUrlBase();
   const now = new Date();
+  const [fabricTechEnabled, mixMatchEnabled] = await Promise.all([
+    isPageEnabled("fabricTech"),
+    isPageEnabled("mixMatch"),
+  ]);
 
   const staticRoutes = [
     "",
     "/shop",
     "/shop/bespoke",
-    "/mix-and-match",
-    "/fabric-technology",
+    ...(mixMatchEnabled ? ["/mix-and-match"] : []),
+    ...(fabricTechEnabled ? ["/fabric-technology"] : []),
     "/bulk-orders",
     "/institutional",
     "/about",

@@ -4,6 +4,8 @@ import { blogMedia, testimonialAvatars } from "../src/data/media/catalog";
 import { createPrismaClient } from "../src/lib/create-prisma-client";
 import { DEFAULT_ADMIN_SEED_EMAIL, isInsecureSeedPassword } from "../src/lib/auth/seed-defaults";
 import { isVercel } from "../src/lib/env";
+import { settingDefaults } from "../src/lib/settings";
+import type { Prisma } from "../src/generated/prisma/client";
 import bcrypt from "bcryptjs";
 
 const prisma = createPrismaClient();
@@ -554,6 +556,17 @@ async function main() {
         data: { ...offer, config: JSON.stringify(offer.config) },
       });
     }
+  }
+
+  // SiteSetting rows are also create-only: an admin's change in
+  // /admin/site-controls must survive every re-seed/redeploy. Each key
+  // gets its documented default (src/lib/settings) only if no row exists.
+  for (const [key, value] of Object.entries(settingDefaults)) {
+    await prisma.siteSetting.upsert({
+      where: { key },
+      update: {},
+      create: { key, value: value as Prisma.InputJsonValue },
+    });
   }
 
   const marketSnapshots = [

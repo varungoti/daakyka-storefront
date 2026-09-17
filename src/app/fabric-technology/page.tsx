@@ -1,6 +1,8 @@
 import { fabricTechPages } from "@/data/fabric-tech";
+import { isPageEnabled } from "@/lib/settings";
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -8,7 +10,11 @@ export const metadata: Metadata = {
   description: "Explore DAAKYKA fabric science and performance technology.",
 };
 
-export default function FabricTechnologyPage() {
+export default async function FabricTechnologyPage() {
+  if (!(await isPageEnabled("fabricTech"))) {
+    notFound();
+  }
+
   return (
     <>
       <section className="border-b border-border bg-section-page-header py-16 md:py-20">

@@ -1,6 +1,8 @@
 import { MixMatchStudioBuilder } from "@/components/mix-match/mix-match-studio-builder";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { getProducts } from "@/lib/products";
+import { isPageEnabled } from "@/lib/settings";
+import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import Link from "next/link";
 
@@ -12,20 +14,11 @@ export const metadata: Metadata = {
 };
 
 export default async function MixMatchStudioPage() {
-  const products = await getProducts();
-  const studioEnabled = process.env.NEXT_PUBLIC_OUTFIT_STUDIO !== "0";
-
-  if (!studioEnabled) {
-    return (
-      <PageContentSection innerClassName="max-w-3xl text-center">
-        <h1 className="font-display text-3xl font-bold text-ink">Studio unavailable</h1>
-        <p className="mt-4 text-muted">Enable NEXT_PUBLIC_OUTFIT_STUDIO to access virtual try-on.</p>
-        <Link href="/mix-and-match" className="mt-6 inline-block text-brand hover:underline">
-          Back to Mix & Match
-        </Link>
-      </PageContentSection>
-    );
+  if (!(await isPageEnabled("mixMatch"))) {
+    notFound();
   }
+
+  const products = await getProducts();
 
   return (
     <>

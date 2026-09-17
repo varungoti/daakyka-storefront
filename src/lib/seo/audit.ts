@@ -1,5 +1,6 @@
 import { brand } from "@/data/brand";
 import { seoLandingPages } from "@/data/seo-landing-pages";
+import { isPageEnabled } from "@/lib/settings";
 
 export interface SeoPageAudit {
   path: string;
@@ -48,7 +49,7 @@ export function auditSeoPage(page: Omit<SeoPageAudit, "status" | "issues">): Seo
   return { ...page, status, issues };
 }
 
-export function getStaticSeoAudits(): SeoPageAudit[] {
+export async function getStaticSeoAudits(): Promise<SeoPageAudit[]> {
   const guidePages = seoLandingPages.map((page) => ({
     path: `/guides/${page.slug}`,
     title: page.title,
@@ -56,7 +57,18 @@ export function getStaticSeoAudits(): SeoPageAudit[] {
     h1: page.h1,
   }));
 
-  return [...staticPages, ...guidePages].map(auditSeoPage);
+  const [fabricTechEnabled, mixMatchEnabled] = await Promise.all([
+    isPageEnabled("fabricTech"),
+    isPageEnabled("mixMatch"),
+  ]);
+
+  const pages = [...staticPages, ...guidePages].filter((page) => {
+    if (page.path === "/fabric-technology") return fabricTechEnabled;
+    if (page.path === "/mix-and-match") return mixMatchEnabled;
+    return true;
+  });
+
+  return pages.map(auditSeoPage);
 }
 
 export function summarizeSeoAudits(pages: SeoPageAudit[]) {

@@ -33,7 +33,7 @@ const scienceCards = [
   },
 ];
 
-export function ScienceSection() {
+export function ScienceSection({ fabricTechEnabled = false }: { fabricTechEnabled?: boolean }) {
   return (
     <section className="bg-section-alt py-20 md:py-24">
       <div className="mx-auto max-w-7xl px-4 lg:px-8">
@@ -61,10 +61,10 @@ export function ScienceSection() {
                 {card.description}
               </p>
               <Link
-                href={card.href}
+                href={fabricTechEnabled ? card.href : "/shop"}
                 className="mt-6 inline-flex items-center gap-2 text-sm font-semibold text-brand hover:underline"
               >
-                Learn More
+                {fabricTechEnabled ? "Learn More" : "Shop Now"}
                 <ArrowRight size={16} />
               </Link>
             </article>

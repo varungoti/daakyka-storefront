@@ -118,7 +118,7 @@ export async function buildWeeklyGrowthReport(periodDays = 7): Promise<WeeklyGro
   const revenueInr = orders.reduce((sum, order) => sum + (order.total ?? 0), 0);
   const insights = buildProductInsights(products);
   const insightSummary = summarizeInsights(insights);
-  const seoSummary = summarizeSeoAudits(getStaticSeoAudits());
+  const seoSummary = summarizeSeoAudits(await getStaticSeoAudits());
 
   const productMap = new Map(products.map((p) => [p.handle, p.name]));
   const topViewedProducts = productViewGroups.map((row) => ({

@@ -1,5 +1,6 @@
 import { ShopPageContent } from "@/components/shop/shop-page-content";
 import { getProducts } from "@/lib/products";
+import { isPageEnabled } from "@/lib/settings";
 import { getTestimonials } from "@/lib/testimonials";
 import type { Metadata } from "next";
 
@@ -15,7 +16,12 @@ interface ShopPageProps {
 
 export default async function ShopPage({ searchParams }: ShopPageProps) {
   const params = await searchParams;
-  const [products, testimonials] = await Promise.all([getProducts(), getTestimonials()]);
+  const [products, testimonials, fabricTechEnabled, mixMatchEnabled] = await Promise.all([
+    getProducts(),
+    getTestimonials(),
+    isPageEnabled("fabricTech"),
+    isPageEnabled("mixMatch"),
+  ]);
 
   return (
     <ShopPageContent
@@ -23,6 +29,8 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
       testimonials={testimonials}
       initialCategory={params.category}
       initialQuery={params.q}
+      fabricTechEnabled={fabricTechEnabled}
+      mixMatchEnabled={mixMatchEnabled}
     />
   );
 }

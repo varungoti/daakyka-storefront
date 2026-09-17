@@ -3,6 +3,7 @@ import { SectionHeading } from "@/components/ui/section-heading";
 import { getFabricTechPage } from "@/data/fabric-tech";
 import type { Product } from "@/lib/types";
 import { getProducts } from "@/lib/products";
+import { isPageEnabled } from "@/lib/settings";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -29,6 +30,10 @@ export async function generateMetadata({ params }: FabricTechDetailPageProps) {
 export default async function FabricTechDetailPage({
   params,
 }: FabricTechDetailPageProps) {
+  if (!(await isPageEnabled("fabricTech"))) {
+    notFound();
+  }
+
   const { slug } = await params;
   const page = getFabricTechPage(slug);
 
