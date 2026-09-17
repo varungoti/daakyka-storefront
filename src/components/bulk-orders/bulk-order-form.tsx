@@ -1,6 +1,8 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { HoneypotField } from "@/components/ui/honeypot-field";
+import { HONEYPOT_FIELD_NAME } from "@/lib/validation/honeypot";
 import { useState } from "react";
 
 export function BulkOrderForm() {
@@ -9,10 +11,12 @@ export function BulkOrderForm() {
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    // Captured before the await — see contact-form.tsx for why.
+    const formElement = event.currentTarget;
     setStatus("loading");
     setError("");
 
-    const form = new FormData(event.currentTarget);
+    const form = new FormData(formElement);
     const payload = {
       organization: form.get("organization"),
       contactPerson: form.get("contactPerson"),
@@ -27,22 +31,28 @@ export function BulkOrderForm() {
       deliveryTimeline: form.get("deliveryTimeline") || undefined,
       notes: form.get("notes") || undefined,
       consentGiven: form.get("consentGiven") === "on",
+      [HONEYPOT_FIELD_NAME]: form.get(HONEYPOT_FIELD_NAME) || undefined,
     };
 
-    const response = await fetch("/api/bulk-orders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    try {
+      const response = await fetch("/api/bulk-orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    if (!response.ok) {
+      if (!response.ok) {
+        setStatus("error");
+        setError("Please check all required fields and try again.");
+        return;
+      }
+
+      setStatus("success");
+      formElement.reset();
+    } catch {
       setStatus("error");
-      setError("Please check all required fields and try again.");
-      return;
+      setError("Something went wrong. Please try again.");
     }
-
-    setStatus("success");
-    event.currentTarget.reset();
   };
 
   if (status === "success") {
@@ -61,6 +71,7 @@ export function BulkOrderForm() {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-border bg-surface p-8">
+      <HoneypotField />
       <FormField label="Hospital / Clinic Name *" name="organization" required />
       <FormField label="Contact Person *" name="contactPerson" required />
       <div className="grid gap-4 md:grid-cols-2">

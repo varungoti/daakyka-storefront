@@ -1,6 +1,8 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { HoneypotField } from "@/components/ui/honeypot-field";
+import { HONEYPOT_FIELD_NAME } from "@/lib/validation/honeypot";
 import { useState } from "react";
 
 export function ContactForm({
@@ -12,29 +14,38 @@ export function ContactForm({
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    // Captured before the await: currentTarget is only valid while the
+    // event is actively being handled, and reading it again after an
+    // await can return null.
+    const formElement = event.currentTarget;
     setStatus("loading");
 
-    const form = new FormData(event.currentTarget);
-    const response = await fetch("/api/contact", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: form.get("name"),
-        email: form.get("email"),
-        phone: form.get("phone") || undefined,
-        organization: form.get("organization") || undefined,
-        type: form.get("type") || defaultType,
-        message: form.get("message"),
-      }),
-    });
+    const form = new FormData(formElement);
+    try {
+      const response = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: form.get("name"),
+          email: form.get("email"),
+          phone: form.get("phone") || undefined,
+          organization: form.get("organization") || undefined,
+          type: form.get("type") || defaultType,
+          message: form.get("message"),
+          [HONEYPOT_FIELD_NAME]: form.get(HONEYPOT_FIELD_NAME) || undefined,
+        }),
+      });
 
-    if (!response.ok) {
+      if (!response.ok) {
+        setStatus("error");
+        return;
+      }
+
+      setStatus("success");
+      formElement.reset();
+    } catch {
       setStatus("error");
-      return;
     }
-
-    setStatus("success");
-    event.currentTarget.reset();
   };
 
   if (status === "success") {
@@ -53,6 +64,7 @@ export function ContactForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-border bg-surface-elevated p-8">
+      <HoneypotField />
       <div className="grid gap-4 md:grid-cols-2">
         <Field label="Full Name *" name="name" required />
         <Field label="Email *" name="email" type="email" required />

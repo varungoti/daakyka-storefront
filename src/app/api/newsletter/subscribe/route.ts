@@ -4,6 +4,7 @@ import { triggerJourneys } from "@/lib/engagement/journey-triggers";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { newsletterSchema } from "@/lib/validation/schemas";
+import { isHoneypotTripped } from "@/lib/validation/honeypot";
 
 export async function POST(request: Request) {
   const limited = rateLimitOrResponse(request, "newsletter", 10, 60_000);
@@ -12,6 +13,11 @@ export async function POST(request: Request) {
   try {
     const bodyResult = await readJsonBody(request);
     if (!bodyResult.ok) return bodyResult.response;
+
+    if (isHoneypotTripped(bodyResult.data)) {
+      return NextResponse.json({ id: "ok", message: "Subscribed successfully" });
+    }
+
     const parsed = newsletterSchema.safeParse(bodyResult.data);
 
     if (!parsed.success) {

@@ -1,18 +1,18 @@
 import { z } from "zod";
 
 export const bulkOrderSchema = z.object({
-  organization: z.string().min(2, "Organization name is required"),
-  contactPerson: z.string().min(2, "Contact person is required"),
-  email: z.string().email("Valid email is required"),
-  phone: z.string().min(8, "Valid phone number is required"),
-  city: z.string().optional(),
-  staffCount: z.coerce.number().int().positive().optional(),
-  productsRequired: z.string().optional(),
-  colorsRequired: z.string().optional(),
-  sizesRequired: z.string().optional(),
+  organization: z.string().min(2, "Organization name is required").max(200),
+  contactPerson: z.string().min(2, "Contact person is required").max(120),
+  email: z.string().email("Valid email is required").max(254),
+  phone: z.string().min(8, "Valid phone number is required").max(32),
+  city: z.string().max(100).optional(),
+  staffCount: z.coerce.number().int().positive().max(1_000_000).optional(),
+  productsRequired: z.string().max(500).optional(),
+  colorsRequired: z.string().max(500).optional(),
+  sizesRequired: z.string().max(500).optional(),
   logoEmbroidery: z.boolean().default(false),
-  deliveryTimeline: z.string().optional(),
-  notes: z.string().optional(),
+  deliveryTimeline: z.string().max(200).optional(),
+  notes: z.string().max(2000).optional(),
   consentGiven: z
     .boolean()
     .refine((value) => value === true, { message: "You must agree to be contacted" }),
@@ -21,8 +21,11 @@ export const bulkOrderSchema = z.object({
 export type BulkOrderInput = z.infer<typeof bulkOrderSchema>;
 
 export const loginSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(8),
+  email: z.string().email().max(254),
+  // bcrypt silently truncates input past 72 bytes; capping well under
+  // that (and under a reasonable password-manager-generated length)
+  // also blocks a trivial large-payload DoS against the hashing step.
+  password: z.string().min(8).max(200),
 });
 
 export const blogPostSchema = z.object({
@@ -39,8 +42,8 @@ export const blogPostSchema = z.object({
 });
 
 export const newsletterSchema = z.object({
-  email: z.string().email(),
-  source: z.string().optional(),
+  email: z.string().email().max(254),
+  source: z.string().max(100).optional(),
   consentGiven: z
     .boolean()
     .refine((value) => value === true, { message: "Consent is required" }),
