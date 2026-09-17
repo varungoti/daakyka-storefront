@@ -1,6 +1,9 @@
+import { DeleteButton } from "@/components/admin/delete-button";
+import { OfferToggle } from "@/components/admin/offer-toggle";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
-import { db } from "@/lib/db";
+import { listOffersForAdmin } from "@/lib/offers";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 export default async function AdminOffersPage() {
@@ -9,20 +12,26 @@ export default async function AdminOffersPage() {
     redirect("/admin/dashboard");
   }
 
-  const offers = await db.offerRecommendation.findMany({
-    orderBy: { createdAt: "desc" },
-  });
+  const offers = await listOffersForAdmin();
 
   const activeCount = offers.filter((o) => o.active).length;
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="font-display text-3xl font-bold text-ink">Smart Offer Engine</h1>
-        <p className="text-muted">
-          Bundle, shipping, first-purchase, and institutional offers — approval required before
-          storefront activation.
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h1 className="font-display text-3xl font-bold text-ink">Smart Offer Engine</h1>
+          <p className="text-muted">
+            Bundle, shipping, first-purchase, and institutional offers — approval required before
+            storefront activation.
+          </p>
+        </div>
+        <Link
+          href="/admin/offers/new"
+          className="rounded-full bg-brand px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand/90"
+        >
+          New Offer
+        </Link>
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -41,13 +50,7 @@ export default async function AdminOffersPage() {
                   <p className="text-xs font-bold uppercase tracking-wide text-brand">{offer.type}</p>
                   <h2 className="mt-1 font-display text-lg font-bold text-ink">{offer.name}</h2>
                 </div>
-                <span
-                  className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                    offer.active ? "bg-trust/15 text-trust" : "bg-lavender/60 text-muted"
-                  }`}
-                >
-                  {offer.active ? "Active" : "Inactive"}
-                </span>
+                <OfferToggle id={offer.id} active={offer.active} />
               </div>
               <p className="mt-3 text-sm text-muted">{offer.description}</p>
               {Object.keys(config).length > 0 && (
@@ -60,6 +63,18 @@ export default async function AdminOffersPage() {
                   ))}
                 </dl>
               )}
+              <div className="mt-4 flex gap-2">
+                <Link
+                  href={`/admin/offers/${offer.id}`}
+                  className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-ink hover:bg-lilac/40"
+                >
+                  Edit
+                </Link>
+                <DeleteButton
+                  href={`/api/admin/offers/${offer.id}`}
+                  confirmMessage={`Delete the "${offer.name}" offer?`}
+                />
+              </div>
             </article>
           );
         })}

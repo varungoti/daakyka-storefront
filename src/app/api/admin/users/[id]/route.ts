@@ -1,10 +1,26 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@/generated/prisma/client";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
-import { buildUserUpdateData } from "@/lib/auth/user-updates";
+import {
+  deleteUser,
+  LastSuperAdminError,
+  UserDeleteBlockedError,
+  UserNotFoundError,
+  UserSelfActionBlockedError,
+} from "@/lib/auth/user-admin";
+import {
+  buildUserUpdateData,
+  isSelfRoleChangeBlocked,
+  wouldRemoveLastSuperAdmin,
+} from "@/lib/auth/user-updates";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
+}
+
+function isRecordNotFound(err: unknown): boolean {
+  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025";
 }
 
 export async function PATCH(request: Request, { params }: RouteParams) {
@@ -36,6 +52,20 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
+  if (isSelfRoleChangeBlocked(id, session!.id, existing.role, parsed.data.role)) {
+    return NextResponse.json({ error: "Cannot change your own role" }, { status: 400 });
+  }
+
+  const otherActiveSuperAdminCount = await db.user.count({
+    where: { role: "SUPER_ADMIN", active: true, id: { not: id } },
+  });
+  if (wouldRemoveLastSuperAdmin(existing, parsed.data, otherActiveSuperAdminCount)) {
+    return NextResponse.json(
+      { error: "At least one active SUPER_ADMIN must remain" },
+      { status: 400 },
+    );
+  }
+
   // sessionVersion revocation (v1 2.3): deactivating a user or changing
   // their role invalidates every session already issued to them, so a
   // demoted/deactivated admin can't keep using a cookie minted before the
@@ -45,19 +75,60 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   // src/lib/auth/user-updates.ts so it can be unit-tested directly.
   const { data: updateData } = buildUserUpdateData(existing, parsed.data);
 
-  const user = await db.user.update({
-    where: { id },
-    data: updateData,
-    select: { id: true, email: true, name: true, role: true, active: true },
-  });
+  try {
+    const user = await db.user.update({
+      where: { id },
+      data: updateData,
+      select: { id: true, email: true, name: true, role: true, active: true },
+    });
 
-  await logAuditEvent({
-    userId: session!.id,
-    action: "update",
-    entity: "user",
-    entityId: id,
-    metadata: parsed.data,
-  });
+    await logAuditEvent({
+      userId: session!.id,
+      action: "update",
+      entity: "user",
+      entityId: id,
+      metadata: parsed.data,
+    });
 
-  return NextResponse.json(user);
+    return NextResponse.json(user);
+  } catch (err) {
+    if (isRecordNotFound(err)) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+    throw err;
+  }
+}
+
+/**
+ * Hard delete — genuinely appropriate only for a user with zero
+ * attribution history (e.g. an invited account that was never used).
+ * Every FK from User (AuditLog.userId, Product.createdById,
+ * MediaAsset.createdById, Review.moderatedById, SiteSetting.updatedById)
+ * is `onDelete: SetNull` in prisma/schema.prisma, so the database itself
+ * would happily null them out and let the delete through — but silently
+ * erasing "who did this" from history is a product decision, not a DB
+ * constraint, so we block it explicitly instead and point the caller at
+ * deactivation (PATCH {active:false}) for any user with real activity.
+ */
+export async function DELETE(_request: Request, { params }: RouteParams) {
+  const { session, error } = await requireAdminPermission("users:manage");
+  if (error) return error;
+
+  const { id } = await params;
+
+  try {
+    await deleteUser(id, session!.id);
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    if (err instanceof UserNotFoundError || isRecordNotFound(err)) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+    if (err instanceof UserSelfActionBlockedError || err instanceof LastSuperAdminError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof UserDeleteBlockedError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    throw err;
+  }
 }

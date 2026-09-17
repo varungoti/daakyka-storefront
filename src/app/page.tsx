@@ -8,9 +8,21 @@ import { TestimonialsSection } from "@/components/home/testimonials-section";
 import { TrustBar } from "@/components/layout/trust-bar";
 import { getHeroContent, getTrustStatsContent } from "@/lib/homepage";
 import { getCategoryTree, getProducts } from "@/lib/products";
+import { getSeoOverrideForPath } from "@/lib/seo/records";
 import { isSaleEnabled } from "@/lib/settings";
 import { getTestimonials } from "@/lib/testimonials";
 import { GraduationCap, HeartPulse } from "lucide-react";
+import type { Metadata } from "next";
+
+/** Lets an admin override the home page's <title>/meta description from
+ * /admin/seo (SeoPageRecord, path "/") without touching code. Falls back
+ * to the root layout's defaults (src/app/layout.tsx's generateMetadata())
+ * when no override exists — returning {} here means "inherit". */
+export async function generateMetadata(): Promise<Metadata> {
+  const override = await getSeoOverrideForPath("/");
+  if (!override) return {};
+  return { title: override.title, description: override.metaDescription };
+}
 
 /**
  * Phase C3: the new store home — "shop now", not "brand story" (that

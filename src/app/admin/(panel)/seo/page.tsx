@@ -1,3 +1,4 @@
+import { DeleteButton } from "@/components/admin/delete-button";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
@@ -8,6 +9,7 @@ import {
   productJsonLd,
   websiteJsonLd,
 } from "@/lib/seo/json-ld";
+import { listSeoRecordsForAdmin } from "@/lib/seo/records";
 import {
   summarizeSchemaValidation,
   validateJsonLdObject,
@@ -38,7 +40,7 @@ export default async function AdminSeoPage() {
 
   const pages = [...staticAudits, ...blogAudits];
   const summary = summarizeSeoAudits(pages);
-  const dbRecords = await db.seoPageRecord.findMany();
+  const dbRecords = await listSeoRecordsForAdmin();
 
   const schemaChecks = [
     { label: "Organization", data: organizationJsonLd() },
@@ -162,6 +164,73 @@ export default async function AdminSeoPage() {
             ))}
           </tbody>
         </table>
+      </section>
+
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h2 className="font-display text-xl font-bold text-ink">SEO Overrides</h2>
+            <p className="text-sm text-muted">
+              Editable per-page title/meta description overrides. Home (/) and Shop (/shop) are
+              read live by the storefront&apos;s page metadata.
+            </p>
+          </div>
+          <Link
+            href="/admin/seo/new"
+            className="rounded-full bg-brand px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand/90"
+          >
+            New Override
+          </Link>
+        </div>
+
+        <div className="overflow-x-auto rounded-3xl border border-border bg-surface">
+          <table className="min-w-full text-left text-sm">
+            <thead className="border-b border-border bg-lavender/30 text-xs uppercase tracking-wide text-muted">
+              <tr>
+                <th className="px-4 py-3">Path</th>
+                <th className="px-4 py-3">Title</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Updated</th>
+                <th className="px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody>
+              {dbRecords.map((record) => (
+                <tr key={record.id} className="border-b border-border/70 align-top">
+                  <td className="px-4 py-3 font-semibold text-ink">{record.path}</td>
+                  <td className="max-w-xs px-4 py-3 text-ink">{record.title}</td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={record.status} />
+                  </td>
+                  <td className="px-4 py-3 text-xs text-muted">
+                    {record.updatedAt.toLocaleDateString("en-IN")}
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="flex justify-end gap-2">
+                      <Link
+                        href={`/admin/seo/${record.id}`}
+                        className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-ink hover:bg-lilac/40"
+                      >
+                        Edit
+                      </Link>
+                      <DeleteButton
+                        href={`/api/admin/seo/${record.id}`}
+                        confirmMessage={`Delete the SEO override for ${record.path}?`}
+                      />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {dbRecords.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-4 py-8 text-center text-muted">
+                    No overrides yet — add one to control a page&apos;s title and meta description.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
     </div>
   );

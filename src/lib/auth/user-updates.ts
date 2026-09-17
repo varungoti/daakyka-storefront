@@ -46,3 +46,48 @@ export function buildUserUpdateData(
     revokesSessions,
   };
 }
+
+/**
+ * Two guard rules for PATCH /api/admin/users/[id] (task: admin CRUD
+ * completion, "Enforce the existing 'can't demote/deactivate the last
+ * SUPER_ADMIN' and 'can't change your own role' rules if they exist").
+ * Neither rule existed in the codebase before this change — the route
+ * already blocked self-*deactivation*, but not a self-role-change or
+ * removing the last SUPER_ADMIN — so both are added here as pure,
+ * unit-testable functions; the route only supplies the DB-derived count.
+ */
+
+/** An admin may still edit their own name/active flag, but changing their
+ * *own* role is blocked — otherwise a SUPER_ADMIN could accidentally (or
+ * a compromised session could deliberately) demote themselves out of a
+ * permission they still need mid-session. */
+export function isSelfRoleChangeBlocked(
+  targetUserId: string,
+  actingUserId: string,
+  existingRole: AdminRole,
+  nextRole: AdminRole,
+): boolean {
+  return targetUserId === actingUserId && existingRole !== nextRole;
+}
+
+/**
+ * True when this update would leave zero active SUPER_ADMIN accounts:
+ * the target is currently an active SUPER_ADMIN, the update would take
+ * them out of that state (role change and/or deactivation), and no other
+ * active SUPER_ADMIN exists to fall back on.
+ *
+ * `otherActiveSuperAdminCount` must be the count of *other* active
+ * SUPER_ADMIN users (i.e. excluding the target row) — the route computes
+ * this with `db.user.count({ where: { role: "SUPER_ADMIN", active: true,
+ * id: { not: id } } })` so the pure decision here doesn't need a DB call.
+ */
+export function wouldRemoveLastSuperAdmin(
+  existing: ExistingUserState,
+  next: UserUpdateInput,
+  otherActiveSuperAdminCount: number,
+): boolean {
+  if (existing.role !== "SUPER_ADMIN" || !existing.active) return false;
+  const staysSuperAdmin = next.role === "SUPER_ADMIN" && next.active;
+  if (staysSuperAdmin) return false;
+  return otherActiveSuperAdminCount === 0;
+}

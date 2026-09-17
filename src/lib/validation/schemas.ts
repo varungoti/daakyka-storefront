@@ -92,19 +92,28 @@ export const newsletterSchema = z.object({
 });
 
 export const segmentSchema = z.object({
-  name: z.string().min(2),
-  slug: z.string().min(2),
-  description: z.string().optional(),
+  name: z.string().trim().min(2).max(150),
+  slug: z
+    .string()
+    .trim()
+    .min(2)
+    .max(160)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and hyphens only"),
+  description: z.string().trim().max(2000).optional().nullable(),
   criteria: z.record(z.string(), z.unknown()).optional(),
 });
 
+export const segmentUpdateSchema = segmentSchema.partial();
+
 export const templateSchema = z.object({
-  name: z.string().min(2),
+  name: z.string().trim().min(2).max(150),
   channel: z.enum(["EMAIL", "WHATSAPP"]),
-  subject: z.string().optional(),
-  body: z.string().min(10),
-  variables: z.array(z.string()).optional(),
+  subject: z.string().trim().max(300).optional().nullable(),
+  body: z.string().trim().min(10).max(20_000),
+  variables: z.array(z.string().trim().min(1).max(60)).max(50).optional(),
 });
+
+export const templateUpdateSchema = templateSchema.partial();
 
 export const campaignSchema = z.object({
   name: z.string().min(2),
@@ -117,14 +126,73 @@ export const campaignSchema = z.object({
 });
 
 export const testimonialSchema = z.object({
-  quote: z.string().min(10),
-  name: z.string().min(2),
-  title: z.string().min(2),
+  quote: z.string().trim().min(10).max(2000),
+  name: z.string().trim().min(2).max(150),
+  title: z.string().trim().min(2).max(150),
   rating: z.number().int().min(1).max(5),
-  avatar: z.string().url(),
+  avatar: z.string().trim().url().max(500),
   featured: z.boolean(),
   active: z.boolean(),
-  sortOrder: z.number().int(),
+  sortOrder: z.number().int().min(0).max(1_000_000),
+});
+
+export const testimonialUpdateSchema = testimonialSchema.partial();
+
+// Phase — admin CRUD completion: offers, SEO overrides, notifications, users.
+
+export const offerSchema = z.object({
+  name: z.string().trim().min(2).max(150),
+  type: z.string().trim().min(2).max(60),
+  description: z.string().trim().min(5).max(2000),
+  // Deliberately `.optional()` without `.default()` (matching
+  // src/lib/catalog/categories.ts's categoryInputSchema convention) so the
+  // z.infer'd type keeps this field optional for callers — the service
+  // layer (src/lib/offers/index.ts's createOffer) applies the `?? true`
+  // fallback itself.
+  active: z.boolean().optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
+});
+
+export const offerUpdateSchema = offerSchema.partial();
+
+export const seoPageRecordSchema = z.object({
+  path: z
+    .string()
+    .trim()
+    .min(1)
+    .max(300)
+    .regex(/^\/[a-zA-Z0-9\-/_]*$/, "Path must start with / and use URL-safe characters"),
+  title: z.string().trim().min(1).max(200),
+  metaDescription: z.string().trim().min(1).max(320),
+  h1: z.string().trim().max(200).optional().nullable(),
+  // See offerSchema's `active` field above for why this is `.optional()`
+  // without `.default()` — src/lib/seo/records.ts's createSeoRecord
+  // applies the `?? "ok"` fallback itself.
+  status: z.enum(["ok", "needs_meta", "missing_h1", "review"]).optional(),
+  issues: z.array(z.string().trim().min(1).max(300)).max(20).optional(),
+});
+
+export const seoPageRecordUpdateSchema = seoPageRecordSchema.partial();
+
+export const notificationMarkReadSchema = z.object({
+  read: z.boolean(),
+});
+
+export const userInviteSchema = z.object({
+  name: z.string().trim().min(2).max(150),
+  email: z.string().trim().email().max(254),
+  role: z.enum([
+    "SUPER_ADMIN",
+    "STORE_OWNER",
+    "MARKETING_ADMIN",
+    "CATALOG_MANAGER",
+    "ORDER_MANAGER",
+    "SEO_MANAGER",
+    "CONTENT_EDITOR",
+    "BULK_ORDER_MANAGER",
+    "SUPPORT_AGENT",
+    "VIEWER",
+  ]),
 });
 
 // Phase D1: customer accounts. `loginSchema` above is reused as-is for

@@ -10,6 +10,18 @@ import {
   customerResetPasswordSchema,
   loginSchema,
   newsletterSchema,
+  notificationMarkReadSchema,
+  offerSchema,
+  offerUpdateSchema,
+  segmentSchema,
+  segmentUpdateSchema,
+  seoPageRecordSchema,
+  seoPageRecordUpdateSchema,
+  templateSchema,
+  templateUpdateSchema,
+  testimonialSchema,
+  testimonialUpdateSchema,
+  userInviteSchema,
 } from "@/lib/validation/schemas";
 
 describe("validation schemas", () => {
@@ -256,5 +268,165 @@ describe("validation schemas", () => {
       razorpayOrderId: "order_test123",
     });
     assert.equal(result.success, false);
+  });
+});
+
+// Admin CRUD completion (testimonials, segments, templates, offers, SEO
+// records, notifications, users) — see tests/integration for the DB-backed
+// round-trip tests; these cover just the zod validation boundary.
+
+describe("testimonialSchema / testimonialUpdateSchema", () => {
+  const valid = {
+    quote: "Absolutely fantastic scrubs, would order again.",
+    name: "Dr. Rao",
+    title: "City Hospital",
+    rating: 5,
+    avatar: "https://example.com/avatar.jpg",
+    featured: false,
+    active: true,
+    sortOrder: 0,
+  };
+
+  it("accepts a valid testimonial", () => {
+    assert.equal(testimonialSchema.safeParse(valid).success, true);
+  });
+
+  it("rejects a rating outside 1-5", () => {
+    assert.equal(testimonialSchema.safeParse({ ...valid, rating: 6 }).success, false);
+  });
+
+  it("rejects a non-URL avatar", () => {
+    assert.equal(testimonialSchema.safeParse({ ...valid, avatar: "not-a-url" }).success, false);
+  });
+
+  it("rejects a too-short quote", () => {
+    assert.equal(testimonialSchema.safeParse({ ...valid, quote: "short" }).success, false);
+  });
+
+  it("testimonialUpdateSchema accepts a partial payload", () => {
+    assert.equal(testimonialUpdateSchema.safeParse({ featured: true }).success, true);
+  });
+
+  it("testimonialUpdateSchema still rejects an invalid partial field", () => {
+    assert.equal(testimonialUpdateSchema.safeParse({ rating: 10 }).success, false);
+  });
+});
+
+describe("segmentSchema / segmentUpdateSchema", () => {
+  const valid = { name: "Newsletter Subscribers", slug: "newsletter-subscribers", criteria: { source: "newsletter" } };
+
+  it("accepts a valid segment", () => {
+    assert.equal(segmentSchema.safeParse(valid).success, true);
+  });
+
+  it("rejects an uppercase slug", () => {
+    assert.equal(segmentSchema.safeParse({ ...valid, slug: "Newsletter" }).success, false);
+  });
+
+  it("rejects a slug with spaces", () => {
+    assert.equal(segmentSchema.safeParse({ ...valid, slug: "not a slug" }).success, false);
+  });
+
+  it("accepts criteria as an arbitrary JSON object", () => {
+    const result = segmentSchema.safeParse({ ...valid, criteria: { pages: ["shop"], consent: true } });
+    assert.equal(result.success, true);
+  });
+
+  it("segmentUpdateSchema accepts a partial payload", () => {
+    assert.equal(segmentUpdateSchema.safeParse({ description: "Updated" }).success, true);
+  });
+});
+
+describe("templateSchema / templateUpdateSchema", () => {
+  const valid = { name: "Welcome Email", channel: "EMAIL" as const, body: "Hi {{first_name}}, welcome!" };
+
+  it("accepts a valid template", () => {
+    assert.equal(templateSchema.safeParse(valid).success, true);
+  });
+
+  it("rejects an invalid channel", () => {
+    assert.equal(templateSchema.safeParse({ ...valid, channel: "SMS" }).success, false);
+  });
+
+  it("rejects a body that's too short", () => {
+    assert.equal(templateSchema.safeParse({ ...valid, body: "hi" }).success, false);
+  });
+
+  it("templateUpdateSchema accepts a partial payload", () => {
+    assert.equal(templateUpdateSchema.safeParse({ subject: "New subject" }).success, true);
+  });
+});
+
+describe("offerSchema / offerUpdateSchema", () => {
+  const valid = { name: "Free Shipping", type: "free_shipping", description: "Free shipping over ₹8,000." };
+
+  it("accepts a valid offer without an explicit active flag (service layer defaults it)", () => {
+    const result = offerSchema.safeParse(valid);
+    assert.equal(result.success, true);
+    if (result.success) assert.equal(result.data.active, undefined);
+  });
+
+  it("rejects a missing description", () => {
+    assert.equal(offerSchema.safeParse({ name: "X", type: "bundle" }).success, false);
+  });
+
+  it("accepts an arbitrary config object", () => {
+    assert.equal(offerSchema.safeParse({ ...valid, config: { discount: "10%", minItems: 2 } }).success, true);
+  });
+
+  it("offerUpdateSchema accepts a partial payload", () => {
+    assert.equal(offerUpdateSchema.safeParse({ active: false }).success, true);
+  });
+});
+
+describe("seoPageRecordSchema / seoPageRecordUpdateSchema", () => {
+  const valid = { path: "/shop", title: "Shop All Scrubs", metaDescription: "Browse premium medical scrubs." };
+
+  it("accepts a valid record without an explicit status (service layer defaults it to ok)", () => {
+    const result = seoPageRecordSchema.safeParse(valid);
+    assert.equal(result.success, true);
+    if (result.success) assert.equal(result.data.status, undefined);
+  });
+
+  it("rejects a path that doesn't start with /", () => {
+    assert.equal(seoPageRecordSchema.safeParse({ ...valid, path: "shop" }).success, false);
+  });
+
+  it("rejects an invalid status value", () => {
+    assert.equal(seoPageRecordSchema.safeParse({ ...valid, status: "broken" }).success, false);
+  });
+
+  it("seoPageRecordUpdateSchema accepts a partial payload", () => {
+    assert.equal(seoPageRecordUpdateSchema.safeParse({ title: "New Title" }).success, true);
+  });
+});
+
+describe("notificationMarkReadSchema", () => {
+  it("accepts { read: true }", () => {
+    assert.equal(notificationMarkReadSchema.safeParse({ read: true }).success, true);
+  });
+
+  it("rejects a missing read field", () => {
+    assert.equal(notificationMarkReadSchema.safeParse({}).success, false);
+  });
+
+  it("rejects a non-boolean read field", () => {
+    assert.equal(notificationMarkReadSchema.safeParse({ read: "true" }).success, false);
+  });
+});
+
+describe("userInviteSchema", () => {
+  const valid = { name: "New Admin", email: "new-admin@example.com", role: "VIEWER" as const };
+
+  it("accepts a valid invite payload", () => {
+    assert.equal(userInviteSchema.safeParse(valid).success, true);
+  });
+
+  it("rejects an invalid email", () => {
+    assert.equal(userInviteSchema.safeParse({ ...valid, email: "not-an-email" }).success, false);
+  });
+
+  it("rejects an unknown role", () => {
+    assert.equal(userInviteSchema.safeParse({ ...valid, role: "GOD_MODE" }).success, false);
   });
 });

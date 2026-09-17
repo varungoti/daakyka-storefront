@@ -1,5 +1,6 @@
 import { AdminShell } from "@/components/admin/admin-shell";
 import { getSession } from "@/lib/auth/session";
+import { getUnreadNotificationCount } from "@/lib/notifications";
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 
@@ -19,5 +20,14 @@ export default async function AdminPanelLayout({
     redirect("/admin/login");
   }
 
-  return <AdminShell user={session}>{children}</AdminShell>;
+  // Cheap enough to fetch on every admin page load — a single count()
+  // query — and getUnreadNotificationCount() already swallows DB errors
+  // (returns 0) so a hiccup here never breaks the whole admin shell.
+  const unreadNotifications = await getUnreadNotificationCount();
+
+  return (
+    <AdminShell user={session} unreadNotifications={unreadNotifications}>
+      {children}
+    </AdminShell>
+  );
 }

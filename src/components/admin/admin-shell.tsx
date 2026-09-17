@@ -112,10 +112,12 @@ function NavLinks({
   groups,
   pathname,
   onNavigate,
+  unreadNotifications = 0,
 }: {
   groups: NavGroup[];
   pathname: string;
   onNavigate?: () => void;
+  unreadNotifications?: number;
 }) {
   return (
     <nav className="mt-8 space-y-6">
@@ -136,7 +138,12 @@ function NavLinks({
                 )}
               >
                 <Icon size={18} />
-                {label}
+                <span className="flex-1">{label}</span>
+                {href === "/admin/notifications" && unreadNotifications > 0 && (
+                  <span className="rounded-full bg-brand px-2 py-0.5 text-[11px] font-bold text-white">
+                    {unreadNotifications > 99 ? "99+" : unreadNotifications}
+                  </span>
+                )}
               </Link>
             ))}
           </div>
@@ -154,11 +161,13 @@ function MobileNavDrawer({
   onClose,
   groups,
   pathname,
+  unreadNotifications,
 }: {
   open: boolean;
   onClose: () => void;
   groups: NavGroup[];
   pathname: string;
+  unreadNotifications: number;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -223,7 +232,7 @@ function MobileNavDrawer({
             <X size={20} />
           </button>
         </div>
-        <NavLinks groups={groups} pathname={pathname} onNavigate={onClose} />
+        <NavLinks groups={groups} pathname={pathname} onNavigate={onClose} unreadNotifications={unreadNotifications} />
       </div>
     </div>
   );
@@ -232,9 +241,11 @@ function MobileNavDrawer({
 export function AdminShell({
   user,
   children,
+  unreadNotifications = 0,
 }: {
   user: SessionUser;
   children: React.ReactNode;
+  unreadNotifications?: number;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -262,7 +273,7 @@ export function AdminShell({
           </Link>
           <p className="mt-1 text-xs text-muted">{formatRole(user.role)}</p>
 
-          <NavLinks groups={visibleGroups} pathname={pathname} />
+          <NavLinks groups={visibleGroups} pathname={pathname} unreadNotifications={unreadNotifications} />
 
           <button
             type="button"
@@ -279,6 +290,7 @@ export function AdminShell({
           onClose={() => setDrawerOpen(false)}
           groups={visibleGroups}
           pathname={pathname}
+          unreadNotifications={unreadNotifications}
         />
 
         <div className="flex-1">

@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
-import { logAuditEvent } from "@/lib/auth/audit";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
-import { db } from "@/lib/db";
 import { readJsonBody } from "@/lib/security/parse-json-body";
+import { createSegment, listSegmentsForAdmin, SegmentSlugConflictError } from "@/lib/engagement/segments";
 import { segmentSchema } from "@/lib/validation/schemas";
 
 export async function GET() {
   const { error } = await requireAdminPermission("engagement:manage");
   if (error) return error;
-  const segments = await db.customerSegment.findMany({ orderBy: { name: "asc" } });
+  const segments = await listSegmentsForAdmin();
   return NextResponse.json(segments);
 }
 
@@ -20,22 +19,16 @@ export async function POST(request: Request) {
   if (!bodyResult.ok) return bodyResult.response;
   const parsed = segmentSchema.safeParse(bodyResult.data);
   if (!parsed.success) {
-    return NextResponse.json({ error: "Validation failed" }, { status: 400 });
+    return NextResponse.json({ error: "Validation failed", issues: parsed.error.issues }, { status: 400 });
   }
 
-  const segment = await db.customerSegment.create({
-    data: {
-      ...parsed.data,
-      criteria: JSON.stringify(parsed.data.criteria ?? {}),
-    },
-  });
-
-  await logAuditEvent({
-    userId: session!.id,
-    action: "create",
-    entity: "customer_segment",
-    entityId: segment.id,
-  });
-
-  return NextResponse.json(segment, { status: 201 });
+  try {
+    const segment = await createSegment(parsed.data, session!.id);
+    return NextResponse.json(segment, { status: 201 });
+  } catch (err) {
+    if (err instanceof SegmentSlugConflictError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    throw err;
+  }
 }

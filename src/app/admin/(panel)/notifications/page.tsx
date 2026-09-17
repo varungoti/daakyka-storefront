@@ -1,3 +1,4 @@
+import { NotificationList } from "@/components/admin/notification-list";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
@@ -35,19 +36,17 @@ export default async function AdminNotificationsPage() {
 
       <section className="rounded-3xl border border-border bg-surface p-6">
         <h2 className="font-display text-xl font-bold text-ink">Admin Notifications</h2>
-        <ul className="mt-4 space-y-3">
-          {notifications.map((note) => (
-            <li
-              key={note.id}
-              className={`rounded-xl border px-4 py-3 ${note.read ? "border-border" : "border-brand/30 bg-brand/5"}`}
-            >
-              <p className="font-semibold text-ink">{note.title}</p>
-              <p className="mt-1 text-sm text-muted">{note.body}</p>
-              <p className="mt-2 text-xs text-muted">{note.createdAt.toLocaleString("en-IN")}</p>
-            </li>
-          ))}
-          {notifications.length === 0 && <p className="text-sm text-muted">No notifications yet.</p>}
-        </ul>
+        <div className="mt-4">
+          <NotificationList
+            notifications={notifications.map((n) => ({
+              id: n.id,
+              title: n.title,
+              body: n.body,
+              read: n.read,
+              createdAt: n.createdAt.toISOString(),
+            }))}
+          />
+        </div>
       </section>
 
       <section className="rounded-3xl border border-border bg-surface p-6">
