@@ -43,7 +43,15 @@ enum CampaignStatus {
   PENDING_APPROVAL
   APPROVED
   SCHEDULED
+  // engagement_compliance: claimed by a dispatch run (see
+  // src/lib/engagement/campaign-dispatcher.ts claimCampaignForSending) so a
+  // second overlapping cron/admin trigger can't send the same campaign twice.
+  SENDING
   SENT
+  // engagement_compliance: every recipient attempt failed (0 CampaignDelivery
+  // rows with status "sent"). Distinct from CANCELLED (never sent, admin
+  // choice) so a failed send can be diagnosed and requeued.
+  FAILED
   CANCELLED
 }
 
@@ -190,7 +198,27 @@ model NewsletterSubscriber {
   id           String   @id @default(cuid())
   email        String   @unique
   source       String   @default("footer")
-  consentGiven Boolean  @default(true)
+  // engagement_compliance: was `@default(true)`, which meant a subscriber
+  // got marketing consent by default with no actual checkbox interaction —
+  // flagged in the compliance audit as a real bug. New rows now start
+  // unconsented until the API-level zod check (newsletterSchema requires
+  // consentGiven: true) and the UI checkbox both confirm it.
+  consentGiven Boolean  @default(false)
+  // engagement_compliance: double opt-in. Set only once the confirmation
+  // link (GET /api/newsletter/confirm?token=...) is followed; nothing is
+  // sent to a subscriber (and no journey is triggered) until this is set.
+  confirmedAt  DateTime?
+  // engagement_compliance: single-use, cleared once consumed by the confirm
+  // route. Null once confirmed or if a subscriber was created before this
+  // migration and hasn't re-subscribed since.
+  confirmToken String?  @unique
+  // engagement_compliance: set when the subscriber unsubscribes; every
+  // marketing-segment query and sendMarketingEmail() must exclude these.
+  unsubscribedAt DateTime?
+  // engagement_compliance: stable, unguessable per-subscriber token used by
+  // the unsubscribe link/footer on every marketing email. Never rotated so
+  // an old email's unsubscribe link keeps working.
+  unsubscribeToken String @unique @default(cuid())
   createdAt    DateTime @default(now())
 }
 
@@ -231,6 +259,55 @@ model Campaign {
   notes       String?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
+  deliveries  CampaignDelivery[]
+}
+
+/// engagement_compliance: one row per (campaign, recipient, channel) send
+/// attempt. The unique constraint is what makes a campaign send idempotent
+/// — campaign-dispatcher.ts checks for an existing row before sending and
+/// relies on the constraint as a second line of defense against a race
+/// creating two rows for the same recipient, so an interrupted dispatch run
+/// can resume without double-sending.
+model CampaignDelivery {
+  id                String          @id @default(cuid())
+  campaignId        String
+  campaign          Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  recipient         String
+  channel           TemplateChannel
+  status            String
+  providerMessageId String?
+  error             String?
+  sentAt            DateTime?
+  createdAt         DateTime        @default(now())
+
+  @@unique([campaignId, recipient, channel])
+  @@index([campaignId])
+}
+
+/// engagement_compliance: WhatsApp marketing opt-in/out, separate from
+/// NewsletterSubscriber because a lead can opt into WhatsApp updates
+/// without subscribing to the email newsletter (and vice versa). Consulted
+/// before a WATI marketing/broadcast send; transactional WhatsApp
+/// (order updates, OTPs) is unaffected.
+model WhatsAppOptIn {
+  id          String    @id @default(cuid())
+  phone       String    @unique
+  optedInAt   DateTime  @default(now())
+  optedOutAt  DateTime?
+}
+
+/// engagement_compliance: one row per (job, runKey) cron execution. The
+/// unique constraint on (job, runKey) is the idempotency mechanism —
+/// creating this row is the "claim"; a duplicate cron trigger for the same
+/// job+window hits a unique-constraint violation and short-circuits
+/// instead of redoing the work. See src/lib/cron/idempotency.ts.
+model CronRun {
+  id        String   @id @default(cuid())
+  job       String
+  runKey    String
+  createdAt DateTime @default(now())
+
+  @@unique([job, runKey])
 }
 
 model TestimonialRecord {
@@ -387,9 +464,28 @@ model JourneyEnrollment {
   nextRunAt   DateTime?
   status      EnrollmentStatus @default(ACTIVE)
   trigger     String
+  // engagement_compliance: claim marker for processDueEnrollments — a cron
+  // run sets this before executing a step and clears it after, so a second
+  // overlapping cron run skips rows already claimed (see
+  // src/lib/engagement/journey-engine.ts). A stale lock (older than the
+  // claim timeout) is treated as unclaimed so a crashed run doesn't wedge
+  // an enrollment forever.
+  lockedAt    DateTime?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
+  // engagement_compliance: NOT a `@@unique([journeyId, email])` — verified
+  // against production data that no duplicate (journeyId, email) rows exist
+  // today, but a hard unique constraint would still be wrong: triggers like
+  // cart_abandoned/order_created/bulk_lead_created legitimately re-enroll
+  // the same email in the same journey over time (a second abandoned cart,
+  // a second order), so only *simultaneously ACTIVE* duplicates should be
+  // blocked. That's enforced with a partial unique index added by raw SQL
+  // in the engagement_compliance migration (`... WHERE status = 'ACTIVE'`,
+  // which Prisma's schema DSL can't express) plus an application-level
+  // check in journey-engine.ts's enrollInJourney. This index is only for
+  // query performance/documentation.
+  @@index([journeyId, email])
   @@index([nextRunAt, status])
 }
 

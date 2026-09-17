@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { triggerJourneys } from "@/lib/engagement/journey-triggers";
+import { subscribeToNewsletter } from "@/lib/engagement/newsletter";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { newsletterSchema } from "@/lib/validation/schemas";
@@ -24,20 +23,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid email or missing consent" }, { status: 400 });
     }
 
-    const email = parsed.data.email.toLowerCase();
-    const subscriber = await db.newsletterSubscriber.upsert({
-      where: { email },
-      update: { source: parsed.data.source ?? "footer", consentGiven: true },
-      create: {
-        email,
-        source: parsed.data.source ?? "footer",
-        consentGiven: true,
-      },
+    // engagement_compliance: double opt-in — this only creates an
+    // unconfirmed subscriber and sends a confirmation email; it does NOT
+    // enroll in any journey. Enrollment happens in
+    // GET /api/newsletter/confirm once the link is actually clicked.
+    const { id, alreadyConfirmed } = await subscribeToNewsletter({
+      email: parsed.data.email,
+      source: parsed.data.source,
     });
 
-    await triggerJourneys("newsletter_signup", { email });
-
-    return NextResponse.json({ id: subscriber.id, message: "Subscribed successfully" });
+    return NextResponse.json({
+      id,
+      message: alreadyConfirmed
+        ? "You're already subscribed."
+        : "Check your inbox to confirm your subscription.",
+    });
   } catch {
     return NextResponse.json({ error: "Subscription failed" }, { status: 500 });
   }

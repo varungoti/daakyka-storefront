@@ -5,6 +5,12 @@ export interface SendEmailInput {
   subject: string;
   html: string;
   text?: string;
+  /** engagement_compliance: optional custom headers (e.g. RFC 8058
+   * List-Unsubscribe / List-Unsubscribe-Post) — Brevo's transactional email
+   * API accepts an arbitrary `headers` object, so this passes straight
+   * through. Only set by sendMarketingEmail(); transactional callers
+   * (customer-auth, order notify) don't need it and leave it undefined. */
+  headers?: Record<string, string>;
 }
 
 export interface SendEmailResult {
@@ -41,6 +47,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
         subject: input.subject,
         htmlContent: input.html,
         textContent: input.text ?? input.html.replace(/<[^>]+>/g, ""),
+        ...(input.headers ? { headers: input.headers } : {}),
       }),
     });
 

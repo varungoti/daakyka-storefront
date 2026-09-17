@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authorizeCron } from "@/lib/cron/authorize";
+import { claimCronRun, dailyRunKey } from "@/lib/cron/idempotency";
 import { db } from "@/lib/db";
 import {
   buildWeeklyGrowthReport,
@@ -10,6 +11,14 @@ import { dispatchHermesTask } from "@/lib/hermes/client";
 export async function POST(request: Request) {
   if (!authorizeCron(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Runs once/week per vercel.json ("0 7 * * 1") — a calendar-date runKey
+  // still guards correctly here since the schedule only ever fires it once
+  // within any given date.
+  const { claimed } = await claimCronRun("reports", dailyRunKey());
+  if (!claimed) {
+    return NextResponse.json({ ok: true, alreadyRan: true });
   }
 
   const report = await buildWeeklyGrowthReport(7);

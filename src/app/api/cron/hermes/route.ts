@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authorizeCron } from "@/lib/cron/authorize";
+import { claimCronRun, dailyRunKey } from "@/lib/cron/idempotency";
 import { db } from "@/lib/db";
 import { dispatchHermesTask } from "@/lib/hermes/client";
 
@@ -8,6 +9,12 @@ const scheduledTasks = ["daily_seo_health_scan", "weekly_competitor_scan"] as co
 export async function POST(request: Request) {
   if (!authorizeCron(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Runs once/day per vercel.json ("0 6 * * *").
+  const { claimed } = await claimCronRun("hermes", dailyRunKey());
+  if (!claimed) {
+    return NextResponse.json({ ok: true, alreadyRan: true, results: [] });
   }
 
   const results = [];

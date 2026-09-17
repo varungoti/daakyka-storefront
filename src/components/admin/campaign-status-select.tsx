@@ -8,7 +8,13 @@ const nextStatuses: Record<CampaignStatus, CampaignStatus[]> = {
   PENDING_APPROVAL: ["APPROVED", "DRAFT", "CANCELLED"],
   APPROVED: ["SCHEDULED", "SENT", "CANCELLED"],
   SCHEDULED: ["SENT", "CANCELLED"],
+  // engagement_compliance: system-managed states (claimed by
+  // campaign-dispatcher.ts while a send is in flight, or the terminal state
+  // when every recipient attempt failed) — not something an admin picks
+  // from this dropdown.
+  SENDING: [],
   SENT: [],
+  FAILED: ["SCHEDULED", "CANCELLED"],
   CANCELLED: ["DRAFT"],
 };
 

@@ -62,9 +62,23 @@ export async function resolveSegmentRecipients(
     );
   }
 
+  // engagement_compliance: a marketing send may only go to a subscriber who
+  // (a) opted in (consentGiven), (b) confirmed via the double opt-in link
+  // (confirmedAt set) and (c) hasn't since unsubscribed. `consentGiven` was
+  // flagged separately as defaulting to true with no real checkbox behind
+  // it and has since been fixed at the schema level (see
+  // NewsletterSubscriber in prisma/schema.prisma) — confirmedAt/
+  // unsubscribedAt are the two checks that actually matter now, but
+  // consentGiven is kept in the filter as defense in depth.
+  const marketingConsentFilter = {
+    consentGiven: true,
+    confirmedAt: { not: null },
+    unsubscribedAt: null,
+  } as const;
+
   if (criteria.source === "newsletter" || criteria.consent === true) {
     const subscribers = await db.newsletterSubscriber.findMany({
-      where: { consentGiven: true },
+      where: marketingConsentFilter,
       orderBy: { createdAt: "desc" },
       take: 1000,
     });
@@ -79,34 +93,25 @@ export async function resolveSegmentRecipients(
   if (criteria.pages?.length) {
     const subscribers = await db.newsletterSubscriber.findMany({
       where: {
-        consentGiven: true,
+        ...marketingConsentFilter,
         source: { in: ["mix-match", "bespoke", "shop", "footer", "checkout"] },
       },
       orderBy: { createdAt: "desc" },
       take: 500,
     });
 
-    if (subscribers.length > 0) {
-      return dedupeRecipients(
-        subscribers.map((subscriber) => ({
-          email: subscriber.email,
-          firstName: subscriber.email.split("@")[0],
-        })),
-      );
-    }
-
-    const enquiries = await db.contactEnquiry.findMany({
-      where: { type: { in: ["BULK_ORDER", "INSTITUTIONAL"] } },
-      orderBy: { createdAt: "desc" },
-      take: 200,
-    });
+    // engagement_compliance: this used to fall back to ContactEnquiry rows
+    // (type BULK_ORDER/INSTITUTIONAL) when no matching subscribers were
+    // found — flagged in the compliance audit as a real issue: someone who
+    // filed a contact enquiry about THEIR OWN question consented to being
+    // contacted about that enquiry, not to being added to a marketing
+    // segment. Removed entirely for this (marketing) resolution path; an
+    // empty consented-subscriber list now just means an empty recipient
+    // list, not "substitute a different audience that never opted in".
     return dedupeRecipients(
-      enquiries.map((enquiry) => ({
-        email: enquiry.email,
-        phone: enquiry.phone ?? undefined,
-        contactName: enquiry.name,
-        firstName: enquiry.name.split(" ")[0],
-        organization: enquiry.organization ?? undefined,
+      subscribers.map((subscriber) => ({
+        email: subscriber.email,
+        firstName: subscriber.email.split("@")[0],
       })),
     );
   }
