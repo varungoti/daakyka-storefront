@@ -89,6 +89,31 @@ export function validateEnv(): void {
     if (process.env.BREVO_API_KEY && !process.env.BREVO_FROM_EMAIL) {
       throw new Error("BREVO_FROM_EMAIL must be set when BREVO_API_KEY is configured");
     }
+
+    // AI image generation and R2 storage are optional integrations: warn
+    // rather than fail the build/boot when their credentials aren't set
+    // yet (e.g. before the client has rotated/provided them) — every
+    // caller already checks isImageGenerationConfigured()/isR2Configured()
+    // and reports a clear "not configured" error instead of crashing.
+    if (!process.env.OPENAI_API_KEY) {
+      console.warn(
+        "[env] OPENAI_API_KEY is not set — AI image generation will report as not configured",
+      );
+    }
+
+    const missingR2Vars = [
+      "R2_ACCOUNT_ID",
+      "R2_ACCESS_KEY_ID",
+      "R2_SECRET_ACCESS_KEY",
+      "R2_BUCKET",
+      "R2_PUBLIC_BASE_URL",
+    ].filter((key) => !process.env[key]);
+    if (missingR2Vars.length > 0) {
+      console.warn(
+        `[env] Cloudflare R2 storage is not fully configured (missing: ${missingR2Vars.join(", ")}) — media upload and AI image storage will report as not configured`,
+      );
+    }
+
     return;
   }
 

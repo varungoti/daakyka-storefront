@@ -10,6 +10,9 @@
     },
     "src/app/api/outfit/try-on/route.ts": {
       "maxDuration": 120
+    },
+    "src/app/api/admin/media/generate/route.ts": {
+      "maxDuration": 120
     }
   },
   "crons": [

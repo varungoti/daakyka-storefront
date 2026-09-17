@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 import { fabricSeoRedirects, seoLandingPages } from "./src/data/seo-landing-pages";
 import { validateEnv } from "./src/lib/env";
-import { TRUSTED_IMAGE_HOSTS } from "./src/lib/security/image-hosts";
+import { getTrustedImageHosts } from "./src/lib/security/image-hosts";
 
 validateEnv();
 
@@ -18,7 +18,8 @@ validateEnv();
 // remote <script src="https://evil.example">, framing the site
 // (frame-ancestors, redundant with X-Frame-Options for older
 // browsers), <object>/<embed>, and form submissions to another origin.
-const imageSources = TRUSTED_IMAGE_HOSTS.map((host) => `https://${host}`).join(" ");
+const trustedImageHosts = getTrustedImageHosts();
+const imageSources = trustedImageHosts.map((host) => `https://${host}`).join(" ");
 const contentSecurityPolicy = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline'",
@@ -58,7 +59,7 @@ const nextConfig: NextConfig = {
   images: {
     formats: ["image/webp"],
     minimumCacheTTL: 60 * 60 * 24 * 30,
-    remotePatterns: TRUSTED_IMAGE_HOSTS.map((hostname) => ({
+    remotePatterns: trustedImageHosts.map((hostname) => ({
       protocol: "https" as const,
       hostname,
     })),
