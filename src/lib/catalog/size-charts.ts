@@ -240,6 +240,18 @@ function normalizeRows(columns: string[], rawRows: unknown): (string | number)[]
   });
 }
 
+function toSizeChartForDisplay(chart: SizeChart): SizeChartForDisplay {
+  const columns = Array.isArray(chart.columns) ? (chart.columns as string[]) : [];
+  return {
+    id: chart.id,
+    name: chart.name,
+    unit: chart.unit,
+    columns,
+    rows: normalizeRows(columns, chart.rows),
+    notes: chart.notes,
+  };
+}
+
 async function fetchSizeChartsForDisplay(): Promise<SizeChartSectionGroup[]> {
   const categories = await db.category.findMany({
     where: { active: true, sizeChartId: { not: null } },
@@ -249,17 +261,7 @@ async function fetchSizeChartsForDisplay(): Promise<SizeChartSectionGroup[]> {
   const bySection = new Map<CategorySection, Map<string, SizeChartForDisplay>>();
   for (const category of categories) {
     if (!category.sizeChart) continue;
-    const columns = Array.isArray(category.sizeChart.columns)
-      ? (category.sizeChart.columns as string[])
-      : [];
-    const chart: SizeChartForDisplay = {
-      id: category.sizeChart.id,
-      name: category.sizeChart.name,
-      unit: category.sizeChart.unit,
-      columns,
-      rows: normalizeRows(columns, category.sizeChart.rows),
-      notes: category.sizeChart.notes,
-    };
+    const chart = toSizeChartForDisplay(category.sizeChart);
     if (!bySection.has(category.section)) bySection.set(category.section, new Map());
     bySection.get(category.section)!.set(chart.id, chart);
   }
@@ -290,6 +292,49 @@ export async function getSizeChartsForDisplay(): Promise<SizeChartSectionGroup[]
       return await fetchSizeChartsForDisplay();
     } catch {
       return [];
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Public storefront read (Phase C5: product detail "Size guide" modal)
+// ---------------------------------------------------------------------------
+
+async function fetchSizeChartForProduct(productId: string): Promise<SizeChartForDisplay | null> {
+  const product = await db.product.findUnique({
+    where: { id: productId },
+    select: {
+      sizeChart: true,
+      category: { select: { sizeChart: true } },
+    },
+  });
+  if (!product) return null;
+
+  // Product-level override wins when set (Product.sizeChartId); otherwise
+  // fall back to the category's default chart (Category.sizeChartId).
+  const chart = product.sizeChart ?? product.category.sizeChart;
+  return chart ? toSizeChartForDisplay(chart) : null;
+}
+
+/** The size chart to show for a single product's "Size guide" modal:
+ * the product's own override if `Product.sizeChartId` is set, else its
+ * category's default (`Category.sizeChartId`), else `null` when neither
+ * has one configured. Falls back to `null` (not a throw) on any DB
+ * error, same rationale as getSizeChartsForDisplay above. */
+export async function getSizeChartForProduct(productId: string): Promise<SizeChartForDisplay | null> {
+  const cached = unstable_cache(
+    () => fetchSizeChartForProduct(productId),
+    ["size-chart-for-product", productId],
+    { tags: [CATEGORIES_CACHE_TAG, PRODUCTS_CACHE_TAG] },
+  );
+
+  try {
+    return await cached();
+  } catch {
+    try {
+      return await fetchSizeChartForProduct(productId);
+    } catch {
+      return null;
     }
   }
 }

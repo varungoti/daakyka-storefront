@@ -1,203 +1,633 @@
 "use client";
 
 import { AddToCartButton } from "@/components/cart/add-to-cart-button";
-import { WishlistButton } from "@/components/wishlist/wishlist-button";
+import { Badge } from "@/components/ui/badge";
+import { ImageLightbox, type LightboxImage } from "@/components/ui/image-lightbox";
+import { Modal } from "@/components/ui/modal";
 import { StarRating } from "@/components/ui/star-rating";
+import { WishlistButton } from "@/components/wishlist/wishlist-button";
 import { useCurrency } from "@/context/currency-provider";
+import type { SizeChartForDisplay } from "@/lib/catalog/size-charts";
+import { computePercentOff } from "@/lib/pricing/percent-off";
+import { isSizeAvailableForColor, resolveVariant } from "@/lib/products/resolve-variant";
+import type { DisplayReview, GetApprovedReviewsResult, ReviewSort, ReviewSummary } from "@/lib/reviews";
 import type { Product } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { ChevronDown, Minus, Plus } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 
 interface ProductDetailProps {
   product: Product;
+  isLoggedIn: boolean;
+  sizeChart: SizeChartForDisplay | null;
+  reviewSummary: ReviewSummary;
+  initialReviews: GetApprovedReviewsResult;
+  shipping: { flatRate: number; freeAbove: number };
 }
 
-export function ProductDetail({ product }: ProductDetailProps) {
+const INSTITUTIONAL_SECTIONS = new Set(["HOSPITAL", "SCHOOL"]);
+
+/**
+ * Phase C5 rewrite. Gallery + info column + accordions + a real reviews
+ * section (display only — review submission is Phase D2). Variant
+ * resolution now goes through src/lib/products/resolve-variant.ts
+ * instead of the inline size/colour matching the old component had.
+ */
+export function ProductDetail({
+  product,
+  isLoggedIn,
+  sizeChart,
+  reviewSummary,
+  initialReviews,
+  shipping,
+}: ProductDetailProps) {
   const { formatPrice } = useCurrency();
-  const gallery = product.images?.length
-    ? product.images.map((img) => img.url)
-    : [product.image];
-  const [activeImage, setActiveImage] = useState(gallery[0]);
-  const [selectedVariantId, setSelectedVariantId] = useState(
-    product.defaultVariantId ?? product.variants?.[0]?.id ?? "",
-  );
-  const [selectedSize, setSelectedSize] = useState(product.sizes[0] ?? "M");
+
   const [selectedColor, setSelectedColor] = useState(product.colorName);
+  const [selectedSize, setSelectedSize] = useState(product.sizes[0] ?? "");
+  const [quantity, setQuantity] = useState(1);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
 
-  const selectedVariant = useMemo(() => {
-    if (!product.variants?.length) return undefined;
+  const gallery = useMemo<LightboxImage[]>(() => {
+    const colorImages = product.images?.filter((img) => img.color === selectedColor) ?? [];
+    const source =
+      colorImages.length > 0
+        ? colorImages
+        : product.images && product.images.length > 0
+          ? product.images
+          : [{ url: product.image, alt: product.name }];
+    return source.map((img) => ({ url: img.url, alt: img.alt ?? product.name }));
+  }, [product.images, product.image, product.name, selectedColor]);
 
-    const bySize = product.variants.find((variant) =>
-      variant.selectedOptions.some(
-        (option) =>
-          option.name.toLowerCase().includes("size") &&
-          option.value === selectedSize,
-      ),
-    );
+  const selectedVariant = useMemo(
+    () => resolveVariant(product.variants, selectedSize, selectedColor),
+    [product.variants, selectedSize, selectedColor],
+  );
 
-    const byColor = product.variants.find((variant) =>
-      variant.selectedOptions.some(
-        (option) =>
-          option.name.toLowerCase().includes("color") &&
-          option.value === selectedColor,
-      ),
-    );
-
-    return (
-      product.variants.find((variant) => variant.id === selectedVariantId) ??
-      bySize ??
-      byColor ??
-      product.variants[0]
-    );
-  }, [product.variants, selectedColor, selectedSize, selectedVariantId]);
-
-  const displayImage = activeImage;
+  const displayPrice = selectedVariant?.price ?? product.price;
+  const percentOff = computePercentOff(displayPrice, product.compareAtPrice);
+  const isInstitutional = Boolean(product.section && INSTITUTIONAL_SECTIONS.has(product.section));
+  const sizeUnavailable =
+    Boolean(selectedSize) && !isSizeAvailableForColor(product.variants, selectedSize, selectedColor);
 
   return (
-    <div className="grid gap-12 lg:grid-cols-2">
-      <div className="space-y-4">
-        <div className="relative aspect-[4/5] overflow-hidden rounded-[2rem] border border-border bg-lilac/20">
-          <Image
-            src={displayImage}
-            alt={product.name}
-            fill
-            priority
-            unoptimized={displayImage.endsWith(".svg")}
-            className="object-cover"
-            sizes="(max-width: 1024px) 100vw, 50vw"
-          />
-        </div>
-        {gallery.length > 1 ? (
-          <div className="flex gap-3 overflow-x-auto pb-1">
-            {gallery.map((image, index) => (
-              <button
-                key={`${image}-${index}`}
-                type="button"
-                onClick={() => setActiveImage(image)}
-                className={`relative h-20 w-20 shrink-0 overflow-hidden rounded-xl border-2 transition ${
-                  displayImage === image
-                    ? "border-brand ring-2 ring-brand/20"
-                    : "border-border hover:border-brand/50"
-                }`}
-                aria-label={`View ${product.name} image ${index + 1}`}
+    <div>
+      <div className="grid gap-12 lg:grid-cols-2">
+        <GalleryColumn
+          images={gallery}
+          selectedColor={selectedColor}
+          productName={product.name}
+          onOpenLightbox={setLightboxIndex}
+        />
+
+        <div className="space-y-6">
+          <div>
+            <h1 className="font-display text-4xl font-bold text-ink">{product.name}</h1>
+            {product.reviewCount > 0 ? (
+              <a
+                href="#reviews"
+                className="mt-2 inline-block text-sm font-semibold text-ink hover:text-brand"
               >
-                <Image
-                  src={image}
-                  alt={`${product.name} view ${index + 1}`}
-                  fill
-                  unoptimized={image.endsWith(".svg")}
-                  className="object-cover"
-                  sizes="80px"
-                />
-              </button>
-            ))}
+                {product.rating.toFixed(1)} · {product.reviewCount} review
+                {product.reviewCount === 1 ? "" : "s"}
+              </a>
+            ) : (
+              <p className="mt-2 text-sm text-muted">No reviews yet</p>
+            )}
           </div>
-        ) : null}
-      </div>
 
-      <div className="space-y-6">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-wide text-brand">
-            {selectedColor}
-          </p>
-          <h1 className="mt-2 font-display text-4xl font-bold text-ink">
-            {product.name}
-          </h1>
-          <StarRating
-            rating={product.rating}
-            reviewCount={product.reviewCount}
-            size="md"
-            className="mt-4"
-          />
-        </div>
-
-        <p className="font-display text-3xl font-bold text-ink">
-          {formatPrice(selectedVariant?.price ?? product.price)}
-        </p>
-
-        <p className="leading-relaxed text-muted">
-          {product.description ??
-            "Premium performance scrubs with advanced fabric technology for healthcare professionals. Engineered for comfort during long shifts."}
-        </p>
-
-        <div>
-          <p className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">
-            Color
-          </p>
-          <div className="flex flex-wrap gap-3">
-            {product.colors.map((color) => (
-              <button
-                key={color.name}
-                type="button"
-                onClick={() => setSelectedColor(color.name)}
-                className={`h-10 w-10 rounded-full border-2 ${
-                  selectedColor === color.name
-                    ? "border-brand ring-2 ring-brand/20"
-                    : "border-transparent"
-                }`}
-                style={{ backgroundColor: color.hex }}
-                title={color.name}
-              />
-            ))}
+          <div className="flex flex-wrap items-baseline gap-3">
+            <p className="font-display text-3xl font-bold text-ink">{formatPrice(displayPrice)}</p>
+            {product.compareAtPrice !== undefined && product.compareAtPrice > displayPrice && (
+              <>
+                <p className="text-lg text-muted line-through">{formatPrice(product.compareAtPrice)}</p>
+                {percentOff !== null && <Badge variant="sale">{percentOff}% Off</Badge>}
+              </>
+            )}
           </div>
-        </div>
 
-        <div>
-          <p className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">
-            Size
+          <p className="leading-relaxed text-muted">
+            {product.description ??
+              "Premium apparel engineered for all-day comfort and durability, built for healthcare and institutional wear."}
           </p>
-          <div className="flex flex-wrap gap-2">
-            {product.sizes.map((size) => (
-              <button
-                key={size}
-                type="button"
-                onClick={() => {
-                  setSelectedSize(size);
-                  const match = product.variants?.find((variant) =>
-                    variant.selectedOptions.some(
-                      (option) =>
-                        option.name.toLowerCase().includes("size") &&
-                        option.value === size,
-                    ),
+
+          {product.colors.length > 1 && (
+            <div>
+              <p className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Color</p>
+              <div className="flex flex-wrap gap-3">
+                {product.colors.map((color) => (
+                  <button
+                    key={color.name}
+                    type="button"
+                    onClick={() => setSelectedColor(color.name)}
+                    aria-pressed={selectedColor === color.name}
+                    aria-label={color.name}
+                    title={color.name}
+                    className={cn(
+                      "h-10 w-10 rounded-full border-2 transition",
+                      selectedColor === color.name
+                        ? "border-brand ring-2 ring-brand/20"
+                        : "border-transparent hover:border-border",
+                    )}
+                    style={{ backgroundColor: color.hex }}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {product.sizes.length > 0 && (
+            <div>
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-xs font-bold uppercase tracking-wide text-muted">Size</p>
+                <button
+                  type="button"
+                  onClick={() => setSizeGuideOpen(true)}
+                  className="text-sm font-semibold text-brand hover:underline"
+                >
+                  Size Guide
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {product.sizes.map((size) => {
+                  const available = isSizeAvailableForColor(product.variants, size, selectedColor);
+                  return (
+                    <button
+                      key={size}
+                      type="button"
+                      disabled={!available}
+                      onClick={() => setSelectedSize(size)}
+                      aria-pressed={selectedSize === size}
+                      className={cn(
+                        "rounded-lg border px-4 py-2 text-sm font-semibold transition",
+                        !available && "cursor-not-allowed border-border text-muted/50 line-through",
+                        available &&
+                          (selectedSize === size
+                            ? "border-brand bg-brand/10 text-brand"
+                            : "border-border hover:border-brand"),
+                      )}
+                    >
+                      {size}
+                    </button>
                   );
-                  if (match) setSelectedVariantId(match.id);
-                }}
-                className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${
-                  selectedSize === size
-                    ? "border-brand bg-brand/10 text-brand"
-                    : "border-border hover:border-brand"
-                }`}
-              >
-                {size}
-              </button>
-            ))}
-          </div>
-          <Link
-            href="/size-guide"
-            className="mt-3 inline-block text-sm font-semibold text-brand hover:underline"
-          >
-            View Size Guide
-          </Link>
-        </div>
+                })}
+              </div>
+              {sizeUnavailable && (
+                <p className="mt-2 text-xs font-semibold text-sale">Out of stock in this size/colour</p>
+              )}
+            </div>
+          )}
 
-        <div className="flex flex-wrap gap-4 pt-4">
-          <AddToCartButton
-            product={product}
-            variant={selectedVariant}
-            size="lg"
-          />
-          <AddToCartButton
-            product={product}
-            variant={selectedVariant}
-            size="lg"
-            variantStyle="outline"
-            label="Buy Now"
-            redirectToCheckout
-          />
-          <WishlistButton product={product} className="border border-border p-4" />
+          <div>
+            <p className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Quantity</p>
+            <div className="inline-flex items-center rounded-md border border-border">
+              <button
+                type="button"
+                onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                className="px-3 py-2 text-ink transition hover:bg-lilac/40"
+                aria-label="Decrease quantity"
+              >
+                <Minus size={16} />
+              </button>
+              <span className="min-w-10 text-center text-sm font-semibold">{quantity}</span>
+              <button
+                type="button"
+                onClick={() => setQuantity((q) => q + 1)}
+                className="px-3 py-2 text-ink transition hover:bg-lilac/40"
+                aria-label="Increase quantity"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-4 pt-2">
+            <AddToCartButton product={product} variant={selectedVariant} quantity={quantity} size="lg" />
+            <AddToCartButton
+              product={product}
+              variant={selectedVariant}
+              quantity={quantity}
+              size="lg"
+              variantStyle="outline"
+              label="Buy Now"
+              redirectToCheckout
+            />
+            <WishlistButton product={product} className="border border-border p-4" />
+          </div>
+
+          {isInstitutional && (
+            <Link
+              href="/bulk-orders"
+              className="inline-flex items-center gap-1 text-sm font-semibold text-brand hover:underline"
+            >
+              Need bulk pricing? Enquire <span aria-hidden="true">→</span>
+            </Link>
+          )}
         </div>
       </div>
+
+      <div className="mt-12 max-w-3xl">
+        <AccordionItem title="Description" defaultOpen>
+          <p>
+            {product.description ??
+              "Premium apparel engineered for all-day comfort and durability, built for healthcare and institutional wear."}
+          </p>
+        </AccordionItem>
+
+        <AccordionItem title="Fabric & Care">
+          {product.fabric || product.care ? (
+            <ul className="space-y-1">
+              {product.fabric && (
+                <li>
+                  <span className="font-semibold text-ink">Fabric: </span>
+                  {product.fabric}
+                </li>
+              )}
+              {product.care && (
+                <li>
+                  <span className="font-semibold text-ink">Care: </span>
+                  {product.care}
+                </li>
+              )}
+            </ul>
+          ) : (
+            <p>Fabric and care details for this product haven&apos;t been added yet.</p>
+          )}
+        </AccordionItem>
+
+        <AccordionItem title="Shipping & Returns">
+          <p>
+            Flat {formatPrice(shipping.flatRate)} shipping, free on orders above{" "}
+            {formatPrice(shipping.freeAbove)}. Get in touch within 7 days of delivery for returns or
+            exchanges.
+          </p>
+        </AccordionItem>
+
+        {isInstitutional && (
+          <AccordionItem title="Bulk Orders">
+            <p>
+              Ordering for a hospital, school, or organisation? We offer volume pricing, colour
+              standardisation and logo embroidery.{" "}
+              <Link href="/bulk-orders" className="font-semibold text-brand hover:underline">
+                Enquire about bulk orders →
+              </Link>
+            </p>
+          </AccordionItem>
+        )}
+      </div>
+
+      <ReviewsSection
+        product={product}
+        summary={reviewSummary}
+        initialReviews={initialReviews}
+        isLoggedIn={isLoggedIn}
+      />
+
+      {lightboxIndex !== null && (
+        <ImageLightbox images={gallery} startIndex={lightboxIndex} onClose={() => setLightboxIndex(null)} />
+      )}
+
+      {sizeGuideOpen && (
+        <Modal title="Size Guide" onClose={() => setSizeGuideOpen(false)}>
+          {sizeChart ? (
+            <SizeChartTable chart={sizeChart} />
+          ) : (
+            <p className="text-sm text-muted">
+              A size chart isn&apos;t set up for this product yet. See our{" "}
+              <Link
+                href="/size-guide"
+                className="font-semibold text-brand hover:underline"
+                onClick={() => setSizeGuideOpen(false)}
+              >
+                general size guide
+              </Link>{" "}
+              in the meantime.
+            </p>
+          )}
+        </Modal>
+      )}
     </div>
+  );
+}
+
+function GalleryColumn({
+  images,
+  selectedColor,
+  productName,
+  onOpenLightbox,
+}: {
+  images: LightboxImage[];
+  selectedColor: string;
+  productName: string;
+  onOpenLightbox: (index: number) => void;
+}) {
+  const [activeIndex, setActiveIndex] = useState(0);
+
+  // The gallery swaps when the selected colour changes (filtered to that
+  // colour's images) — reset back to the first image so we never point
+  // at an index the new gallery doesn't have.
+  const [lastColor, setLastColor] = useState(selectedColor);
+  if (selectedColor !== lastColor) {
+    setLastColor(selectedColor);
+    setActiveIndex(0);
+  }
+
+  const active = images[Math.min(activeIndex, images.length - 1)] ?? images[0];
+
+  return (
+    <div className="flex flex-col-reverse gap-4 lg:flex-row">
+      {images.length > 1 && (
+        <div className="flex gap-3 overflow-x-auto pb-1 lg:w-20 lg:flex-col lg:overflow-x-visible lg:overflow-y-auto lg:pb-0">
+          {images.map((image, index) => (
+            <button
+              key={`${image.url}-${index}`}
+              type="button"
+              onClick={() => setActiveIndex(index)}
+              className={cn(
+                "relative h-20 w-20 shrink-0 overflow-hidden rounded-xl border-2 transition",
+                index === activeIndex ? "border-brand ring-2 ring-brand/20" : "border-border hover:border-brand/50",
+              )}
+              aria-label={`View ${productName} image ${index + 1}`}
+              aria-current={index === activeIndex}
+            >
+              <Image
+                src={image.url}
+                alt={image.alt ?? `${productName} view ${index + 1}`}
+                fill
+                unoptimized={image.url.endsWith(".svg")}
+                className="object-cover"
+                sizes="80px"
+              />
+            </button>
+          ))}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => onOpenLightbox(activeIndex)}
+        aria-label={`View full-screen images of ${productName}`}
+        className="relative aspect-[4/5] flex-1 overflow-hidden rounded-[2rem] border border-border bg-lilac/20"
+      >
+        <Image
+          src={active.url}
+          alt={active.alt ?? productName}
+          fill
+          priority
+          unoptimized={active.url.endsWith(".svg")}
+          className="object-cover"
+          sizes="(max-width: 1024px) 100vw, 50vw"
+        />
+      </button>
+    </div>
+  );
+}
+
+function AccordionItem({
+  title,
+  children,
+  defaultOpen = false,
+}: {
+  title: string;
+  children: ReactNode;
+  defaultOpen?: boolean;
+}) {
+  return (
+    <details className="group border-b border-border py-4" open={defaultOpen}>
+      <summary className="flex cursor-pointer list-none items-center justify-between font-display text-base font-semibold text-ink">
+        {title}
+        <ChevronDown size={18} className="shrink-0 text-muted transition group-open:rotate-180" />
+      </summary>
+      <div className="mt-3 text-sm leading-relaxed text-muted">{children}</div>
+    </details>
+  );
+}
+
+function SizeChartTable({ chart }: { chart: SizeChartForDisplay }) {
+  return (
+    <div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[420px] border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-border text-left">
+              {chart.columns.map((column) => (
+                <th key={column} className="px-3 py-2 font-semibold text-ink">
+                  {column}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {chart.rows.map((row, index) => (
+              <tr key={index} className="border-b border-border/60">
+                {row.map((cell, cellIndex) => (
+                  <td key={cellIndex} className="px-3 py-2 text-muted">
+                    {cell}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {chart.notes && <p className="mt-3 text-xs text-muted">{chart.notes}</p>}
+      <p className="mt-2 text-xs text-muted">
+        Measurements in {chart.unit === "IN" ? "inches" : "centimeters"}.
+      </p>
+    </div>
+  );
+}
+
+function ReviewsSection({
+  product,
+  summary,
+  initialReviews,
+  isLoggedIn,
+}: {
+  product: Product;
+  summary: ReviewSummary;
+  initialReviews: GetApprovedReviewsResult;
+  isLoggedIn: boolean;
+}) {
+  const [sort, setSort] = useState<ReviewSort>("newest");
+  const [result, setResult] = useState(initialReviews);
+  const [loading, setLoading] = useState(false);
+  const [photoLightbox, setPhotoLightbox] = useState<{ photos: DisplayReview["photos"]; index: number } | null>(
+    null,
+  );
+
+  const fetchReviews = async (nextSort: ReviewSort, page: number, append: boolean) => {
+    setLoading(true);
+    try {
+      const response = await fetch(
+        `/api/products/${product.handle}/reviews?sort=${nextSort}&page=${page}`,
+      );
+      const data = (await response.json()) as GetApprovedReviewsResult;
+      setResult((prev) => (append ? { ...data, reviews: [...prev.reviews, ...data.reviews] } : data));
+    } catch {
+      // Keep whatever we already had rendered rather than clearing it on
+      // a transient network error.
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSortChange = (nextSort: ReviewSort) => {
+    setSort(nextSort);
+    void fetchReviews(nextSort, 1, false);
+  };
+
+  const handleLoadMore = () => {
+    void fetchReviews(sort, result.page + 1, true);
+  };
+
+  const returnTo = `/products/${product.handle}#reviews`;
+
+  return (
+    <section id="reviews" className="mt-16 scroll-mt-24 border-t border-border pt-12">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <h2 className="font-display text-2xl font-bold text-ink">Reviews</h2>
+        {!isLoggedIn && (
+          <Link
+            href={`/account/login?returnTo=${encodeURIComponent(returnTo)}`}
+            className="rounded-md border border-ink px-4 py-2 text-sm font-semibold text-ink transition hover:bg-ink hover:text-white"
+          >
+            Write a Review
+          </Link>
+        )}
+      </div>
+
+      <div className="mt-6 grid gap-10 md:grid-cols-[240px_1fr]">
+        <div>
+          {summary.count > 0 ? (
+            <>
+              <div className="flex items-baseline gap-2">
+                <span className="font-display text-4xl font-bold text-ink">
+                  {summary.average.toFixed(1)}
+                </span>
+                <StarRating rating={summary.average} />
+              </div>
+              <p className="mt-1 text-sm text-muted">
+                Based on {summary.count} review{summary.count === 1 ? "" : "s"}
+              </p>
+              <div className="mt-4 space-y-1.5">
+                {([5, 4, 3, 2, 1] as const).map((star) => {
+                  const count = summary.histogram[star];
+                  const pct = summary.count > 0 ? Math.round((count / summary.count) * 100) : 0;
+                  return (
+                    <div key={star} className="flex items-center gap-2 text-xs text-muted">
+                      <span className="w-3">{star}</span>
+                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-surface-muted">
+                        <div className="h-full rounded-full bg-accent" style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="w-8 text-right">{count}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-muted">No reviews yet. Be the first to share your experience.</p>
+          )}
+        </div>
+
+        <div>
+          {result.reviews.length > 0 && (
+            <div className="mb-4 flex items-center justify-end gap-2 text-sm">
+              <label htmlFor="review-sort" className="text-muted">
+                Sort by
+              </label>
+              <select
+                id="review-sort"
+                value={sort}
+                onChange={(event) => handleSortChange(event.target.value as ReviewSort)}
+                className="rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-ink outline-none focus:border-brand"
+              >
+                <option value="newest">Newest</option>
+                <option value="highest">Highest rated</option>
+                <option value="lowest">Lowest rated</option>
+              </select>
+            </div>
+          )}
+
+          {result.reviews.length === 0 ? (
+            <p className="text-sm text-muted">
+              This product has no reviews yet — check back soon, or be the first once you&apos;ve tried it.
+            </p>
+          ) : (
+            <ul className="space-y-6">
+              {result.reviews.map((review) => (
+                <li key={review.id} className="border-b border-border pb-6">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <StarRating rating={review.rating} />
+                    {review.verifiedPurchase && (
+                      <span className="rounded-full bg-trust/10 px-2.5 py-0.5 text-xs font-semibold text-trust">
+                        Verified Buyer
+                      </span>
+                    )}
+                  </div>
+                  {review.title && (
+                    <p className="mt-2 font-display font-semibold text-ink">{review.title}</p>
+                  )}
+                  <p className="mt-1 text-sm leading-relaxed text-muted">{review.body}</p>
+                  {review.photos.length > 0 && (
+                    <div className="mt-3 flex gap-2">
+                      {review.photos.map((photo, index) => (
+                        <button
+                          key={`${photo.url}-${index}`}
+                          type="button"
+                          onClick={() => setPhotoLightbox({ photos: review.photos, index })}
+                          className="relative h-16 w-16 overflow-hidden rounded-lg border border-border"
+                          aria-label={`View review photo ${index + 1}`}
+                        >
+                          <Image
+                            src={photo.url}
+                            alt={photo.alt ?? "Review photo"}
+                            fill
+                            unoptimized={photo.url.endsWith(".svg")}
+                            className="object-cover"
+                            sizes="64px"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <p className="mt-2 text-xs text-muted">
+                    {review.reviewerName} ·{" "}
+                    {new Date(review.createdAt).toLocaleDateString("en-IN", {
+                      year: "numeric",
+                      month: "short",
+                      day: "numeric",
+                    })}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {result.hasMore && (
+            <button
+              type="button"
+              onClick={handleLoadMore}
+              disabled={loading}
+              className="mt-4 rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink transition hover:border-brand disabled:opacity-50"
+            >
+              {loading ? "Loading..." : "Load more reviews"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {photoLightbox && (
+        <ImageLightbox
+          images={photoLightbox.photos}
+          startIndex={photoLightbox.index}
+          onClose={() => setPhotoLightbox(null)}
+        />
+      )}
+    </section>
   );
 }

@@ -1,0 +1,57 @@
+"use client";
+
+import { useFocusTrap } from "@/hooks/use-focus-trap";
+import { X } from "lucide-react";
+import { createPortal } from "react-dom";
+import type { ReactNode } from "react";
+
+interface ModalProps {
+  title: string;
+  onClose: () => void;
+  children: ReactNode;
+}
+
+/**
+ * Phase C5: a minimal shared dialog for the size-guide modal (no
+ * existing modal component was found in components/ui — search covered
+ * admin's size-chart preview too, which renders inline rather than as a
+ * dialog). Mirrors ImageLightbox's pattern: mounted conditionally by the
+ * parent, reuses useFocusTrap from C2 for focus containment,
+ * Escape-to-close and body scroll lock.
+ */
+export function Modal({ title, onClose, children }: ModalProps) {
+  const containerRef = useFocusTrap<HTMLDivElement>(true, onClose, { lockScroll: true });
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <button
+        type="button"
+        aria-label="Close dialog"
+        className="absolute inset-0 bg-ink/60 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      <div
+        ref={containerRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        tabIndex={-1}
+        className="relative z-10 max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-2xl outline-none"
+      >
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <h2 className="font-display text-xl font-bold text-ink">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="shrink-0 rounded-full p-2 transition hover:bg-lilac/50"
+          >
+            <X size={20} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>,
+    document.body,
+  );
+}

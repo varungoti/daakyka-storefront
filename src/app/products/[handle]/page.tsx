@@ -2,13 +2,38 @@ import { ProductCard } from "@/components/ui/product-card";
 import { ProductDetail } from "@/components/product/product-detail";
 import { ProductViewTracker } from "@/components/product/product-view-tracker";
 import { JsonLdScript } from "@/components/seo/json-ld-script";
-import { getProductByHandle, getProducts } from "@/lib/products";
+import { getSizeChartForProduct } from "@/lib/catalog/size-charts";
+import { getCategoryBySlug, getProductByHandle, getProducts } from "@/lib/products";
+import { getApprovedReviews, getReviewSummary } from "@/lib/reviews";
 import { breadcrumbJsonLd, productJsonLd, siteUrlBase } from "@/lib/seo/json-ld";
+import { getSetting } from "@/lib/settings";
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 
 interface ProductPageProps {
   params: Promise<{ handle: string }>;
+}
+
+// D1 (customer accounts) isn't built yet, so this cookie never actually
+// exists right now — checking for it anyway means the "Write a Review"
+// button already takes the correct (not-logged-in) branch today and just
+// works once D1 lands, with no change needed here.
+const CUSTOMER_SESSION_COOKIE = "daakyka_customer";
+
+const SECTION_LANDING: Record<string, { label: string; href: string }> = {
+  HOSPITAL: { label: "For Hospitals", href: "/for-hospitals" },
+  SCHOOL: { label: "School Uniforms", href: "/school-uniforms" },
+  KIDS: { label: "Kids Wear", href: "/kids-wear" },
+};
+
+async function getIsLoggedIn(): Promise<boolean> {
+  try {
+    const cookieStore = await cookies();
+    return Boolean(cookieStore.get(CUSTOMER_SESSION_COOKIE)?.value);
+  } catch {
+    return false;
+  }
 }
 
 export async function generateMetadata({ params }: ProductPageProps) {
@@ -40,12 +65,38 @@ export default async function ProductPage({ params }: ProductPageProps) {
     notFound();
   }
 
-  const allProducts = await getProducts();
+  const [allProducts, isLoggedIn, sizeChart, reviewSummary, initialReviews, flatRate, freeAbove, resolvedCategory] =
+    await Promise.all([
+      getProducts(),
+      getIsLoggedIn(),
+      getSizeChartForProduct(product.id),
+      getReviewSummary(product.id),
+      getApprovedReviews(product.id, { page: 1 }),
+      getSetting("shipping.flatRate"),
+      getSetting("shipping.freeAbove"),
+      product.categorySlug ? getCategoryBySlug(product.categorySlug) : Promise.resolve(null),
+    ]);
+
   const related = allProducts
     .filter((item) => item.category === product.category && item.id !== product.id)
     .slice(0, 4);
 
   const base = siteUrlBase();
+
+  // Home > section landing (For Hospitals / School Uniforms / Kids Wear /
+  // Shop) > category (linked only if it actually resolves in the DB
+  // category tree, else falls back to /shop) > product name (current
+  // page, unlinked).
+  const sectionInfo = (product.section && SECTION_LANDING[product.section]) || { label: "Shop", href: "/shop" };
+  const categoryHref = resolvedCategory ? `/category/${resolvedCategory.slug}` : "/shop";
+  const breadcrumbItems: { name: string; url: string }[] = [
+    { name: "Home", url: base },
+    { name: sectionInfo.label, url: `${base}${sectionInfo.href}` },
+  ];
+  if (product.categoryName && product.categoryName !== sectionInfo.label) {
+    breadcrumbItems.push({ name: product.categoryName, url: `${base}${categoryHref}` });
+  }
+  breadcrumbItems.push({ name: product.name, url: `${base}/products/${product.handle}` });
 
   return (
     <>
@@ -55,32 +106,42 @@ export default async function ProductPage({ params }: ProductPageProps) {
           images: product.images?.map((img) => img.url),
         })}
       />
-      <JsonLdScript
-        data={breadcrumbJsonLd([
-          { name: "Home", url: base },
-          { name: "Shop", url: `${base}/shop` },
-          { name: product.name, url: `${base}/products/${product.handle}` },
-        ])}
-      />
+      <JsonLdScript data={breadcrumbJsonLd(breadcrumbItems)} />
 
       <section className="border-b border-border bg-alt-surface py-6">
         <div className="mx-auto max-w-[1320px] px-4 text-sm text-muted lg:px-8">
-          <Link href="/" className="hover:text-brand">
-            Home
-          </Link>
-          <span className="mx-2">›</span>
-          <Link href="/shop" className="hover:text-brand">
-            Shop
-          </Link>
-          <span className="mx-2">›</span>
-          <span className="font-semibold text-ink">{product.name}</span>
+          {breadcrumbItems.map((crumb, index) => {
+            const isLast = index === breadcrumbItems.length - 1;
+            return (
+              <span key={crumb.name}>
+                {index > 0 && <span className="mx-2">›</span>}
+                {isLast ? (
+                  <span className="font-semibold text-ink">{crumb.name}</span>
+                ) : (
+                  <Link
+                    href={index === 0 ? "/" : crumb.url.replace(base, "")}
+                    className="hover:text-brand"
+                  >
+                    {crumb.name}
+                  </Link>
+                )}
+              </span>
+            );
+          })}
         </div>
       </section>
 
       <section className="py-12">
         <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
           <ProductViewTracker handle={product.handle} name={product.name} />
-          <ProductDetail product={product} />
+          <ProductDetail
+            product={product}
+            isLoggedIn={isLoggedIn}
+            sizeChart={sizeChart}
+            reviewSummary={reviewSummary}
+            initialReviews={initialReviews}
+            shipping={{ flatRate, freeAbove }}
+          />
         </div>
       </section>
 
