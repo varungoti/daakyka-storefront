@@ -6,6 +6,7 @@ import {
   getClientIp,
   resetRateLimits,
 } from "@/lib/security/rate-limit";
+import { setNodeEnv } from "../../tests/helpers/env";
 
 describe("env validation", () => {
   it("allows indexing by default in non-preview environments", () => {
@@ -28,9 +29,9 @@ describe("env validation", () => {
 
   it("does not throw validateEnv in development", () => {
     const originalNodeEnv = process.env.NODE_ENV;
-    process.env.NODE_ENV = "development";
+    setNodeEnv("development");
     assert.doesNotThrow(() => validateEnv());
-    process.env.NODE_ENV = originalNodeEnv;
+    setNodeEnv(originalNodeEnv);
   });
 });
 

@@ -1,5 +1,6 @@
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
+import { setNodeEnv } from "../helpers/env";
 import { GET as getProducts } from "@/app/api/products/route";
 import { GET as getHealth } from "@/app/api/health/route";
 import { POST as postNewsletter } from "@/app/api/newsletter/subscribe/route";
@@ -113,19 +114,19 @@ describe("API integration", () => {
     after(() => {
       if (originalSecret === undefined) delete process.env.CRON_SECRET;
       else process.env.CRON_SECRET = originalSecret;
-      process.env.NODE_ENV = originalNodeEnv;
+      setNodeEnv(originalNodeEnv);
     });
 
     it("rejects cron without bearer when CRON_SECRET is set", async () => {
       process.env.CRON_SECRET = "test-cron-secret";
-      process.env.NODE_ENV = "production";
+      setNodeEnv("production");
       const response = await getCronJourneys(new Request("http://localhost/api/cron/journeys"));
       assert.equal(response.status, 401);
     });
 
     it("accepts cron with valid bearer", async () => {
       process.env.CRON_SECRET = "test-cron-secret";
-      process.env.NODE_ENV = "production";
+      setNodeEnv("production");
       const response = await getCronJourneys(
         new Request("http://localhost/api/cron/journeys", {
           headers: { Authorization: "Bearer test-cron-secret" },
@@ -136,7 +137,7 @@ describe("API integration", () => {
 
     it("accepts campaigns cron with valid bearer", async () => {
       process.env.CRON_SECRET = "test-cron-secret";
-      process.env.NODE_ENV = "production";
+      setNodeEnv("production");
       const response = await getCronCampaigns(
         new Request("http://localhost/api/cron/campaigns", {
           headers: { Authorization: "Bearer test-cron-secret" },
@@ -259,12 +260,12 @@ describe("API integration", () => {
     after(() => {
       if (originalSecret === undefined) delete process.env.SHOPIFY_WEBHOOK_SECRET;
       else process.env.SHOPIFY_WEBHOOK_SECRET = originalSecret;
-      process.env.NODE_ENV = originalNodeEnv;
+      setNodeEnv(originalNodeEnv);
     });
 
     it("rejects unsigned payload when webhook secret is set", async () => {
       process.env.SHOPIFY_WEBHOOK_SECRET = "test-webhook-secret";
-      process.env.NODE_ENV = "production";
+      setNodeEnv("production");
       const response = await postShopifyWebhook(
         new Request("http://localhost/api/webhooks/shopify/orders", {
           method: "POST",

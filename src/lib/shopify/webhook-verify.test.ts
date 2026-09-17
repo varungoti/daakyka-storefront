@@ -2,6 +2,7 @@ import { createHmac } from "crypto";
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { verifyShopifyWebhookHmac } from "@/lib/shopify/webhook-verify";
+import { setNodeEnv } from "../../../tests/helpers/env";
 
 describe("Shopify webhook HMAC", () => {
   const originalSecret = process.env.SHOPIFY_WEBHOOK_SECRET;
@@ -10,12 +11,12 @@ describe("Shopify webhook HMAC", () => {
   after(() => {
     if (originalSecret === undefined) delete process.env.SHOPIFY_WEBHOOK_SECRET;
     else process.env.SHOPIFY_WEBHOOK_SECRET = originalSecret;
-    process.env.NODE_ENV = originalNodeEnv;
+    setNodeEnv(originalNodeEnv);
   });
 
   it("accepts valid signature when secret is set", () => {
     process.env.SHOPIFY_WEBHOOK_SECRET = "test-webhook-secret";
-    process.env.NODE_ENV = "production";
+    setNodeEnv("production");
     const body = JSON.stringify({ id: 123, email: "test@example.com" });
     const hmac = createHmac("sha256", "test-webhook-secret")
       .update(body, "utf8")
@@ -25,20 +26,20 @@ describe("Shopify webhook HMAC", () => {
 
   it("rejects invalid signature in production", () => {
     process.env.SHOPIFY_WEBHOOK_SECRET = "test-webhook-secret";
-    process.env.NODE_ENV = "production";
+    setNodeEnv("production");
     const body = JSON.stringify({ id: 123 });
     assert.equal(verifyShopifyWebhookHmac(body, "bad-signature"), false);
   });
 
   it("rejects missing signature when secret is set", () => {
     process.env.SHOPIFY_WEBHOOK_SECRET = "test-webhook-secret";
-    process.env.NODE_ENV = "production";
+    setNodeEnv("production");
     assert.equal(verifyShopifyWebhookHmac("{}", null), false);
   });
 
   it("allows unsigned webhooks in development when secret is unset", () => {
     delete process.env.SHOPIFY_WEBHOOK_SECRET;
-    process.env.NODE_ENV = "development";
+    setNodeEnv("development");
     assert.equal(verifyShopifyWebhookHmac("{}", null), true);
   });
 });
