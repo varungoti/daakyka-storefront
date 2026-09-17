@@ -18,9 +18,15 @@ import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useState, type ReactNode } from "react";
 
+export type ReviewEligibility =
+  | { status: "guest" }
+  | { status: "unverified" }
+  | { status: "already-reviewed" }
+  | { status: "eligible" };
+
 interface ProductDetailProps {
   product: Product;
-  isLoggedIn: boolean;
+  reviewEligibility: ReviewEligibility;
   sizeChart: SizeChartForDisplay | null;
   reviewSummary: ReviewSummary;
   initialReviews: GetApprovedReviewsResult;
@@ -30,14 +36,15 @@ interface ProductDetailProps {
 const INSTITUTIONAL_SECTIONS = new Set(["HOSPITAL", "SCHOOL"]);
 
 /**
- * Phase C5 rewrite. Gallery + info column + accordions + a real reviews
- * section (display only — review submission is Phase D2). Variant
- * resolution now goes through src/lib/products/resolve-variant.ts
- * instead of the inline size/colour matching the old component had.
+ * Phase C5 rewrite, extended in Phase D2 with real review submission
+ * (rating/title/body/photos, gated on `reviewEligibility` computed
+ * server-side in the page). Variant resolution goes through
+ * src/lib/products/resolve-variant.ts instead of the inline size/colour
+ * matching the old component had.
  */
 export function ProductDetail({
   product,
-  isLoggedIn,
+  reviewEligibility,
   sizeChart,
   reviewSummary,
   initialReviews,
@@ -283,7 +290,7 @@ export function ProductDetail({
         product={product}
         summary={reviewSummary}
         initialReviews={initialReviews}
-        isLoggedIn={isLoggedIn}
+        reviewEligibility={reviewEligibility}
       />
 
       {lightboxIndex !== null && (
@@ -445,12 +452,12 @@ function ReviewsSection({
   product,
   summary,
   initialReviews,
-  isLoggedIn,
+  reviewEligibility,
 }: {
   product: Product;
   summary: ReviewSummary;
   initialReviews: GetApprovedReviewsResult;
-  isLoggedIn: boolean;
+  reviewEligibility: ReviewEligibility;
 }) {
   const [sort, setSort] = useState<ReviewSort>("newest");
   const [result, setResult] = useState(initialReviews);
@@ -458,6 +465,8 @@ function ReviewsSection({
   const [photoLightbox, setPhotoLightbox] = useState<{ photos: DisplayReview["photos"]; index: number } | null>(
     null,
   );
+  const [showForm, setShowForm] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
 
   const fetchReviews = async (nextSort: ReviewSort, page: number, append: boolean) => {
     setLoading(true);
@@ -490,7 +499,7 @@ function ReviewsSection({
     <section id="reviews" className="mt-16 scroll-mt-24 border-t border-border pt-12">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h2 className="font-display text-2xl font-bold text-ink">Reviews</h2>
-        {!isLoggedIn && (
+        {reviewEligibility.status === "guest" && (
           <Link
             href={`/account/login?returnTo=${encodeURIComponent(returnTo)}`}
             className="rounded-md border border-ink px-4 py-2 text-sm font-semibold text-ink transition hover:bg-ink hover:text-white"
@@ -498,7 +507,46 @@ function ReviewsSection({
             Write a Review
           </Link>
         )}
+        {reviewEligibility.status === "eligible" && !showForm && !submitted && (
+          <button
+            type="button"
+            onClick={() => setShowForm(true)}
+            className="rounded-md border border-ink px-4 py-2 text-sm font-semibold text-ink transition hover:bg-ink hover:text-white"
+          >
+            Write a Review
+          </button>
+        )}
       </div>
+
+      {reviewEligibility.status === "unverified" && (
+        <p className="mt-3 rounded-lg bg-alt-surface px-4 py-3 text-sm text-muted">
+          Please verify your email address before writing a review — check your inbox for the
+          verification link we sent when you registered.
+        </p>
+      )}
+
+      {reviewEligibility.status === "already-reviewed" && !submitted && (
+        <p className="mt-3 rounded-lg bg-alt-surface px-4 py-3 text-sm text-muted">
+          You&apos;ve already reviewed this product.
+        </p>
+      )}
+
+      {submitted && (
+        <p className="mt-3 rounded-lg bg-trust/10 px-4 py-3 text-sm font-medium text-trust">
+          Thanks — your review is awaiting moderation.
+        </p>
+      )}
+
+      {reviewEligibility.status === "eligible" && showForm && !submitted && (
+        <ReviewForm
+          productId={product.id}
+          onCancel={() => setShowForm(false)}
+          onSubmitted={() => {
+            setShowForm(false);
+            setSubmitted(true);
+          }}
+        />
+      )}
 
       <div className="mt-6 grid gap-10 md:grid-cols-[240px_1fr]">
         <div>
@@ -629,5 +677,207 @@ function ReviewsSection({
         />
       )}
     </section>
+  );
+}
+
+const REVIEW_TITLE_MIN = 4;
+const REVIEW_TITLE_MAX = 120;
+const REVIEW_BODY_MIN = 10;
+const REVIEW_BODY_MAX = 2000;
+const REVIEW_MAX_PHOTOS = 3;
+
+/**
+ * Phase D2 review submission form — rendered only once the server has
+ * already confirmed (`reviewEligibility.status === "eligible"`) that this
+ * customer is logged in, email-verified, and hasn't reviewed this product
+ * yet. The server re-checks all of that again in POST /api/reviews (never
+ * trust the client), so this form's only job is a good submission UX, not
+ * enforcement.
+ */
+function ReviewForm({
+  productId,
+  onCancel,
+  onSubmitted,
+}: {
+  productId: string;
+  onCancel: () => void;
+  onSubmitted: () => void;
+}) {
+  const [rating, setRating] = useState(0);
+  const [hoverRating, setHoverRating] = useState(0);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [photoIds, setPhotoIds] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const titleLength = title.trim().length;
+  const bodyLength = body.trim().length;
+  const canSubmit =
+    rating >= 1 &&
+    rating <= 5 &&
+    titleLength >= REVIEW_TITLE_MIN &&
+    titleLength <= REVIEW_TITLE_MAX &&
+    bodyLength >= REVIEW_BODY_MIN &&
+    bodyLength <= REVIEW_BODY_MAX &&
+    !submitting;
+
+  async function handlePhotoUpload(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (photoIds.length >= REVIEW_MAX_PHOTOS) {
+      setError(`You can attach up to ${REVIEW_MAX_PHOTOS} photos.`);
+      return;
+    }
+
+    setUploading(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch("/api/reviews/photos", { method: "POST", body: form });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error ?? "Photo upload failed");
+      }
+      const data = (await response.json()) as { id: string };
+      setPhotoIds((prev) => [...prev, data.id]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Photo upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!canSubmit) return;
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId,
+          rating,
+          title: title.trim(),
+          body: body.trim(),
+          photoAssetIds: photoIds,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error ?? "Could not submit your review");
+      }
+
+      onSubmitted();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not submit your review");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-4 space-y-4 rounded-2xl border border-border bg-alt-surface p-5">
+      <div>
+        <label className="mb-1.5 block text-sm font-semibold text-ink">Your rating</label>
+        <div className="flex items-center gap-1" onMouseLeave={() => setHoverRating(0)}>
+          {[1, 2, 3, 4, 5].map((star) => (
+            <button
+              key={star}
+              type="button"
+              onClick={() => setRating(star)}
+              onMouseEnter={() => setHoverRating(star)}
+              aria-label={`${star} star${star === 1 ? "" : "s"}`}
+              className="p-0.5"
+            >
+              <span
+                className={cn(
+                  "text-2xl",
+                  (hoverRating || rating) >= star ? "text-amber-400" : "text-star-empty",
+                )}
+              >
+                ★
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label htmlFor="review-title" className="mb-1.5 block text-sm font-semibold text-ink">
+          Title
+        </label>
+        <input
+          id="review-title"
+          type="text"
+          value={title}
+          onChange={(event) => setTitle(event.target.value)}
+          maxLength={REVIEW_TITLE_MAX}
+          placeholder="Sum up your experience"
+          className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-brand"
+        />
+      </div>
+
+      <div>
+        <label htmlFor="review-body" className="mb-1.5 block text-sm font-semibold text-ink">
+          Review
+        </label>
+        <textarea
+          id="review-body"
+          value={body}
+          onChange={(event) => setBody(event.target.value)}
+          maxLength={REVIEW_BODY_MAX}
+          rows={4}
+          placeholder="What did you like or dislike? How was the fit and fabric?"
+          className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-brand"
+        />
+        <p className="mt-1 text-xs text-muted">{bodyLength}/{REVIEW_BODY_MAX} characters</p>
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-sm font-semibold text-ink">
+          Photos <span className="font-normal text-muted">(optional, up to {REVIEW_MAX_PHOTOS})</span>
+        </label>
+        <div className="flex flex-wrap items-center gap-2">
+          {photoIds.map((id) => (
+            <span key={id} className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-muted">
+              Photo attached
+            </span>
+          ))}
+          {photoIds.length < REVIEW_MAX_PHOTOS && (
+            <label className="cursor-pointer rounded-md border border-dashed border-border px-3 py-1.5 text-xs font-semibold text-muted hover:border-brand hover:text-brand">
+              {uploading ? "Uploading…" : "Add photo"}
+              <input type="file" accept="image/*" onChange={handlePhotoUpload} disabled={uploading} className="hidden" />
+            </label>
+          )}
+        </div>
+      </div>
+
+      {error && <p className="text-sm text-red-600">{error}</p>}
+
+      <div className="flex gap-3">
+        <button
+          type="submit"
+          disabled={!canSubmit}
+          className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
+        >
+          {submitting ? "Submitting…" : "Submit Review"}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-md border border-border px-4 py-2 text-sm font-semibold text-ink transition hover:border-ink"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }

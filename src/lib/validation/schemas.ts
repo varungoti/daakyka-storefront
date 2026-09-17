@@ -189,6 +189,29 @@ export const customerAddressSchema = z.object({
 
 export const customerAddressUpdateSchema = customerAddressSchema.partial();
 
+// Phase D2: reviews. Bounds mirror the length-bound style used above
+// (customerNameSchema, shippingAddressSchema, etc) — title 4-120, body
+// 10-2000, matching src/lib/reviews/create-review.ts's own constants
+// (kept in sync manually; both are small enough that a shared constant
+// would be more indirection than it saves).
+export const reviewCreateSchema = z.object({
+  productId: z.string().trim().min(1, "productId is required"),
+  rating: z.number().int().min(1, "Rating must be 1-5").max(5, "Rating must be 1-5"),
+  title: z.string().trim().min(4, "Title is too short").max(120, "Title is too long"),
+  body: z.string().trim().min(10, "Review is too short").max(2000, "Review is too long"),
+  photoAssetIds: z.array(z.string().trim().min(1)).max(3, "At most 3 photos are allowed").optional(),
+});
+
+export const adminReviewModerateSchema = z.object({
+  action: z.enum(["approve", "reject"]),
+  reason: z.string().trim().max(500).optional(),
+});
+
+export const adminReviewBulkSchema = z.object({
+  action: z.literal("approve"),
+  ids: z.array(z.string().trim().min(1)).min(1, "At least one review id is required").max(100),
+});
+
 export const userUpdateSchema = z.object({
   name: z.string().min(2),
   role: z.enum([

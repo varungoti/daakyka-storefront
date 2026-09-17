@@ -1,25 +1,20 @@
 import { ProductCard } from "@/components/ui/product-card";
-import { ProductDetail } from "@/components/product/product-detail";
+import { ProductDetail, type ReviewEligibility } from "@/components/product/product-detail";
 import { ProductViewTracker } from "@/components/product/product-view-tracker";
 import { JsonLdScript } from "@/components/seo/json-ld-script";
 import { getSizeChartForProduct } from "@/lib/catalog/size-charts";
+import { getCustomerSession } from "@/lib/customer-auth/session";
+import { db } from "@/lib/db";
 import { getCategoryBySlug, getProductByHandle, getProducts } from "@/lib/products";
 import { getApprovedReviews, getReviewSummary } from "@/lib/reviews";
 import { breadcrumbJsonLd, productJsonLd, siteUrlBase } from "@/lib/seo/json-ld";
 import { getSetting } from "@/lib/settings";
 import Link from "next/link";
-import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 
 interface ProductPageProps {
   params: Promise<{ handle: string }>;
 }
-
-// D1 (customer accounts) isn't built yet, so this cookie never actually
-// exists right now — checking for it anyway means the "Write a Review"
-// button already takes the correct (not-logged-in) branch today and just
-// works once D1 lands, with no change needed here.
-const CUSTOMER_SESSION_COOKIE = "daakyka_customer";
 
 const SECTION_LANDING: Record<string, { label: string; href: string }> = {
   HOSPITAL: { label: "For Hospitals", href: "/for-hospitals" },
@@ -27,13 +22,29 @@ const SECTION_LANDING: Record<string, { label: string; href: string }> = {
   KIDS: { label: "Kids Wear", href: "/kids-wear" },
 };
 
-async function getIsLoggedIn(): Promise<boolean> {
-  try {
-    const cookieStore = await cookies();
-    return Boolean(cookieStore.get(CUSTOMER_SESSION_COOKIE)?.value);
-  } catch {
-    return false;
-  }
+/**
+ * Phase D2: the real "can this visitor write a review for this product"
+ * state — replaces the Phase C5 placeholder that only ever checked for the
+ * customer cookie's *presence* (D1 didn't exist yet, so it was always
+ * "guest"). Computed here, server-side, from the real customer session
+ * (never trusted from the client) plus a single extra lookup against the
+ * @@unique([productId, customerId]) constraint that also backs
+ * createReview()'s own duplicate check — cheap, and means the button never
+ * has to render a form only to 409 on submit for a customer who already
+ * reviewed this exact product.
+ */
+async function getReviewEligibility(productId: string): Promise<ReviewEligibility> {
+  const session = await getCustomerSession();
+  if (!session) return { status: "guest" };
+  if (!session.emailVerifiedAt) return { status: "unverified" };
+
+  const existing = await db.review.findUnique({
+    where: { productId_customerId: { productId, customerId: session.id } },
+    select: { id: true },
+  });
+  if (existing) return { status: "already-reviewed" };
+
+  return { status: "eligible" };
 }
 
 export async function generateMetadata({ params }: ProductPageProps) {
@@ -65,10 +76,10 @@ export default async function ProductPage({ params }: ProductPageProps) {
     notFound();
   }
 
-  const [allProducts, isLoggedIn, sizeChart, reviewSummary, initialReviews, flatRate, freeAbove, resolvedCategory] =
+  const [allProducts, reviewEligibility, sizeChart, reviewSummary, initialReviews, flatRate, freeAbove, resolvedCategory] =
     await Promise.all([
       getProducts(),
-      getIsLoggedIn(),
+      getReviewEligibility(product.id),
       getSizeChartForProduct(product.id),
       getReviewSummary(product.id),
       getApprovedReviews(product.id, { page: 1 }),
@@ -136,7 +147,7 @@ export default async function ProductPage({ params }: ProductPageProps) {
           <ProductViewTracker handle={product.handle} name={product.name} />
           <ProductDetail
             product={product}
-            isLoggedIn={isLoggedIn}
+            reviewEligibility={reviewEligibility}
             sizeChart={sizeChart}
             reviewSummary={reviewSummary}
             initialReviews={initialReviews}
