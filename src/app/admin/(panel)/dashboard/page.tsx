@@ -1,14 +1,26 @@
 import { db } from "@/lib/db";
 import Link from "next/link";
+import { countDraftProductsAwaitingPublish, countLowStockVariants } from "@/lib/catalog/products";
 
 export default async function AdminDashboardPage() {
-  const [leadCount, blogCount, subscriberCount, pendingCampaigns, pendingHermes, recentLeads, recentLogs] =
-    await Promise.all([
+  const [
+    leadCount,
+    blogCount,
+    subscriberCount,
+    pendingCampaigns,
+    pendingHermes,
+    draftProducts,
+    lowStockVariants,
+    recentLeads,
+    recentLogs,
+  ] = await Promise.all([
     db.bulkOrderLead.count(),
     db.blogPostRecord.count({ where: { status: "PUBLISHED" } }),
     db.newsletterSubscriber.count(),
     db.campaign.count({ where: { status: "PENDING_APPROVAL" } }),
     db.hermesApproval.count({ where: { status: "PENDING" } }),
+    countDraftProductsAwaitingPublish(),
+    countLowStockVariants(),
     db.bulkOrderLead.findMany({ orderBy: { createdAt: "desc" }, take: 5 }),
     db.auditLog.findMany({
       orderBy: { createdAt: "desc" },
@@ -32,6 +44,15 @@ export default async function AdminDashboardPage() {
         <StatCard label="Published Articles" value={String(blogCount)} hint="Journal posts live" />
         <StatCard label="Campaigns Pending" value={String(pendingCampaigns)} hint="Awaiting approval" />
         <StatCard label="Hermes Pending" value={String(pendingHermes)} hint="Recommendations queue" />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Link href="/admin/products?status=DRAFT">
+          <StatCard label="Draft Products" value={String(draftProducts)} hint="Awaiting publish" />
+        </Link>
+        <Link href="/admin/products?stockFilter=low">
+          <StatCard label="Low-Stock Variants" value={String(lowStockVariants)} hint="Active variants under 10 in stock" />
+        </Link>
       </div>
 
       <div className="rounded-2xl border border-border bg-lavender/20 p-4">
