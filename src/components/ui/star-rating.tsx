@@ -26,7 +26,7 @@ export function StarRating({
             className={cn(
               index < Math.round(rating)
                 ? "fill-amber-400 text-amber-400"
-                : "fill-transparent text-gray-300",
+                : "fill-transparent text-star-empty",
             )}
           />
         ))}

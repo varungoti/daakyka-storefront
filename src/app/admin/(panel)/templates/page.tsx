@@ -20,7 +20,7 @@ export default async function TemplatesPage() {
 
       <div className="space-y-4">
         {templates.map((template) => (
-          <article key={template.id} className="rounded-2xl border border-border bg-white p-5">
+          <article key={template.id} className="rounded-2xl border border-border bg-surface p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="font-display text-lg font-bold text-ink">{template.name}</p>
               <span className="rounded-full bg-brand/10 px-3 py-1 text-xs font-bold uppercase text-brand">

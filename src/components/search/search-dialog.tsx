@@ -60,7 +60,7 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
           <motion.button
             type="button"
             aria-label="Close search overlay"
-            className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm"
+            className="fixed inset-0 z-[60] bg-overlay-scrim backdrop-blur-sm"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -69,7 +69,7 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
           <motion.div
             role="dialog"
             aria-label="Search products"
-            className="fixed inset-x-4 top-24 z-[70] mx-auto max-w-2xl rounded-[2rem] border border-border bg-white shadow-2xl md:inset-x-auto"
+            className="fixed inset-x-4 top-24 z-[70] mx-auto max-w-2xl rounded-[2rem] border border-border bg-surface-elevated shadow-2xl backdrop-blur-xl md:inset-x-auto"
             initial={{ opacity: 0, y: -12, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -12, scale: 0.98 }}
@@ -108,7 +108,7 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
                       <Link
                         href={`/products/${product.handle}`}
                         onClick={onClose}
-                        className="flex items-center gap-4 rounded-2xl px-3 py-3 transition hover:bg-lavender/40"
+                        className="flex items-center gap-4 rounded-2xl px-3 py-3 transition hover:bg-lilac/40"
                       >
                         <div className="relative h-16 w-14 shrink-0 overflow-hidden rounded-xl bg-lilac/30">
                           <Image
@@ -136,7 +136,7 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
                 <Link
                   href={`/shop?q=${encodeURIComponent(query)}`}
                   onClick={onClose}
-                  className="mt-4 block rounded-2xl bg-lavender/40 px-4 py-3 text-center text-sm font-semibold text-brand hover:bg-lavender/60"
+                  className="mt-4 block rounded-2xl bg-lilac/40 px-4 py-3 text-center text-sm font-semibold text-brand hover:bg-lilac/60"
                 >
                   View all results for &ldquo;{query}&rdquo;
                 </Link>

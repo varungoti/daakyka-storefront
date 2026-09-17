@@ -64,7 +64,7 @@ export function ShopPageContent({
 
   return (
     <>
-      <section className="border-b border-border bg-gradient-to-b from-lavender/40 to-white py-10 md:py-14">
+      <section className="border-b border-border bg-section-page-header py-10 md:py-14">
         <div className="mx-auto max-w-7xl px-4 lg:px-8">
           <nav className="mb-6 text-sm text-muted">
             <Link href="/" className="hover:text-brand">

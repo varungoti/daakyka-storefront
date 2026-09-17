@@ -34,7 +34,7 @@ export default async function AdminMarketPage() {
         <StatCard label="Latest Capture" value={snapshots[0]?.capturedAt.toLocaleDateString("en-IN") ?? "—"} />
       </div>
 
-      <section className="rounded-3xl border border-border bg-white p-6">
+      <section className="rounded-3xl border border-border bg-surface p-6">
         <h2 className="font-display text-xl font-bold text-ink">Recent Observations</h2>
         <ul className="mt-4 space-y-4">
           {snapshots.map((snap) => (
@@ -60,7 +60,7 @@ export default async function AdminMarketPage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-white p-5">
+    <div className="rounded-2xl border border-border bg-surface p-5">
       <p className="text-sm text-muted">{label}</p>
       <p className="mt-2 font-display text-xl font-bold text-brand">{value}</p>
     </div>

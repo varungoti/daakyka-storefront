@@ -58,7 +58,7 @@ export default async function FabricTechDetailPage({
 
   return (
     <>
-      <section className="border-b border-border bg-lavender/30 py-6">
+      <section className="border-b border-border bg-section-page-header py-6">
         <div className="mx-auto max-w-7xl px-4 text-sm text-muted lg:px-8">
           <Link href="/" className="hover:text-brand">
             Home
@@ -93,7 +93,7 @@ export default async function FabricTechDetailPage({
             <TechBlock title="How It Works" content={page.howItWorks} />
             <TechBlock title="Why Healthcare Teams Need It" content={page.whyItMatters} />
 
-            <div className="rounded-3xl border border-border bg-white p-8">
+            <div className="rounded-3xl border border-border bg-surface-elevated p-8">
               <h3 className="font-display text-xl font-bold text-ink">Care Tips</h3>
               <ul className="mt-4 space-y-2">
                 {page.careTips.map((tip) => (
@@ -104,7 +104,7 @@ export default async function FabricTechDetailPage({
               </ul>
             </div>
 
-            <div className="rounded-3xl border border-border bg-lavender/30 p-8">
+            <div className="rounded-3xl border border-border bg-surface-muted p-8">
               <h3 className="font-display text-xl font-bold text-ink">FAQ</h3>
               <div className="mt-6 space-y-6">
                 {page.faqs.map((faq) => (
@@ -121,7 +121,7 @@ export default async function FabricTechDetailPage({
         </div>
       </section>
 
-      <section className="border-t border-border bg-white py-16">
+      <section className="border-t border-border bg-surface-elevated py-16">
         <div className="mx-auto max-w-7xl px-4 lg:px-8">
           <h2 className="mb-8 font-display text-2xl font-bold text-ink">
             Shop {page.title} Products
@@ -139,7 +139,7 @@ export default async function FabricTechDetailPage({
 
 function TechBlock({ title, content }: { title: string; content: string }) {
   return (
-    <div className="rounded-3xl border border-border bg-white p-8">
+    <div className="rounded-3xl border border-border bg-surface-elevated p-8">
       <h3 className="font-display text-xl font-bold text-ink">{title}</h3>
       <p className="mt-3 leading-relaxed text-muted">{content}</p>
     </div>

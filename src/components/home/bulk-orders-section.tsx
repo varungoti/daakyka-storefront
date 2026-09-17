@@ -30,10 +30,10 @@ const specIcons = {
 
 export function BulkOrdersSection() {
   return (
-    <section className="bg-white py-20 md:py-24">
+    <section className="bg-surface py-20 md:py-24">
       <div className="mx-auto max-w-7xl px-4 lg:px-8">
         {/* Primary CTA — mockup hospital teams strip */}
-        <div className="overflow-hidden rounded-[2rem] border border-border bg-gradient-to-br from-lilac/50 via-white to-lavender/70 p-8 shadow-sm md:p-12">
+        <div className="overflow-hidden rounded-[2rem] border border-border bg-gradient-to-br from-lilac/50 via-surface to-lavender/70 p-8 shadow-sm md:p-12">
           <div className="grid gap-10 lg:grid-cols-[1.15fr_0.85fr] lg:items-center">
             <div className="space-y-5">
               <p className="text-xs font-bold uppercase tracking-[0.22em] text-brand">
@@ -85,7 +85,7 @@ export function BulkOrdersSection() {
                 <Link
                   key={item.title}
                   href={item.href}
-                  className="neon-border-hover group rounded-2xl border border-border bg-lavender/25 p-5 transition"
+                  className="neon-border-hover group rounded-2xl border border-border bg-surface-muted p-5 transition"
                 >
                   <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-brand/10 text-brand transition group-hover:bg-brand group-hover:text-white">
                     <Icon size={22} />
@@ -101,7 +101,7 @@ export function BulkOrdersSection() {
         </div>
 
         {/* Trusted by — client sectors strip */}
-        <div className="mt-14 rounded-[2rem] border border-border bg-lavender/30 p-8 md:p-10">
+        <div className="mt-14 rounded-[2rem] border border-border bg-surface-muted p-8 md:p-10">
           <p className="text-center text-xs font-bold uppercase tracking-[0.2em] text-brand">
             Trusted By Leading Organizations
           </p>
@@ -111,7 +111,7 @@ export function BulkOrdersSection() {
               return (
                 <article
                   key={sector.name}
-                  className="rounded-xl border border-border/80 bg-white p-4 text-center shadow-sm"
+                  className="rounded-xl border border-border/80 bg-surface p-4 text-center shadow-sm"
                 >
                   <div className="mx-auto mb-2 flex h-9 w-9 items-center justify-center rounded-full bg-brand/10 text-brand">
                     <Icon size={18} />

@@ -41,7 +41,7 @@ export default async function AdminDashboardPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <section className="rounded-3xl border border-border bg-white p-6">
+        <section className="rounded-3xl border border-border bg-surface p-6">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="font-display text-xl font-bold text-ink">Recent Bulk Leads</h2>
             <Link href="/admin/bulk-orders" className="text-sm font-semibold text-brand hover:underline">
@@ -63,7 +63,7 @@ export default async function AdminDashboardPage() {
           </ul>
         </section>
 
-        <section className="rounded-3xl border border-border bg-white p-6">
+        <section className="rounded-3xl border border-border bg-surface p-6">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="font-display text-xl font-bold text-ink">Recent Activity</h2>
             <Link href="/admin/audit-logs" className="text-sm font-semibold text-brand hover:underline">
@@ -98,7 +98,7 @@ function StatCard({
   hint: string;
 }) {
   return (
-    <div className="rounded-3xl border border-border bg-white p-6">
+    <div className="rounded-3xl border border-border bg-surface p-6">
       <p className="text-sm text-muted">{label}</p>
       <p className="mt-2 font-display text-3xl font-bold text-brand">{value}</p>
       <p className="mt-1 text-xs text-muted">{hint}</p>

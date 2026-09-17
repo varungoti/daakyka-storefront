@@ -67,8 +67,8 @@ export function ShopFiltersPanel({
               className={cn(
                 "flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm transition",
                 !filters.category
-                  ? "bg-brand/10 font-semibold text-brand"
-                  : "hover:bg-lilac/40",
+                  ? "neon-selected bg-brand/10 font-semibold text-brand"
+                  : "text-ink hover:bg-lilac/40",
               )}
             >
               All Products
@@ -83,8 +83,8 @@ export function ShopFiltersPanel({
                 className={cn(
                   "flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm transition",
                   filters.category === category.slug
-                    ? "bg-brand/10 font-semibold text-brand"
-                    : "hover:bg-lilac/40",
+                    ? "neon-selected bg-brand/10 font-semibold text-brand"
+                    : "text-ink hover:bg-lilac/40",
                 )}
               >
                 {category.label}
@@ -108,7 +108,7 @@ export function ShopFiltersPanel({
               className={cn(
                 "h-8 w-8 rounded-full border-2 transition",
                 filters.colors.includes(color.name)
-                  ? "border-brand scale-110"
+                  ? "neon-selected border-brand scale-110"
                   : "border-transparent hover:scale-105",
               )}
               style={{ backgroundColor: color.hex }}
@@ -127,8 +127,8 @@ export function ShopFiltersPanel({
               className={cn(
                 "rounded-lg border px-2 py-2 text-xs font-semibold transition",
                 filters.sizes.includes(size)
-                  ? "border-brand bg-brand/10 text-brand"
-                  : "border-border hover:border-brand/40",
+                  ? "neon-selected border-brand bg-brand/10 text-brand"
+                  : "border-border text-ink hover:border-brand/40",
               )}
             >
               {size}
@@ -185,7 +185,7 @@ function FilterBlock({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-border bg-white p-5">
+    <div className="neon-border-hover rounded-2xl border border-border bg-surface-elevated p-5">
       <p className="mb-4 text-xs font-bold uppercase tracking-[0.15em] text-muted">
         {title}
       </p>

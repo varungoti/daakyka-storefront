@@ -60,7 +60,7 @@ export function BulkOrderForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-border bg-white p-8">
+    <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-border bg-surface p-8">
       <FormField label="Hospital / Clinic Name *" name="organization" required />
       <FormField label="Contact Person *" name="contactPerson" required />
       <div className="grid gap-4 md:grid-cols-2">

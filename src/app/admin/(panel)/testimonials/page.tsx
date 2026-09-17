@@ -21,7 +21,7 @@ export default async function AdminTestimonialsPage() {
 
       <div className="space-y-4">
         {testimonials.map((t) => (
-          <article key={t.id} className="flex gap-4 rounded-2xl border border-border bg-white p-5">
+          <article key={t.id} className="flex gap-4 rounded-2xl border border-border bg-surface p-5">
             <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-full">
               <Image src={t.avatar} alt={t.name} fill className="object-cover" sizes="64px" />
             </div>

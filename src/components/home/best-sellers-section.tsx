@@ -21,7 +21,7 @@ export function BestSellersSection({ products }: BestSellersSectionProps) {
   };
 
   return (
-    <section className="bg-lavender/30 py-20 md:py-24">
+    <section className="bg-section-alt py-20 md:py-24">
       <div className="mx-auto max-w-7xl px-4 lg:px-8">
         <div className="mb-10 flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <SectionHeading

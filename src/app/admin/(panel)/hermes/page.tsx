@@ -41,7 +41,7 @@ export default async function AdminHermesPage() {
         <StatCard label="Pending Approvals" value={String(pendingCount)} />
       </div>
 
-      <section className="rounded-3xl border border-border bg-white p-6">
+      <section className="rounded-3xl border border-border bg-surface-elevated p-6">
         <h2 className="font-display text-xl font-bold text-ink">Run Hermes Workflow</h2>
         <p className="mt-1 text-sm text-muted">Outputs land in the approval queue — never auto-published.</p>
         <div className="mt-4">
@@ -49,7 +49,7 @@ export default async function AdminHermesPage() {
         </div>
       </section>
 
-      <section className="rounded-3xl border border-border bg-white p-6">
+      <section className="rounded-3xl border border-border bg-surface-elevated p-6">
         <h2 className="font-display text-xl font-bold text-ink">Approval Queue</h2>
         <ul className="mt-4 space-y-4">
           {approvals.map((item) => (
@@ -70,7 +70,7 @@ export default async function AdminHermesPage() {
         </ul>
       </section>
 
-      <section className="rounded-3xl border border-border bg-white p-6">
+      <section className="rounded-3xl border border-border bg-surface-elevated p-6">
         <h2 className="font-display text-xl font-bold text-ink">Recent Tasks</h2>
         <ul className="mt-4 space-y-3">
           {tasks.map((task) => (
@@ -92,7 +92,7 @@ export default async function AdminHermesPage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-white p-5">
+    <div className="rounded-2xl border border-border bg-surface-elevated p-5">
       <p className="text-sm text-muted">{label}</p>
       <p className="mt-2 font-display text-xl font-bold text-brand">{value}</p>
     </div>

@@ -35,7 +35,7 @@ export function ProductCard({ product, className }: ProductCardProps) {
             sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
           />
           <div className="absolute inset-0 flex items-end justify-center bg-gradient-to-t from-ink/50 via-transparent to-transparent p-5 opacity-0 transition duration-300 group-hover:opacity-100">
-            <span className="rounded-full bg-white px-4 py-2 text-xs font-bold uppercase tracking-wide text-ink shadow-lg">
+            <span className="rounded-full bg-surface px-4 py-2 text-xs font-bold uppercase tracking-wide text-ink shadow-lg">
               View Product
             </span>
           </div>
@@ -57,7 +57,7 @@ export function ProductCard({ product, className }: ProductCardProps) {
             {product.colors.slice(0, 5).map((color) => (
               <span
                 key={color.name}
-                className="h-4 w-4 rounded-full border border-black/10 ring-1 ring-white"
+                className="h-4 w-4 rounded-full border border-border ring-1 ring-surface-elevated"
                 style={{ backgroundColor: color.hex }}
                 title={color.name}
               />

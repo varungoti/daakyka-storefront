@@ -11,7 +11,7 @@ export function ClientLogosStrip({
   description = "Healthcare, education, corporate, and hospitality partners across India.",
 }: ClientLogosStripProps) {
   return (
-    <section className="border-y border-border bg-white py-16">
+    <section className="border-y border-border bg-surface py-16">
       <div className="mx-auto max-w-7xl px-4 lg:px-8">
         <div className="text-center">
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">Our Clients</p>
@@ -22,7 +22,7 @@ export function ClientLogosStrip({
           {daakykaMedia.clientLogos.map((client) => (
             <li
               key={client.name}
-              className="flex flex-col items-center justify-center rounded-2xl border border-border bg-lavender/20 p-4"
+              className="flex flex-col items-center justify-center rounded-2xl border border-border bg-surface-muted p-4"
             >
               <div className="relative h-14 w-full">
                 <Image

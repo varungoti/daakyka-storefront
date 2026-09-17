@@ -33,6 +33,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     if (!mounted) return;
     document.documentElement.setAttribute("data-theme", theme);
     localStorage.setItem("daakyka-theme", theme);
+    document.documentElement.style.colorScheme = theme;
   }, [theme, mounted]);
 
   const toggleTheme = () => {

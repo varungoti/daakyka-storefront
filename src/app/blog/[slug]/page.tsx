@@ -32,7 +32,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
 
   return (
     <>
-      <section className="border-b border-border bg-lavender/20 py-6">
+      <section className="border-b border-border bg-section-page-header py-6">
         <div className="mx-auto max-w-3xl px-4 text-sm text-muted lg:px-8">
           <Link href="/" className="hover:text-brand">
             Home

@@ -9,9 +9,9 @@ export async function InsightsStrip() {
   const posts = (await getPublishedBlogPosts()).slice(0, 3);
 
   return (
-    <section className="border-y border-border bg-white py-16">
+    <section className="border-y border-border bg-section-alt py-16">
       <div className="mx-auto grid max-w-7xl gap-6 px-4 lg:grid-cols-3 lg:px-8">
-        <article className="overflow-hidden rounded-[2rem] border border-border bg-lavender/20">
+        <article className="neon-border-hover overflow-hidden rounded-[2rem] border border-border bg-surface-muted">
           <div className="relative h-48">
             <Image
               src={marketingMedia.insightsFabric}
@@ -38,7 +38,7 @@ export async function InsightsStrip() {
           </div>
         </article>
 
-        <article className="overflow-hidden rounded-[2rem] border border-border bg-lavender/20">
+        <article className="neon-border-hover overflow-hidden rounded-[2rem] border border-border bg-surface-muted">
           <div className="relative h-48">
             <Image
               src={marketingMedia.insightsInstitutional}
@@ -65,7 +65,7 @@ export async function InsightsStrip() {
           </div>
         </article>
 
-        <article className="rounded-[2rem] border border-border bg-white p-6">
+        <article className="neon-border-hover rounded-[2rem] border border-border bg-surface p-6">
           <p className="text-xs font-bold uppercase tracking-wide text-brand">From Our Journal</p>
           <h3 className="mt-2 font-display text-xl font-bold text-ink">Latest From The Blog</h3>
           <ul className="mt-5 space-y-4">
@@ -73,7 +73,7 @@ export async function InsightsStrip() {
               <li key={post.slug}>
                 <Link
                   href={`/blog/${post.slug}`}
-                  className="group flex gap-3 rounded-xl p-2 transition hover:bg-lavender/30"
+                  className="group flex gap-3 rounded-xl p-2 transition hover:bg-lilac/40"
                 >
                   <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg">
                     <Image src={post.image} alt="" fill className="object-cover" sizes="56px" />

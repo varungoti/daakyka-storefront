@@ -27,7 +27,7 @@ export function HomepageEditor({
   };
 
   return (
-    <div className="space-y-6 rounded-3xl border border-border bg-white p-6">
+    <div className="space-y-6 rounded-3xl border border-border bg-surface p-6">
       <div>
         <h2 className="font-display text-xl font-bold text-ink">Hero Section</h2>
         <p className="text-sm text-muted">Edit homepage hero copy shown on the storefront.</p>

@@ -35,7 +35,7 @@ const categories = [
 
 export function ShopByCategorySection() {
   return (
-    <section className="bg-white py-20 md:py-24">
+    <section className="bg-background py-20 md:py-24">
       <div className="mx-auto max-w-7xl px-4 lg:px-8">
         <SectionHeading
           eyebrow="Browse"

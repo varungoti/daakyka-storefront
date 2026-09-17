@@ -52,7 +52,7 @@ export function ContactForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-border bg-white p-8">
+    <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-border bg-surface-elevated p-8">
       <div className="grid gap-4 md:grid-cols-2">
         <Field label="Full Name *" name="name" required />
         <Field label="Email *" name="email" type="email" required />

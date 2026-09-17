@@ -84,7 +84,7 @@ export function MixMatchBuilder({ products }: MixMatchBuilderProps) {
             ))}
           </ul>
 
-          <div className="rounded-2xl border border-border bg-white p-5 shadow-sm">
+          <div className="rounded-2xl border border-border bg-surface p-5 shadow-sm">
             <p className="text-xs font-bold uppercase tracking-wide text-muted">Set Total</p>
             <p className="mt-1 font-display text-3xl font-bold text-brand">{formatPrice(setTotal)}</p>
             <p className="mt-1 text-sm text-muted">2 pieces · Size {config.size}</p>

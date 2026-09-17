@@ -7,7 +7,7 @@ export async function OffersStrip() {
   if (offers.length === 0) return null;
 
   return (
-    <section className="border-y border-border bg-gradient-to-r from-brand/5 via-lavender/40 to-brand/5 py-8">
+    <section className="border-y border-border bg-section-alt py-8">
       <div className="mx-auto max-w-7xl px-4 lg:px-8">
         <div className="mb-4 flex items-center gap-2">
           <Tag size={18} className="text-brand" />
@@ -17,7 +17,7 @@ export async function OffersStrip() {
           {offers.map((offer) => (
             <article
               key={offer.id}
-              className="rounded-2xl border border-border bg-white/90 p-4 shadow-sm backdrop-blur-sm"
+              className="neon-border-hover rounded-2xl border border-border bg-surface-elevated p-4 shadow-sm backdrop-blur-sm"
             >
               <p className="text-xs font-semibold uppercase tracking-wide text-muted">{offer.type.replace(/_/g, " ")}</p>
               <h3 className="mt-1 font-display font-bold text-ink">{offer.name}</h3>

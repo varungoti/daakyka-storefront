@@ -41,7 +41,7 @@ export function ProductGrid({
   return (
     <div>
       {showToolbar && (
-        <div className="mb-6 flex flex-col gap-4 rounded-2xl border border-border bg-white px-5 py-4">
+        <div className="neon-border-hover mb-6 flex flex-col gap-4 rounded-2xl border border-border bg-surface-elevated px-5 py-4">
           {onSearchQueryChange && (
             <input
               type="search"
@@ -63,7 +63,7 @@ export function ProductGrid({
                 onChange={(event) =>
                   handleSortChange(event.target.value as SortOption)
                 }
-                className="rounded-full border border-border bg-white px-4 py-2 text-sm text-ink outline-none focus:border-brand"
+                className="rounded-full border border-border bg-surface-elevated px-4 py-2 text-sm text-ink outline-none focus:border-brand"
               >
                 <option value="featured">Featured</option>
                 <option value="price-asc">Price: Low to High</option>
@@ -88,7 +88,7 @@ export function ProductGrid({
       )}
 
       {products.length === 0 ? (
-        <div className="rounded-3xl border border-dashed border-border bg-lavender/20 px-6 py-16 text-center">
+        <div className="rounded-3xl border border-dashed border-border bg-surface-muted px-6 py-16 text-center">
           <p className="font-display text-xl font-bold text-ink">No products found</p>
           <p className="mt-2 text-sm text-muted">
             Try adjusting your filters to see more results.

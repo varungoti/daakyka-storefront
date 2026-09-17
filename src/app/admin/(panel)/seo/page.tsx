@@ -92,7 +92,7 @@ export default async function AdminSeoPage() {
         <p className="text-muted">Page metadata audit and structured data validation.</p>
       </div>
 
-      <section className="rounded-3xl border border-border bg-white p-6">
+      <section className="rounded-3xl border border-border bg-surface p-6">
         <h2 className="font-display text-xl font-bold text-ink">Schema Validation</h2>
         <p className="mt-1 text-sm text-muted">
           JSON-LD fixtures for Organization, WebSite, Product, Breadcrumb, and FAQ schemas.
@@ -131,7 +131,7 @@ export default async function AdminSeoPage() {
         <StatCard label="DB Overrides" value={String(dbRecords.length)} />
       </div>
 
-      <section className="overflow-x-auto rounded-3xl border border-border bg-white">
+      <section className="overflow-x-auto rounded-3xl border border-border bg-surface">
         <table className="min-w-full text-left text-sm">
           <thead className="border-b border-border bg-lavender/30 text-xs uppercase tracking-wide text-muted">
             <tr>
@@ -169,7 +169,7 @@ export default async function AdminSeoPage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-white p-5">
+    <div className="rounded-2xl border border-border bg-surface p-5">
       <p className="text-sm text-muted">{label}</p>
       <p className="mt-2 font-display text-2xl font-bold text-brand">{value}</p>
     </div>

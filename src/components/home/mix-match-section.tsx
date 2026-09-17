@@ -39,7 +39,7 @@ export function MixMatchSection() {
   };
 
   return (
-    <section className="relative overflow-hidden bg-[linear-gradient(180deg,#f3ecff_0%,#faf8ff_45%,#ffffff_100%)] py-20 md:py-24">
+    <section className="relative overflow-hidden bg-section-mix py-20 md:py-24">
       <div className="pointer-events-none absolute inset-0">
         <div className="hero-ring animate-breathe absolute -left-20 top-20 h-72 w-72 rounded-full opacity-60" />
         <div className="hero-ring animate-breathe absolute -right-16 bottom-10 h-80 w-80 rounded-full opacity-50 [animation-delay:1.5s]" />

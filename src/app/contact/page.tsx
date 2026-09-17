@@ -1,5 +1,6 @@
 import { ContactForm } from "@/components/contact/contact-form";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { brand } from "@/data/brand";
 import { Clock, MapPin, MessageCircle } from "lucide-react";
 import type { Metadata } from "next";
@@ -28,24 +29,24 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
     (params.intent === "checkout" ? "GENERAL" : "GENERAL");
 
   return (
-    <section className="py-20">
-      <div className="mx-auto max-w-7xl px-4 lg:px-8">
-        <div className="mx-auto max-w-2xl text-center">
-          <SectionHeading
-            eyebrow="Get in Touch"
-            title={params.intent === "checkout" ? "Complete Your Order" : "Contact DAAKYKA"}
-            description={
-              params.intent === "checkout"
-                ? "Checkout is being connected. Share your cart details and our team will assist with your order."
-                : "Questions about scrubs, hospital linens, school uniforms, or bulk institutional orders? Reach out to Babaji Enterprises."
-            }
-            align="center"
-          />
-        </div>
+    <>
+      <PageHeroBand innerClassName="max-w-2xl text-center">
+        <SectionHeading
+          eyebrow="Get in Touch"
+          title={params.intent === "checkout" ? "Complete Your Order" : "Contact DAAKYKA"}
+          description={
+            params.intent === "checkout"
+              ? "Checkout is being connected. Share your cart details and our team will assist with your order."
+              : "Questions about scrubs, hospital linens, school uniforms, or bulk institutional orders? Reach out to Babaji Enterprises."
+          }
+          align="center"
+        />
+      </PageHeroBand>
 
-        <div className="mt-12 grid gap-10 lg:grid-cols-[1fr_1.2fr]">
+      <PageContentSection>
+        <div className="grid gap-10 lg:grid-cols-[1fr_1.2fr]">
           <div className="space-y-6">
-            <article className="rounded-3xl border border-border bg-lavender/30 p-6">
+            <article className="neon-border-hover rounded-3xl border border-border bg-surface-elevated p-6">
               <div className="flex items-start gap-3">
                 <MapPin className="mt-1 text-brand" size={22} />
                 <div>
@@ -58,7 +59,7 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
               </div>
             </article>
 
-            <article className="rounded-3xl border border-border bg-white p-6">
+            <article className="neon-border-hover rounded-3xl border border-border bg-surface-elevated p-6">
               <div className="flex items-start gap-3">
                 <Clock className="mt-1 text-brand" size={22} />
                 <div>
@@ -71,7 +72,7 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
               </div>
             </article>
 
-            <article className="rounded-3xl border border-border bg-white p-6">
+            <article className="neon-border-hover rounded-3xl border border-border bg-surface-elevated p-6">
               <div className="flex items-start gap-3">
                 <MessageCircle className="mt-1 text-trust" size={22} />
                 <div>
@@ -106,7 +107,7 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
 
           <ContactForm defaultType={defaultType} />
         </div>
-      </div>
-    </section>
+      </PageContentSection>
+    </>
   );
 }

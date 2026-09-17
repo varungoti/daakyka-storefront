@@ -30,7 +30,7 @@ export default async function AdminIntegrationsPage() {
           const dbSetting = settingsMap[item.provider];
           const enabled = dbSetting?.enabled ?? item.status === "configured";
           return (
-            <article key={item.provider} className="rounded-3xl border border-border bg-white p-6">
+            <article key={item.provider} className="rounded-3xl border border-border bg-surface-elevated p-6">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <h2 className="font-display text-lg font-bold text-ink">{item.label}</h2>
@@ -56,8 +56,8 @@ export default async function AdminIntegrationsPage() {
       <section className="rounded-3xl border border-border bg-lavender/30 p-6 text-sm text-muted">
         <p className="font-semibold text-ink">Setup</p>
         <p className="mt-2">
-          Copy <code className="rounded bg-white px-1.5 py-0.5">.env.local.example</code> to{" "}
-          <code className="rounded bg-white px-1.5 py-0.5">.env.local</code> and add provider
+          Copy <code className="rounded bg-surface-elevated px-1.5 py-0.5">.env.local.example</code> to{" "}
+          <code className="rounded bg-surface-elevated px-1.5 py-0.5">.env.local</code> and add provider
           keys. Restart the dev server after changes.
         </p>
       </section>

@@ -34,7 +34,7 @@ export default async function AdminBlogPage() {
           <Link
             key={post.id}
             href={`/admin/blog/${post.id}`}
-            className="block rounded-2xl border border-border bg-white p-5 transition hover:border-brand/40"
+            className="block rounded-2xl border border-border bg-surface p-5 transition hover:border-brand/40"
           >
             <div className="flex items-center justify-between gap-4">
               <div>

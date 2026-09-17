@@ -1,6 +1,7 @@
 import { collectionPages, getCollection } from "@/data/seo-landing-pages";
 import { Button } from "@/components/ui/button";
 import { ProductCard } from "@/components/ui/product-card";
+import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { getBestSellers, getProducts } from "@/lib/products";
 import type { Metadata } from "next";
@@ -29,8 +30,8 @@ export default async function CollectionPage({ params }: PageProps) {
 
   if ("shopHref" in collection && collection.shopHref && handle !== "best-sellers") {
     return (
-      <section className="py-20">
-        <div className="mx-auto max-w-3xl px-4 text-center lg:px-8">
+      <>
+        <PageHeroBand innerClassName="max-w-3xl text-center">
           <SectionHeading
             title={collection.title}
             description={collection.description}
@@ -40,8 +41,8 @@ export default async function CollectionPage({ params }: PageProps) {
           <Link href={collection.shopHref} className="mt-8 inline-block">
             <Button size="lg">Continue to {collection.title}</Button>
           </Link>
-        </div>
-      </section>
+        </PageHeroBand>
+      </>
     );
   }
 
@@ -49,14 +50,15 @@ export default async function CollectionPage({ params }: PageProps) {
     handle === "best-sellers" ? await getBestSellers() : (await getProducts()).slice(0, 8);
 
   return (
-    <section className="py-20">
-      <div className="mx-auto max-w-7xl px-4 lg:px-8">
+    <>
+      <PageHeroBand>
         <SectionHeading
           title={collection.title}
           description={collection.description}
-          className="mb-10"
           titleAs="h1"
         />
+      </PageHeroBand>
+      <PageContentSection>
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
           {products.map((product) => (
             <ProductCard key={product.id} product={product} />
@@ -67,7 +69,7 @@ export default async function CollectionPage({ params }: PageProps) {
             View all products →
           </Link>
         </div>
-      </div>
-    </section>
+      </PageContentSection>
+    </>
   );
 }

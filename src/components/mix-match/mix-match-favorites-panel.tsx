@@ -28,7 +28,7 @@ export function MixMatchFavoritesPanel({
 
   if (items.length === 0) {
     return (
-      <div className="rounded-[1.75rem] border border-dashed border-brand/25 bg-white/90 p-5 text-center">
+      <div className="rounded-[1.75rem] border border-dashed border-brand/25 bg-surface-elevated p-5 text-center">
         <Heart className="mx-auto text-brand/60" size={28} />
         <p className="mt-3 font-display text-sm font-bold text-ink">Your Favorites</p>
         <p className="mt-2 text-xs leading-relaxed text-muted">
@@ -42,7 +42,7 @@ export function MixMatchFavoritesPanel({
   }
 
   return (
-    <div className="rounded-[1.75rem] border border-border bg-white/95 p-5 shadow-[0_20px_60px_rgba(91,46,255,0.06)]">
+    <div className="rounded-[1.75rem] border border-border bg-surface-elevated p-5 shadow-[0_20px_60px_rgba(91,46,255,0.06)]">
       <div className="flex items-center justify-between gap-2">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.12em] text-brand">Your Favorites</p>
@@ -70,7 +70,7 @@ export function MixMatchFavoritesPanel({
                 "flex w-full items-center gap-3 rounded-2xl border p-2.5 text-left transition",
                 isActive
                   ? "border-brand bg-brand/5 shadow-sm"
-                  : "border-border hover:border-brand/30 hover:bg-lavender/30",
+                  : "border-border hover:border-brand/30 hover:bg-lilac/30",
               )}
             >
               <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-lilac/40">

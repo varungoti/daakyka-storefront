@@ -21,13 +21,13 @@ export function TrustBar() {
   });
 
   return (
-    <section className="border-y border-border bg-lavender/50 py-8">
+    <section className="border-y border-border bg-section-alt py-8">
       <div className="mx-auto grid max-w-7xl grid-cols-2 gap-6 px-4 md:grid-cols-5 lg:px-8">
         {trustItems.map((item, index) => {
           const Icon = icons[index];
           return (
             <div key={item.title} className="flex flex-col items-center text-center">
-              <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm">
+              <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-surface-elevated shadow-sm">
                 <Icon className="text-brand" size={22} />
               </div>
               <p className="font-display text-sm font-bold uppercase tracking-wide text-ink">

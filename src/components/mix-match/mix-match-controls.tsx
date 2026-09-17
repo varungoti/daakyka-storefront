@@ -65,7 +65,7 @@ export function MixMatchControls({
 
   if (layout === "studio") {
     return (
-      <div className="mix-match-panel space-y-6 rounded-[1.75rem] border border-border bg-white/95 p-5 shadow-[0_20px_60px_rgba(91,46,255,0.08)] backdrop-blur-md">
+      <div className="mix-match-panel neon-border-hover space-y-6 rounded-[1.75rem] border border-border bg-surface-elevated p-5 shadow-[0_20px_60px_rgba(91,46,255,0.08)] backdrop-blur-md">
         <StudioSection title="1. Choose Top Style" subtitle="Select your neckline silhouette">
           <StyleGrid>
             {topStyleOptions.map((option) => (
@@ -123,7 +123,7 @@ export function MixMatchControls({
   }
 
   return (
-    <div className="mix-match-panel flex gap-3 rounded-[1.75rem] border border-border bg-white/95 p-4 shadow-[0_20px_60px_rgba(91,46,255,0.08)] backdrop-blur-md md:gap-4 md:p-5">
+    <div className="mix-match-panel neon-border-hover flex gap-3 rounded-[1.75rem] border border-border bg-surface-elevated p-4 shadow-[0_20px_60px_rgba(91,46,255,0.08)] backdrop-blur-md md:gap-4 md:p-5">
       <div className="flex shrink-0 flex-col gap-1.5">
         {tabs.map(({ id, label, icon: Icon }) => (
           <button
@@ -134,8 +134,8 @@ export function MixMatchControls({
             className={cn(
               "flex h-11 w-11 flex-col items-center justify-center rounded-xl transition-all md:h-12 md:w-12",
               activeTab === id
-                ? "bg-brand text-white shadow-md shadow-brand/30"
-                : "bg-lavender/60 text-muted hover:bg-lilac hover:text-brand",
+                ? "neon-selected bg-brand text-white shadow-md shadow-brand/30"
+                : "bg-lilac/50 text-muted hover:bg-lilac hover:text-brand",
             )}
           >
             <Icon size={18} />
@@ -255,7 +255,7 @@ function ColorSwatches({
               "group relative h-11 w-11 rounded-full border-2 transition-all",
               color === c.name
                 ? "scale-110 border-brand shadow-md shadow-brand/25"
-                : "border-white hover:scale-105 hover:border-brand/40",
+                : "border-2 border-surface shadow-sm hover:scale-105 hover:border-brand/40",
             )}
             style={{ backgroundColor: c.hex }}
           >
@@ -323,7 +323,7 @@ function PersonalizeBlock({
         value={embroideryName}
         onChange={(e) => onEmbroideryChange(e.target.value)}
         placeholder="Dr. Alex Johnson"
-        className="mt-3 w-full rounded-xl border border-border bg-white px-4 py-3 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/15"
+        className="mt-3 w-full rounded-xl border border-border bg-surface px-4 py-3 text-sm outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/15"
       />
       <Button variant="outline" size="sm" className="mt-3 w-full" type="button">
         <Sparkles size={16} />
@@ -369,8 +369,8 @@ function StyleTile({
       className={cn(
         "relative flex flex-col items-center gap-2 rounded-2xl border px-3 py-4 text-center transition-all",
         selected
-          ? "border-brand bg-brand/5 shadow-[0_0_0_1px_rgba(91,46,255,0.2)]"
-          : "border-border bg-white hover:border-brand/35 hover:bg-lavender/40",
+          ? "neon-border-active border-brand bg-brand/5"
+          : "neon-border-hover border-border bg-surface hover:bg-lilac/40",
       )}
     >
       {selected && (

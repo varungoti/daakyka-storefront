@@ -73,7 +73,7 @@ export function AdminShell({
   return (
     <div className="min-h-screen bg-lavender/40">
       <div className="mx-auto flex min-h-screen max-w-7xl">
-        <aside className="hidden w-64 shrink-0 border-r border-border bg-white p-6 lg:block">
+        <aside className="hidden w-64 shrink-0 border-r border-border bg-surface p-6 lg:block">
           <Link href="/admin/dashboard" className="font-display text-xl font-extrabold text-brand">
             DAAKYKA Admin
           </Link>
@@ -108,7 +108,7 @@ export function AdminShell({
         </aside>
 
         <div className="flex-1">
-          <header className="border-b border-border bg-white px-4 py-4 lg:px-8">
+          <header className="border-b border-border bg-surface px-4 py-4 lg:px-8">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-xs font-bold uppercase tracking-wide text-brand">Admin Panel</p>

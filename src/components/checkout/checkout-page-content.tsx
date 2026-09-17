@@ -40,7 +40,7 @@ export function CheckoutPageContent() {
           {cart.lines.map((line) => (
             <article
               key={line.id}
-              className="flex gap-4 rounded-2xl border border-border bg-white p-4"
+              className="flex gap-4 rounded-2xl border border-border bg-surface p-4"
             >
               <div className="relative h-20 w-16 shrink-0 overflow-hidden rounded-xl bg-lilac/30">
                 <Image src={line.image} alt={line.productTitle} fill className="object-cover" sizes="64px" />
@@ -54,7 +54,7 @@ export function CheckoutPageContent() {
           ))}
         </section>
 
-        <aside className="h-fit rounded-3xl border border-border bg-lavender/30 p-6">
+        <aside className="neon-border-hover h-fit rounded-3xl border border-border bg-surface-elevated p-6">
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted">Subtotal</span>
             <span className="font-display text-2xl font-bold text-ink">{formatPrice(cart.subtotal)}</span>

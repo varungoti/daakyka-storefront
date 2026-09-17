@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 export default function AboutPage() {
   return (
     <>
-      <section className="bg-gradient-to-b from-lavender/40 to-white py-20">
+      <section className="border-b border-border bg-section-page-header py-20">
         <div className="mx-auto max-w-4xl px-4 text-center lg:px-8">
           <SectionHeading
             eyebrow="Our Story"
@@ -24,15 +24,15 @@ export default function AboutPage() {
             align="center"
           />
           <div className="mt-8 flex flex-wrap items-center justify-center gap-4 text-sm text-muted">
-            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2">
+            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-2">
               <MapPin size={16} className="text-brand" />
               {brand.location.city}, {brand.location.state}
             </span>
-            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2">
+            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-2">
               <Award size={16} className="text-brand" />
               {brand.yearsInBusiness}+ Years in Manufacturing
             </span>
-            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-white px-4 py-2">
+            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-2">
               <Sparkles size={16} className="text-brand" />
               {brand.location.serviceArea} Service
             </span>
@@ -57,7 +57,7 @@ export default function AboutPage() {
             ).map((founder) => (
               <article
                 key={founder.name}
-                className="overflow-hidden rounded-[2rem] border border-border bg-white shadow-sm"
+                className="overflow-hidden rounded-[2rem] border border-border bg-surface shadow-sm"
               >
                 <div className="relative aspect-[16/10] bg-lilac/20">
                   <Image
@@ -81,7 +81,7 @@ export default function AboutPage() {
         </div>
       </section>
 
-      <section className="border-y border-border bg-lavender/30 py-20">
+      <section className="border-y border-border bg-section-alt py-20">
         <div className="mx-auto max-w-7xl px-4 lg:px-8">
           <SectionHeading
             eyebrow="Why DAAKYKA"
@@ -93,7 +93,7 @@ export default function AboutPage() {
             {brand.valueProps.map((item) => (
               <li
                 key={item}
-                className="flex items-start gap-3 rounded-2xl border border-border bg-white p-5 text-sm text-muted"
+                className="flex items-start gap-3 rounded-2xl border border-border bg-surface p-5 text-sm text-muted"
               >
                 <CheckCircle2 size={20} className="mt-0.5 shrink-0 text-trust" />
                 {item}
@@ -127,7 +127,7 @@ export default function AboutPage() {
                 {brand.processSteps.map((step, index) => (
                   <li
                     key={step}
-                    className="flex items-start gap-4 rounded-2xl border border-border bg-white p-5"
+                    className="flex items-start gap-4 rounded-2xl border border-border bg-surface p-5"
                   >
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand text-sm font-bold text-white">
                       {index + 1}

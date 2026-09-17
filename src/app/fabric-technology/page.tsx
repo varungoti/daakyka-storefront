@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 export default function FabricTechnologyPage() {
   return (
     <>
-      <section className="bg-lavender/30 py-16">
+      <section className="border-b border-border bg-section-page-header py-16 md:py-20">
         <div className="mx-auto max-w-7xl px-4 text-center lg:px-8">
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">
             Performance Engineering
@@ -32,7 +32,7 @@ export default function FabricTechnologyPage() {
             <Link
               key={page.slug}
               href={`/fabric-technology/${page.slug}`}
-              className="neon-border-hover rounded-3xl border border-border bg-white p-8"
+              className="neon-border-hover rounded-3xl border border-border bg-surface p-8"
             >
               <p className="text-xs font-bold uppercase tracking-[0.15em] text-brand">
                 {page.eyebrow}

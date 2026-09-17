@@ -1,4 +1,5 @@
 import { MixMatchBuilder } from "@/components/mix-match/mix-match-builder";
+import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { getProducts } from "@/lib/products";
 import type { Metadata } from "next";
 
@@ -12,8 +13,8 @@ export default async function MixAndMatchPage() {
 
   return (
     <>
-      <section className="border-b border-border bg-[linear-gradient(180deg,#f3ecff_0%,#ffffff_100%)] py-14 md:py-16">
-        <div className="mx-auto max-w-7xl px-4 text-center lg:px-8">
+      <PageHeroBand className="py-14 md:py-16">
+        <div className="text-center">
           <p className="text-xs font-bold uppercase tracking-[0.22em] text-brand">
             3D Visualizer
           </p>
@@ -28,13 +29,11 @@ export default async function MixAndMatchPage() {
             </a>
           </p>
         </div>
-      </section>
+      </PageHeroBand>
 
-      <section className="bg-lavender/20 py-12 md:py-16">
-        <div className="mx-auto max-w-7xl px-4 lg:px-8">
-          <MixMatchBuilder products={products} />
-        </div>
-      </section>
+      <PageContentSection variant="mix" className="py-12 md:py-16">
+        <MixMatchBuilder products={products} />
+      </PageContentSection>
     </>
   );
 }

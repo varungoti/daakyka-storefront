@@ -33,7 +33,7 @@ export default async function AdminReputationPage() {
       </div>
 
       <section className="grid gap-6 lg:grid-cols-2">
-        <article className="rounded-3xl border border-border bg-white p-6">
+        <article className="rounded-3xl border border-border bg-surface p-6">
           <h2 className="font-display text-xl font-bold text-ink">Top Rated Products</h2>
           <ul className="mt-4 space-y-3">
             {summary.topRated.map((product) => (
@@ -52,7 +52,7 @@ export default async function AdminReputationPage() {
           </ul>
         </article>
 
-        <article className="rounded-3xl border border-border bg-white p-6">
+        <article className="rounded-3xl border border-border bg-surface p-6">
           <h2 className="font-display text-xl font-bold text-ink">Review Gaps</h2>
           <p className="mt-1 text-sm text-muted">
             Products flagged for low review volume — candidates for post-purchase review requests.
@@ -101,7 +101,7 @@ export default async function AdminReputationPage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-white p-5">
+    <div className="rounded-2xl border border-border bg-surface p-5">
       <p className="text-sm text-muted">{label}</p>
       <p className="mt-2 font-display text-2xl font-bold text-brand">{value}</p>
     </div>

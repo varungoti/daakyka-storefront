@@ -61,7 +61,7 @@ export function Header() {
         className={cn(
           "sticky top-0 z-50 border-b transition-all duration-300",
           scrolled
-            ? "border-border bg-background/95 backdrop-blur-xl shadow-[0_4px_24px_rgba(91,46,255,0.06)]"
+            ? "border-border bg-background/95 backdrop-blur-xl shadow-[0_4px_24px_var(--shadow-tint)]"
             : "border-transparent bg-background/80 backdrop-blur-md",
         )}
       >
@@ -119,7 +119,7 @@ export function Header() {
             <button
               type="button"
               onClick={toggleTheme}
-              className="hidden items-center gap-2 rounded-full border border-border bg-white/70 px-3 py-2 text-xs font-semibold text-ink transition hover:border-brand lg:flex"
+              className="hidden items-center gap-2 rounded-full border border-border bg-surface-muted px-3 py-2 text-xs font-semibold text-ink transition hover:border-brand lg:flex"
               aria-label="Toggle theme"
             >
               {theme === "light" ? <Sun size={14} /> : <Moon size={14} />}
@@ -142,11 +142,11 @@ export function Header() {
         <div className="fixed inset-0 z-40 lg:hidden">
           <button
             type="button"
-            className="absolute inset-0 bg-ink/40 backdrop-blur-sm"
+            className="absolute inset-0 bg-overlay-scrim backdrop-blur-sm"
             aria-label="Close menu"
             onClick={() => setMobileOpen(false)}
           />
-          <div className="absolute right-0 top-0 flex h-full w-[min(100%,320px)] flex-col bg-white shadow-2xl">
+          <div className="absolute right-0 top-0 flex h-full w-[min(100%,320px)] flex-col bg-surface shadow-2xl">
             <div className="flex items-center justify-between border-b border-border px-5 py-4">
               <p className="font-display font-bold text-ink">Menu</p>
               <button type="button" onClick={() => setMobileOpen(false)} aria-label="Close">
@@ -163,7 +163,7 @@ export function Header() {
                     "block rounded-xl px-4 py-3 text-sm font-semibold transition",
                     pathname === item.href
                       ? "bg-brand/10 text-brand"
-                      : "text-ink hover:bg-lavender/60",
+                      : "text-ink hover:bg-lilac/40",
                   )}
                 >
                   {item.label}

@@ -20,7 +20,7 @@ export function WishlistDrawer() {
           <motion.button
             type="button"
             aria-label="Close wishlist overlay"
-            className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm"
+            className="fixed inset-0 z-[60] bg-overlay-scrim backdrop-blur-sm"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -29,7 +29,7 @@ export function WishlistDrawer() {
           <motion.aside
             role="dialog"
             aria-label="Wishlist"
-            className="fixed inset-y-0 right-0 z-[70] flex w-full max-w-md flex-col bg-white shadow-2xl"
+            className="fixed inset-y-0 right-0 z-[70] flex w-full max-w-md flex-col bg-surface-elevated shadow-2xl backdrop-blur-xl"
             initial={{ x: "100%" }}
             animate={{ x: 0 }}
             exit={{ x: "100%" }}

@@ -38,8 +38,8 @@ Admin UI / Cron  →  dispatchHermesTask()
 
 | Task | Fireworks model |
 |------|-----------------|
-| SEO scans, competitor scan | `llama-v3p1-8b-instruct` |
-| Blog drafts, campaigns, weekly report | `llama-v3p1-70b-instruct` |
+| SEO scans, competitor scan | `gpt-oss-20b` |
+| Blog drafts, campaigns, weekly report | `gpt-oss-120b` |
 
 ## Local development
 

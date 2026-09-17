@@ -23,7 +23,7 @@ export function GenderModelToggle({ gender, onGenderChange, className }: GenderM
             "flex items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold capitalize transition",
             gender === value
               ? "border-brand bg-brand text-white shadow-sm shadow-brand/25"
-              : "border-border bg-white text-muted hover:border-brand/30 hover:text-ink",
+              : "border-border bg-surface text-muted hover:border-brand/30 hover:text-ink",
           )}
         >
           <UserRound size={16} />

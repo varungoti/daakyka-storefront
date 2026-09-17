@@ -115,7 +115,7 @@ export function MixMatchVisualizer({
               />
             )}
             {loading && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white/30 backdrop-blur-[2px]">
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-surface-muted/60 backdrop-blur-[2px]">
                 <div className="h-10 w-10 animate-spin rounded-full border-2 border-brand border-t-transparent" />
                 <p className="text-xs font-semibold uppercase tracking-wide text-brand">
                   Rendering outfit…
@@ -123,7 +123,7 @@ export function MixMatchVisualizer({
               </div>
             )}
             {embroideryName && (
-              <div className="absolute left-1/2 top-[28%] -translate-x-1/2 rounded-md bg-white/90 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-brand shadow-sm">
+              <div className="absolute left-1/2 top-[28%] -translate-x-1/2 rounded-md bg-surface-elevated px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-brand shadow-sm">
                 {embroideryName}
               </div>
             )}
@@ -149,7 +149,7 @@ export function MixMatchVisualizer({
         />
       )}
 
-      <div className="mt-4 rounded-2xl border border-border bg-white/90 p-4 text-center shadow-sm backdrop-blur-sm">
+      <div className="mt-4 rounded-2xl border border-border bg-surface-elevated p-4 text-center shadow-sm backdrop-blur-sm">
         <p className="font-display text-sm font-bold text-ink">Live Set Preview</p>
         <p className="mt-1 text-xs text-muted">
           {topLabel} + {bottomLabel}

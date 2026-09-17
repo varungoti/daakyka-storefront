@@ -42,7 +42,7 @@ export function NewsletterSignup({ source = "footer" }: { source?: string }) {
         onChange={(e) => setEmail(e.target.value)}
         placeholder="Enter your email"
         required
-        className="min-w-[260px] rounded-full border border-border bg-white px-5 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+        className="min-w-[260px] rounded-full border border-border bg-surface-input px-5 py-3 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
       />
       <Button type="submit" disabled={status === "loading"}>
         {status === "loading" ? "Subscribing..." : "Subscribe"}

@@ -8,7 +8,7 @@ const socialIcons = [Share2, Globe, Users, Video];
 
 export function Footer() {
   return (
-    <footer className="border-t border-border bg-white">
+    <footer className="border-t border-border bg-background">
       <div className="mx-auto max-w-7xl px-4 py-16 lg:px-8">
         <div className="grid gap-12 lg:grid-cols-[1.2fr_2fr]">
           <div className="space-y-6">
@@ -54,7 +54,7 @@ export function Footer() {
           </div>
         </div>
 
-        <div className="mt-12 grid gap-6 rounded-3xl border border-border bg-lavender/40 p-8 lg:grid-cols-[1fr_auto] lg:items-center">
+        <div className="mt-12 grid gap-6 rounded-3xl border border-border bg-surface-muted p-8 lg:grid-cols-[1fr_auto] lg:items-center">
           <div>
             <p className="font-display text-xl font-bold text-ink">Stay Updated</p>
             <p className="mt-2 text-sm text-muted">

@@ -28,7 +28,7 @@ export default async function AdminReportsPage() {
         </div>
         <Link
           href="/admin/hermes"
-          className="rounded-xl border border-border bg-white px-4 py-2 text-sm font-semibold text-brand hover:bg-lavender/30"
+          className="rounded-xl border border-border bg-surface px-4 py-2 text-sm font-semibold text-brand hover:bg-lavender/30"
         >
           Hermes Queue
         </Link>
@@ -96,7 +96,7 @@ export default async function AdminReportsPage() {
         </ul>
       </section>
 
-      <section className="rounded-3xl border border-border bg-white p-6">
+      <section className="rounded-3xl border border-border bg-surface p-6">
         <h2 className="font-display text-lg font-bold text-ink">Export (Markdown)</h2>
         <p className="mt-1 text-sm text-muted">
           Copy for Slack, email, or Hermes review. Automated weekly cron saves to admin notifications.
@@ -111,7 +111,7 @@ export default async function AdminReportsPage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-white p-5">
+    <div className="rounded-2xl border border-border bg-surface p-5">
       <p className="text-sm text-muted">{label}</p>
       <p className="mt-2 font-display text-2xl font-bold text-brand">{value}</p>
     </div>
@@ -120,7 +120,7 @@ function StatCard({ label, value }: { label: string; value: string }) {
 
 function ReportSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <article className="rounded-3xl border border-border bg-white p-6">
+    <article className="rounded-3xl border border-border bg-surface p-6">
       <h2 className="font-display text-lg font-bold text-ink">{title}</h2>
       <div className="mt-4 space-y-2">{children}</div>
     </article>

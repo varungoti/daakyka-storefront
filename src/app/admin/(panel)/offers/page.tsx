@@ -35,7 +35,7 @@ export default async function AdminOffersPage() {
         {offers.map((offer) => {
           const config = JSON.parse(offer.config) as Record<string, unknown>;
           return (
-            <article key={offer.id} className="rounded-3xl border border-border bg-white p-6">
+            <article key={offer.id} className="rounded-3xl border border-border bg-surface p-6">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-wide text-brand">{offer.type}</p>
@@ -75,7 +75,7 @@ export default async function AdminOffersPage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-white p-5">
+    <div className="rounded-2xl border border-border bg-surface p-5">
       <p className="text-sm text-muted">{label}</p>
       <p className="mt-2 font-display text-2xl font-bold text-brand">{value}</p>
     </div>

@@ -47,6 +47,11 @@ export default function RootLayout({
   return (
     <html lang="en" data-theme="light" className={`${outfit.variable} ${dmSans.variable} h-full`} suppressHydrationWarning>
       <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem("daakyka-theme");if(t==="dark"||t==="light")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();`,
+          }}
+        />
         <link rel="preconnect" href="https://images.pexels.com" />
         <link rel="preconnect" href="https://daakyka.com" />
       </head>

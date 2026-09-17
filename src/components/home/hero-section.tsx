@@ -16,7 +16,7 @@ interface HeroSectionProps {
 
 export function HeroSection({ content, trustStats }: HeroSectionProps) {
   return (
-    <section className="relative overflow-hidden bg-[linear-gradient(180deg,#f7f2ff_0%,#fcfbff_55%,#ffffff_100%)]">
+    <section className="relative overflow-hidden bg-section-hero">
       <div className="pointer-events-none absolute inset-0">
         <div className="hero-ring animate-breathe absolute left-[8%] top-[12%] h-[340px] w-[340px] rounded-full" />
         <div className="hero-ring animate-breathe absolute right-[12%] top-[18%] h-[420px] w-[420px] rounded-full [animation-delay:2s]" />
@@ -105,7 +105,7 @@ export function HeroSection({ content, trustStats }: HeroSectionProps) {
             <div className="absolute bottom-[8%] left-1/2 h-8 w-[72%] -translate-x-1/2 rounded-[100%] bg-brand/25 blur-2xl" />
             <div className="absolute bottom-[6%] left-1/2 h-3 w-[68%] -translate-x-1/2 rounded-full border border-brand/20 bg-[linear-gradient(180deg,rgba(91,46,255,0.35),rgba(91,46,255,0.05))] shadow-[0_0_40px_rgba(91,46,255,0.35)]" />
             <div className="relative flex h-full items-end justify-center gap-1 px-4 pb-[10%] md:gap-3">
-              <div className="relative h-[88%] w-[46%] overflow-hidden rounded-[1.5rem] border border-white/80 bg-white shadow-[0_20px_50px_rgba(91,46,255,0.15)]">
+              <div className="relative h-[88%] w-[46%] overflow-hidden rounded-[1.5rem] hero-model-frame shadow-[0_20px_50px_rgba(91,46,255,0.15)]">
                 <Image
                   src={marketingMedia.heroSecondary}
                   alt="Healthcare professional in DAAKYKA scrubs"
@@ -114,7 +114,7 @@ export function HeroSection({ content, trustStats }: HeroSectionProps) {
                   sizes="(max-width: 1024px) 42vw, 18vw"
                 />
               </div>
-              <div className="relative h-[94%] w-[48%] overflow-hidden rounded-[1.5rem] border border-white/80 bg-white shadow-[0_24px_60px_rgba(91,46,255,0.2)]">
+              <div className="relative h-[94%] w-[48%] overflow-hidden rounded-[1.5rem] hero-model-frame shadow-[0_24px_60px_rgba(91,46,255,0.2)]">
                 <Image
                   src={marketingMedia.heroMain}
                   alt="Healthcare team in DAAKYKA scrubs"
@@ -134,7 +134,7 @@ export function HeroSection({ content, trustStats }: HeroSectionProps) {
           {trustStats.map((stat) => (
             <div
               key={stat.label}
-              className="glass-card rounded-2xl border border-white/80 px-5 py-4 shadow-sm"
+              className="glass-card neon-border-hover rounded-2xl border border-border px-5 py-4 shadow-sm"
             >
               <p className="font-display text-xl font-bold text-brand">{stat.value}</p>
               <p className="mt-1 text-sm text-muted">{stat.label}</p>
@@ -147,7 +147,7 @@ export function HeroSection({ content, trustStats }: HeroSectionProps) {
         {trustStats.map((stat) => (
           <div
             key={stat.label}
-            className="glass-card rounded-xl border border-white/80 px-3 py-3 text-center shadow-sm"
+            className="glass-card neon-border-hover rounded-xl border border-border px-3 py-3 text-center shadow-sm"
           >
             <p className="font-display text-sm font-bold text-brand">{stat.value}</p>
             <p className="mt-0.5 text-[10px] leading-tight text-muted">{stat.label}</p>
@@ -167,7 +167,7 @@ export function HeroFeatureStrip() {
   ];
 
   return (
-    <section className="border-y border-border bg-white/80 py-6 backdrop-blur-sm">
+    <section className="border-y border-border bg-surface-muted py-6 backdrop-blur-sm">
       <div className="mx-auto grid max-w-7xl grid-cols-2 gap-4 px-4 md:grid-cols-4 lg:px-8">
         {features.map(({ icon: Icon, label, sub }) => (
           <div key={label} className="flex items-center gap-4 rounded-2xl px-3 py-2">

@@ -50,7 +50,7 @@ export default async function AdminIntelligencePage() {
         <StatCard label="SEO Opportunities" value={String(summary.seoGaps)} />
       </div>
 
-      <section className="overflow-x-auto rounded-3xl border border-border bg-white">
+      <section className="overflow-x-auto rounded-3xl border border-border bg-surface">
         <table className="min-w-full text-left text-sm">
           <thead className="border-b border-border bg-lavender/30 text-xs uppercase tracking-wide text-muted">
             <tr>
@@ -87,7 +87,7 @@ export default async function AdminIntelligencePage() {
       </section>
 
       {topViewed.length > 0 && (
-        <section className="rounded-3xl border border-border bg-white p-6">
+        <section className="rounded-3xl border border-border bg-surface p-6">
           <h2 className="font-display text-xl font-bold text-ink">Most Viewed Products</h2>
           <ul className="mt-4 space-y-3">
             {topViewed.map((item) => (
@@ -107,7 +107,7 @@ export default async function AdminIntelligencePage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-white p-5">
+    <div className="rounded-2xl border border-border bg-surface p-5">
       <p className="text-sm text-muted">{label}</p>
       <p className="mt-2 font-display text-2xl font-bold text-brand">{value}</p>
     </div>

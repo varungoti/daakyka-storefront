@@ -30,7 +30,7 @@ const iconMap = {
 export default function InstitutionalPage() {
   return (
     <>
-      <section className="bg-gradient-to-b from-lavender/40 to-white py-20">
+      <section className="bg-section-page-header py-20">
         <div className="mx-auto grid max-w-7xl items-center gap-10 px-4 lg:grid-cols-2 lg:px-8">
           <div>
             <SectionHeading
@@ -60,7 +60,7 @@ export default function InstitutionalPage() {
               return (
                 <article
                   key={item.title}
-                  className="rounded-[2rem] border border-border bg-white p-8 shadow-sm"
+                  className="rounded-[2rem] border border-border bg-surface p-8 shadow-sm"
                 >
                   <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-brand/10 text-brand">
                     <Icon size={28} />

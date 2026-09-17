@@ -33,7 +33,7 @@ export default async function AdminNotificationsPage() {
         <StatCard label="Journey Events" value={String(journeyEvents.length)} />
       </div>
 
-      <section className="rounded-3xl border border-border bg-white p-6">
+      <section className="rounded-3xl border border-border bg-surface p-6">
         <h2 className="font-display text-xl font-bold text-ink">Admin Notifications</h2>
         <ul className="mt-4 space-y-3">
           {notifications.map((note) => (
@@ -50,7 +50,7 @@ export default async function AdminNotificationsPage() {
         </ul>
       </section>
 
-      <section className="rounded-3xl border border-border bg-white p-6">
+      <section className="rounded-3xl border border-border bg-surface p-6">
         <h2 className="font-display text-xl font-bold text-ink">Journey Event Log</h2>
         <ul className="mt-4 space-y-3">
           {journeyEvents.map((event) => (
@@ -74,7 +74,7 @@ export default async function AdminNotificationsPage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-border bg-white p-5">
+    <div className="rounded-2xl border border-border bg-surface p-5">
       <p className="text-sm text-muted">{label}</p>
       <p className="mt-2 font-display text-2xl font-bold text-brand">{value}</p>
     </div>

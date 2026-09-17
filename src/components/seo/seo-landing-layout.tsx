@@ -47,7 +47,7 @@ export function SeoLandingLayout({
       <JsonLdScript data={faqJsonLd} />
       <JsonLdScript data={breadcrumbs} />
 
-      <nav className="border-b border-border bg-white py-3 text-sm text-muted">
+      <nav className="border-b border-border bg-surface py-3 text-sm text-muted">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-1 px-4 lg:px-8">
           <Link href="/" className="hover:text-brand">
             Home
@@ -61,7 +61,7 @@ export function SeoLandingLayout({
         </div>
       </nav>
 
-      <section className="bg-gradient-to-b from-lavender/40 to-white py-16 md:py-20">
+      <section className="bg-section-page-header py-16 md:py-20">
         <div className="mx-auto max-w-4xl px-4 text-center lg:px-8">
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">DAAKYKA Guides</p>
           <h1 className="mt-3 font-display text-4xl font-extrabold text-ink md:text-5xl">{page.h1}</h1>
@@ -91,7 +91,7 @@ export function SeoLandingLayout({
             {page.bullets.map((bullet) => (
               <li
                 key={bullet}
-                className="flex items-start gap-3 rounded-2xl border border-border bg-white p-4 text-sm text-muted"
+                className="flex items-start gap-3 rounded-2xl border border-border bg-surface p-4 text-sm text-muted"
               >
                 <CheckCircle2 size={18} className="mt-0.5 shrink-0 text-trust" />
                 {bullet}
@@ -102,7 +102,7 @@ export function SeoLandingLayout({
       </section>
 
       {page.buyingGuide && page.buyingGuide.length > 0 && (
-        <section className="border-y border-border bg-lavender/20 py-16">
+        <section className="border-y border-border bg-section-alt py-16">
           <div className="mx-auto max-w-4xl px-4 lg:px-8">
             <h2 className="font-display text-2xl font-bold text-ink">Buying Guide</h2>
             <ol className="mt-6 space-y-4">
@@ -137,10 +137,10 @@ export function SeoLandingLayout({
         </section>
       )}
 
-      <section className="border-t border-border bg-white py-12">
+      <section className="border-t border-border bg-surface py-12">
         <div className="mx-auto grid max-w-6xl gap-4 px-4 sm:grid-cols-2 lg:grid-cols-4 lg:px-8">
           {trustItems.slice(0, 4).map((item) => (
-            <div key={item.title} className="rounded-2xl border border-border bg-lavender/20 p-4 text-center">
+            <div key={item.title} className="rounded-2xl border border-border bg-surface-muted p-4 text-center">
               <p className="font-semibold text-ink">{item.title}</p>
               <p className="mt-1 text-xs text-muted">{item.description}</p>
             </div>
@@ -209,7 +209,7 @@ export function SeoLandingLayout({
         </section>
       )}
 
-      <section className="border-t border-border bg-lavender/30 py-16">
+      <section className="border-t border-border bg-section-alt py-16">
         <div className="mx-auto max-w-3xl px-4 lg:px-8">
           <h2 className="font-display text-2xl font-bold text-ink">Frequently Asked Questions</h2>
           <dl className="mt-8 space-y-6">

@@ -21,7 +21,7 @@ export default async function AdminBulkOrdersPage() {
         <p className="text-muted">Hospital and team uniform enquiries from the storefront.</p>
       </div>
 
-      <div className="overflow-x-auto rounded-3xl border border-border bg-white">
+      <div className="overflow-x-auto rounded-3xl border border-border bg-surface">
         <table className="min-w-full text-left text-sm">
           <thead className="border-b border-border bg-lavender/30 text-xs uppercase tracking-wide text-muted">
             <tr>

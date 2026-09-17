@@ -64,7 +64,7 @@ export function BlogPostEditor({
   };
 
   return (
-    <div className="space-y-4 rounded-3xl border border-border bg-white p-6">
+    <div className="space-y-4 rounded-3xl border border-border bg-surface p-6">
       {(
         [
           ["title", "Title"],

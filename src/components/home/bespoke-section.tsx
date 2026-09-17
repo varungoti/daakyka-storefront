@@ -57,7 +57,7 @@ export function BespokeSection() {
             {features.map(({ icon: Icon, label }) => (
               <div
                 key={label}
-                className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-4 backdrop-blur-sm"
+                className="flex items-center gap-3 rounded-2xl border border-white/10 bg-surface/5 px-4 py-4 backdrop-blur-sm"
               >
                 <Icon className="text-electric-violet" size={20} />
                 <span className="text-sm font-semibold">{label}</span>

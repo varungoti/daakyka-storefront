@@ -40,7 +40,7 @@ export default async function AdminJourneysPage() {
 
       <div className="space-y-6">
         {journeys.map((journey) => (
-          <article key={journey.id} className="rounded-3xl border border-border bg-white p-6">
+          <article key={journey.id} className="rounded-3xl border border-border bg-surface p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <p className="text-xs font-bold uppercase tracking-wide text-brand">
@@ -84,7 +84,7 @@ export default async function AdminJourneysPage() {
         )}
       </div>
 
-      <section className="rounded-3xl border border-border bg-white p-6">
+      <section className="rounded-3xl border border-border bg-surface p-6">
         <h2 className="font-display text-xl font-bold text-ink">Active Enrollments</h2>
         <ul className="mt-4 space-y-3">
           {enrollments.map((enrollment) => (

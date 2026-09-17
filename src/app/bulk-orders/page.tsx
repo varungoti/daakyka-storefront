@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 export default function BulkOrdersPage() {
   return (
     <>
-      <section className="bg-lavender/30 py-16">
+      <section className="border-b border-border bg-section-page-header py-16 md:py-20">
         <div className="mx-auto max-w-7xl px-4 lg:px-8">
           <SectionHeading
             eyebrow="B2B"
@@ -41,7 +41,7 @@ export default function BulkOrdersPage() {
           </div>
 
           <aside className="space-y-4">
-            <div className="rounded-3xl border border-border bg-white p-6">
+            <div className="rounded-3xl border border-border bg-surface p-6">
               <h3 className="font-display text-lg font-bold text-ink">WhatsApp Enquiry</h3>
               <p className="mt-2 text-sm text-muted">
                 Prefer to chat? Reach our bulk orders team directly on WhatsApp.
@@ -81,7 +81,7 @@ function BenefitCard({
   text: string;
 }) {
   return (
-    <div className="rounded-2xl border border-border bg-white p-6 text-center">
+    <div className="rounded-2xl border border-border bg-surface p-6 text-center">
       <Icon className="mx-auto mb-3 text-brand" size={28} />
       <h3 className="font-display font-bold text-ink">{title}</h3>
       <p className="mt-2 text-sm text-muted">{text}</p>

@@ -35,7 +35,7 @@ const scienceCards = [
 
 export function ScienceSection() {
   return (
-    <section className="bg-lavender/30 py-20 md:py-24">
+    <section className="bg-section-alt py-20 md:py-24">
       <div className="mx-auto max-w-7xl px-4 lg:px-8">
         <SectionHeading
           eyebrow="Fabric Technology"
@@ -49,7 +49,7 @@ export function ScienceSection() {
           {scienceCards.map((card) => (
             <article
               key={card.title}
-              className="neon-border-hover rounded-3xl border border-border bg-white p-6"
+              className="neon-border-hover rounded-3xl border border-border bg-surface-elevated p-6"
             >
               <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-lilac/60">
                 <card.icon className="text-brand" size={26} />

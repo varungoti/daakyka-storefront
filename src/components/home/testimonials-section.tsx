@@ -26,7 +26,7 @@ export function TestimonialsSection({ testimonials }: TestimonialsSectionProps) 
   };
 
   return (
-    <section className="bg-lavender/30 py-20">
+    <section className="bg-section-alt py-20">
       <div className="mx-auto max-w-7xl space-y-16 px-4 lg:px-8">
         <div className="grid gap-10 lg:grid-cols-[0.75fr_1.25fr] lg:items-center">
           <SectionHeading
@@ -35,7 +35,7 @@ export function TestimonialsSection({ testimonials }: TestimonialsSectionProps) 
             description="Trusted by doctors, nurses, and healthcare teams across the world."
           />
 
-          <article className="relative rounded-[2rem] border border-border bg-white p-8 shadow-lg md:p-10">
+          <article className="neon-border-hover relative rounded-[2rem] border border-border bg-surface p-8 shadow-lg md:p-10">
             <Quote className="text-brand/30" size={48} />
             <p className="mt-4 text-lg leading-relaxed text-ink md:text-xl">
               &ldquo;{featured.quote}&rdquo;
@@ -57,7 +57,7 @@ export function TestimonialsSection({ testimonials }: TestimonialsSectionProps) 
 
         <div>
           <SectionHeading eyebrow="Community" title="Voices of Our Community" className="mb-8" />
-          <div className="relative rounded-[2rem] border border-border bg-white p-8 shadow-sm">
+          <div className="neon-border-hover relative rounded-[2rem] border border-border bg-surface p-8 shadow-sm">
             <p className="text-lg leading-relaxed text-ink md:text-xl">&ldquo;{current.quote}&rdquo;</p>
             <div className="mt-6 flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">

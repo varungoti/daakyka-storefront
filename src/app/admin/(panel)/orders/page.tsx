@@ -37,7 +37,7 @@ export default async function AdminOrdersPage() {
         />
       </div>
 
-      <div className="overflow-x-auto rounded-3xl border border-border bg-white">
+      <div className="overflow-x-auto rounded-3xl border border-border bg-surface-elevated">
         <table className="min-w-full text-left text-sm">
           <thead className="border-b border-border bg-lavender/30 text-xs uppercase tracking-wide text-muted">
             <tr>
@@ -91,7 +91,7 @@ export default async function AdminOrdersPage() {
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-3xl border border-border bg-white p-6">
+    <div className="rounded-3xl border border-border bg-surface-elevated p-6">
       <p className="text-xs font-bold uppercase tracking-wide text-muted">{label}</p>
       <p className="mt-2 font-display text-2xl font-bold text-ink">{value}</p>
     </div>

@@ -33,7 +33,7 @@ export function HermesTaskLauncher() {
           type="button"
           disabled={loading !== null}
           onClick={() => launch(task.id)}
-          className="rounded-full border border-border bg-white px-4 py-2 text-xs font-semibold text-ink transition hover:border-brand hover:text-brand disabled:opacity-50"
+          className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-brand hover:text-brand disabled:opacity-50"
         >
           {loading === task.id ? "Running…" : task.label}
         </button>

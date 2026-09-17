@@ -20,7 +20,7 @@ export default async function SegmentsPage() {
 
       <div className="grid gap-4 md:grid-cols-2">
         {segments.map((segment) => (
-          <article key={segment.id} className="rounded-2xl border border-border bg-white p-5">
+          <article key={segment.id} className="rounded-2xl border border-border bg-surface p-5">
             <p className="font-display text-lg font-bold text-ink">{segment.name}</p>
             <p className="text-xs font-semibold uppercase tracking-wide text-brand">{segment.slug}</p>
             {segment.description && <p className="mt-2 text-sm text-muted">{segment.description}</p>}

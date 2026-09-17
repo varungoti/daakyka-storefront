@@ -7,7 +7,7 @@ import Link from "next/link";
 
 export function ShopFeatureCards() {
   return (
-    <section className="border-t border-border bg-white py-20">
+    <section className="border-t border-border bg-surface py-20">
       <div className="mx-auto grid max-w-7xl gap-6 px-4 lg:grid-cols-2 lg:px-8">
         <FeatureCard
           eyebrow="Fabric Science"
@@ -55,7 +55,7 @@ function FeatureCard({
   return (
     <article
       className={`overflow-hidden rounded-[2rem] border ${
-        dark ? "border-plum/30 bg-plum text-white" : "border-border bg-lavender/30"
+        dark ? "border-plum/30 bg-plum text-white" : "border-border bg-surface-muted"
       }`}
     >
       <div className="grid md:grid-cols-2">

@@ -58,7 +58,7 @@ export default async function ProductPage({ params }: ProductPageProps) {
         ])}
       />
 
-      <section className="border-b border-border bg-lavender/20 py-6">
+      <section className="border-b border-border bg-section-page-header py-6">
         <div className="mx-auto max-w-7xl px-4 text-sm text-muted lg:px-8">
           <Link href="/" className="hover:text-brand">
             Home
@@ -80,7 +80,7 @@ export default async function ProductPage({ params }: ProductPageProps) {
       </section>
 
       {related.length > 0 && (
-        <section className="border-t border-border bg-lavender/20 py-16">
+        <section className="border-t border-border bg-section-alt py-16">
           <div className="mx-auto max-w-7xl px-4 lg:px-8">
             <h2 className="mb-8 font-display text-2xl font-bold text-ink">
               You May Also Like

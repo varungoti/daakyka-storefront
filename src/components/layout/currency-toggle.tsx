@@ -9,7 +9,7 @@ export function CurrencyToggle() {
 
   return (
     <div
-      className="hidden items-center rounded-full border border-border bg-white/70 p-1 md:flex"
+      className="hidden items-center rounded-full border border-border bg-surface-muted p-1 md:flex"
       role="group"
       aria-label="Select currency"
     >

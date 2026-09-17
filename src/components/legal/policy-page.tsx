@@ -1,4 +1,5 @@
 import { SectionHeading } from "@/components/ui/section-heading";
+import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
@@ -10,12 +11,14 @@ interface PolicyPageProps {
 
 export function PolicyPage({ title, description, children }: PolicyPageProps) {
   return (
-    <section className="py-20">
-      <div className="mx-auto max-w-3xl px-4 lg:px-8">
+    <>
+      <PageHeroBand innerClassName="max-w-3xl text-center">
         <SectionHeading eyebrow="Customer Care" title={title} description={description} align="center" />
-        <div className="prose-policy mt-10 space-y-4 text-sm leading-relaxed text-muted">{children}</div>
-      </div>
-    </section>
+      </PageHeroBand>
+      <PageContentSection innerClassName="max-w-3xl">
+        <div className="prose-policy space-y-4 text-sm leading-relaxed text-muted">{children}</div>
+      </PageContentSection>
+    </>
   );
 }
 

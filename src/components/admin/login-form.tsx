@@ -33,7 +33,7 @@ export function LoginForm() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-border bg-white p-8 shadow-lg">
+    <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-border bg-surface-elevated p-8 shadow-lg">
       <div>
         <label htmlFor="email" className="mb-2 block text-sm font-semibold text-ink">
           Email

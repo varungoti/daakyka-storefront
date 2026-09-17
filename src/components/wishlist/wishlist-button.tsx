@@ -20,7 +20,7 @@ export function WishlistButton({ product, className }: WishlistButtonProps) {
       aria-label={active ? "Remove from wishlist" : "Add to wishlist"}
       aria-pressed={active}
       className={cn(
-        "rounded-full bg-white/90 p-2.5 shadow-sm transition hover:text-brand",
+        "rounded-full bg-surface-elevated p-2.5 shadow-sm transition hover:text-brand",
         active ? "text-brand" : "text-muted",
         className,
       )}

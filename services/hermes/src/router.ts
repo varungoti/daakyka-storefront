@@ -11,13 +11,13 @@ interface ModelProfile {
 }
 
 const profiles: Record<string, ModelProfile> = {
-  seo_scan: { model: "accounts/fireworks/models/llama-v3p1-8b-instruct", maxTokens: 1200, temperature: 0.2 },
-  daily_seo_health_scan: { model: "accounts/fireworks/models/llama-v3p1-8b-instruct", maxTokens: 1500, temperature: 0.2 },
-  weekly_competitor_scan: { model: "accounts/fireworks/models/llama-v3p1-8b-instruct", maxTokens: 1500, temperature: 0.3 },
-  weekly_growth_report: { model: "accounts/fireworks/models/llama-v3p1-70b-instruct", maxTokens: 2500, temperature: 0.35 },
-  blog_draft: { model: "accounts/fireworks/models/llama-v3p1-70b-instruct", maxTokens: 3000, temperature: 0.5 },
-  campaign_draft: { model: "accounts/fireworks/models/llama-v3p1-70b-instruct", maxTokens: 2000, temperature: 0.45 },
-  default: { model: "accounts/fireworks/models/llama-v3p1-70b-instruct", maxTokens: 1800, temperature: 0.35 },
+  seo_scan: { model: "accounts/fireworks/models/gpt-oss-20b", maxTokens: 1200, temperature: 0.2 },
+  daily_seo_health_scan: { model: "accounts/fireworks/models/gpt-oss-20b", maxTokens: 1500, temperature: 0.2 },
+  weekly_competitor_scan: { model: "accounts/fireworks/models/gpt-oss-20b", maxTokens: 1500, temperature: 0.3 },
+  weekly_growth_report: { model: "accounts/fireworks/models/gpt-oss-120b", maxTokens: 2500, temperature: 0.35 },
+  blog_draft: { model: "accounts/fireworks/models/gpt-oss-120b", maxTokens: 3000, temperature: 0.5 },
+  campaign_draft: { model: "accounts/fireworks/models/gpt-oss-120b", maxTokens: 2000, temperature: 0.45 },
+  default: { model: "accounts/fireworks/models/gpt-oss-120b", maxTokens: 1800, temperature: 0.35 },
 };
 
 function promptForTask(task: HermesTaskInput): string {

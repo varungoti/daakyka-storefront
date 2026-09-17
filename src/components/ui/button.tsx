@@ -13,7 +13,7 @@ const variantClasses: Record<ButtonVariant, string> = {
   primary:
     "bg-gradient-to-r from-brand to-brand-violet text-white shadow-lg shadow-brand/25 hover:shadow-xl hover:shadow-brand/30 hover:-translate-y-0.5",
   outline:
-    "border-2 border-brand/30 bg-white/80 text-ink hover:border-brand hover:bg-lilac/40",
+    "border-2 border-brand/30 bg-surface-muted text-ink hover:border-brand hover:bg-lilac/40",
   luxury:
     "bg-plum text-white border border-white/10 hover:bg-plum/90 shadow-lg shadow-black/20",
   ghost: "text-brand hover:bg-lilac/50",
