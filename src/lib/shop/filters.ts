@@ -1,8 +1,4 @@
-import {
-  PRICE_FILTER_DEFAULT_MAX_INR,
-  PRICE_FILTER_MAX_INR,
-  PRICE_FILTER_MIN_INR,
-} from "@/lib/currency/config";
+import { PRICE_FILTER_DEFAULT_MAX_INR } from "@/lib/currency/config";
 
 import type { FabricTech, Product } from "@/lib/types";
 

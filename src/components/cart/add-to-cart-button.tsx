@@ -35,7 +35,7 @@ export function AddToCartButton({
   };
 
   const handleClick = async () => {
-    await addToCart({
+    const result = await addToCart({
       variantId: activeVariant.id,
       productHandle: product.handle,
       productTitle: product.name,
@@ -46,7 +46,13 @@ export function AddToCartButton({
     });
 
     if (redirectToCheckout) {
-      checkout();
+      // Redirect straight to the cart this add just produced, rather than
+      // the (possibly empty) checkoutUrl from before the add resolved.
+      if (result.checkoutUrl) {
+        window.location.href = result.checkoutUrl;
+      } else {
+        checkout();
+      }
     }
   };
 

@@ -1,7 +1,7 @@
 "use client";
 
 import type { OutfitTryOnRequest, OutfitTryOnResponse, TryOnGender } from "@/lib/outfit/types";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 interface UseOutfitTryOnOptions {
   enabled?: boolean;
@@ -18,12 +18,14 @@ export function useOutfitTryOn(
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  const hasActiveRequest = enabled && Boolean(request?.topImageUrl);
+
   useEffect(() => {
-    if (!enabled || !request?.topImageUrl) {
-      setResult(null);
-      setLoading(false);
-      return;
-    }
+    // Nothing to fetch: bail out without touching state here. The
+    // hook derives idle result/loading/error from `hasActiveRequest`
+    // below instead, so switching this off never needs an extra
+    // setState-triggered render.
+    if (!hasActiveRequest) return;
 
     const timer = window.setTimeout(async () => {
       abortRef.current?.abort();
@@ -37,7 +39,15 @@ export function useOutfitTryOn(
         const response = await fetch("/api/outfit/try-on", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(request),
+          body: JSON.stringify({
+            gender: request?.gender,
+            topImageUrl: request?.topImageUrl,
+            bottomImageUrl: request?.bottomImageUrl,
+            avatarImageUrl: request?.avatarImageUrl,
+            topHandle: request?.topHandle,
+            bottomHandle: request?.bottomHandle,
+            color: request?.color,
+          }),
           signal: controller.signal,
         });
 
@@ -61,17 +71,28 @@ export function useOutfitTryOn(
       abortRef.current?.abort();
     };
   }, [
-    enabled,
+    hasActiveRequest,
     debounceMs,
     request?.gender,
     request?.topImageUrl,
     request?.bottomImageUrl,
+    request?.avatarImageUrl,
     request?.topHandle,
     request?.bottomHandle,
     request?.color,
   ]);
 
-  return { result, loading, error, previewUrl: result?.resultImageUrl ?? null };
+  const idleResult = useMemo(
+    () => (hasActiveRequest ? result : null),
+    [hasActiveRequest, result],
+  );
+
+  return {
+    result: idleResult,
+    loading: hasActiveRequest && loading,
+    error: hasActiveRequest ? error : null,
+    previewUrl: idleResult?.resultImageUrl ?? null,
+  };
 }
 
 export type { TryOnGender };

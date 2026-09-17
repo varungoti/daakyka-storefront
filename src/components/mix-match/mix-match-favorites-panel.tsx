@@ -97,7 +97,6 @@ export function MixMatchFavoritesPanel({
 
 export function applyFavoriteToConfig(
   product: Product,
-  current: { topStyle: TopStyle; bottomStyle: BottomStyle },
 ): { topStyle?: TopStyle; bottomStyle?: BottomStyle } {
   const topMatch = topStyleOptions.find((option) => option.productHandle === product.handle);
   const bottomMatch = bottomStyleOptions.find((option) => option.productHandle === product.handle);

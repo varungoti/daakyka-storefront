@@ -2,13 +2,16 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
-  useEffect,
-  useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 
 type Theme = "light" | "dark";
+
+const THEME_STORAGE_KEY = "daakyka-theme";
+const THEME_CHANGE_EVENT = "daakyka-theme-change";
 
 interface ThemeContextValue {
   theme: Theme;
@@ -17,28 +20,54 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<Theme>("light");
-  const [mounted, setMounted] = useState(false);
+function applyThemeToDocument(theme: Theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  document.documentElement.style.colorScheme = theme;
+}
 
-  useEffect(() => {
-    const stored = localStorage.getItem("daakyka-theme") as Theme | null;
-    if (stored === "light" || stored === "dark") {
-      setTheme(stored);
+// The inline script in app/layout.tsx already applies the stored theme to
+// <html> before hydration (so there is no flash), and the server always
+// renders data-theme="light". useSyncExternalStore lets React's context
+// value agree with whatever the browser actually has on the very first
+// client render, with no extra setState-in-an-effect render.
+function readStoredTheme(): Theme {
+  try {
+    return window.localStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
+  } catch {
+    return "light";
+  }
+}
+
+function getServerTheme(): Theme {
+  return "light";
+}
+
+function subscribeToThemeChanges(onStoreChange: () => void) {
+  window.addEventListener(THEME_CHANGE_EVENT, onStoreChange);
+  window.addEventListener("storage", onStoreChange);
+  return () => {
+    window.removeEventListener(THEME_CHANGE_EVENT, onStoreChange);
+    window.removeEventListener("storage", onStoreChange);
+  };
+}
+
+export function ThemeProvider({ children }: { children: ReactNode }) {
+  const theme = useSyncExternalStore(subscribeToThemeChanges, readStoredTheme, getServerTheme);
+
+  const setTheme = useCallback((next: Theme) => {
+    applyThemeToDocument(next);
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      // localStorage can throw in private-browsing modes; the DOM attribute
+      // above still reflects the choice for this page view.
     }
-    setMounted(true);
+    window.dispatchEvent(new Event(THEME_CHANGE_EVENT));
   }, []);
 
-  useEffect(() => {
-    if (!mounted) return;
-    document.documentElement.setAttribute("data-theme", theme);
-    localStorage.setItem("daakyka-theme", theme);
-    document.documentElement.style.colorScheme = theme;
-  }, [theme, mounted]);
-
-  const toggleTheme = () => {
-    setTheme((current) => (current === "light" ? "dark" : "light"));
-  };
+  const toggleTheme = useCallback(() => {
+    setTheme(theme === "light" ? "dark" : "light");
+  }, [setTheme, theme]);
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme }}>

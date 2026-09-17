@@ -5,12 +5,6 @@ import nextTs from "eslint-config-next/typescript";
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
-  {
-    rules: {
-      // Hydration/bootstrap from localStorage in client providers is intentional
-      "react-hooks/set-state-in-effect": "warn",
-    },
-  },
   // Override default ignores of eslint-config-next.
   globalIgnores([
     // Default ignores of eslint-config-next:
@@ -18,6 +12,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated/vendored code, not linted:
+    "src/generated/**",
+    // Playwright artifacts and standalone Python/Node services, not part
+    // of the Next.js app's lint surface:
+    "dogfood-output/**",
+    "services/**",
   ]),
 ]);
 

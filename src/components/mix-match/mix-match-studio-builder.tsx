@@ -34,7 +34,7 @@ const SAVED_OUTFITS_KEY = "daakyka-saved-outfits";
 
 export function MixMatchStudioBuilder({ products }: MixMatchStudioBuilderProps) {
   const { formatPrice } = useCurrency();
-  const { addToCart, openCart, isLoading } = useCart();
+  const { addLinesToCart, openCart, isLoading } = useCart();
   const [config, setConfig] = useState<MixMatchConfig>(defaultMixMatchConfig);
   const [gender, setGender] = useState<TryOnGender>("female");
 
@@ -74,7 +74,7 @@ export function MixMatchStudioBuilder({ products }: MixMatchStudioBuilderProps) 
   };
 
   const applyFavorite = (product: Product) => {
-    const patch = applyFavoriteToConfig(product, config);
+    const patch = applyFavoriteToConfig(product);
     setConfig((current) => ({ ...current, ...patch }));
     if (product.colorName) {
       update("color", product.colorName);
@@ -102,22 +102,24 @@ export function MixMatchStudioBuilder({ products }: MixMatchStudioBuilderProps) 
     if (!resolved.topProduct || !resolved.bottomProduct || !resolved.topVariant || !resolved.bottomVariant) {
       return;
     }
-    await addToCart({
-      variantId: resolved.topVariant.id,
-      productHandle: resolved.topProduct.handle,
-      productTitle: resolved.topProduct.name,
-      variantTitle: resolved.topVariant.title,
-      price: resolved.topVariant.price,
-      image: resolved.topVariant.image ?? resolved.topProduct.image,
-    });
-    await addToCart({
-      variantId: resolved.bottomVariant.id,
-      productHandle: resolved.bottomProduct.handle,
-      productTitle: resolved.bottomProduct.name,
-      variantTitle: resolved.bottomVariant.title,
-      price: resolved.bottomVariant.price,
-      image: resolved.bottomVariant.image ?? resolved.bottomProduct.image,
-    });
+    await addLinesToCart([
+      {
+        variantId: resolved.topVariant.id,
+        productHandle: resolved.topProduct.handle,
+        productTitle: resolved.topProduct.name,
+        variantTitle: resolved.topVariant.title,
+        price: resolved.topVariant.price,
+        image: resolved.topVariant.image ?? resolved.topProduct.image,
+      },
+      {
+        variantId: resolved.bottomVariant.id,
+        productHandle: resolved.bottomProduct.handle,
+        productTitle: resolved.bottomProduct.name,
+        variantTitle: resolved.bottomVariant.title,
+        price: resolved.bottomVariant.price,
+        image: resolved.bottomVariant.image ?? resolved.bottomProduct.image,
+      },
+    ]);
     openCart();
   };
 

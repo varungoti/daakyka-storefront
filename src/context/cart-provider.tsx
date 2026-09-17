@@ -3,8 +3,17 @@
 import {
   buildLocalCart,
   createLocalCartId,
+  isLocalCartId,
   isShopifyCartMode,
 } from "@/lib/cart/service";
+import {
+  clearCartId,
+  getCartIdSnapshot,
+  getCartSnapshot,
+  getServerCartSnapshot,
+  setCartState,
+  subscribeToCart,
+} from "@/context/cart-store";
 import type { Cart, CartLine } from "@/lib/types";
 import {
   createContext,
@@ -13,11 +22,9 @@ import {
   useEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
-
-const CART_STORAGE_KEY = "daakyka-cart";
-const CART_ID_KEY = "daakyka-cart-id";
 
 interface AddToCartInput {
   variantId: string;
@@ -36,19 +43,17 @@ interface CartContextValue {
   mode: "shopify" | "local";
   openCart: () => void;
   closeCart: () => void;
-  addToCart: (input: AddToCartInput) => Promise<void>;
+  /** Adds one line and returns the resulting cart (so callers like "Buy
+   * Now" can redirect using its checkoutUrl instead of a stale one). */
+  addToCart: (input: AddToCartInput) => Promise<Cart>;
+  /** Adds several lines in a single request, e.g. a Mix & Match "add
+   * complete set" — avoids racing two separate add calls against the
+   * same cart id, which can silently drop one of the items. */
+  addLinesToCart: (inputs: AddToCartInput[]) => Promise<Cart>;
   updateQuantity: (lineId: string, quantity: number) => Promise<void>;
   removeLine: (lineId: string) => Promise<void>;
   checkout: () => void;
 }
-
-const emptyCart: Cart = {
-  id: "",
-  lines: [],
-  totalQuantity: 0,
-  subtotal: 0,
-  currencyCode: "INR",
-};
 
 const CartContext = createContext<CartContextValue | null>(null);
 
@@ -69,21 +74,19 @@ async function shopifyCartRequest(body: Record<string, unknown>) {
   return { degraded: false as const, cart: data.cart as Cart };
 }
 
-function applyLocalAdd(current: Cart, input: AddToCartInput): Cart {
-  const existing = current.lines.find((line) => line.variantId === input.variantId);
+function applyLocalAdds(current: Cart, inputs: AddToCartInput[]): Cart {
+  let lines = current.lines;
 
-  let nextLines: CartLine[];
-
-  if (existing) {
-    nextLines = current.lines.map((line) =>
-      line.variantId === input.variantId
-        ? { ...line, quantity: line.quantity + (input.quantity ?? 1) }
-        : line,
-    );
-  } else {
-    nextLines = [
-      ...current.lines,
-      {
+  for (const input of inputs) {
+    const existing = lines.find((line) => line.variantId === input.variantId);
+    if (existing) {
+      lines = lines.map((line) =>
+        line.variantId === input.variantId
+          ? { ...line, quantity: line.quantity + (input.quantity ?? 1) }
+          : line,
+      );
+    } else {
+      const newLine: CartLine = {
         id: `local-line-${input.variantId}`,
         variantId: input.variantId,
         productHandle: input.productHandle,
@@ -92,104 +95,111 @@ function applyLocalAdd(current: Cart, input: AddToCartInput): Cart {
         quantity: input.quantity ?? 1,
         price: input.price,
         image: input.image,
-      },
-    ];
+      };
+      lines = [...lines, newLine];
+    }
   }
 
-  return buildLocalCart(nextLines);
+  return buildLocalCart(lines);
 }
 
 export function CartProvider({ children }: { children: ReactNode }) {
-  const [cart, setCart] = useState<Cart>(emptyCart);
-  const [cartId, setCartId] = useState<string>("");
+  // cart.id already changes in lockstep with the cart id (setCartState
+  // sets both together), so a single subscription is enough to re-render
+  // on every mutation; the id itself is read fresh via getCartIdSnapshot()
+  // where it's needed, since that module-level cache is synchronously
+  // current even before this component re-renders.
+  const cart = useSyncExternalStore(subscribeToCart, getCartSnapshot, getServerCartSnapshot);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [mounted, setMounted] = useState(false);
   const mode: "shopify" | "local" = isShopifyCartMode() ? "shopify" : "local";
 
+  // One-time reconciliation with Shopify on mount: a cart id can go
+  // stale (expired, or the order already completed) without the
+  // browser ever finding out. Left unhandled, every future mutation
+  // keeps resending that dead id and silently falling into local mode.
   useEffect(() => {
-    setMounted(true);
-    const storedCartId = localStorage.getItem(CART_ID_KEY) ?? "";
-    const storedCart = localStorage.getItem(CART_STORAGE_KEY);
+    if (mode !== "shopify") return;
+    const storedCartId = getCartIdSnapshot();
+    if (!storedCartId || isLocalCartId(storedCartId)) return;
 
-    if (storedCartId) setCartId(storedCartId);
+    fetch(`/api/cart?cartId=${encodeURIComponent(storedCartId)}`)
+      .then((res) => res.json())
+      .then((data: { cart: Cart | null; mode?: string }) => {
+        if (data.cart) {
+          setCartState({ cart: data.cart, cartId: data.cart.id });
+        } else if (data.mode === "shopify") {
+          // Shopify no longer recognizes this cart id. Drop it so the
+          // next add creates a fresh cart; keep the cached local lines
+          // so the customer doesn't see their cart disappear.
+          clearCartId();
+        }
+        // data.mode === "degraded": leave the locally cached cart as-is.
+      })
+      .catch(() => undefined);
+  }, [mode]);
 
-    if (!isShopifyCartMode() && storedCart) {
-      try {
-        setCart(JSON.parse(storedCart) as Cart);
-      } catch {
-        setCart(emptyCart);
-      }
-    }
+  const addLinesToCart = useCallback(
+    async (inputs: AddToCartInput[]): Promise<Cart> => {
+      if (!inputs.length) return getCartSnapshot();
 
-    if (isShopifyCartMode() && storedCartId) {
-      fetch(`/api/cart?cartId=${encodeURIComponent(storedCartId)}`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.cart) setCart(data.cart);
-          else if (data.mode === "degraded" && storedCart) {
-            try {
-              setCart(JSON.parse(storedCart) as Cart);
-            } catch {
-              setCart(emptyCart);
-            }
-          }
-        })
-        .catch(() => undefined);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!mounted) return;
-    localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cart));
-  }, [cart, mounted]);
-
-  useEffect(() => {
-    if (!mounted || !cartId) return;
-    localStorage.setItem(CART_ID_KEY, cartId);
-  }, [cartId, mounted]);
-
-  const persistShopifyCart = useCallback((nextCart: Cart) => {
-    setCart(nextCart);
-    setCartId(nextCart.id);
-  }, []);
-
-  const addToCart = useCallback(
-    async (input: AddToCartInput) => {
       setIsLoading(true);
       try {
         if (mode === "shopify") {
-          const payload = cartId
-            ? {
-                action: "add",
-                cartId,
-                merchandiseId: input.variantId,
-                quantity: input.quantity ?? 1,
-              }
-            : {
-                action: "create",
-                merchandiseId: input.variantId,
-                quantity: input.quantity ?? 1,
-              };
+          // Read from the store directly (not React state): the store's
+          // cache updates synchronously on every call below, so a second
+          // add in the same click handler (before any re-render) still
+          // sees the cart id the first add just created.
+          const currentCartId = getCartIdSnapshot();
+          const hasRealCartId = Boolean(currentCartId) && !isLocalCartId(currentCartId);
+          const shopifyLines = inputs.map((input) => ({
+            merchandiseId: input.variantId,
+            quantity: input.quantity ?? 1,
+          }));
 
-          const data = await shopifyCartRequest(payload);
-          if (data.degraded) {
-            setCart((current) => applyLocalAdd(current, input));
-            if (!cartId) setCartId(createLocalCartId());
-          } else {
-            persistShopifyCart(data.cart);
+          let data = hasRealCartId
+            ? await shopifyCartRequest({
+                action: "add",
+                cartId: currentCartId,
+                lines: shopifyLines,
+              })
+            : await shopifyCartRequest({ action: "create", lines: shopifyLines });
+
+          // A stale cart id (expired, already checked out) fails as
+          // "degraded" server-side; retry once as a fresh cart instead of
+          // dropping straight to local-only mode.
+          if (data.degraded && hasRealCartId) {
+            data = await shopifyCartRequest({ action: "create", lines: shopifyLines });
           }
-        } else {
-          setCart((current) => applyLocalAdd(current, input));
-          if (!cartId) setCartId(createLocalCartId());
+
+          if (data.degraded) {
+            const next = applyLocalAdds(getCartSnapshot(), inputs);
+            const nextCartId = getCartIdSnapshot() || createLocalCartId();
+            setCartState({ cart: next, cartId: nextCartId });
+            setIsOpen(true);
+            return next;
+          }
+
+          setCartState({ cart: data.cart, cartId: data.cart.id });
+          setIsOpen(true);
+          return data.cart;
         }
 
+        const next = applyLocalAdds(getCartSnapshot(), inputs);
+        const nextCartId = getCartIdSnapshot() || createLocalCartId();
+        setCartState({ cart: next, cartId: nextCartId });
         setIsOpen(true);
+        return next;
       } finally {
         setIsLoading(false);
       }
     },
-    [cartId, mode, persistShopifyCart],
+    [mode],
+  );
+
+  const addToCart = useCallback(
+    (input: AddToCartInput) => addLinesToCart([input]),
+    [addLinesToCart],
   );
 
   const updateQuantity = useCallback(
@@ -197,67 +207,55 @@ export function CartProvider({ children }: { children: ReactNode }) {
       if (quantity < 1) return;
       setIsLoading(true);
       try {
-        if (mode === "shopify" && cartId) {
+        const currentCartId = getCartIdSnapshot();
+        if (mode === "shopify" && currentCartId && !isLocalCartId(currentCartId)) {
           const data = await shopifyCartRequest({
             action: "update",
-            cartId,
+            cartId: currentCartId,
             lineId,
             quantity,
           });
           if (!data.degraded) {
-            persistShopifyCart(data.cart);
-          } else {
-            setCart((current) => {
-              const nextLines = current.lines.map((line) =>
-                line.id === lineId ? { ...line, quantity } : line,
-              );
-              return buildLocalCart(nextLines);
-            });
+            setCartState({ cart: data.cart, cartId: data.cart.id });
+            return;
           }
-        } else {
-          setCart((current) => {
-            const nextLines = current.lines.map((line) =>
-              line.id === lineId ? { ...line, quantity } : line,
-            );
-            return buildLocalCart(nextLines);
-          });
         }
+        const next = buildLocalCart(
+          getCartSnapshot().lines.map((line) =>
+            line.id === lineId ? { ...line, quantity } : line,
+          ),
+        );
+        setCartState({ cart: next });
       } finally {
         setIsLoading(false);
       }
     },
-    [cartId, mode, persistShopifyCart],
+    [mode],
   );
 
   const removeLine = useCallback(
     async (lineId: string) => {
       setIsLoading(true);
       try {
-        if (mode === "shopify" && cartId) {
+        const currentCartId = getCartIdSnapshot();
+        if (mode === "shopify" && currentCartId && !isLocalCartId(currentCartId)) {
           const data = await shopifyCartRequest({
             action: "remove",
-            cartId,
+            cartId: currentCartId,
             lineIds: [lineId],
           });
           if (!data.degraded) {
-            persistShopifyCart(data.cart);
-          } else {
-            setCart((current) => {
-              const nextLines = current.lines.filter((line) => line.id !== lineId);
-              return buildLocalCart(nextLines);
-            });
+            setCartState({ cart: data.cart, cartId: data.cart.id });
+            return;
           }
-        } else {
-          setCart((current) => {
-            const nextLines = current.lines.filter((line) => line.id !== lineId);
-            return buildLocalCart(nextLines);
-          });
         }
+        const next = buildLocalCart(getCartSnapshot().lines.filter((line) => line.id !== lineId));
+        setCartState({ cart: next });
       } finally {
         setIsLoading(false);
       }
     },
-    [cartId, mode, persistShopifyCart],
+    [mode],
   );
 
   const checkout = useCallback(() => {
@@ -277,11 +275,22 @@ export function CartProvider({ children }: { children: ReactNode }) {
       openCart: () => setIsOpen(true),
       closeCart: () => setIsOpen(false),
       addToCart,
+      addLinesToCart,
       updateQuantity,
       removeLine,
       checkout,
     }),
-    [addToCart, cart, checkout, isLoading, isOpen, mode, removeLine, updateQuantity],
+    [
+      addLinesToCart,
+      addToCart,
+      cart,
+      checkout,
+      isLoading,
+      isOpen,
+      mode,
+      removeLine,
+      updateQuantity,
+    ],
   );
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

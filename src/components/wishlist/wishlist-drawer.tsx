@@ -3,7 +3,6 @@
 import { useWishlist } from "@/context/wishlist-provider";
 import { useCurrency } from "@/context/currency-provider";
 import { Button } from "@/components/ui/button";
-import type { Product } from "@/lib/types";
 import { Heart, ShoppingBag, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";

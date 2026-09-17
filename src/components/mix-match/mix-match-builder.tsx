@@ -160,25 +160,30 @@ function AddSetButton({
   topVariant: NonNullable<Product["variants"]>[number];
   bottomVariant: NonNullable<Product["variants"]>[number];
 }) {
-  const { addToCart, openCart, isLoading } = useCart();
+  const { addLinesToCart, openCart, isLoading } = useCart();
 
   const handleAddSet = async () => {
-    await addToCart({
-      variantId: topVariant.id,
-      productHandle: topProduct.handle,
-      productTitle: topProduct.name,
-      variantTitle: topVariant.title,
-      price: topVariant.price,
-      image: topVariant.image ?? topProduct.image,
-    });
-    await addToCart({
-      variantId: bottomVariant.id,
-      productHandle: bottomProduct.handle,
-      productTitle: bottomProduct.name,
-      variantTitle: bottomVariant.title,
-      price: bottomVariant.price,
-      image: bottomVariant.image ?? bottomProduct.image,
-    });
+    // A single multi-line request so both items land in the same cart
+    // atomically — two sequential addToCart calls can each try to create
+    // a fresh Shopify cart and silently drop the first item.
+    await addLinesToCart([
+      {
+        variantId: topVariant.id,
+        productHandle: topProduct.handle,
+        productTitle: topProduct.name,
+        variantTitle: topVariant.title,
+        price: topVariant.price,
+        image: topVariant.image ?? topProduct.image,
+      },
+      {
+        variantId: bottomVariant.id,
+        productHandle: bottomProduct.handle,
+        productTitle: bottomProduct.name,
+        variantTitle: bottomVariant.title,
+        price: bottomVariant.price,
+        image: bottomVariant.image ?? bottomProduct.image,
+      },
+    ]);
     openCart();
   };
 

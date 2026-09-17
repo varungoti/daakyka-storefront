@@ -5,13 +5,17 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
-
-const STORAGE_KEY = "daakyka-wishlist";
+import {
+  getServerWishlistSnapshot,
+  getWishlistSnapshot,
+  setWishlistItems,
+  subscribeToWishlist,
+} from "@/context/wishlist-store";
 
 interface WishlistContextValue {
   items: Product[];
@@ -27,27 +31,15 @@ interface WishlistContextValue {
 const WishlistContext = createContext<WishlistContextValue | null>(null);
 
 export function WishlistProvider({ children }: { children: ReactNode }) {
-  const [items, setItems] = useState<Product[]>([]);
+  const items = useSyncExternalStore(
+    subscribeToWishlist,
+    getWishlistSnapshot,
+    getServerWishlistSnapshot,
+  );
   const [isOpen, setIsOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) setItems(JSON.parse(stored) as Product[]);
-    } catch {
-      setItems([]);
-    }
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (!mounted) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-  }, [items, mounted]);
 
   const toggleWishlist = useCallback((product: Product) => {
-    setItems((current) => {
+    setWishlistItems((current) => {
       const exists = current.some((item) => item.id === product.id);
       if (exists) {
         return current.filter((item) => item.id !== product.id);
@@ -57,7 +49,7 @@ export function WishlistProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const removeFromWishlist = useCallback((productId: string) => {
-    setItems((current) => current.filter((item) => item.id !== productId));
+    setWishlistItems((current) => current.filter((item) => item.id !== productId));
   }, []);
 
   const isWishlisted = useCallback(

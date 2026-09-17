@@ -1,6 +1,5 @@
 "use client";
 
-import { GenderModelToggle } from "@/components/mix-match/gender-model-toggle";
 import { MixMatchControls } from "@/components/mix-match/mix-match-controls";
 import { MixMatchVisualizer } from "@/components/mix-match/mix-match-visualizer";
 import { Button } from "@/components/ui/button";

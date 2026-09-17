@@ -15,13 +15,13 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
-  useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 
 const STORAGE_KEY = "daakyka-currency";
+const CURRENCY_CHANGE_EVENT = "daakyka-currency-change";
 
 interface CurrencyContextValue {
   currency: SupportedCurrency;
@@ -38,30 +38,54 @@ interface CurrencyContextValue {
 
 const CurrencyContext = createContext<CurrencyContextValue | null>(null);
 
+// Mirrors the theme provider's approach: the server always renders
+// DEFAULT_CURRENCY, so useSyncExternalStore reconciles that with
+// whatever is actually in localStorage on the client's first render,
+// instead of rendering the default then flipping state in an effect
+// (which would cost every price on the page an extra render, and can
+// still show DEFAULT_CURRENCY-formatted prices flash-then-correct).
+function readStoredCurrency(): SupportedCurrency {
+  try {
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    return stored === "INR" || stored === "USD" ? stored : DEFAULT_CURRENCY;
+  } catch {
+    return DEFAULT_CURRENCY;
+  }
+}
+
+function getServerCurrency(): SupportedCurrency {
+  return DEFAULT_CURRENCY;
+}
+
+function subscribeToCurrencyChanges(onStoreChange: () => void) {
+  window.addEventListener(CURRENCY_CHANGE_EVENT, onStoreChange);
+  window.addEventListener("storage", onStoreChange);
+  return () => {
+    window.removeEventListener(CURRENCY_CHANGE_EVENT, onStoreChange);
+    window.removeEventListener("storage", onStoreChange);
+  };
+}
+
 export function CurrencyProvider({ children }: { children: ReactNode }) {
-  const [currency, setCurrencyState] = useState<SupportedCurrency>(DEFAULT_CURRENCY);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY) as SupportedCurrency | null;
-    if (stored === "INR" || stored === "USD") {
-      setCurrencyState(stored);
-    }
-    setMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (!mounted) return;
-    localStorage.setItem(STORAGE_KEY, currency);
-  }, [currency, mounted]);
+  const currency = useSyncExternalStore(
+    subscribeToCurrencyChanges,
+    readStoredCurrency,
+    getServerCurrency,
+  );
 
   const setCurrency = useCallback((next: SupportedCurrency) => {
-    setCurrencyState(next);
+    try {
+      window.localStorage.setItem(STORAGE_KEY, next);
+    } catch {
+      // Ignore write failures (private browsing, quota); the change
+      // still applies for the rest of this page view via the event.
+    }
+    window.dispatchEvent(new Event(CURRENCY_CHANGE_EVENT));
   }, []);
 
   const toggleCurrency = useCallback(() => {
-    setCurrencyState((current) => (current === "INR" ? "USD" : "INR"));
-  }, []);
+    setCurrency(currency === "INR" ? "USD" : "INR");
+  }, [currency, setCurrency]);
 
   const formatPrice = useCallback(
     (amountInInr: number) => formatBasePrice(amountInInr, currency),

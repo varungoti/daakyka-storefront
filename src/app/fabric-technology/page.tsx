@@ -1,4 +1,3 @@
-import { SectionHeading } from "@/components/ui/section-heading";
 import { fabricTechPages } from "@/data/fabric-tech";
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";

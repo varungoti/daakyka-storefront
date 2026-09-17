@@ -1,6 +1,5 @@
 "use client";
 
-import { ProductCard } from "@/components/ui/product-card";
 import { useCurrency } from "@/context/currency-provider";
 import type { Product } from "@/lib/types";
 import { Search, X } from "lucide-react";
@@ -22,6 +21,11 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
 
   useEffect(() => {
     if (!open) return;
+    // Fetch-on-open: setLoading(true) must run synchronously so the
+    // "Searching..." state shows immediately, not after the request
+    // resolves. This is the documented data-fetching effect pattern
+    // (react.dev/reference/react/useEffect#fetching-data-with-effects).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
     fetch("/api/products")
       .then((res) => res.json())

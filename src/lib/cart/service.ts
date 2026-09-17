@@ -96,8 +96,7 @@ export async function getShopifyCart(cartId: string): Promise<Cart | null> {
 
 export async function addToShopifyCart(
   cartId: string,
-  merchandiseId: string,
-  quantity: number,
+  lines: { merchandiseId: string; quantity: number }[],
 ): Promise<Cart> {
   const data = await shopifyFetch<{
     cartLinesAdd: { cart: ShopifyCart | null; userErrors: { message: string }[] };
@@ -105,7 +104,10 @@ export async function addToShopifyCart(
     query: ADD_TO_CART_MUTATION,
     variables: {
       cartId,
-      lines: [{ merchandiseId, quantity }],
+      lines: lines.map((line) => ({
+        merchandiseId: line.merchandiseId,
+        quantity: line.quantity,
+      })),
     },
     cache: "no-store",
   });
@@ -177,6 +179,11 @@ export function isShopifyCartMode(): boolean {
 
 export function createLocalCartId(): string {
   return `local-${crypto.randomUUID()}`;
+}
+
+/** True for cart ids minted client-side, never a real Shopify cart GID. */
+export function isLocalCartId(cartId: string): boolean {
+  return cartId.startsWith("local-");
 }
 
 export function buildLocalCart(lines: CartLine[]): Cart {

@@ -1,9 +1,5 @@
 import "dotenv/config";
-import {
-  blogMedia,
-  scrubMedia,
-  testimonialAvatars,
-} from "../src/data/media/catalog";
+import { blogMedia, testimonialAvatars } from "../src/data/media/catalog";
 import { createPrismaClient } from "../src/lib/create-prisma-client";
 import {
   DEFAULT_ADMIN_SEED_EMAIL,
@@ -296,10 +292,6 @@ async function main() {
       body: "Hi {{contact_name}}, thank you for your bulk uniform enquiry at {{organization}}. Our team will share a custom quote within 1–2 business days.",
       variables: JSON.stringify(["contact_name", "organization"]),
     },
-  });
-
-  const bulkSegment = await prisma.customerSegment.findUnique({
-    where: { slug: "bulk-order-leads" },
   });
 
   const newsletterSegment = await prisma.customerSegment.findUnique({
