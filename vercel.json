@@ -31,6 +31,10 @@
     {
       "path": "/api/cron/campaigns",
       "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/cancel-stale-orders",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

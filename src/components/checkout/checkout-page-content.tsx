@@ -1,17 +1,70 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { EMPTY_CART, setCartState } from "@/context/cart-store";
 import { useCart } from "@/context/cart-provider";
 import { useCurrency } from "@/context/currency-provider";
+import { loadRazorpayCheckoutScript } from "@/lib/payments/load-razorpay-script";
 import { isShopifyConfigured } from "@/lib/shopify/config";
-import { ArrowRight, Lock, ShoppingBag } from "lucide-react";
+import { AlertCircle, Lock, ShoppingBag } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState, type FormEvent } from "react";
 
-export function CheckoutPageContent() {
-  const { cart, checkout, mode } = useCart();
+interface CheckoutCustomerHint {
+  email?: string;
+  name?: string;
+}
+
+interface CheckoutApiSuccess {
+  orderNumber: string;
+  fallback?: boolean;
+  razorpayOrderId?: string;
+  keyId?: string;
+  amount?: number;
+  currency?: string;
+}
+
+interface CheckoutApiError {
+  error: string;
+}
+
+function clearLocalCart(): void {
+  setCartState({ cart: EMPTY_CART, cartId: "" });
+}
+
+export function CheckoutPageContent({ customerHint = {} }: { customerHint?: CheckoutCustomerHint }) {
+  const { cart, mode } = useCart();
   const { formatPrice } = useCurrency();
+  const router = useRouter();
   const shopifyReady = isShopifyConfigured();
+
+  const [name, setName] = useState(customerHint.name ?? "");
+  const [email, setEmail] = useState(customerHint.email ?? "");
+  const [phone, setPhone] = useState("");
+  const [line1, setLine1] = useState("");
+  const [line2, setLine2] = useState("");
+  const [city, setCity] = useState("");
+  const [stateName, setStateName] = useState("");
+  const [pincode, setPincode] = useState("");
+  const [country] = useState("IN");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (mode === "shopify" && shopifyReady) {
+    return (
+      <div className="mx-auto max-w-lg px-4 py-24 text-center">
+        <h1 className="font-display text-2xl font-bold text-ink">Checkout via Shopify</h1>
+        <p className="mt-2 text-muted">
+          Use the cart&rsquo;s checkout button — it takes you to our secure Shopify checkout.
+        </p>
+        <Link href="/shop" className="mt-6 inline-block">
+          <Button>Back to Shop</Button>
+        </Link>
+      </div>
+    );
+  }
 
   if (cart.lines.length === 0) {
     return (
@@ -25,17 +78,225 @@ export function CheckoutPageContent() {
     );
   }
 
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setSubmitting(true);
+
+    try {
+      const response = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: cart.lines.map((line) => ({ variantId: line.variantId, quantity: line.quantity })),
+          email,
+          phone,
+          shippingAddress: {
+            name,
+            line1,
+            line2: line2 || undefined,
+            city,
+            state: stateName,
+            pincode,
+            country,
+          },
+        }),
+      });
+
+      const data = (await response.json()) as CheckoutApiSuccess | CheckoutApiError;
+
+      if (!response.ok || "error" in data) {
+        setError("error" in data ? data.error : "Could not process checkout. Please try again.");
+        setSubmitting(false);
+        return;
+      }
+
+      if (data.fallback) {
+        clearLocalCart();
+        router.push(`/order/${data.orderNumber}`);
+        return;
+      }
+
+      if (!data.razorpayOrderId || !data.keyId || !data.amount || !data.currency) {
+        setError("Payment could not be started. Please try again.");
+        setSubmitting(false);
+        return;
+      }
+
+      await loadRazorpayCheckoutScript();
+      if (!window.Razorpay) {
+        setError("Payment could not be started. Please try again.");
+        setSubmitting(false);
+        return;
+      }
+
+      const orderNumber = data.orderNumber;
+      const razorpay = new window.Razorpay({
+        key: data.keyId,
+        amount: data.amount,
+        currency: data.currency,
+        order_id: data.razorpayOrderId,
+        name: "DAAKYKA Apparels",
+        description: `Order ${orderNumber}`,
+        prefill: { name, email, contact: phone },
+        notes: { orderNumber },
+        handler: async (response: unknown) => {
+          const paymentResponse = response as {
+            razorpay_payment_id?: string;
+            razorpay_order_id?: string;
+            razorpay_signature?: string;
+          };
+          try {
+            const verifyRes = await fetch("/api/checkout/verify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                orderNumber,
+                razorpayPaymentId: paymentResponse.razorpay_payment_id,
+                razorpayOrderId: paymentResponse.razorpay_order_id,
+                razorpaySignature: paymentResponse.razorpay_signature,
+              }),
+            });
+            const verifyData = (await verifyRes.json()) as { ok?: boolean; error?: string };
+            if (!verifyRes.ok || !verifyData.ok) {
+              setError(verifyData.error ?? "Payment verification failed. Please contact us with your order number.");
+              setSubmitting(false);
+              return;
+            }
+            clearLocalCart();
+            router.push(`/order/${orderNumber}`);
+          } catch {
+            setError("Payment verification failed. Please contact us with your order number.");
+            setSubmitting(false);
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setError("Payment was cancelled. Your cart is unchanged — you can try again.");
+            setSubmitting(false);
+          },
+        },
+      });
+
+      razorpay.on("payment.failed", () => {
+        setError("Payment failed. Your cart is unchanged — you can try again.");
+        setSubmitting(false);
+      });
+
+      razorpay.open();
+    } catch {
+      setError("Could not process checkout. Please check your connection and try again.");
+      setSubmitting(false);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-12 lg:px-8">
       <h1 className="font-display text-3xl font-bold text-ink">Checkout</h1>
-      <p className="mt-2 text-muted">
-        {shopifyReady && mode === "shopify"
-          ? "Secure checkout powered by Shopify."
-          : "Complete your order — our team will assist while Shopify checkout is being connected."}
-      </p>
+      <p className="mt-2 text-muted">Enter your details to complete your order.</p>
 
-      <div className="mt-10 grid gap-10 lg:grid-cols-[1.2fr_0.8fr]">
-        <section className="space-y-4">
+      {error && (
+        <div className="mt-6 flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <AlertCircle size={18} className="mt-0.5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="mt-8 grid gap-10 lg:grid-cols-[1.2fr_0.8fr]">
+        <section className="space-y-6">
+          <fieldset className="space-y-4 rounded-2xl border border-border bg-surface p-4">
+            <legend className="px-1 font-display text-lg font-bold text-ink">Contact</legend>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="text-sm text-muted">
+                Full name
+                <input
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-border bg-white px-3 py-2 text-ink"
+                />
+              </label>
+              <label className="text-sm text-muted">
+                Phone
+                <input
+                  required
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-border bg-white px-3 py-2 text-ink"
+                />
+              </label>
+              <label className="text-sm text-muted sm:col-span-2">
+                Email
+                <input
+                  required
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-border bg-white px-3 py-2 text-ink"
+                />
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset className="space-y-4 rounded-2xl border border-border bg-surface p-4">
+            <legend className="px-1 font-display text-lg font-bold text-ink">Shipping address</legend>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="text-sm text-muted sm:col-span-2">
+                Address line 1
+                <input
+                  required
+                  value={line1}
+                  onChange={(e) => setLine1(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-border bg-white px-3 py-2 text-ink"
+                />
+              </label>
+              <label className="text-sm text-muted sm:col-span-2">
+                Address line 2 (optional)
+                <input
+                  value={line2}
+                  onChange={(e) => setLine2(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-border bg-white px-3 py-2 text-ink"
+                />
+              </label>
+              <label className="text-sm text-muted">
+                City
+                <input
+                  required
+                  value={city}
+                  onChange={(e) => setCity(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-border bg-white px-3 py-2 text-ink"
+                />
+              </label>
+              <label className="text-sm text-muted">
+                State
+                <input
+                  required
+                  value={stateName}
+                  onChange={(e) => setStateName(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-border bg-white px-3 py-2 text-ink"
+                />
+              </label>
+              <label className="text-sm text-muted">
+                Pincode
+                <input
+                  required
+                  value={pincode}
+                  onChange={(e) => setPincode(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-border bg-white px-3 py-2 text-ink"
+                />
+              </label>
+              <label className="text-sm text-muted">
+                Country
+                <input
+                  disabled
+                  value="India"
+                  className="mt-1 w-full rounded-md border border-border bg-lilac/20 px-3 py-2 text-ink"
+                />
+              </label>
+            </div>
+          </fieldset>
+
           <h2 className="font-display text-lg font-bold text-ink">Order Summary</h2>
           {cart.lines.map((line) => (
             <article
@@ -54,38 +315,27 @@ export function CheckoutPageContent() {
           ))}
         </section>
 
-        <aside className="hover:border-brand hover:shadow-sm transition-colors h-fit rounded-3xl border border-border bg-surface-elevated p-6">
+        <aside className="h-fit rounded-3xl border border-border bg-surface-elevated p-6">
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted">Subtotal</span>
             <span className="font-display text-2xl font-bold text-ink">{formatPrice(cart.subtotal)}</span>
           </div>
-          <p className="mt-2 text-xs text-muted">Shipping and taxes calculated at next step.</p>
+          <p className="mt-2 text-xs text-muted">Shipping is calculated at the next step.</p>
 
-          <Button className="mt-6 w-full" size="lg" onClick={checkout}>
-            {shopifyReady && mode === "shopify" ? (
-              <>
-                <Lock size={18} />
-                Pay Securely with Shopify
-              </>
-            ) : (
-              <>
-                Request Order Assistance
-                <ArrowRight size={18} />
-              </>
-            )}
+          <Button type="submit" className="mt-6 w-full" size="lg" disabled={submitting}>
+            <Lock size={18} />
+            {submitting ? "Processing…" : "Place Order"}
           </Button>
 
-          {!shopifyReady && (
-            <p className="mt-4 text-center text-xs text-muted">
-              Or email{" "}
-              <Link href="/contact?intent=checkout" className="text-brand hover:underline">
-                contact us
-              </Link>{" "}
-              with your cart details.
-            </p>
-          )}
+          <p className="mt-4 text-center text-xs text-muted">
+            Having trouble?{" "}
+            <Link href="/contact?intent=checkout" className="text-brand hover:underline">
+              Contact us
+            </Link>{" "}
+            with your cart details.
+          </p>
         </aside>
-      </div>
+      </form>
     </div>
   );
 }

@@ -4,6 +4,42 @@ import { z } from "zod";
 // additive/backward-compatible — older clients that omit it are unaffected.
 export const bulkOrderOrganizationTypes = ["HOSPITAL", "SCHOOL", "CORPORATE", "OTHER"] as const;
 
+// Phase D3: checkout / Razorpay.
+export const shippingAddressSchema = z.object({
+  name: z.string().trim().min(2, "Name is required").max(120),
+  line1: z.string().trim().min(3, "Address line 1 is required").max(200),
+  line2: z.string().trim().max(200).optional(),
+  city: z.string().trim().min(2, "City is required").max(100),
+  state: z.string().trim().min(2, "State is required").max(100),
+  pincode: z.string().trim().min(4, "A valid pincode is required").max(12),
+  country: z.string().trim().length(2, "Country must be a 2-letter code").default("IN"),
+});
+
+export type ShippingAddressInput = z.infer<typeof shippingAddressSchema>;
+
+export const checkoutItemSchema = z.object({
+  variantId: z.string().trim().min(1),
+  quantity: z.coerce.number().int().min(1).max(50),
+});
+
+export const checkoutSchema = z.object({
+  items: z.array(checkoutItemSchema).min(1, "Your cart is empty").max(50),
+  email: z.string().trim().email("Valid email is required").max(254),
+  phone: z.string().trim().min(8, "Valid phone number is required").max(20),
+  shippingAddress: shippingAddressSchema,
+});
+
+export type CheckoutInput = z.infer<typeof checkoutSchema>;
+
+export const checkoutVerifySchema = z.object({
+  orderNumber: z.string().trim().min(1).max(40),
+  razorpayPaymentId: z.string().trim().min(1).max(100),
+  razorpayOrderId: z.string().trim().min(1).max(100),
+  razorpaySignature: z.string().trim().min(1).max(256),
+});
+
+export type CheckoutVerifyInput = z.infer<typeof checkoutVerifySchema>;
+
 export const bulkOrderSchema = z.object({
   organization: z.string().min(2, "Organization name is required").max(200),
   contactPerson: z.string().min(2, "Contact person is required").max(120),
@@ -90,6 +126,68 @@ export const testimonialSchema = z.object({
   active: z.boolean(),
   sortOrder: z.number().int(),
 });
+
+// Phase D1: customer accounts. `loginSchema` above is reused as-is for
+// POST /api/account/login (identical {email, password} shape and bounds).
+
+const customerNameSchema = z.string().trim().min(2, "Name is required").max(120);
+const customerPhoneSchema = z.string().trim().min(8, "Enter a valid phone number").max(32);
+
+export const customerRegisterSchema = z.object({
+  name: customerNameSchema,
+  email: z.string().email().max(254),
+  // Matches loginSchema's bounds: >=8 for a real password rule, <=200 to
+  // stay well under bcrypt's 72-byte truncation point and block a
+  // large-payload DoS against the hashing step.
+  password: z.string().min(8, "Password must be at least 8 characters").max(200),
+  phone: customerPhoneSchema.optional(),
+  consentGiven: z
+    .boolean()
+    .refine((value) => value === true, { message: "You must agree to the terms" }),
+});
+
+export const customerForgotPasswordSchema = z.object({
+  email: z.string().email().max(254),
+});
+
+export const customerResetPasswordSchema = z.object({
+  token: z.string().min(16).max(512),
+  newPassword: z.string().min(8, "Password must be at least 8 characters").max(200),
+});
+
+export const customerVerifyEmailSchema = z.object({
+  token: z.string().min(16).max(512),
+});
+
+export const customerProfileUpdateSchema = z
+  .object({
+    name: customerNameSchema.optional(),
+    phone: customerPhoneSchema.optional().nullable(),
+    // Optional password-change sub-form on the Profile tab, reusing the
+    // same bounds as customerResetPasswordSchema's newPassword. Changing
+    // the password this way (while already logged in) requires the
+    // current password rather than a reset token.
+    currentPassword: z.string().min(1).max(200).optional(),
+    newPassword: z.string().min(8, "Password must be at least 8 characters").max(200).optional(),
+  })
+  .refine((data) => !data.newPassword || !!data.currentPassword, {
+    message: "Current password is required to set a new password",
+    path: ["currentPassword"],
+  });
+
+export const customerAddressSchema = z.object({
+  label: z.string().trim().max(60).optional(),
+  line1: z.string().trim().min(2, "Address line 1 is required").max(200),
+  line2: z.string().trim().max(200).optional(),
+  city: z.string().trim().min(2, "City is required").max(100),
+  state: z.string().trim().min(2, "State is required").max(100),
+  postalCode: z.string().trim().min(3, "Postal code is required").max(16),
+  country: z.string().trim().min(2).max(2).default("IN"),
+  phone: customerPhoneSchema.optional(),
+  isDefault: z.boolean().optional().default(false),
+});
+
+export const customerAddressUpdateSchema = customerAddressSchema.partial();
 
 export const userUpdateSchema = z.object({
   name: z.string().min(2),

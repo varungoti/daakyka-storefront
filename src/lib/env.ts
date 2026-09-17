@@ -114,6 +114,26 @@ export function validateEnv(): void {
       );
     }
 
+    // Razorpay (Phase D3): the three vars must be set together or not at
+    // all. Missing all three is fine — checkout degrades to the
+    // order-request fallback (isRazorpayConfigured() everywhere already
+    // checks for this) — but having only some of them set almost always
+    // means a copy-paste mistake that would otherwise silently leave
+    // signature verification or webhook handling broken in production.
+    const razorpayVars = ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET"];
+    const razorpaySet = razorpayVars.filter((key) => process.env[key]);
+    if (razorpaySet.length > 0 && razorpaySet.length < razorpayVars.length) {
+      const missing = razorpayVars.filter((key) => !process.env[key]);
+      throw new Error(
+        `RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET and RAZORPAY_WEBHOOK_SECRET must all be set together — missing: ${missing.join(", ")}`,
+      );
+    }
+    if (razorpaySet.length === 0) {
+      console.warn(
+        "[env] Razorpay is not configured — checkout will fall back to the order-request flow",
+      );
+    }
+
     return;
   }
 

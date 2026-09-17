@@ -22,11 +22,16 @@ const trustedImageHosts = getTrustedImageHosts();
 const imageSources = trustedImageHosts.map((host) => `https://${host}`).join(" ");
 const contentSecurityPolicy = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  // Phase D3: Razorpay Checkout.js is loaded from the client (see
+  // src/lib/payments/load-razorpay-script.ts) and needs to run its own
+  // script and open its payment modal, which embeds an iframe served
+  // from api.razorpay.com and posts back to it over fetch/XHR.
+  "script-src 'self' 'unsafe-inline' https://checkout.razorpay.com",
   "style-src 'self' 'unsafe-inline'",
   `img-src 'self' data: blob: ${imageSources}`,
   "font-src 'self' data:",
-  "connect-src 'self'",
+  "connect-src 'self' https://api.razorpay.com",
+  "frame-src https://api.razorpay.com https://checkout.razorpay.com",
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
