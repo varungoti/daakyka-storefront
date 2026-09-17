@@ -17,7 +17,7 @@ import { checkoutVerifySchema } from "@/lib/validation/schemas";
  * the customer still sees success.
  */
 export async function POST(request: Request) {
-  const limited = rateLimitOrResponse(request, "checkout-verify", 20, 60_000);
+  const limited = await rateLimitOrResponse(request, "checkout-verify", 20, 60_000);
   if (limited) return limited;
 
   const body = await readJsonBody(request);

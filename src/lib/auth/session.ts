@@ -22,17 +22,34 @@ function getSecret(): Uint8Array {
   return new TextEncoder().encode(secret);
 }
 
-export async function createSession(user: SessionUser): Promise<void> {
-  const token = await new SignJWT({
+/**
+ * Mints the signed session JWT without touching cookies — split out from
+ * `createSession` so the sessionVersion-revocation logic (see
+ * `verifySessionToken` below) can be exercised in tests without needing a
+ * real Next.js request scope for `cookies()`.
+ */
+export async function signSessionToken(
+  user: SessionUser,
+  sessionVersion: number,
+): Promise<string> {
+  return new SignJWT({
     sub: user.id,
     email: user.email,
     name: user.name,
     role: user.role,
+    sv: sessionVersion,
   })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_MAX_AGE}s`)
     .sign(getSecret());
+}
+
+export async function createSession(
+  user: SessionUser,
+  sessionVersion: number,
+): Promise<void> {
+  const token = await signSessionToken(user, sessionVersion);
 
   const cookieStore = await cookies();
   cookieStore.set(ADMIN_SESSION_COOKIE, token, {
@@ -47,6 +64,55 @@ export async function createSession(user: SessionUser): Promise<void> {
 export async function destroySession(): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.delete(ADMIN_SESSION_COOKIE);
+}
+
+/**
+ * Verifies a raw session JWT string (signature, expiry, and the
+ * sessionVersion-revocation check against the DB) without touching
+ * `cookies()`. Exported so tests can exercise revocation directly — see
+ * tests/integration/admin-auth.test.ts — since `getSession()` itself can
+ * only be driven through cookies() inside a real Next.js request.
+ */
+export async function verifySessionToken(token: string): Promise<SessionUser | null> {
+  try {
+    const { payload } = await jwtVerify(token, getSecret());
+    const userId = payload.sub;
+    const tokenSessionVersion = payload.sv;
+    if (!userId || typeof tokenSessionVersion !== "number") return null;
+
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        active: true,
+        sessionVersion: true,
+      },
+    });
+
+    if (!user || !user.active) return null;
+
+    // sessionVersion revocation (v1 2.3): bumped whenever an admin's
+    // access should be invalidated everywhere at once (deactivation, role
+    // change — see src/app/api/admin/users/[id]/route.ts). A token minted
+    // before the bump carries the old version and is rejected here even
+    // though its signature and expiry are still valid, which is what
+    // makes "log out everywhere" actually revoke existing sessions
+    // instead of merely relying on the 7-day expiry. Mirrors
+    // src/lib/customer-auth/session.ts's identical pattern.
+    if (user.sessionVersion !== tokenSessionVersion) return null;
+
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function getSession(): Promise<SessionUser | null> {
@@ -66,27 +132,7 @@ export async function getSession(): Promise<SessionUser | null> {
   }
   if (!token) return null;
 
-  try {
-    const { payload } = await jwtVerify(token, getSecret());
-    const userId = payload.sub;
-    if (!userId) return null;
-
-    const user = await db.user.findUnique({
-      where: { id: userId },
-      select: { id: true, email: true, name: true, role: true, active: true },
-    });
-
-    if (!user || !user.active) return null;
-
-    return {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-    };
-  } catch {
-    return null;
-  }
+  return verifySessionToken(token);
 }
 
 export async function requireSession(): Promise<SessionUser> {

@@ -13,7 +13,7 @@ const schema = z.object({
 });
 
 export async function POST(request: Request) {
-  const limited = rateLimitOrResponse(request, "cart-abandon", 10, 60_000);
+  const limited = await rateLimitOrResponse(request, "cart-abandon", 10, 60_000);
   if (limited) return limited;
 
   try {

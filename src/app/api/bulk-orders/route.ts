@@ -7,7 +7,7 @@ import { bulkOrderSchema } from "@/lib/validation/schemas";
 import { isHoneypotTripped } from "@/lib/validation/honeypot";
 
 export async function POST(request: Request) {
-  const limited = rateLimitOrResponse(request, "bulk-orders", 5, 60_000);
+  const limited = await rateLimitOrResponse(request, "bulk-orders", 5, 60_000);
   if (limited) return limited;
 
   try {

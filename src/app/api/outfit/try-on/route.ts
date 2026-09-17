@@ -26,7 +26,7 @@ const schema = z.object({
 });
 
 export async function POST(request: Request) {
-  const limited = rateLimitOrResponse(request, "outfit-try-on", 20, 60_000);
+  const limited = await rateLimitOrResponse(request, "outfit-try-on", 20, 60_000);
   if (limited) return limited;
 
   const bodyResult = await readJsonBody(request);

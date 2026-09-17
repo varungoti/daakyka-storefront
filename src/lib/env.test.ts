@@ -95,12 +95,12 @@ describe("rate limiting", () => {
     assert.equal(getClientIp(request), "203.0.113.1");
   });
 
-  it("blocks after limit is exceeded", () => {
-    resetRateLimits();
+  it("blocks after limit is exceeded", async () => {
+    await resetRateLimits();
     const key = "test-route:127.0.0.1";
-    assert.equal(checkRateLimit(key, 2, 60_000).ok, true);
-    assert.equal(checkRateLimit(key, 2, 60_000).ok, true);
-    const blocked = checkRateLimit(key, 2, 60_000);
+    assert.equal((await checkRateLimit(key, 2, 60_000)).ok, true);
+    assert.equal((await checkRateLimit(key, 2, 60_000)).ok, true);
+    const blocked = await checkRateLimit(key, 2, 60_000);
     assert.equal(blocked.ok, false);
     if (!blocked.ok) {
       assert.ok(blocked.retryAfter >= 1);

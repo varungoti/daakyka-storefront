@@ -7,7 +7,7 @@ import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { customerResetPasswordSchema } from "@/lib/validation/schemas";
 
 export async function POST(request: Request) {
-  const limited = rateLimitOrResponse(request, "account-reset-password", 5, 60_000);
+  const limited = await rateLimitOrResponse(request, "account-reset-password", 5, 60_000);
   if (limited) return limited;
 
   try {

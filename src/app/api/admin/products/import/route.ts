@@ -19,7 +19,7 @@ export async function POST(request: Request) {
   const { session, error } = await requireAdminPermission("products:manage");
   if (error) return error;
 
-  const limited = rateLimitOrResponse(request, "admin-products-import", 10, 60_000);
+  const limited = await rateLimitOrResponse(request, "admin-products-import", 10, 60_000);
   if (limited) return limited;
 
   const contentType = request.headers.get("content-type") ?? "";

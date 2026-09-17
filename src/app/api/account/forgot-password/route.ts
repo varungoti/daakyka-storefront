@@ -17,7 +17,7 @@ const GENERIC_RESPONSE = {
 };
 
 export async function POST(request: Request) {
-  const limited = rateLimitOrResponse(request, "account-forgot-password", 5, 60_000);
+  const limited = await rateLimitOrResponse(request, "account-forgot-password", 5, 60_000);
   if (limited) return limited;
 
   try {

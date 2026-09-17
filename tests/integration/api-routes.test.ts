@@ -342,15 +342,15 @@ describe("API integration", () => {
   });
 
   describe("rate limiting helper", () => {
-    after(() => {
-      resetRateLimits();
+    after(async () => {
+      await resetRateLimits();
     });
 
-    it("returns retryAfter when bucket is full", () => {
-      resetRateLimits();
+    it("returns retryAfter when bucket is full", async () => {
+      await resetRateLimits();
       const key = "integration:test";
-      checkRateLimit(key, 1, 60_000);
-      const blocked = checkRateLimit(key, 1, 60_000);
+      await checkRateLimit(key, 1, 60_000);
+      const blocked = await checkRateLimit(key, 1, 60_000);
       assert.equal(blocked.ok, false);
     });
   });

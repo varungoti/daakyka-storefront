@@ -47,7 +47,7 @@ async function getOptionalCustomerId(): Promise<string | undefined> {
  *    the checkout page's real fallback path (see /checkout).
  */
 export async function POST(request: Request) {
-  const limited = rateLimitOrResponse(request, "checkout", 10, 60_000);
+  const limited = await rateLimitOrResponse(request, "checkout", 10, 60_000);
   if (limited) return limited;
 
   const body = await readJsonBody(request);

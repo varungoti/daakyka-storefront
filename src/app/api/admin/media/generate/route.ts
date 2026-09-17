@@ -57,7 +57,7 @@ export async function POST(request: Request) {
   const { session, error } = await requireAdminPermission("ai:generate");
   if (error) return error;
 
-  const limited = rateLimitOrResponse(request, "admin-media-generate", 20, 60_000);
+  const limited = await rateLimitOrResponse(request, "admin-media-generate", 20, 60_000);
   if (limited) return limited;
 
   const bodyResult = await readJsonBody(request);

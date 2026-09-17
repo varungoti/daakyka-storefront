@@ -13,7 +13,7 @@ import { loginSchema } from "@/lib/validation/schemas";
 const LOCKED_STATUS = 423;
 
 export async function POST(request: Request) {
-  const limited = rateLimitOrResponse(request, "account-login", 5, 60_000);
+  const limited = await rateLimitOrResponse(request, "account-login", 5, 60_000);
   if (limited) return limited;
 
   try {

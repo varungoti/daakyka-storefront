@@ -64,7 +64,7 @@ export async function POST(request: Request) {
   const { session, error } = await requireAdminPermission("media:manage");
   if (error) return error;
 
-  const limited = rateLimitOrResponse(request, "admin-media-upload", 30, 60_000);
+  const limited = await rateLimitOrResponse(request, "admin-media-upload", 30, 60_000);
   if (limited) return limited;
 
   const contentType = request.headers.get("content-type") ?? "";

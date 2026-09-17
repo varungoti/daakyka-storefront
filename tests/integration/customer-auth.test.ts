@@ -53,7 +53,7 @@ describe("customer accounts (Phase D1)", () => {
 
   describe("POST /api/account/register", () => {
     it("creates an unverified customer and issues a VERIFY token, logging the dev fallback link", async () => {
-      resetRateLimits();
+      await resetRateLimits();
       const unique = randomUUID().slice(0, 8);
       const email = `register-${unique}@example.com`;
 
@@ -93,7 +93,7 @@ describe("customer accounts (Phase D1)", () => {
     });
 
     it("returns a fake success and creates no customer when the honeypot is tripped", async () => {
-      resetRateLimits();
+      await resetRateLimits();
       const unique = randomUUID().slice(0, 8);
       const email = `honeypot-${unique}@example.com`;
       const response = await postRegister(
@@ -111,7 +111,7 @@ describe("customer accounts (Phase D1)", () => {
     });
 
     it("rejects a duplicate email", async () => {
-      resetRateLimits();
+      await resetRateLimits();
       const unique = randomUUID().slice(0, 8);
       const email = `dup-${unique}@example.com`;
       const customer = await db.customer.create({
@@ -119,7 +119,7 @@ describe("customer accounts (Phase D1)", () => {
       });
       createdCustomerIds.push(customer.id);
 
-      resetRateLimits();
+      await resetRateLimits();
       const response = await postRegister(
         jsonRequest("http://localhost/api/account/register", "POST", {
           name: "Duplicate",
@@ -134,7 +134,7 @@ describe("customer accounts (Phase D1)", () => {
 
   describe("POST /api/account/login", () => {
     it("returns 401 for an unknown email (timing-safe dummy compare path)", async () => {
-      resetRateLimits();
+      await resetRateLimits();
       const response = await postLogin(
         jsonRequest("http://localhost/api/account/login", "POST", {
           email: `nope-${randomUUID().slice(0, 8)}@example.com`,
@@ -152,7 +152,7 @@ describe("customer accounts (Phase D1)", () => {
       });
       createdCustomerIds.push(customer.id);
 
-      resetRateLimits();
+      await resetRateLimits();
       const response = await postLogin(
         jsonRequest("http://localhost/api/account/login", "POST", {
           email,
@@ -176,7 +176,7 @@ describe("customer accounts (Phase D1)", () => {
       });
       createdCustomerIds.push(customer.id);
 
-      resetRateLimits();
+      await resetRateLimits();
       const response = await postLogin(
         jsonRequest("http://localhost/api/account/login", "POST", {
           email,
@@ -203,7 +203,7 @@ describe("customer accounts (Phase D1)", () => {
       // row, not the separate per-IP rate limiter that would otherwise
       // return 429 well before the 10th attempt.
       for (let attempt = 1; attempt <= 9; attempt += 1) {
-        resetRateLimits();
+        await resetRateLimits();
         const response = await postLogin(
           jsonRequest("http://localhost/api/account/login", "POST", {
             email,
@@ -213,7 +213,7 @@ describe("customer accounts (Phase D1)", () => {
         assert.equal(response.status, 401, `attempt ${attempt} should still be a plain 401`);
       }
 
-      resetRateLimits();
+      await resetRateLimits();
       const lockedResponse = await postLogin(
         jsonRequest("http://localhost/api/account/login", "POST", {
           email,
@@ -226,7 +226,7 @@ describe("customer accounts (Phase D1)", () => {
       assert.ok(locked!.lockedUntil && locked!.lockedUntil.getTime() > Date.now());
 
       // Even the correct password is rejected while locked.
-      resetRateLimits();
+      await resetRateLimits();
       const correctButLocked = await postLogin(
         jsonRequest("http://localhost/api/account/login", "POST", {
           email,
@@ -296,13 +296,13 @@ describe("customer accounts (Phase D1)", () => {
       });
       createdCustomerIds.push(customer.id);
 
-      resetRateLimits();
+      await resetRateLimits();
       const existingResponse = await postForgotPassword(
         jsonRequest("http://localhost/api/account/forgot-password", "POST", { email }),
       );
       const existingBody = await existingResponse.json();
 
-      resetRateLimits();
+      await resetRateLimits();
       const missingResponse = await postForgotPassword(
         jsonRequest("http://localhost/api/account/forgot-password", "POST", {
           email: `nonexistent-${unique}@example.com`,

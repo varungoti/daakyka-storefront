@@ -11,7 +11,7 @@ const schema = z.object({
 });
 
 export async function POST(request: Request) {
-  const limited = rateLimitOrResponse(request, "product-view", 60, 60_000);
+  const limited = await rateLimitOrResponse(request, "product-view", 60, 60_000);
   if (limited) return limited;
 
   try {

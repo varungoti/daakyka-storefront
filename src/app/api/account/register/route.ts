@@ -17,7 +17,7 @@ import { isHoneypotTripped } from "@/lib/validation/honeypot";
 // itself. This avoids a dead-end "check your email, come back and log in"
 // step for the common case, while still tracking verification status.
 export async function POST(request: Request) {
-  const limited = rateLimitOrResponse(request, "account-register", 5, 60_000);
+  const limited = await rateLimitOrResponse(request, "account-register", 5, 60_000);
   if (limited) return limited;
 
   try {

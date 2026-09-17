@@ -99,6 +99,10 @@ model User {
   passwordHash        String
   role                AdminRole     @default(VIEWER)
   active              Boolean       @default(true)
+  sessionVersion      Int           @default(0)
+  failedLoginCount    Int           @default(0)
+  lockedUntil         DateTime?
+  lastFailedLoginAt   DateTime?
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
   auditLogs           AuditLog[]
@@ -106,6 +110,18 @@ model User {
   mediaAssetsCreated  MediaAsset[]
   reviewsModerated    Review[]
   siteSettingsUpdated SiteSetting[]
+}
+
+/// DB-backed rate limit buckets (v1 2.1). Replaces the old in-memory Map so
+/// limits are enforced consistently across serverless instances. `key` is
+/// `${route}:${ip}`; `count`/`resetAt` are updated atomically via a raw
+/// upsert in src/lib/security/rate-limit.ts.
+model RateLimitBucket {
+  key     String   @id
+  count   Int
+  resetAt DateTime
+
+  @@index([resetAt])
 }
 
 model BulkOrderLead {

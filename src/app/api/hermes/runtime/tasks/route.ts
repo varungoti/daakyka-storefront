@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const limited = rateLimitOrResponse(request, "hermes-runtime", 30, 60_000);
+  const limited = await rateLimitOrResponse(request, "hermes-runtime", 30, 60_000);
   if (limited) return limited;
 
   const bodyResult = await readJsonBody(request);

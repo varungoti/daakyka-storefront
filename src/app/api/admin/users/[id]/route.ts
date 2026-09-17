@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
+import { buildUserUpdateData } from "@/lib/auth/user-updates";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 
 interface RouteParams {
@@ -27,9 +28,26 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "Cannot deactivate your own account" }, { status: 400 });
   }
 
+  const existing = await db.user.findUnique({
+    where: { id },
+    select: { active: true, role: true },
+  });
+  if (!existing) {
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+
+  // sessionVersion revocation (v1 2.3): deactivating a user or changing
+  // their role invalidates every session already issued to them, so a
+  // demoted/deactivated admin can't keep using a cookie minted before the
+  // change until it naturally expires (see src/lib/auth/session.ts's
+  // getSession(), which rejects a JWT whose embedded `sv` no longer
+  // matches the User row). Decision logic lives in
+  // src/lib/auth/user-updates.ts so it can be unit-tested directly.
+  const { data: updateData } = buildUserUpdateData(existing, parsed.data);
+
   const user = await db.user.update({
     where: { id },
-    data: parsed.data,
+    data: updateData,
     select: { id: true, email: true, name: true, role: true, active: true },
   });
 
