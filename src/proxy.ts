@@ -18,7 +18,7 @@ async function verifyAdminToken(request: NextRequest): Promise<boolean> {
   }
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (pathname.startsWith("/admin/login")) {

@@ -15,6 +15,7 @@ import {
   subscribeToCart,
 } from "@/context/cart-store";
 import type { Cart, CartLine } from "@/lib/types";
+import { useRouter } from "next/navigation";
 import {
   createContext,
   useCallback,
@@ -113,6 +114,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const mode: "shopify" | "local" = isShopifyCartMode() ? "shopify" : "local";
+  const router = useRouter();
 
   // One-time reconciliation with Shopify on mount: a cart id can go
   // stale (expired, or the order already completed) without the
@@ -260,11 +262,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const checkout = useCallback(() => {
     if (mode === "shopify" && cart.checkoutUrl) {
+      // External Shopify domain — a full navigation, not a Next.js route.
       window.location.href = cart.checkoutUrl;
       return;
     }
-    window.location.href = "/checkout";
-  }, [cart.checkoutUrl, mode]);
+    router.push("/checkout");
+  }, [cart.checkoutUrl, mode, router]);
 
   const value = useMemo(
     () => ({

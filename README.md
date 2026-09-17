@@ -63,9 +63,9 @@ deploy will even build.
 Copy `.env.local.example` to `.env` (or `.env.local`):
 
 ```env
-DATABASE_URL="file:./dev.db"
+DATABASE_URL="postgresql://daakyka:daakyka@localhost:5432/daakyka_dev"
 AUTH_SECRET=your-long-random-secret
-ADMIN_SEED_EMAIL=varungoti@gmail.com
+ADMIN_SEED_EMAIL=admin@example.com
 ADMIN_SEED_PASSWORD=change-me
 
 NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN=your-store.myshopify.com

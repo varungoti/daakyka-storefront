@@ -30,7 +30,7 @@ npm run test:unit
 
 **Runner:** `tsx --test`  
 **Location:** `tests/integration/**/*.test.ts`  
-**Scope:** API route handlers invoked directly with `Request` objects; uses seeded SQLite dev DB
+**Scope:** API route handlers invoked directly with `Request` objects; uses the seeded local Postgres dev DB (`docker compose up -d postgres`)
 
 ```bash
 npm run test:integration
