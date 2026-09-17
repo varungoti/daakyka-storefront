@@ -3,6 +3,9 @@ import Link from "next/link";
 import { countDraftProductsAwaitingPublish, countLowStockVariants } from "@/lib/catalog/products";
 
 export default async function AdminDashboardPage() {
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+
   const [
     leadCount,
     blogCount,
@@ -11,6 +14,8 @@ export default async function AdminDashboardPage() {
     pendingHermes,
     draftProducts,
     lowStockVariants,
+    ordersTodayCount,
+    ordersTodayRevenue,
     recentLeads,
     recentLogs,
   ] = await Promise.all([
@@ -21,6 +26,9 @@ export default async function AdminDashboardPage() {
     db.hermesApproval.count({ where: { status: "PENDING" } }),
     countDraftProductsAwaitingPublish(),
     countLowStockVariants(),
+    // Phase D4: orders admin — "Orders Today" card.
+    db.order.count({ where: { createdAt: { gte: startOfToday } } }),
+    db.order.aggregate({ where: { createdAt: { gte: startOfToday } }, _sum: { total: true } }),
     db.bulkOrderLead.findMany({ orderBy: { createdAt: "desc" }, take: 5 }),
     db.auditLog.findMany({
       orderBy: { createdAt: "desc" },
@@ -30,6 +38,7 @@ export default async function AdminDashboardPage() {
   ]);
 
   const newLeads = await db.bulkOrderLead.count({ where: { status: "NEW" } });
+  const ordersTodayRevenueTotal = Number(ordersTodayRevenue._sum.total ?? 0);
 
   return (
     <div className="space-y-8">
@@ -46,12 +55,15 @@ export default async function AdminDashboardPage() {
         <StatCard label="Hermes Pending" value={String(pendingHermes)} hint="Recommendations queue" />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Link href="/admin/products?status=DRAFT">
           <StatCard label="Draft Products" value={String(draftProducts)} hint="Awaiting publish" />
         </Link>
         <Link href="/admin/products?stockFilter=low">
           <StatCard label="Low-Stock Variants" value={String(lowStockVariants)} hint="Active variants under 10 in stock" />
+        </Link>
+        <Link href="/admin/orders">
+          <StatCard label="Orders Today" value={String(ordersTodayCount)} hint={`₹${ordersTodayRevenueTotal.toLocaleString("en-IN", { maximumFractionDigits: 0 })} placed today`} />
         </Link>
       </div>
 

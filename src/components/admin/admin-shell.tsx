@@ -67,7 +67,8 @@ const navGroups: NavGroup[] = [
   {
     label: "Sales",
     items: [
-      { href: "/admin/orders", label: "Orders", icon: Package, permission: "bulk-orders:manage" },
+      { href: "/admin/orders", label: "Orders", icon: Package, permission: "orders:view" },
+      { href: "/admin/customers", label: "Customers", icon: Users, permission: "customers:view" },
       { href: "/admin/bulk-orders", label: "Bulk Enquiries", icon: ClipboardList, permission: "bulk-orders:manage" },
       { href: "/admin/contact-enquiries", label: "Contact Enquiries", icon: Mail, permission: "bulk-orders:manage" },
       { href: "/admin/reviews", label: "Reviews", icon: Star, permission: "reviews:moderate" },

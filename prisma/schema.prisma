@@ -713,6 +713,8 @@ model Order {
   paymentMethod     PaymentMethod @default(RAZORPAY)
   razorpayOrderId   String?
   razorpayPaymentId String?
+  trackingNumber    String?
+  courier           String?
   notes             String?
   adminNotes        String?
   createdAt         DateTime      @default(now())
