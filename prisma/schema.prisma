@@ -90,15 +90,19 @@ enum EnrollmentStatus {
 }
 
 model User {
-  id           String     @id @default(cuid())
-  email        String     @unique
-  name         String
-  passwordHash String
-  role         AdminRole  @default(VIEWER)
-  active       Boolean    @default(true)
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-  auditLogs    AuditLog[]
+  id                  String        @id @default(cuid())
+  email               String        @unique
+  name                String
+  passwordHash        String
+  role                AdminRole     @default(VIEWER)
+  active              Boolean       @default(true)
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  auditLogs           AuditLog[]
+  productsCreated     Product[]
+  mediaAssetsCreated  MediaAsset[]
+  reviewsModerated    Review[]
+  siteSettingsUpdated SiteSetting[]
 }
 
 model BulkOrderLead {
@@ -178,15 +182,15 @@ model CustomerSegment {
 }
 
 model MessageTemplate {
-  id        String          @id @default(cuid())
-  name      String
-  channel   TemplateChannel
-  subject   String?
-  body      String
-  variables String?
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
-  campaigns Campaign[]
+  id           String          @id @default(cuid())
+  name         String
+  channel      TemplateChannel
+  subject      String?
+  body         String
+  variables    String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  campaigns    Campaign[]
   journeySteps JourneyStep[]
 }
 
@@ -220,27 +224,27 @@ model TestimonialRecord {
 }
 
 model ContactEnquiry {
-  id        String             @id @default(cuid())
-  name      String
-  email     String
-  phone     String?
+  id           String             @id @default(cuid())
+  name         String
+  email        String
+  phone        String?
   organization String?
-  type      ContactEnquiryType @default(GENERAL)
-  message   String
-  status    String             @default("NEW")
-  createdAt DateTime           @default(now())
-  updatedAt DateTime           @updatedAt
+  type         ContactEnquiryType @default(GENERAL)
+  message      String
+  status       String             @default("NEW")
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
 }
 
 model CustomerJourney {
-  id          String        @id @default(cuid())
+  id          String              @id @default(cuid())
   name        String
-  slug        String        @unique
+  slug        String              @unique
   description String?
   trigger     String
-  status      JourneyStatus @default(DRAFT)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  status      JourneyStatus       @default(DRAFT)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
   steps       JourneyStep[]
   events      JourneyEvent[]
   enrollments JourneyEnrollment[]
@@ -396,4 +400,354 @@ model ProductViewEvent {
   createdAt     DateTime @default(now())
 
   @@index([productHandle, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// catalog_commerce_v1 — native catalog, customers, reviews, orders, settings
+// ---------------------------------------------------------------------------
+
+enum CategorySection {
+  HOSPITAL
+  SCHOOL
+  KIDS
+  GENERAL
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum ProductGender {
+  MEN
+  WOMEN
+  UNISEX
+  BOYS
+  GIRLS
+  KIDS
+}
+
+enum MediaSource {
+  UPLOAD
+  AI
+}
+
+enum MediaUsage {
+  PRODUCT
+  CATEGORY
+  BANNER
+  SECTION
+  BLOG
+  AVATAR
+  REVIEW
+}
+
+enum SizeUnit {
+  IN
+  CM
+}
+
+enum CustomerTokenType {
+  VERIFY
+  RESET
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAID
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  RAZORPAY
+  ORDER_REQUEST
+}
+
+enum ShopifySyncStatus {
+  NOT_SYNCED
+  PENDING
+  SYNCED
+  ERROR
+}
+
+model Category {
+  id             String          @id @default(cuid())
+  slug           String          @unique
+  name           String
+  description    String?
+  section        CategorySection @default(GENERAL)
+  parentId       String?
+  parent         Category?       @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children       Category[]      @relation("CategoryHierarchy")
+  imageId        String?
+  image          MediaAsset?     @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  sortOrder      Int             @default(0)
+  active         Boolean         @default(true)
+  showInMenu     Boolean         @default(true)
+  sizeChartId    String?
+  sizeChart      SizeChart?      @relation(fields: [sizeChartId], references: [id], onDelete: SetNull)
+  seoTitle       String?
+  seoDescription String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  products       Product[]
+
+  @@index([section])
+  @@index([parentId])
+}
+
+model Product {
+  id                String            @id @default(cuid())
+  slug              String            @unique
+  name              String
+  shortDescription  String?
+  description       String?
+  categoryId        String
+  category          Category          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  status            ProductStatus     @default(DRAFT)
+  featured          Boolean           @default(false)
+  isNew             Boolean           @default(false)
+  price             Decimal           @db.Decimal(10, 2)
+  compareAtPrice    Decimal?          @db.Decimal(10, 2)
+  gender            ProductGender     @default(UNISEX)
+  fabric            String?
+  care              String?
+  tags              String[]
+  sizeChartId       String?
+  sizeChart         SizeChart?        @relation(fields: [sizeChartId], references: [id], onDelete: SetNull)
+  seoTitle          String?
+  seoDescription    String?
+  shopifyProductId  String?
+  shopifySyncStatus ShopifySyncStatus @default(NOT_SYNCED)
+  shopifySyncedAt   DateTime?
+  createdById       String?
+  createdBy         User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  variants          ProductVariant[]
+  images            ProductImage[]
+  reviews           Review[]
+  wishlistItems     WishlistItem[]
+
+  @@index([status, categoryId])
+  @@index([featured])
+}
+
+model ProductVariant {
+  id               String      @id @default(cuid())
+  productId        String
+  product          Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku              String      @unique
+  size             String
+  color            String
+  colorHex         String?
+  price            Decimal?    @db.Decimal(10, 2)
+  stock            Int         @default(0)
+  active           Boolean     @default(true)
+  shopifyVariantId String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  orderItems       OrderItem[]
+
+  @@unique([productId, size, color])
+}
+
+model ProductImage {
+  id        String     @id @default(cuid())
+  productId String
+  product   Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  mediaId   String
+  media     MediaAsset @relation(fields: [mediaId], references: [id], onDelete: Cascade)
+  color     String?
+  sortOrder Int        @default(0)
+  alt       String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([productId, color])
+}
+
+model MediaAsset {
+  id            String         @id @default(cuid())
+  key           String         @unique
+  url           String
+  alt           String?
+  width         Int?
+  height        Int?
+  source        MediaSource    @default(UPLOAD)
+  prompt        String?
+  model         String?
+  usage         MediaUsage
+  slot          String?        @unique
+  createdById   String?
+  createdBy     User?          @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  categories    Category[]
+  productImages ProductImage[]
+
+  @@index([usage])
+}
+
+model SizeChart {
+  id         String     @id @default(cuid())
+  name       String
+  unit       SizeUnit   @default(IN)
+  columns    Json
+  rows       Json
+  notes      String?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  categories Category[]
+  products   Product[]
+}
+
+model Customer {
+  id               String            @id @default(cuid())
+  email            String            @unique
+  name             String
+  phone            String?
+  passwordHash     String
+  emailVerifiedAt  DateTime?
+  sessionVersion   Int               @default(0)
+  active           Boolean           @default(true)
+  failedLoginCount Int               @default(0)
+  lockedUntil      DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  addresses        CustomerAddress[]
+  tokens           CustomerToken[]
+  reviews          Review[]
+  orders           Order[]
+  wishlistItems    WishlistItem[]
+}
+
+model CustomerAddress {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  label      String?
+  line1      String
+  line2      String?
+  city       String
+  state      String
+  postalCode String
+  country    String   @default("IN")
+  phone      String?
+  isDefault  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([customerId])
+}
+
+model CustomerToken {
+  id         String            @id @default(cuid())
+  customerId String
+  customer   Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type       CustomerTokenType
+  tokenHash  String            @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime          @default(now())
+
+  @@index([customerId, type])
+}
+
+model Review {
+  id               String       @id @default(cuid())
+  productId        String
+  product          Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  customerId       String
+  customer         Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  rating           Int
+  title            String?
+  body             String
+  photoIds         String[]
+  status           ReviewStatus @default(PENDING)
+  verifiedPurchase Boolean      @default(false)
+  moderatedById    String?
+  moderatedBy      User?        @relation(fields: [moderatedById], references: [id], onDelete: SetNull)
+  moderatedAt      DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@unique([productId, customerId])
+  @@index([status])
+}
+
+model Order {
+  id                String        @id @default(cuid())
+  number            String        @unique
+  customerId        String?
+  customer          Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  email             String
+  phone             String?
+  shippingAddress   Json
+  subtotal          Decimal       @db.Decimal(10, 2)
+  shipping          Decimal       @db.Decimal(10, 2)
+  discount          Decimal       @default(0) @db.Decimal(10, 2)
+  total             Decimal       @db.Decimal(10, 2)
+  currency          String        @default("INR")
+  status            OrderStatus   @default(PENDING_PAYMENT)
+  paymentMethod     PaymentMethod @default(RAZORPAY)
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  notes             String?
+  adminNotes        String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  items             OrderItem[]
+
+  @@index([status])
+  @@index([customerId])
+}
+
+model OrderItem {
+  id           String          @id @default(cuid())
+  orderId      String
+  order        Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variantId    String?
+  variant      ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  productName  String
+  variantLabel String?
+  sku          String?
+  unitPrice    Decimal         @db.Decimal(10, 2)
+  quantity     Int
+  imageUrl     String?
+  createdAt    DateTime        @default(now())
+
+  @@index([orderId])
+}
+
+model SiteSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       Json
+  updatedById String?
+  updatedBy   User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model WishlistItem {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([customerId, productId])
 }
