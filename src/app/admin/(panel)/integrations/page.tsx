@@ -28,7 +28,11 @@ export default async function AdminIntegrationsPage() {
       <div className="grid gap-4 md:grid-cols-2">
         {envStatuses.map((item) => {
           const dbSetting = settingsMap[item.provider];
-          const enabled = dbSetting?.enabled ?? item.status === "configured";
+          // No row means no admin has opted in yet — matches
+          // isIntegrationEnabled()'s default-to-disabled behavior, so
+          // this toggle never shows "enabled" for something that would
+          // actually be treated as disabled when sending.
+          const enabled = dbSetting?.enabled ?? false;
           return (
             <article key={item.provider} className="rounded-3xl border border-border bg-surface-elevated p-6">
               <div className="flex items-start justify-between gap-4">
