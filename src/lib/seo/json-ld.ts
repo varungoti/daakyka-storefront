@@ -76,7 +76,11 @@ export function productJsonLd(product: {
       product.description ??
       "Premium medical apparel engineered for healthcare professionals.",
     image: product.images ?? [product.image],
-    sku: product.id,
+    // Not a real SKU (Shopify variant SKUs aren't queried yet) — the
+    // handle is at least a stable, human-readable identifier, unlike
+    // product.id, which is Shopify's opaque GID for Shopify-backed
+    // products and would be a meaningless "SKU" to publish.
+    sku: product.handle,
     brand: {
       "@type": "Brand",
       name: "DAAKYKA Apparels",
@@ -90,10 +94,18 @@ export function productJsonLd(product: {
         : "https://schema.org/OutOfStock",
       url: `${base}/products/${product.handle}`,
     },
-    aggregateRating: {
-      "@type": "AggregateRating",
-      ratingValue: product.rating,
-      reviewCount: product.reviewCount,
-    },
+    // Google's structured-data guidelines require aggregateRating to
+    // reflect real reviews — omit it rather than publish a rating with
+    // zero (or fabricated) reviewCount, which Rich Results treats as
+    // invalid/spammy.
+    ...(product.reviewCount > 0
+      ? {
+          aggregateRating: {
+            "@type": "AggregateRating",
+            ratingValue: product.rating,
+            reviewCount: product.reviewCount,
+          },
+        }
+      : {}),
   };
 }
