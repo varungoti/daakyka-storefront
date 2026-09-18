@@ -10,6 +10,8 @@
 import https from "node:https";
 import {
   DeleteObjectCommand,
+  GetObjectCommand,
+  NoSuchKey,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -104,6 +106,32 @@ export async function uploadObject(
   );
 }
 
+export interface StoredObject {
+  body: ReadableStream<Uint8Array>;
+  contentType: string;
+  contentLength?: number;
+  etag?: string;
+}
+
+/** Returns null when the key doesn't exist, so the caller (the /cdn media
+ * route) can 404 cleanly instead of surfacing an R2/SDK error. */
+export async function getObject(key: string): Promise<StoredObject | null> {
+  const env = requireEnv();
+  try {
+    const result = await getClient(env).send(new GetObjectCommand({ Bucket: env.bucket, Key: key }));
+    if (!result.Body) return null;
+    return {
+      body: result.Body.transformToWebStream(),
+      contentType: result.ContentType ?? "application/octet-stream",
+      contentLength: result.ContentLength,
+      etag: result.ETag,
+    };
+  } catch (err) {
+    if (err instanceof NoSuchKey) return null;
+    throw err;
+  }
+}
+
 export async function deleteObject(key: string): Promise<void> {
   const env = requireEnv();
   await getClient(env).send(
@@ -141,10 +169,18 @@ export async function getPresignedUploadUrl(
   return getSignedUrl(getClient(env), command, { expiresIn: expiresSeconds });
 }
 
+/**
+ * The bucket has no public-read access configured (no r2.dev subdomain or
+ * custom domain enabled) — R2_PUBLIC_BASE_URL, when set, is the fast path
+ * (served directly from Cloudflare's edge). Without it, every image is
+ * served through this app's own `/cdn/[...key]` route instead, which
+ * authenticates to R2 server-side via `getObject()`. This keeps the
+ * bucket private and needs no further Cloudflare dashboard step.
+ */
 export function publicUrlForKey(key: string): string {
   const base = process.env.R2_PUBLIC_BASE_URL;
-  if (!base) {
-    throw new StorageNotConfiguredError("R2_PUBLIC_BASE_URL is not configured");
+  if (base) {
+    return `${base.replace(/\/$/, "")}/${key}`;
   }
-  return `${base.replace(/\/$/, "")}/${key}`;
+  return `/cdn/${key}`;
 }
