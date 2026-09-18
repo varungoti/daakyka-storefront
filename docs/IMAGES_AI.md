@@ -108,12 +108,42 @@ action for product images.
 
 ## Bulk / scripted generation
 
-There is currently **no bulk generation script** in this repository (no `scripts/generate-images.ts`
-and no `images:generate` entry in `package.json`'s `scripts`). All AI image generation today goes
-through the per-product and per-slot admin UI flows described above — one image (or up to 4
-variations) at a time, gated by the same `ai:generate` permission and daily cap either way. If a
-bulk/CLI generation tool is added later, document its flags here once it exists; don't assume its
-shape in advance.
+`scripts/generate-images.ts` (Phase E3) is the batch counterpart to the per-product/per-slot admin
+buttons above — same `generateImage`/`saveMediaAsset` pipeline, driven over every image-needing row
+in one run instead of clicking through each one. Run it with:
+
+```bash
+npm run images:generate -- [--dry-run] [--only=slots|products|categories] [--limit=N] [--yes]
+```
+
+- **What it fills in**: every manifest slot from `src/data/media/image-manifest.ts` without a
+  `MediaAsset`, every `Category` missing an image, and every `Product` with zero `ProductImage`
+  rows (one image per distinct colour, capped at `MAX_COLORS_PER_PRODUCT` = 3, to bound cost on
+  products with long colourways).
+- **`--dry-run`**: lists every job (slot/product/category and the exact prompt it would use) and
+  the estimated cost, without calling OpenAI or writing anything — works with zero credentials
+  configured, so it's safe to run any time to see what's outstanding.
+- **`--only=slots|products|categories`**: restricts a run to one group.
+- **`--limit=N`**: caps the number of generation calls in a single run — use this for a small
+  style-approval sample before committing to a full run.
+- **`--yes`**: required to actually call the API and write results; without it (and without
+  `--dry-run`) the script only prints the plan and estimated cost, same as a dry run, then stops.
+  This is also the point where it checks `isImageGenerationConfigured()`/`isR2Configured()` and
+  exits with a friendly message naming the exact missing env vars if either isn't set — it never
+  gets partway through a real run on incomplete config.
+- **Cost estimate**: `ESTIMATED_COST_PER_IMAGE_USD` in the script is a placeholder — verify the
+  real current figure at [platform.openai.com/pricing](https://platform.openai.com/pricing) before
+  relying on it for budgeting. The OpenAI SDK's response doesn't currently surface per-request
+  usage through the existing `generateImage()` wrapper, so the run report's `actualCostUsd` is
+  `null` rather than a fabricated number.
+- **Resumable**: re-running the script only targets rows that still lack an image, so an
+  interrupted or partial run can simply be invoked again.
+- **Run report**: written to `dogfood-output/image-run.json` after a real (`--yes`) run — what was
+  generated, what failed, and timestamps.
+
+This is still gated by the same missing credentials as the per-item admin flow: nothing in this
+repository's `.env` currently sets `OPENAI_API_KEY` or the `R2_*` vars, so `--yes` will not
+succeed until those are added (see [Environment variables](#environment-variables) above).
 
 ## Storage (Cloudflare R2)
 
