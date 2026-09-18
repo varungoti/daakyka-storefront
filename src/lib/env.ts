@@ -55,6 +55,28 @@ export function validateEnv(): void {
       );
     }
 
+    // Root key for encrypting admin-settable third-party credentials
+    // (Razorpay/Brevo, see src/lib/integrations/credential-store.ts).
+    // This is app-level infrastructure the operator sets once, like
+    // AUTH_SECRET — not a rotating third-party credential — so it must
+    // come from env, never be admin-editable, and must exist before any
+    // credential can be stored or decrypted.
+    const credentialEncryptionKey = process.env.CREDENTIAL_ENCRYPTION_KEY;
+    if (!credentialEncryptionKey) {
+      throw new Error(
+        "CREDENTIAL_ENCRYPTION_KEY must be set in production — generate one with " +
+          "`node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\"`",
+      );
+    }
+    const decodedKeyLength = /^[0-9a-fA-F]{64}$/.test(credentialEncryptionKey)
+      ? Buffer.from(credentialEncryptionKey, "hex").length
+      : Buffer.from(credentialEncryptionKey, "base64").length;
+    if (decodedKeyLength !== 32) {
+      throw new Error(
+        "CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes (256 bits), as base64 or hex",
+      );
+    }
+
     if (databaseUrl.startsWith("file:")) {
       throw new Error(
         "DATABASE_URL must be a Postgres URL in production (SQLite is dev-only)",

@@ -118,6 +118,7 @@ model User {
   mediaAssetsCreated  MediaAsset[]
   reviewsModerated    Review[]
   siteSettingsUpdated SiteSetting[]
+  integrationCredentialsUpdated IntegrationCredential[]
 }
 
 /// DB-backed rate limit buckets (v1 2.1). Replaces the old in-memory Map so
@@ -372,6 +373,32 @@ model IntegrationSetting {
   enabled   Boolean             @default(false)
   config    String              @default("{}")
   updatedAt DateTime            @updatedAt
+}
+
+enum CredentialProvider {
+  RAZORPAY
+  BREVO
+}
+
+/// Admin-settable third-party credentials (Razorpay keys, Brevo API key),
+/// so a live deploy can be given real credentials through the admin UI
+/// without a redeploy or hosting-platform env var change. `valueEncrypted`
+/// is always AES-256-GCM ciphertext (see src/lib/integrations/credential-store.ts)
+/// even for non-secret sub-fields like BREVO/FROM_EMAIL — one encrypt/decrypt
+/// code path with no plaintext branch is less error-prone than special-casing
+/// "this field doesn't need it". Every read site checks this table first and
+/// falls back to process.env, so an env-var-only deploy keeps working.
+model IntegrationCredential {
+  id             String              @id @default(cuid())
+  provider       CredentialProvider
+  key            String
+  valueEncrypted String
+  updatedById    String?
+  updatedBy      User?               @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@unique([provider, key])
 }
 
 model HermesTask {

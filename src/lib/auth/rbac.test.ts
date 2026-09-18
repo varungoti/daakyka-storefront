@@ -70,12 +70,24 @@ describe("RBAC", () => {
     }[] = [
       {
         role: "SUPER_ADMIN",
-        allowed: ["users:manage", "settings:manage", "products:publish", "shopify:sync"],
+        allowed: [
+          "users:manage",
+          "settings:manage",
+          "products:publish",
+          "shopify:sync",
+          "integrations:manage",
+        ],
         denied: [],
       },
       {
         role: "STORE_OWNER",
-        allowed: ["settings:manage", "products:publish", "orders:manage", "shopify:sync"],
+        allowed: [
+          "settings:manage",
+          "products:publish",
+          "orders:manage",
+          "shopify:sync",
+          "integrations:manage",
+        ],
         denied: ["users:manage"],
       },
       {
@@ -91,7 +103,11 @@ describe("RBAC", () => {
       {
         role: "MARKETING_ADMIN",
         allowed: ["homepage:manage", "settings:manage", "offers:manage"],
-        denied: ["users:manage", "products:manage", "orders:manage"],
+        // integrations:manage now gates payment/email credentials
+        // (Razorpay, Brevo) via the admin UI, so it's deliberately kept
+        // out of MARKETING_ADMIN — narrower than settings:manage,
+        // SUPER_ADMIN/STORE_OWNER only.
+        denied: ["users:manage", "products:manage", "orders:manage", "integrations:manage"],
       },
       {
         role: "CONTENT_EDITOR",

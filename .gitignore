@@ -66,3 +66,6 @@ __pycache__/
 # local tunnel binary (scripts download on demand)
 /bin/cloudflared.exe
 
+
+.vercel
+.env*

@@ -1,3 +1,4 @@
+import { getCredential } from "@/lib/integrations/credential-store";
 import { isIntegrationEnabled } from "@/lib/integrations/enabled";
 
 export interface SendEmailInput {
@@ -29,8 +30,11 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     };
   }
 
-  const apiKey = process.env.BREVO_API_KEY!;
-  const fromEmail = process.env.BREVO_FROM_EMAIL ?? "noreply@daakyka.com";
+  // isIntegrationEnabled("BREVO") above already confirmed a key exists
+  // somewhere (DB or env) — resolve the same way here, DB-first.
+  const apiKey = (await getCredential("BREVO", "API_KEY")) ?? process.env.BREVO_API_KEY!;
+  const fromEmail =
+    (await getCredential("BREVO", "FROM_EMAIL")) ?? process.env.BREVO_FROM_EMAIL ?? "noreply@daakyka.com";
   const fromName = process.env.BREVO_FROM_NAME ?? "DAAKYKA Apparels";
 
   try {

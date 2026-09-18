@@ -19,7 +19,7 @@ export async function isIntegrationEnabled(
     return setting?.enabled ?? false;
   }
 
-  if (!isProviderConfigured(provider)) return false;
+  if (!(await isProviderConfigured(provider))) return false;
 
   const setting = await db.integrationSetting.findUnique({
     where: { provider },

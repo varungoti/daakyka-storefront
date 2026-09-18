@@ -7,7 +7,7 @@ import {
   OutOfStockError,
 } from "@/lib/orders/create-order";
 import { notifyNewOrder } from "@/lib/orders/notify";
-import { createRazorpayOrder, isRazorpayConfigured } from "@/lib/payments/razorpay";
+import { createRazorpayOrder, getRazorpayKeyId, isRazorpayConfigured } from "@/lib/payments/razorpay";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { checkoutSchema } from "@/lib/validation/schemas";
@@ -62,7 +62,7 @@ export async function POST(request: Request) {
   }
 
   const { items, email, phone, shippingAddress } = parsed.data;
-  const razorpayReady = isRazorpayConfigured();
+  const razorpayReady = await isRazorpayConfigured();
 
   try {
     const customerId = await getOptionalCustomerId();
@@ -111,7 +111,7 @@ export async function POST(request: Request) {
     return NextResponse.json({
       orderNumber: order.number,
       razorpayOrderId: razorpayOrder.id,
-      keyId: process.env.RAZORPAY_KEY_ID,
+      keyId: await getRazorpayKeyId(),
       amount: razorpayOrder.amount,
       currency: razorpayOrder.currency,
     });

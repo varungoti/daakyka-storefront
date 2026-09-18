@@ -1,13 +1,32 @@
+import { getCredential } from "@/lib/integrations/credential-store";
+import { isRazorpayConfigured } from "@/lib/payments/razorpay";
+
 export type ProviderStatus = "configured" | "missing" | "disabled";
+export type CredentialSource = "database" | "env";
 
 export interface IntegrationStatus {
   provider: string;
   label: string;
   status: ProviderStatus;
   hint: string;
+  /** Where a "configured" status came from — unset when missing. */
+  source?: CredentialSource;
 }
 
-export function getIntegrationStatuses(): IntegrationStatus[] {
+async function brevoSource(): Promise<CredentialSource | null> {
+  if (await getCredential("BREVO", "API_KEY")) return "database";
+  if (process.env.BREVO_API_KEY) return "env";
+  return null;
+}
+
+async function razorpaySource(): Promise<CredentialSource | null> {
+  if (!(await isRazorpayConfigured())) return null;
+  return (await getCredential("RAZORPAY", "KEY_ID")) ? "database" : "env";
+}
+
+export async function getIntegrationStatuses(): Promise<IntegrationStatus[]> {
+  const [brevo, razorpay] = await Promise.all([brevoSource(), razorpaySource()]);
+
   return [
     {
       provider: "SHOPIFY",
@@ -21,8 +40,9 @@ export function getIntegrationStatuses(): IntegrationStatus[] {
     {
       provider: "BREVO",
       label: "Brevo Email",
-      status: process.env.BREVO_API_KEY ? "configured" : "missing",
+      status: brevo ? "configured" : "missing",
       hint: "Transactional and campaign email",
+      source: brevo ?? undefined,
     },
     {
       provider: "WATI",
@@ -41,11 +61,18 @@ export function getIntegrationStatuses(): IntegrationStatus[] {
           : "missing",
       hint: "Vercel inline runtime, HERMES_LOCAL_URL, or external HERMES_API_URL",
     },
+    {
+      provider: "RAZORPAY",
+      label: "Razorpay Payments",
+      status: razorpay ? "configured" : "missing",
+      hint: "Online checkout payment capture",
+      source: razorpay ?? undefined,
+    },
   ];
 }
 
-export function isProviderConfigured(provider: string): boolean {
-  return getIntegrationStatuses().some(
+export async function isProviderConfigured(provider: string): Promise<boolean> {
+  return (await getIntegrationStatuses()).some(
     (item) => item.provider === provider && item.status === "configured",
   );
 }
