@@ -18,6 +18,7 @@ import type { CategoryTreeNode } from "@/lib/products";
 import type { Product } from "@/lib/types";
 import type { Testimonial } from "@/lib/types";
 import dynamic from "next/dynamic";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -73,6 +74,10 @@ interface ShopPageContentProps {
   /** Syncs `category`, `q`, and `sort` to the URL via router.replace as
    * they change (Phase C3 fix for v1 5.5). Defaults to true. */
   syncUrl?: boolean;
+  /** Phase E2: the `category.{slug}` manifest slot for this page, resolved
+   * via `getSiteImage` by /category/[slug]/page.tsx. `null`/omitted keeps
+   * the plain text-only heading band (/shop's existing behavior). */
+  headingImage?: { url: string; alt: string } | null;
 }
 
 export function ShopPageContent({
@@ -86,6 +91,7 @@ export function ShopPageContent({
   heading,
   showExtras = true,
   syncUrl = true,
+  headingImage,
 }: ShopPageContentProps) {
   const router = useRouter();
   const pathname = usePathname();
@@ -157,8 +163,21 @@ export function ShopPageContent({
 
   return (
     <>
-      <section className="border-b border-border bg-alt-surface py-10 md:py-14">
-        <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
+      <section className="relative overflow-hidden border-b border-border bg-alt-surface py-10 md:py-14">
+        {headingImage ? (
+          <>
+            <Image
+              src={headingImage.url}
+              alt={headingImage.alt}
+              fill
+              priority
+              className="object-cover"
+              sizes="100vw"
+            />
+            <div className="absolute inset-0 bg-white/78" aria-hidden />
+          </>
+        ) : null}
+        <div className="relative mx-auto max-w-[1320px] px-4 lg:px-8">
           <nav className="mb-6 text-sm text-muted">
             <Link href="/" className="hover:text-brand">
               Home

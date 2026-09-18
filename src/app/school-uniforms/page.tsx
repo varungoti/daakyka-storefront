@@ -1,4 +1,5 @@
 import { SectionLandingPage } from "@/components/category/section-landing-page";
+import { getSiteImage } from "@/lib/media/get-site-image";
 import { getCategoryBySlug, getProducts } from "@/lib/products";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
@@ -15,7 +16,10 @@ export default async function SchoolUniformsPage() {
   const category = await getCategoryBySlug(CATEGORY_SLUG);
   if (!category) notFound();
 
-  const products = await getProducts({ categorySlug: CATEGORY_SLUG });
+  const [products, bannerImage] = await Promise.all([
+    getProducts({ categorySlug: CATEGORY_SLUG }),
+    getSiteImage(`category.${CATEGORY_SLUG}`),
+  ]);
 
   return (
     <SectionLandingPage
@@ -25,6 +29,7 @@ export default async function SchoolUniformsPage() {
       category={category}
       products={products}
       bulkNote="School-wide uniform programs with consistent sizing, made-to-measure blazers, and bulk pricing for institutions of any size."
+      bannerImage={bannerImage}
     />
   );
 }

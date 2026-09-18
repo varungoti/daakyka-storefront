@@ -1,12 +1,29 @@
 import { redirect } from "next/navigation";
+import { IMAGE_MANIFEST, blogPostImageSlot, categoryImageSlot } from "@/data/media/image-manifest";
+import type { SiteImageSlotRow } from "@/components/admin/site-images-grid";
+import { SiteImagesGrid } from "@/components/admin/site-images-grid";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
+import { getAllBlogPostsForAdmin } from "@/lib/blog";
+import { getSiteImages } from "@/lib/media/get-site-image";
+import { getCategoryTree, type CategoryTreeNode } from "@/lib/products";
+
+function flattenCategories(nodes: CategoryTreeNode[]): CategoryTreeNode[] {
+  return nodes.flatMap((node) => [node, ...flattenCategories(node.children)]);
+}
 
 /**
- * Placeholder — the full media library (grid of every MediaAsset, filters
- * by usage/source, replace/regenerate, "which products use this") is a
- * separate task. This page exists so the "Media" nav link resolves and
- * still enforces `media:manage`.
+ * Phase E2 admin "Site Images" tab: every slot declared in the image
+ * manifest (src/data/media/image-manifest.ts) — homepage, content pages,
+ * size guide — plus the dynamic `category.{slug}` slot for every active
+ * category and `blog.post.{slug}` for every blog post, each with its
+ * current image (or "Not generated yet") and Generate/Replace actions.
+ *
+ * This renders correctly with zero images configured (the current state
+ * of this environment): every card shows the neutral placeholder and a
+ * "Not generated yet" badge, and both actions surface the existing 503
+ * "not configured" messages from the underlying admin API routes rather
+ * than failing silently.
  */
 export default async function AdminMediaPage() {
   const session = await getSession();
@@ -14,16 +31,44 @@ export default async function AdminMediaPage() {
     redirect("/admin/dashboard");
   }
 
+  const [categoryTree, blogPosts] = await Promise.all([getCategoryTree(), getAllBlogPostsForAdmin()]);
+  const categories = flattenCategories(categoryTree);
+
+  const entries = [
+    ...IMAGE_MANIFEST.map((entry) => ({ ...entry, group: groupForSlot(entry.slot) })),
+    ...categories.map((category) => ({ ...categoryImageSlot(category), group: "Categories" })),
+    ...blogPosts.map((post) => ({ ...blogPostImageSlot(post), group: "Blog Covers" })),
+  ];
+
+  const currentImages = await getSiteImages(entries.map((entry) => entry.slot));
+
+  const rows: SiteImageSlotRow[] = entries.map((entry) => ({
+    slot: entry.slot,
+    label: entry.label,
+    group: entry.group,
+    usage: entry.usage,
+    preset: entry.preset,
+    aspect: entry.aspect,
+    fields: entry.fields,
+    current: currentImages[entry.slot] ?? null,
+  }));
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-8">
       <div>
         <h1 className="font-display text-3xl font-bold text-ink">Media Library</h1>
-        <p className="text-muted">The full media library is coming next.</p>
+        <p className="text-muted">
+          Site images — hero banners, category tiles, and page heroes. Uploads and AI generation for
+          product images still happen from the product/category editors.
+        </p>
       </div>
-      <div className="rounded-2xl border border-dashed border-border bg-surface p-8 text-center text-sm text-muted">
-        Uploads and AI generation already work from the Categories editor — a dedicated grid with
-        filters, replace, and regenerate ships in the next phase.
-      </div>
+      <SiteImagesGrid rows={rows} />
     </div>
   );
+}
+
+function groupForSlot(slot: string): string {
+  if (slot.startsWith("home.")) return "Homepage";
+  if (slot.startsWith("size-guide.")) return "Size Guide";
+  return "Content Pages";
 }

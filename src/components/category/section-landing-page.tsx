@@ -23,6 +23,7 @@ export function SectionLandingPage({
   category,
   products,
   bulkNote,
+  bannerImage,
 }: {
   eyebrow: string;
   title: string;
@@ -30,12 +31,16 @@ export function SectionLandingPage({
   category: CategoryTreeNode;
   products: Product[];
   bulkNote: string;
+  /** Phase E2: the `category.{slug}` manifest slot, resolved via
+   * `getSiteImage` by the page (for-hospitals/school-uniforms/kids-wear).
+   * `null`/omitted keeps today's plain text-only band. */
+  bannerImage?: { url: string; alt: string } | null;
 }) {
   const subCategories = category.children.filter((child) => child.showInMenu);
 
   return (
     <>
-      <PageHeroBand innerClassName="max-w-3xl text-center">
+      <PageHeroBand innerClassName="max-w-3xl text-center" image={bannerImage}>
         <SectionHeading eyebrow={eyebrow} title={title} description={description} align="center" titleAs="h1" />
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <Link href="#products">

@@ -3,6 +3,7 @@ import { SectionHeading } from "@/components/ui/section-heading";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { daakykaMedia } from "@/data/media/catalog";
 import { brand } from "@/data/brand";
+import { getSiteImage } from "@/lib/media/get-site-image";
 import { Award, CheckCircle2, MapPin, Sparkles } from "lucide-react";
 import type { Metadata } from "next";
 import Image from "next/image";
@@ -13,10 +14,12 @@ export const metadata: Metadata = {
   description: `${brand.name} by ${brand.legalName} — ${brand.tagline}. ${brand.subtagline}.`,
 };
 
-export default function AboutPage() {
+export default async function AboutPage() {
+  const heroImage = await getSiteImage("about.hero");
+
   return (
     <>
-      <PageHeroBand innerClassName="max-w-4xl text-center">
+      <PageHeroBand innerClassName="max-w-4xl text-center" image={heroImage}>
         <SectionHeading
           eyebrow="Our Story"
           title={`${brand.tagline}. ${brand.subtagline}.`}

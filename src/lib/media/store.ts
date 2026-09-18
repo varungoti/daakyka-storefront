@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { revalidateTag } from "next/cache";
 import { db } from "@/lib/db";
 import type { MediaAsset, MediaSource, MediaUsage } from "@/generated/prisma/client";
+import { MEDIA_CACHE_TAG } from "@/lib/media/get-site-image";
 import { processImage } from "@/lib/media/process-image";
 import {
+  deleteObject,
   isR2Configured,
   publicUrlForKey,
   uploadObject,
@@ -66,13 +69,32 @@ export async function saveMediaAsset(
     throw new StorageNotConfiguredForMediaError();
   }
 
+  // `MediaAsset.slot` is @unique — a slotted asset (manifest site images,
+  // Phase E2) can be "replaced" (re-uploaded or regenerated) any number of
+  // times, so clear out whatever previously held this slot first instead
+  // of letting the create() below hit a unique-constraint violation. The
+  // old R2 object is removed best-effort; a failure there (e.g. R2
+  // transiently unavailable) must not block publishing the new image.
+  if (input.slot) {
+    const existing = await db.mediaAsset.findUnique({ where: { slot: input.slot } });
+    if (existing) {
+      try {
+        await deleteObject(existing.key);
+      } catch {
+        // Best-effort cleanup only — an orphaned R2 object is a much
+        // smaller problem than failing the replace entirely.
+      }
+      await db.mediaAsset.delete({ where: { id: existing.id } });
+    }
+  }
+
   const processed = await processImage(input.buffer);
   const key = objectKeyFor(input.usage);
 
   await storage.upload(key, processed.buffer, processed.contentType);
   const url = storage.publicUrl(key);
 
-  return db.mediaAsset.create({
+  const asset = await db.mediaAsset.create({
     data: {
       key,
       url,
@@ -87,4 +109,18 @@ export async function saveMediaAsset(
       createdById: input.createdById,
     },
   });
+
+  if (input.slot) {
+    try {
+      // "max": the recommended profile (see next/cache's revalidateTag
+      // docs) — stale-while-revalidate, matching the settings module's
+      // SETTINGS_CACHE_TAG invalidation in src/lib/settings/index.ts.
+      revalidateTag(MEDIA_CACHE_TAG, "max");
+    } catch {
+      // No static generation store in this context (unit tests, scripts,
+      // the fake-storage integration tests) — nothing to revalidate.
+    }
+  }
+
+  return asset;
 }

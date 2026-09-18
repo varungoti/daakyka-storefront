@@ -2,6 +2,7 @@ import { ContactForm } from "@/components/contact/contact-form";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { brand } from "@/data/brand";
+import { getSiteImage } from "@/lib/media/get-site-image";
 import { Clock, MapPin, MessageCircle } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -27,10 +28,11 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
   const defaultType =
     typeMap[params.type as keyof typeof typeMap] ??
     (params.intent === "checkout" ? "GENERAL" : "GENERAL");
+  const heroImage = await getSiteImage("contact.banner");
 
   return (
     <>
-      <PageHeroBand innerClassName="max-w-2xl text-center">
+      <PageHeroBand innerClassName="max-w-2xl text-center" image={heroImage}>
         <SectionHeading
           eyebrow="Get in Touch"
           title={params.intent === "checkout" ? "Complete Your Order" : "Contact DAAKYKA"}

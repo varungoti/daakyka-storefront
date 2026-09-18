@@ -1,21 +1,42 @@
 "use client";
 
 import { marketingMedia } from "@/data/media/catalog";
+import { placeholderForAspect } from "@/data/media/image-manifest";
 import type { HeroContent } from "@/lib/homepage";
+import type { SiteImage } from "@/lib/media/get-site-image";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, Droplets, Leaf, Shield, Sparkles, Star } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 
 const avatars = marketingMedia.heroAvatars;
+const HERO_PLACEHOLDER = placeholderForAspect("wide");
 
 interface HeroSectionProps {
   content: HeroContent;
   trustStats: { value: string; label: string }[];
   mixMatchEnabled?: boolean;
+  /**
+   * Phase E2: `home.hero.1`/`home.hero.2` from the image manifest
+   * (src/data/media/image-manifest.ts), resolved via `getSiteImage` in
+   * src/app/page.tsx. `null` (the current, credential-less state) falls
+   * back to a neutral placeholder rather than the old Pexels stock
+   * photos — `home.hero.3` is declared in the manifest for a future
+   * carousel but isn't consumed by this two-image layout yet.
+   */
+  heroMainImage?: SiteImage | null;
+  heroSecondaryImage?: SiteImage | null;
 }
 
-export function HeroSection({ content, trustStats, mixMatchEnabled = false }: HeroSectionProps) {
+export function HeroSection({
+  content,
+  trustStats,
+  mixMatchEnabled = false,
+  heroMainImage,
+  heroSecondaryImage,
+}: HeroSectionProps) {
+  const mainImage = heroMainImage ?? { url: HERO_PLACEHOLDER, alt: "" };
+  const secondaryImage = heroSecondaryImage ?? { url: HERO_PLACEHOLDER, alt: "" };
   return (
     <section className="relative overflow-hidden bg-background">
       <div className="pointer-events-none absolute inset-0">
@@ -110,8 +131,8 @@ export function HeroSection({ content, trustStats, mixMatchEnabled = false }: He
             <div className="relative flex h-full items-end justify-center gap-1 px-4 pb-[10%] md:gap-3">
               <div className="relative h-[88%] w-[46%] overflow-hidden rounded-[1.5rem] hero-model-frame shadow-[0_20px_50px_rgba(138,52,125,0.15)]">
                 <Image
-                  src={marketingMedia.heroSecondary}
-                  alt="Healthcare professional in DAAKYKA scrubs"
+                  src={secondaryImage.url}
+                  alt={secondaryImage.alt || "Healthcare professional in DAAKYKA scrubs"}
                   fill
                   className="object-cover object-top"
                   sizes="(max-width: 1024px) 42vw, 18vw"
@@ -119,8 +140,8 @@ export function HeroSection({ content, trustStats, mixMatchEnabled = false }: He
               </div>
               <div className="relative h-[94%] w-[48%] overflow-hidden rounded-[1.5rem] hero-model-frame shadow-[0_24px_60px_rgba(138,52,125,0.2)]">
                 <Image
-                  src={marketingMedia.heroMain}
-                  alt="Healthcare team in DAAKYKA scrubs"
+                  src={mainImage.url}
+                  alt={mainImage.alt || "Healthcare team in DAAKYKA scrubs"}
                   fill
                   priority
                   fetchPriority="high"

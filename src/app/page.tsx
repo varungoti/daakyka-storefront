@@ -7,12 +7,24 @@ import { ShopByCategorySection, type ShopByCategoryTile } from "@/components/hom
 import { TestimonialsSection } from "@/components/home/testimonials-section";
 import { TrustBar } from "@/components/layout/trust-bar";
 import { getHeroContent, getTrustStatsContent } from "@/lib/homepage";
+import { getSiteImages } from "@/lib/media/get-site-image";
 import { getCategoryTree, getProducts } from "@/lib/products";
 import { getSeoOverrideForPath } from "@/lib/seo/records";
 import { isSaleEnabled } from "@/lib/settings";
 import { getTestimonials } from "@/lib/testimonials";
 import { GraduationCap, HeartPulse } from "lucide-react";
 import type { Metadata } from "next";
+
+/** Phase E2 manifest slots this page reads via getSiteImage/getSiteImages —
+ * see src/data/media/image-manifest.ts for the full declaration. */
+const HOME_IMAGE_SLOTS = [
+  "home.hero.1",
+  "home.hero.2",
+  "home.tile.for-hospitals",
+  "home.tile.school-uniforms",
+  "home.tile.kids-wear",
+  "home.tile.sale",
+] as const;
 
 /** Lets an admin override the home page's <title>/meta description from
  * /admin/seo (SeoPageRecord, path "/") without touching code. Falls back
@@ -32,12 +44,13 @@ export async function generateMetadata(): Promise<Metadata> {
  * testimonials -> a values row.
  */
 export default async function HomePage() {
-  const [categoryTree, saleEnabled, heroContent, trustStats, testimonials] = await Promise.all([
+  const [categoryTree, saleEnabled, heroContent, trustStats, testimonials, siteImages] = await Promise.all([
     getCategoryTree(),
     isSaleEnabled(),
     getHeroContent(),
     getTrustStatsContent(),
     getTestimonials(),
+    getSiteImages(HOME_IMAGE_SLOTS),
   ]);
 
   const topLevelMenu = categoryTree.filter((category) => category.showInMenu);
@@ -47,30 +60,40 @@ export default async function HomePage() {
   const schoolCategory = findTopLevel("school-uniforms");
   const kidsCategory = findTopLevel("kids-wear");
 
+  // Phase E2: the homepage tile image prefers the admin-curated
+  // `home.tile.*` manifest slot (generated for exactly this tile) over the
+  // category's own `imageId` (used elsewhere, e.g. the /category/[slug]
+  // sub-category grid) — falling back to null (→ a neutral placeholder in
+  // ShopByCategorySection) when neither exists yet.
   const categoryTiles: ShopByCategoryTile[] = [];
   if (hospitalsCategory) {
     categoryTiles.push({
       title: hospitalsCategory.name,
       href: "/for-hospitals",
-      image: hospitalsCategory.image?.url ?? null,
+      image: siteImages["home.tile.for-hospitals"]?.url ?? hospitalsCategory.image?.url ?? null,
     });
   }
   if (schoolCategory) {
     categoryTiles.push({
       title: schoolCategory.name,
       href: "/school-uniforms",
-      image: schoolCategory.image?.url ?? null,
+      image: siteImages["home.tile.school-uniforms"]?.url ?? schoolCategory.image?.url ?? null,
     });
   }
   if (kidsCategory) {
     categoryTiles.push({
       title: kidsCategory.name,
       href: "/kids-wear",
-      image: kidsCategory.image?.url ?? null,
+      image: siteImages["home.tile.kids-wear"]?.url ?? kidsCategory.image?.url ?? null,
     });
   }
   if (saleEnabled) {
-    categoryTiles.push({ title: "Sale", href: "/sale", image: null, cta: "Shop Sale" });
+    categoryTiles.push({
+      title: "Sale",
+      href: "/sale",
+      image: siteImages["home.tile.sale"]?.url ?? null,
+      cta: "Shop Sale",
+    });
   }
 
   const [bestSellers, newArrivalsRaw, hospitalProducts, schoolProducts] = await Promise.all([
@@ -84,7 +107,12 @@ export default async function HomePage() {
 
   return (
     <>
-      <HeroSection content={heroContent} trustStats={trustStats.stats} />
+      <HeroSection
+        content={heroContent}
+        trustStats={trustStats.stats}
+        heroMainImage={siteImages["home.hero.1"]}
+        heroSecondaryImage={siteImages["home.hero.2"]}
+      />
       <OffersStrip />
       <ShopByCategorySection categories={categoryTiles} />
       <FeaturedProductsGrid eyebrow="Curated For You" title="Best Sellers" products={bestSellers} />

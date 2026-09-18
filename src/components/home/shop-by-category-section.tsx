@@ -1,3 +1,4 @@
+import { placeholderForAspect } from "@/data/media/image-manifest";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { ArrowRight } from "lucide-react";
 import Image from "next/image";
@@ -10,14 +11,16 @@ export interface ShopByCategoryTile {
   cta?: string;
 }
 
+const TILE_PLACEHOLDER = placeholderForAspect("portrait");
+
 /**
  * Phase C3: the new store home's "shop by category" tiles — built from
  * the top-level DB category tree (For Hospitals / School Uniforms / Kids
  * Wear) plus an optional Sale tile, instead of the old hardcoded
- * tops/bottoms/sets/bespoke seed categories. `image` is null until Phase
- * E3 (AI image generation) populates a MediaAsset for the category, in
- * which case a neutral placeholder tile is shown instead of a broken
- * <Image>.
+ * tops/bottoms/sets/bespoke seed categories. `image` (resolved in
+ * src/app/page.tsx via getSiteImage's `home.tile.*` manifest slots, see
+ * Phase E2) is null until an admin generates or uploads one, in which
+ * case a neutral placeholder tile is shown instead of a broken <Image>.
  */
 export function ShopByCategorySection({ categories }: { categories: ShopByCategoryTile[] }) {
   if (categories.length === 0) return null;
@@ -39,17 +42,13 @@ export function ShopByCategorySection({ categories }: { categories: ShopByCatego
               className="hover:border-brand hover:shadow-sm transition-colors group relative overflow-hidden rounded-3xl border border-border"
             >
               <div className="relative aspect-[4/5] bg-lilac/30">
-                {category.image ? (
-                  <Image
-                    src={category.image}
-                    alt={`${category.title} — DAAKYKA Apparels`}
-                    fill
-                    className="object-cover transition duration-500 group-hover:scale-105"
-                    sizes="(max-width: 768px) 100vw, 25vw"
-                  />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-lilac/60 to-lavender/60" />
-                )}
+                <Image
+                  src={category.image ?? TILE_PLACEHOLDER}
+                  alt={`${category.title} — DAAKYKA Apparels`}
+                  fill
+                  className="object-cover transition duration-500 group-hover:scale-105"
+                  sizes="(max-width: 768px) 100vw, 25vw"
+                />
                 <div className="absolute inset-0 bg-gradient-to-t from-ink/70 via-ink/20 to-transparent" />
                 <div className="absolute bottom-0 left-0 right-0 p-6">
                   <h3 className="font-display text-2xl font-bold text-white">

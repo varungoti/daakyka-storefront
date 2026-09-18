@@ -2,6 +2,7 @@ import { BulkOrderForm } from "@/components/bulk-orders/bulk-order-form";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { brand } from "@/data/brand";
+import { getSiteImage } from "@/lib/media/get-site-image";
 import { Building2, MessageCircle, ShieldCheck, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -11,10 +12,12 @@ export const metadata: Metadata = {
   description: "Hospital and team uniform bulk order enquiries for DAAKYKA Apparels.",
 };
 
-export default function BulkOrdersPage() {
+export default async function BulkOrdersPage() {
+  const heroImage = await getSiteImage("bulk-orders.hero");
+
   return (
     <>
-      <PageHeroBand>
+      <PageHeroBand image={heroImage}>
         <SectionHeading
           eyebrow="B2B"
           title="Uniforms for Healthcare Teams"

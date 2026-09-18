@@ -1,4 +1,5 @@
 import { ShopPageContent } from "@/components/shop/shop-page-content";
+import { getSiteImage } from "@/lib/media/get-site-image";
 import { getCategoryBySlug, getProducts } from "@/lib/products";
 import { getTestimonials } from "@/lib/testimonials";
 import type { Metadata } from "next";
@@ -34,9 +35,10 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
   if (!category) notFound();
 
   const search = await searchParams;
-  const [products, testimonials] = await Promise.all([
+  const [products, testimonials, headingImage] = await Promise.all([
     getProducts({ categorySlug: slug }),
     getTestimonials(),
+    getSiteImage(`category.${slug}`),
   ]);
 
   return (
@@ -54,6 +56,7 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
           category.description ?? `Browse ${category.name.toLowerCase()} from DAAKYKA Apparels.`,
         breadcrumbLabel: category.name,
       }}
+      headingImage={headingImage}
     />
   );
 }
