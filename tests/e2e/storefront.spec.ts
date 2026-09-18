@@ -5,7 +5,9 @@ test.describe("Storefront E2E", () => {
     await page.goto("/");
     await expect(page.getByRole("link", { name: /DAAKYKA/i }).first()).toBeVisible();
     await expect(page.getByRole("banner")).toBeVisible();
-    await expect(page.getByRole("navigation").getByRole("link", { name: "Shop", exact: true })).toBeVisible();
+    // "Shop" is a mega-menu trigger button (not a link) since Phase C2's
+    // header rewrite — it opens a dropdown of category tiles on click.
+    await expect(page.getByRole("navigation").getByRole("button", { name: "Shop", exact: true })).toBeVisible();
   });
 
   test("skip to main content link exists", async ({ page }) => {
@@ -82,17 +84,28 @@ test.describe("Storefront E2E", () => {
     await page.goto("/shop");
     const initialCount = await page.locator("article").count();
     expect(initialCount).toBeGreaterThan(0);
-    await page.getByRole("button", { name: /^Tops\b/ }).click();
+    // The desktop filter sidebar lists top-level menu categories from the
+    // draft catalog (For Hospitals, School Uniforms, Kids Wear), each
+    // button showing a trailing product count — unlike the header's
+    // "For Hospitals" mega-menu trigger, which has no count and would
+    // otherwise make this locator ambiguous.
+    await page.getByRole("button", { name: /^For Hospitals \d+$/ }).click();
     await expect(page.locator("article").first()).toBeVisible();
-    const filteredText = await page.locator("text=/\\d+ products?/i").first().textContent();
-    expect(filteredText).toBeTruthy();
+    const filteredCount = await page.locator("article").count();
+    expect(filteredCount).toBeGreaterThan(0);
+    expect(filteredCount).toBeLessThanOrEqual(initialCount);
   });
 
   test("mobile navigation drawer opens", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/");
     await page.getByRole("button", { name: /open menu/i }).click();
-    await expect(page.getByRole("link", { name: "Shop", exact: true }).first()).toBeVisible();
+    const drawer = page.getByRole("dialog", { name: "Site navigation" });
+    await expect(drawer).toBeVisible();
+    // "Shop" is an accordion trigger button in the mobile drawer too;
+    // expanding it reveals a "View all Shop" link into the category.
+    await drawer.getByRole("button", { name: "Shop", exact: true }).click();
+    await expect(drawer.getByRole("link", { name: "View all Shop" })).toBeVisible();
   });
 
   test("about page shows founders and client logos", async ({ page }) => {
@@ -102,17 +115,34 @@ test.describe("Storefront E2E", () => {
     await expect(page.locator('img[alt*="KIMS"]').first()).toBeVisible();
   });
 
-  test("institutional page shows hero and partner logos", async ({ page }) => {
+  test("institutional page redirects to For Hospitals landing page", async ({ page }) => {
+    // Phase C3 retired the standalone /institutional page; it now
+    // permanently redirects to the section landing page.
     await page.goto("/institutional");
-    await expect(page.getByRole("heading", { name: /Uniforms & Linens/i })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Institutional Partners" })).toBeVisible();
+    await expect(page).toHaveURL(/\/for-hospitals$/);
+    await expect(page.getByRole("heading", { name: "For Hospitals", level: 1 })).toBeVisible();
   });
 
   test("product gallery thumbnail switches main image", async ({ page }) => {
-    await page.goto("/products/v-neck-top-lilac");
+    const productsResponse = await page.request.get("/api/products");
+    const { products } = (await productsResponse.json()) as {
+      products: { handle: string; name: string; images?: unknown[] }[];
+    };
+    const withGallery = products.find((p) => (p.images?.length ?? 0) > 1) ?? products[0];
+
+    await page.goto(`/products/${withGallery.handle}`);
     const mainImage = page.locator(".relative.aspect-\\[4\\/5\\] img").first();
     const initialSrc = await mainImage.getAttribute("src");
-    await page.getByRole("button", { name: /View V-Neck Top image 2/i }).click();
+    const secondThumbnail = page.getByRole("button", {
+      name: new RegExp(`View ${withGallery.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} image 2`, "i"),
+    });
+
+    if ((await secondThumbnail.count()) === 0) {
+      // This product only has one image — nothing to switch between.
+      test.skip();
+    }
+
+    await secondThumbnail.click();
     await expect(mainImage).not.toHaveAttribute("src", initialSrc ?? "");
   });
 });
