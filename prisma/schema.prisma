@@ -394,10 +394,11 @@ model HermesApproval {
   title      String
   summary    String
   payload    String
-  status     HermesApprovalStatus @default(PENDING)
-  reviewedBy String?
-  reviewedAt DateTime?
-  createdAt  DateTime             @default(now())
+  status          HermesApprovalStatus @default(PENDING)
+  reviewedBy      String?
+  reviewedAt      DateTime?
+  executionResult Json?
+  createdAt       DateTime             @default(now())
 }
 
 model JourneyEvent {

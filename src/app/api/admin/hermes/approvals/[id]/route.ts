@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { logAuditEvent } from "@/lib/auth/audit";
-import { db } from "@/lib/db";
-import { executeHermesApproval } from "@/lib/hermes/approval-executor";
+import { reviewHermesApproval } from "@/lib/hermes/approval-executor";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { z } from "zod";
 
@@ -25,26 +24,21 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid status" }, { status: 400 });
   }
 
-  const approval = await db.hermesApproval.update({
-    where: { id },
-    data: {
-      status: parsed.data.status,
-      reviewedBy: session!.id,
-      reviewedAt: new Date(),
-    },
-  });
-
-  await logAuditEvent({
-    userId: session!.id,
-    action: parsed.data.status.toLowerCase(),
-    entity: "hermes_approval",
-    entityId: id,
-  });
-
-  let execution = null;
-  if (parsed.data.status === "APPROVED") {
-    execution = await executeHermesApproval(id);
+  const result = await reviewHermesApproval(id, parsed.data.status, session!.id);
+  if (!result) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  return NextResponse.json({ ...approval, execution });
+  // A duplicate PATCH on an already-reviewed approval is a legitimate
+  // double-click, not a new decision — don't log a second audit event for it.
+  if (result.transitioned) {
+    await logAuditEvent({
+      userId: session!.id,
+      action: parsed.data.status.toLowerCase(),
+      entity: "hermes_approval",
+      entityId: id,
+    });
+  }
+
+  return NextResponse.json({ ...result.approval, execution: result.execution });
 }

@@ -1,11 +1,60 @@
 import { daakykaMedia } from "@/data/media/catalog";
 import { db } from "@/lib/db";
+import type { HermesApproval, HermesApprovalStatus, Prisma } from "@/generated/prisma/client";
 
 export interface ApprovalExecutionResult {
   ok: boolean;
   action?: string;
   entityId?: string;
   message?: string;
+}
+
+export interface ReviewHermesApprovalResult {
+  approval: HermesApproval;
+  execution: ApprovalExecutionResult | null;
+  /** false when the approval had already been reviewed and this call was a no-op. */
+  transitioned: boolean;
+}
+
+/**
+ * Transitions an approval out of PENDING and, for APPROVED, runs its
+ * side effects exactly once. The transition is conditioned on the row
+ * still being PENDING (an atomic updateMany) so a duplicate call — a
+ * double-click, a retried request, or a second concurrent PATCH — is a
+ * DB-level no-op instead of re-running executeHermesApproval, which is
+ * what used to create duplicate Campaign rows.
+ */
+export async function reviewHermesApproval(
+  approvalId: string,
+  status: HermesApprovalStatus,
+  reviewerId: string,
+): Promise<ReviewHermesApprovalResult | null> {
+  const { count } = await db.hermesApproval.updateMany({
+    where: { id: approvalId, status: "PENDING" },
+    data: { status, reviewedBy: reviewerId, reviewedAt: new Date() },
+  });
+
+  if (count === 0) {
+    const existing = await db.hermesApproval.findUnique({ where: { id: approvalId } });
+    if (!existing) return null;
+    return {
+      approval: existing,
+      execution: (existing.executionResult as ApprovalExecutionResult | null) ?? null,
+      transitioned: false,
+    };
+  }
+
+  let execution: ApprovalExecutionResult | null = null;
+  let approval = await db.hermesApproval.findUniqueOrThrow({ where: { id: approvalId } });
+  if (status === "APPROVED") {
+    execution = await executeHermesApproval(approvalId);
+    approval = await db.hermesApproval.update({
+      where: { id: approvalId },
+      data: { executionResult: execution as unknown as Prisma.InputJsonValue },
+    });
+  }
+
+  return { approval, execution, transitioned: true };
 }
 
 export async function executeHermesApproval(approvalId: string): Promise<ApprovalExecutionResult> {
@@ -63,13 +112,22 @@ export async function executeHermesApproval(approvalId: string): Promise<Approva
     }
 
     case "campaign_draft": {
+      const campaignName = approval.title.replace(/^Campaign:\s*/i, "");
+      // Dedupe by name, the same natural key executeHermesApproval derives
+      // deterministically from the approval title — mirrors the blog_draft
+      // dedupe-by-slug above, so a second execution of this approval is a no-op.
+      const existingCampaign = await db.campaign.findFirst({ where: { name: campaignName } });
+      if (existingCampaign) {
+        return { ok: true, action: "campaign_draft_exists", entityId: existingCampaign.id };
+      }
+
       const segmentSlug = String(payload.segment ?? "newsletter-subscribers");
       const segment = await db.customerSegment.findUnique({ where: { slug: segmentSlug } });
       const channel = payload.channel === "WHATSAPP" ? "WHATSAPP" : "EMAIL";
 
       const campaign = await db.campaign.create({
         data: {
-          name: approval.title.replace(/^Campaign:\s*/i, ""),
+          name: campaignName,
           channel,
           status: "PENDING_APPROVAL",
           segmentId: segment?.id,
@@ -99,7 +157,7 @@ export async function executeHermesApproval(approvalId: string): Promise<Approva
           metadata: approval.payload ?? "{}",
         },
       });
-      return { ok: true, action: "notification_created" };
+      return { ok: true, action: "notification_created", message: approval.summary };
     }
 
     default: {
@@ -111,7 +169,7 @@ export async function executeHermesApproval(approvalId: string): Promise<Approva
           metadata: approval.payload ?? "{}",
         },
       });
-      return { ok: true, action: "generic_notification" };
+      return { ok: true, action: "generic_notification", message: approval.summary };
     }
   }
 }

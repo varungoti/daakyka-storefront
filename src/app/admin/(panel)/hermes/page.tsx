@@ -3,7 +3,9 @@ import { HermesTaskLauncher } from "@/components/admin/hermes-task-launcher";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
+import type { ApprovalExecutionResult } from "@/lib/hermes/approval-executor";
 import { getHermesMode, isHermesInlineRuntime, isHermesRuntimeConfigured } from "@/lib/hermes/client";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 export default async function AdminHermesPage() {
@@ -59,6 +61,7 @@ export default async function AdminHermesPage() {
                   <p className="text-xs font-bold uppercase tracking-wide text-brand">{item.type}</p>
                   <p className="font-semibold text-ink">{item.title}</p>
                   <p className="mt-1 text-sm text-muted">{item.summary}</p>
+                  <ExecutionPreview title={item.title} result={item.executionResult as ApprovalExecutionResult | null} />
                 </div>
                 <HermesApprovalActions approvalId={item.id} currentStatus={item.status} />
               </div>
@@ -88,6 +91,42 @@ export default async function AdminHermesPage() {
       </section>
     </div>
   );
+}
+
+function ExecutionPreview({ title, result }: { title: string; result: ApprovalExecutionResult | null }) {
+  if (!result || !result.ok) return null;
+
+  switch (result.action) {
+    case "blog_draft_created":
+    case "blog_draft_exists": {
+      const postTitle = title.replace(/^Blog:\s*/i, "");
+      return (
+        <p className="mt-2 text-sm text-trust">
+          Created blog draft: &quot;{postTitle}&quot; —{" "}
+          <Link href={`/admin/blog/${result.entityId}`} className="underline">
+            open in CMS
+          </Link>
+        </p>
+      );
+    }
+    case "campaign_draft_created":
+    case "campaign_draft_exists": {
+      const campaignName = title.replace(/^Campaign:\s*/i, "");
+      return (
+        <p className="mt-2 text-sm text-trust">
+          Created campaign: &quot;{campaignName}&quot;, pending approval —{" "}
+          <Link href="/admin/campaigns" className="underline">
+            open Campaign Planner
+          </Link>
+        </p>
+      );
+    }
+    case "notification_created":
+    case "generic_notification":
+      return <p className="mt-2 text-sm text-trust">{result.message ?? "Logged as an admin notification."}</p>;
+    default:
+      return null;
+  }
 }
 
 function StatCard({ label, value }: { label: string; value: string }) {
