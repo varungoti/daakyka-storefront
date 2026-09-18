@@ -1,5 +1,6 @@
 import { ShopPageContent } from "@/components/shop/shop-page-content";
 import { getCategoryTree, getProducts } from "@/lib/products";
+import { canonicalPath } from "@/lib/seo/canonical";
 import { getSeoOverrideForPath } from "@/lib/seo/records";
 import { isPageEnabled } from "@/lib/settings";
 import { getTestimonials } from "@/lib/testimonials";
@@ -19,6 +20,9 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: override?.title ?? DEFAULT_METADATA.title,
     description: override?.metaDescription ?? DEFAULT_METADATA.description,
+    // Canonical is always the bare /shop path, regardless of ?category=/?q=
+    // filter query params — those are the same content, not distinct pages.
+    alternates: { canonical: canonicalPath("/shop") },
   };
 }
 

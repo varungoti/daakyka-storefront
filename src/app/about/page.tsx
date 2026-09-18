@@ -4,6 +4,7 @@ import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { daakykaMedia } from "@/data/media/catalog";
 import { brand } from "@/data/brand";
 import { getSiteImage } from "@/lib/media/get-site-image";
+import { canonicalPath } from "@/lib/seo/canonical";
 import { Award, CheckCircle2, MapPin, Sparkles } from "lucide-react";
 import type { Metadata } from "next";
 import Image from "next/image";
@@ -12,6 +13,7 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "About Us",
   description: `${brand.name} by ${brand.legalName} — ${brand.tagline}. ${brand.subtagline}.`,
+  alternates: { canonical: canonicalPath("/about") },
 };
 
 export default async function AboutPage() {

@@ -1,5 +1,6 @@
 import { fabricTechPages } from "@/data/fabric-tech";
 import { getSeoGuideGroups } from "@/data/seo-landing-pages";
+import { canonicalPath } from "@/lib/seo/canonical";
 import { isPageEnabled } from "@/lib/settings";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
@@ -11,6 +12,7 @@ export const metadata: Metadata = {
   title: "Medical Scrubs Guides",
   description:
     "Buying guides, fabric science, and hospital uniform resources from DAAKYKA Apparels — Pan India medical apparel experts.",
+  alternates: { canonical: canonicalPath("/guides") },
 };
 
 export default async function GuidesIndexPage() {

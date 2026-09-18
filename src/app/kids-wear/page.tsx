@@ -1,6 +1,7 @@
 import { SectionLandingPage } from "@/components/category/section-landing-page";
 import { getSiteImage } from "@/lib/media/get-site-image";
 import { getCategoryBySlug, getProducts } from "@/lib/products";
+import { canonicalPath } from "@/lib/seo/canonical";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
@@ -10,6 +11,7 @@ export const metadata: Metadata = {
   title: "Kids Wear",
   description:
     "Everyday kids' wear — cotton T-shirts, joggers, frocks, co-ord sets, and hoodies from DAAKYKA Apparels.",
+  alternates: { canonical: canonicalPath("/kids-wear") },
 };
 
 export default async function KidsWearPage() {

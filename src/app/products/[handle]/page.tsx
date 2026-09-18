@@ -7,6 +7,7 @@ import { getCustomerSession } from "@/lib/customer-auth/session";
 import { db } from "@/lib/db";
 import { getCategoryBySlug, getProductByHandle, getProducts } from "@/lib/products";
 import { getApprovedReviews, getReviewSummary } from "@/lib/reviews";
+import { canonicalPath } from "@/lib/seo/canonical";
 import { breadcrumbJsonLd, productJsonLd, siteUrlBase } from "@/lib/seo/json-ld";
 import { getSetting } from "@/lib/settings";
 import Link from "next/link";
@@ -60,6 +61,7 @@ export async function generateMetadata({ params }: ProductPageProps) {
     description:
       product.description ??
       `${product.name} in ${product.colorName}. Premium medical apparel by DAAKYKA.`,
+    alternates: { canonical: canonicalPath(`/products/${handle}`) },
     openGraph: {
       title: product.name,
       description: product.description,

@@ -1,6 +1,7 @@
 "use client";
 
 import { ShopFiltersPanel, type ShopFilterCategory } from "@/components/shop/shop-filters-panel";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 import type { ShopFilters } from "@/lib/shop/filters";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
@@ -25,6 +26,8 @@ export function MobileFilterDrawer({
   categoryCounts,
   totalCount,
 }: MobileFilterDrawerProps) {
+  const panelRef = useFocusTrap<HTMLElement>(open, onClose, { lockScroll: true });
+
   return (
     <AnimatePresence>
       {open && (
@@ -39,10 +42,13 @@ export function MobileFilterDrawer({
             onClick={onClose}
           />
           <motion.aside
+            ref={panelRef}
+            tabIndex={-1}
             role="dialog"
+            aria-modal="true"
             aria-label="Shop filters"
             className={cn(
-              "fixed inset-y-0 left-0 z-[70] w-full max-w-sm overflow-y-auto bg-background p-6 shadow-2xl lg:hidden",
+              "fixed inset-y-0 left-0 z-[70] w-full max-w-sm overflow-y-auto bg-background p-6 shadow-2xl outline-none lg:hidden",
             )}
             initial={{ x: "-100%" }}
             animate={{ x: 0 }}

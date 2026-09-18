@@ -2,6 +2,7 @@ import { ProductGrid } from "@/components/shop/product-grid";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { getProducts } from "@/lib/products";
+import { canonicalPath } from "@/lib/seo/canonical";
 import { isSaleEnabled } from "@/lib/settings";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
@@ -9,6 +10,7 @@ import { notFound } from "next/navigation";
 export const metadata: Metadata = {
   title: "Sale",
   description: "Discounted medical scrubs, uniforms, and apparel from DAAKYKA Apparels while stocks last.",
+  alternates: { canonical: canonicalPath("/sale") },
 };
 
 /**

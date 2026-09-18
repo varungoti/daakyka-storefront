@@ -1,6 +1,7 @@
 import { ShopPageContent } from "@/components/shop/shop-page-content";
 import { getSiteImage } from "@/lib/media/get-site-image";
 import { getCategoryBySlug, getProducts } from "@/lib/products";
+import { canonicalPath } from "@/lib/seo/canonical";
 import { getTestimonials } from "@/lib/testimonials";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
@@ -26,6 +27,7 @@ export async function generateMetadata({ params }: CategoryPageProps): Promise<M
     title: category.name,
     description:
       category.description ?? `Shop ${category.name} from DAAKYKA Apparels — Pan India delivery.`,
+    alternates: { canonical: canonicalPath(`/category/${slug}`) },
   };
 }
 

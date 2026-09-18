@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { PageHeroBand } from "@/components/ui/page-shell";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { brand } from "@/data/brand";
+import { canonicalPath } from "@/lib/seo/canonical";
 import { isPageEnabled } from "@/lib/settings";
 import { ArrowRight } from "lucide-react";
 import type { Metadata } from "next";
@@ -24,6 +25,7 @@ const MixMatchSection = dynamic(
 export const metadata: Metadata = {
   title: "Our Story",
   description: `${brand.name} by ${brand.legalName} — ${brand.tagline}. ${brand.description}`,
+  alternates: { canonical: canonicalPath("/our-story") },
 };
 
 /**

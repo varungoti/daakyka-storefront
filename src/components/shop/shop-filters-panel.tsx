@@ -163,6 +163,8 @@ export function ShopFiltersPanel({
       <FilterBlock title="Price Range">
         <input
           type="range"
+          aria-label="Maximum price"
+          aria-valuetext={`${formatPrice(filters.priceMax)}+`}
           min={PRICE_FILTER_MIN_INR}
           max={PRICE_FILTER_MAX_INR}
           value={filters.priceMax}

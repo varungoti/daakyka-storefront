@@ -2,7 +2,8 @@
 
 import { useWishlist } from "@/context/wishlist-provider";
 import { useCurrency } from "@/context/currency-provider";
-import { Button } from "@/components/ui/button";
+import { buttonClassNames } from "@/components/ui/button";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { Heart, ShoppingBag, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -11,6 +12,7 @@ import { AnimatePresence, motion } from "framer-motion";
 export function WishlistDrawer() {
   const { items, isOpen, closeWishlist, removeFromWishlist } = useWishlist();
   const { formatPrice } = useCurrency();
+  const panelRef = useFocusTrap<HTMLDivElement>(isOpen, closeWishlist, { lockScroll: true });
 
   return (
     <AnimatePresence>
@@ -26,9 +28,12 @@ export function WishlistDrawer() {
             onClick={closeWishlist}
           />
           <motion.aside
+            ref={panelRef}
+            tabIndex={-1}
             role="dialog"
+            aria-modal="true"
             aria-label="Wishlist"
-            className="fixed inset-y-0 right-0 z-[70] flex w-full max-w-md flex-col bg-surface-elevated shadow-2xl backdrop-blur-xl"
+            className="fixed inset-y-0 right-0 z-[70] flex w-full max-w-md flex-col bg-surface-elevated shadow-2xl outline-none backdrop-blur-xl"
             initial={{ x: "100%" }}
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
@@ -64,8 +69,8 @@ export function WishlistDrawer() {
                   <p className="mt-2 text-sm text-muted">
                     Save scrubs you love and come back anytime.
                   </p>
-                  <Link href="/shop" onClick={closeWishlist} className="mt-6">
-                    <Button>Browse Shop</Button>
+                  <Link href="/shop" onClick={closeWishlist} className={buttonClassNames({ className: "mt-6" })}>
+                    Browse Shop
                   </Link>
                 </div>
               ) : (
@@ -98,11 +103,13 @@ export function WishlistDrawer() {
                           {formatPrice(product.price)}
                         </p>
                         <div className="mt-auto flex items-center gap-3 pt-3">
-                          <Link href={`/products/${product.handle}`} onClick={closeWishlist}>
-                            <Button size="sm">
-                              <ShoppingBag size={14} />
-                              View
-                            </Button>
+                          <Link
+                            href={`/products/${product.handle}`}
+                            onClick={closeWishlist}
+                            className={buttonClassNames({ size: "sm" })}
+                          >
+                            <ShoppingBag size={14} />
+                            View
                           </Link>
                           <button
                             type="button"

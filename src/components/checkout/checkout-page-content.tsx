@@ -329,7 +329,7 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
 
           <p className="mt-4 text-center text-xs text-muted">
             Having trouble?{" "}
-            <Link href="/contact?intent=checkout" className="text-brand hover:underline">
+            <Link href="/contact?intent=checkout" className="text-brand underline underline-offset-2">
               Contact us
             </Link>{" "}
             with your cart details.

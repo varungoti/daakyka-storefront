@@ -1,6 +1,7 @@
 "use client";
 
 import { useCurrency } from "@/context/currency-provider";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 import type { Product } from "@/lib/types";
 import { Search, X } from "lucide-react";
 import Image from "next/image";
@@ -18,6 +19,7 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
   const { formatPrice } = useCurrency();
+  const panelRef = useFocusTrap<HTMLDivElement>(open, onClose, { lockScroll: true });
 
   useEffect(() => {
     if (!open) return;
@@ -33,15 +35,6 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
       .catch(() => setProducts([]))
       .finally(() => setLoading(false));
   }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -71,9 +64,12 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
             onClick={onClose}
           />
           <motion.div
+            ref={panelRef}
+            tabIndex={-1}
             role="dialog"
+            aria-modal="true"
             aria-label="Search products"
-            className="fixed inset-x-4 top-24 z-[70] mx-auto max-w-2xl rounded-[2rem] border border-border bg-surface-elevated shadow-2xl backdrop-blur-xl md:inset-x-auto"
+            className="fixed inset-x-4 top-24 z-[70] mx-auto max-w-2xl rounded-[2rem] border border-border bg-surface-elevated shadow-2xl outline-none backdrop-blur-xl md:inset-x-auto"
             initial={{ opacity: 0, y: -12, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -12, scale: 0.98 }}

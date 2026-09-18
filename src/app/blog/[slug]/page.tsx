@@ -1,5 +1,6 @@
 import { getBlogPostBySlug, getPublishedBlogPosts } from "@/lib/blog";
 import { PageContentSection } from "@/components/ui/page-shell";
+import { canonicalPath } from "@/lib/seo/canonical";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -20,6 +21,7 @@ export async function generateMetadata({ params }: BlogPostPageProps) {
   return {
     title: post.title,
     description: post.excerpt,
+    alternates: { canonical: canonicalPath(`/blog/${slug}`) },
   };
 }
 

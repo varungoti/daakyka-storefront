@@ -1,6 +1,7 @@
 import { SectionLandingPage } from "@/components/category/section-landing-page";
 import { getSiteImage } from "@/lib/media/get-site-image";
 import { getCategoryBySlug, getProducts } from "@/lib/products";
+import { canonicalPath } from "@/lib/seo/canonical";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
@@ -10,6 +11,7 @@ export const metadata: Metadata = {
   title: "School Uniforms",
   description:
     "Shirts, tunics, trousers, skirts, pinafores, made-to-measure blazers, sweaters, and sportswear for schools — by DAAKYKA Apparels, Pan India delivery.",
+  alternates: { canonical: canonicalPath("/school-uniforms") },
 };
 
 export default async function SchoolUniformsPage() {

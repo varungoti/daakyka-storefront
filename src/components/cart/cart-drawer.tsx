@@ -1,8 +1,9 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { Button, buttonClassNames } from "@/components/ui/button";
 import { useCart } from "@/context/cart-provider";
 import { useCurrency } from "@/context/currency-provider";
+import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { Minus, Plus, ShoppingBag, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -20,6 +21,7 @@ export function CartDrawer() {
     checkout,
   } = useCart();
   const { formatPrice } = useCurrency();
+  const panelRef = useFocusTrap<HTMLDivElement>(isOpen, closeCart, { lockScroll: true });
 
   return (
     <AnimatePresence>
@@ -35,9 +37,12 @@ export function CartDrawer() {
             onClick={closeCart}
           />
           <motion.aside
+            ref={panelRef}
+            tabIndex={-1}
             role="dialog"
+            aria-modal="true"
             aria-label="Shopping cart"
-            className="fixed inset-y-0 right-0 z-[70] flex w-full max-w-md flex-col bg-surface shadow-2xl"
+            className="fixed inset-y-0 right-0 z-[70] flex w-full max-w-md flex-col bg-surface shadow-2xl outline-none"
             initial={{ x: "100%" }}
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
@@ -73,8 +78,8 @@ export function CartDrawer() {
                   <p className="mt-2 text-sm text-muted">
                     Explore premium scrubs built for long shifts.
                   </p>
-                  <Link href="/shop" onClick={closeCart} className="mt-6">
-                    <Button>Shop All Scrubs</Button>
+                  <Link href="/shop" onClick={closeCart} className={buttonClassNames({ className: "mt-6" })}>
+                    Shop All Scrubs
                   </Link>
                 </div>
               ) : (

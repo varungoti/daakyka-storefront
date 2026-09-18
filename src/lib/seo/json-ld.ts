@@ -9,7 +9,7 @@ export function organizationJsonLd() {
     name: brand.name,
     legalName: brand.legalName,
     url: siteUrl,
-    logo: `${siteUrl}/favicon.ico`,
+    logo: `${siteUrl}/icon.svg`,
     description: brand.description,
     address: {
       "@type": "PostalAddress",

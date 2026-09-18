@@ -8,6 +8,7 @@ import { GlobalJsonLd } from "@/components/seo/global-json-ld";
 import { isIndexingAllowed } from "@/lib/env";
 import { getNavigation } from "@/lib/navigation/get-navigation";
 import { getSetting, isPageEnabled, isSaleEnabled } from "@/lib/settings";
+import { canonicalPath } from "@/lib/seo/canonical";
 import "./globals.css";
 
 const outfit = Outfit({
@@ -24,16 +25,34 @@ const dmSans = DM_Sans({
   display: "swap",
 });
 
+const SITE_DESCRIPTION =
+  "Expertly designed, meticulously crafted. Hospital linens, medical scrubs, school uniforms, and corporate wear by Babaji Enterprises — Hyderabad, Pan India delivery.";
+
 export async function generateMetadata(): Promise<Metadata> {
   const allowIndex = isIndexingAllowed();
 
   return {
+    metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://daakyka.com"),
     title: {
       default: "DAAKYKA Apparels | Quality Uniforms & Linens for Pan India",
       template: "%s | DAAKYKA Apparels",
     },
-    description:
-      "Expertly designed, meticulously crafted. Hospital linens, medical scrubs, school uniforms, and corporate wear by Babaji Enterprises — Hyderabad, Pan India delivery.",
+    description: SITE_DESCRIPTION,
+    alternates: {
+      canonical: canonicalPath("/"),
+    },
+    openGraph: {
+      type: "website",
+      siteName: "DAAKYKA Apparels",
+      title: "DAAKYKA Apparels | Quality Uniforms & Linens for Pan India",
+      description: SITE_DESCRIPTION,
+      locale: "en_IN",
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: "DAAKYKA Apparels | Quality Uniforms & Linens for Pan India",
+      description: SITE_DESCRIPTION,
+    },
     robots: allowIndex
       ? { index: true, follow: true }
       : { index: false, follow: false },

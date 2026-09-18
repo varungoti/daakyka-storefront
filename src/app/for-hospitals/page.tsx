@@ -1,6 +1,7 @@
 import { SectionLandingPage } from "@/components/category/section-landing-page";
 import { getSiteImage } from "@/lib/media/get-site-image";
 import { getCategoryBySlug, getProducts } from "@/lib/products";
+import { canonicalPath } from "@/lib/seo/canonical";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
@@ -10,6 +11,7 @@ export const metadata: Metadata = {
   title: "For Hospitals",
   description:
     "Scrubs, lab coats, surgical gowns, patient gowns, staff uniforms, and hospital linens by DAAKYKA Apparels — Pan India delivery and institutional pricing.",
+  alternates: { canonical: canonicalPath("/for-hospitals") },
 };
 
 export default async function ForHospitalsPage() {

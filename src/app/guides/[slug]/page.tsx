@@ -1,6 +1,7 @@
 import { SeoLandingLayout } from "@/components/seo/seo-landing-layout";
 import { seoLandingPages, type SeoLandingPageConfig } from "@/data/seo-landing-pages";
 import { getBestSellers, getProductsByCategory } from "@/lib/products";
+import { canonicalPath } from "@/lib/seo/canonical";
 import { isPageEnabled } from "@/lib/settings";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
@@ -46,7 +47,11 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const { slug } = await params;
   const page = seoLandingPages.find((p) => p.slug === slug);
   if (!page) return { title: "Not Found" };
-  return { title: page.title, description: page.metaDescription };
+  return {
+    title: page.title,
+    description: page.metaDescription,
+    alternates: { canonical: canonicalPath(`/guides/${slug}`) },
+  };
 }
 
 export default async function SeoGuidePage({ params }: PageProps) {
