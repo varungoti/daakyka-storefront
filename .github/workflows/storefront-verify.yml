@@ -120,6 +120,21 @@ jobs:
           PLAYWRIGHT_BASE_URL: http://localhost:3000
           DISABLE_RATE_LIMIT: "1"
 
+      - name: Accessibility tests
+        run: npm run test:a11y
+        env:
+          PLAYWRIGHT_BASE_URL: http://localhost:3000
+
+      # Reuses the server already built and started above rather than a
+      # second full build — Lighthouse mobile scores are noisy on shared
+      # runners, so lighthouserc.js gates performance at a floor measured
+      # locally (see docs/PERFORMANCE.md), not yet the master-plan target of
+      # 90; accessibility is gated at 90 to match the axe pass above.
+      - name: Lighthouse CI (mobile)
+        run: npm run test:lighthouse
+        env:
+          LHCI_BASE_URL: http://localhost:3000
+
   staging-probe:
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch'

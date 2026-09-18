@@ -49,6 +49,9 @@ yarn-error.log*
 # dogfood artifacts (screenshots, reports)
 /dogfood-output/
 
+# lighthouse-ci healthcheck/cache dir
+/.lighthouseci/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
