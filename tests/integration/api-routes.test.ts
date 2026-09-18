@@ -1,5 +1,6 @@
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { setNodeEnv } from "../helpers/env";
 import { GET as getProducts } from "@/app/api/products/route";
 import { GET as getHealth } from "@/app/api/health/route";
@@ -338,6 +339,64 @@ describe("API integration", () => {
         }),
       );
       assert.equal(response.status, 401);
+    });
+
+    function signedWebhookRequest(body: string, headers: Record<string, string> = {}) {
+      const hmac = createHmac("sha256", "test-webhook-secret").update(body, "utf8").digest("base64");
+      return new Request("http://localhost/api/webhooks/shopify/orders", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-shopify-hmac-sha256": hmac,
+          "x-shopify-topic": "orders/create",
+          ...headers,
+        },
+        body,
+      });
+    }
+
+    it("rejects a validly-signed payload with an unrecognized topic", async () => {
+      process.env.SHOPIFY_WEBHOOK_SECRET = "test-webhook-secret";
+      setNodeEnv("production");
+      const body = JSON.stringify({ id: 999002, email: "webhook@example.com" });
+      const response = await postShopifyWebhook(
+        signedWebhookRequest(body, { "x-shopify-topic": "customers/data_request" }),
+      );
+      assert.equal(response.status, 400);
+    });
+
+    it("rejects a validly-signed payload from an unexpected shop domain", async () => {
+      const originalDomain = process.env.NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN;
+      process.env.SHOPIFY_WEBHOOK_SECRET = "test-webhook-secret";
+      process.env.NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN = "daakyka.myshopify.com";
+      setNodeEnv("production");
+      try {
+        const body = JSON.stringify({ id: 999003, email: "webhook@example.com" });
+        const response = await postShopifyWebhook(
+          signedWebhookRequest(body, { "x-shopify-shop-domain": "attacker-store.myshopify.com" }),
+        );
+        assert.equal(response.status, 401);
+      } finally {
+        if (originalDomain === undefined) delete process.env.NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN;
+        else process.env.NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN = originalDomain;
+      }
+    });
+
+    it("accepts a validly-signed payload with a recognized topic and matching shop domain", async () => {
+      const originalDomain = process.env.NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN;
+      process.env.SHOPIFY_WEBHOOK_SECRET = "test-webhook-secret";
+      process.env.NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN = "daakyka.myshopify.com";
+      setNodeEnv("production");
+      try {
+        const body = JSON.stringify({ id: 999004, email: "webhook-ok@example.com" });
+        const response = await postShopifyWebhook(
+          signedWebhookRequest(body, { "x-shopify-shop-domain": "daakyka.myshopify.com" }),
+        );
+        assert.equal(response.status, 200);
+      } finally {
+        if (originalDomain === undefined) delete process.env.NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN;
+        else process.env.NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN = originalDomain;
+      }
     });
   });
 
