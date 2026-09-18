@@ -125,7 +125,7 @@ describe("generateImage (integration, fake OpenAI client + fake storage — no r
     const adminId = await findAnyAdminId();
     const pngB64 = (await tinyPngBuffer()).toString("base64");
 
-    await withEnv({ OPENAI_API_KEY: "test-key-not-real" }, async () => {
+    await withEnv({ OPENAI_API_KEY: "test-key-not-real", AI_IMAGE_DAILY_LIMIT: "999999" }, async () => {
       const asset = await generateImage(
         {
           preset: "product",
@@ -145,7 +145,7 @@ describe("generateImage (integration, fake OpenAI client + fake storage — no r
   });
 
   it("throws GenerationFailedError when the client returns no image data", async () => {
-    await withEnv({ OPENAI_API_KEY: "test-key-not-real" }, async () => {
+    await withEnv({ OPENAI_API_KEY: "test-key-not-real", AI_IMAGE_DAILY_LIMIT: "999999" }, async () => {
       await assert.rejects(
         () =>
           generateImage(
@@ -161,7 +161,7 @@ describe("generateImage (integration, fake OpenAI client + fake storage — no r
   });
 
   it("wraps a thrown client error as GenerationFailedError", async () => {
-    await withEnv({ OPENAI_API_KEY: "test-key-not-real" }, async () => {
+    await withEnv({ OPENAI_API_KEY: "test-key-not-real", AI_IMAGE_DAILY_LIMIT: "999999" }, async () => {
       await assert.rejects(
         () =>
           generateImage(

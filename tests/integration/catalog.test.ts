@@ -85,9 +85,14 @@ describe("catalog (Phase B3 + E1) integration", () => {
       assert.ok(product!.price > 0);
       assert.equal(product!.reviewCount, 0);
       assert.equal(product!.ratingAverage, 0);
-      // No ProductImage rows exist yet (AI image generation is a later
-      // phase) — mapping should fall back to the neutral placeholder.
-      assert.equal(product!.image, "/placeholder-product.svg");
+      // Falls back to the neutral placeholder when no ProductImage rows
+      // exist, or resolves to a real (possibly Phase E3 AI-generated)
+      // image otherwise — either way, mapping must always produce some
+      // valid, non-empty image reference.
+      assert.ok(
+        product!.image === "/placeholder-product.svg" || product!.image.startsWith("/cdn/"),
+        `expected a placeholder or /cdn/ image, got: ${product!.image}`,
+      );
 
       const variant = product!.variants!.find((v) => v.size && v.color);
       assert.ok(variant, "expected at least one variant with size + color");

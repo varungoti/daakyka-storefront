@@ -270,28 +270,57 @@ describe("planSlotJobs", () => {
   it("excludes a manifest slot once a MediaAsset exists for it, and includes it again once removed (resumability)", async () => {
     const targetSlot = "home.hero.1";
 
-    const before = await planSlotJobs(db);
-    assert.ok(before.some((j) => j.slot === targetSlot), "expected this environment to have no asset for the slot yet");
-
-    const asset = await db.mediaAsset.create({
-      data: {
-        key: `media/banner/e3-test/${randomUUID()}.webp`,
-        url: "https://fake-r2.test/e3-slot.webp",
-        usage: "BANNER",
-        source: "UPLOAD",
-        slot: targetSlot,
-      },
-    });
-
-    try {
-      const during = await planSlotJobs(db);
-      assert.ok(!during.some((j) => j.slot === targetSlot));
-    } finally {
-      await db.mediaAsset.delete({ where: { id: asset.id } });
+    // This slot may already carry a real asset in this environment (e.g. a
+    // completed Phase E3 generation run) — snapshot and clear it first so
+    // the test is self-sufficient regardless of ambient DB state, then
+    // restore it afterward instead of leaving a real slot empty.
+    const existing = await db.mediaAsset.findUnique({ where: { slot: targetSlot } });
+    if (existing) {
+      await db.mediaAsset.delete({ where: { id: existing.id } });
     }
 
-    const afterCleanup = await planSlotJobs(db);
-    assert.ok(afterCleanup.some((j) => j.slot === targetSlot), "slot must reappear once its asset is removed");
+    try {
+      const before = await planSlotJobs(db);
+      assert.ok(before.some((j) => j.slot === targetSlot), "expected this environment to have no asset for the slot yet");
+
+      const asset = await db.mediaAsset.create({
+        data: {
+          key: `media/banner/e3-test/${randomUUID()}.webp`,
+          url: "https://fake-r2.test/e3-slot.webp",
+          usage: "BANNER",
+          source: "UPLOAD",
+          slot: targetSlot,
+        },
+      });
+
+      try {
+        const during = await planSlotJobs(db);
+        assert.ok(!during.some((j) => j.slot === targetSlot));
+      } finally {
+        await db.mediaAsset.delete({ where: { id: asset.id } });
+      }
+
+      const afterCleanup = await planSlotJobs(db);
+      assert.ok(afterCleanup.some((j) => j.slot === targetSlot), "slot must reappear once its asset is removed");
+    } finally {
+      if (existing) {
+        await db.mediaAsset.create({
+          data: {
+            key: existing.key,
+            url: existing.url,
+            alt: existing.alt,
+            width: existing.width,
+            height: existing.height,
+            source: existing.source,
+            prompt: existing.prompt,
+            model: existing.model,
+            usage: existing.usage,
+            slot: existing.slot,
+            createdById: existing.createdById,
+          },
+        });
+      }
+    }
   });
 });
 
@@ -335,7 +364,7 @@ describe("executeJobs + writeRunReport (fake OpenAI client + fake storage — no
     const jobs: ImageJob[] = [categoryJob, productJob];
     const b64 = await tinyPngB64();
 
-    const result = await withEnv({ OPENAI_API_KEY: "test-key-not-real" }, () =>
+    const result = await withEnv({ OPENAI_API_KEY: "test-key-not-real", AI_IMAGE_DAILY_LIMIT: "999999" }, () =>
       executeJobs(jobs, {
         db,
         client: makeFakeOpenAIClient(b64),
@@ -399,7 +428,7 @@ describe("executeJobs + writeRunReport (fake OpenAI client + fake storage — no
       },
     };
 
-    const result = await withEnv({ OPENAI_API_KEY: "test-key-not-real" }, () =>
+    const result = await withEnv({ OPENAI_API_KEY: "test-key-not-real", AI_IMAGE_DAILY_LIMIT: "999999" }, () =>
       executeJobs([job], { db, client: failingClient, storage: makeFakeStorage() }),
     );
 
