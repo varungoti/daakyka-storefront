@@ -119,6 +119,16 @@ export function ProductsTable({
       setNotice(body?.error ?? `Couldn't ${action}.`);
       return;
     }
+    // adjust-price-pct can partially apply: rows that would push price
+    // past the product's compareAtPrice are skipped rather than silently
+    // corrupted or failing the whole batch — surface that here instead of
+    // dropping it (F6).
+    const body: { skipped?: { id: string; name: string; reason: string }[] } = await response.json().catch(() => ({}));
+    if (body.skipped && body.skipped.length > 0) {
+      const count = body.skipped.length;
+      const names = body.skipped.map((s) => s.name).join(", ");
+      setNotice(`${count} product${count === 1 ? "" : "s"} skipped (${body.skipped[0].reason}): ${names}`);
+    }
     setSelected(new Set());
     load();
   }
@@ -300,7 +310,12 @@ export function ProductsTable({
       </div>
 
       <div className="flex items-center justify-between text-sm text-muted">
-        <span>{total} products</span>
+        {/* F-03: `total` starts at 0, so rendering it unconditionally
+            raced the table body's own "Loading…" state and flashed "0
+            products" on every fresh navigation, before the same fetch
+            that fills the table had resolved. Gate it on the same
+            `loading` flag instead of introducing a second data source. */}
+        <span>{loading ? "Loading…" : `${total} products`}</span>
         <div className="flex items-center gap-2">
           <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold disabled:opacity-40">
             Previous

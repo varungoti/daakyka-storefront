@@ -30,15 +30,63 @@ function safeRevalidate(tag: string) {
   }
 }
 
+/**
+ * Builds the SKU-ownership lookup used by validateImportRows' "SKU already
+ * exists" warning and commitProductImport's cross-product SKU-move guard.
+ *
+ * Pulled out as a pure function (no Prisma types, no I/O) so the one
+ * defensive line that matters — a variant whose owning product can't be
+ * resolved is excluded rather than dereferenced — is directly and
+ * deterministically testable. See fetchValidationContext below for why
+ * that case is real, not hypothetical.
+ */
+export function buildSkuOwnership(
+  variants: { sku: string; productId: string }[],
+  productSlugById: Map<string, string>,
+): { existingSkus: Set<string>; skuOwner: Map<string, string> } {
+  return {
+    existingSkus: new Set(variants.map((v) => v.sku.toUpperCase())),
+    skuOwner: new Map(
+      variants
+        .map((v) => [v.sku.toUpperCase(), productSlugById.get(v.productId)] as const)
+        .filter((entry): entry is [string, string] => entry[1] !== undefined),
+    ),
+  };
+}
+
 async function fetchValidationContext() {
   const [categories, variants] = await Promise.all([
     db.category.findMany({ select: { slug: true } }),
-    db.productVariant.findMany({ select: { sku: true, product: { select: { slug: true } } } }),
+    db.productVariant.findMany({ select: { sku: true, productId: true } }),
   ]);
+
+  // Bug 3 (flaky "export round-trip" null-deref): this used to fetch
+  // `product: { select: { slug: true } } }` as a nested relation directly
+  // on the query above. Prisma's pg driver adapter resolves a to-one
+  // relation like that as a *second*, separate `SELECT ... WHERE id IN
+  // (...)` query rather than a single atomic SQL join (confirmed via
+  // query logging — relationLoadStrategy effectively falls back to
+  // "query" for @prisma/adapter-pg). ProductVariant.product is a required
+  // relation in the schema (onDelete: Cascade), but a concurrent delete of
+  // the owning product landing between those two queries still made
+  // Prisma resolve it to `null` at runtime — `v.product.slug` then threw.
+  // Roughly 1 admin CSV import/export run in 3 hit this under the
+  // integration suite's concurrent test files, each creating/deleting
+  // their own products against the same DB. Looking products up
+  // ourselves through an explicit id→slug map (and simply excluding a
+  // variant that doesn't resolve — see buildSkuOwnership) removes the
+  // unguarded access instead of relying on the relation's shape.
+  const productIds = Array.from(new Set(variants.map((v) => v.productId)));
+  const products =
+    productIds.length > 0 ? await db.product.findMany({ where: { id: { in: productIds } }, select: { id: true, slug: true } }) : [];
+  const productSlugById = new Map(products.map((p) => [p.id, p.slug]));
+
+  const { existingSkus, skuOwner } = buildSkuOwnership(variants, productSlugById);
+
   return {
     knownCategorySlugs: new Set(categories.map((c) => c.slug)),
-    existingSkus: new Set(variants.map((v) => v.sku.toUpperCase())),
-    skuOwner: new Map(variants.map((v) => [v.sku.toUpperCase(), v.product.slug])),
+    existingSkus,
+    skuOwner,
   };
 }
 

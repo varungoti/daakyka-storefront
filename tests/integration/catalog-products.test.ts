@@ -22,7 +22,7 @@ import {
   updateProduct,
 } from "@/lib/catalog/products";
 import { DuplicateVariantKeyError } from "@/lib/catalog/product-validation";
-import { commitProductImport, dryRunProductImport, exportProductsCsv } from "@/lib/catalog/product-import";
+import { buildSkuOwnership, commitProductImport, dryRunProductImport, exportProductsCsv } from "@/lib/catalog/product-import";
 import { IMPORT_COLUMNS, parseCsv, stringifyCsv } from "@/lib/catalog/csv";
 import { GET as getProducts, POST as postProduct } from "@/app/api/admin/products/route";
 import { DELETE as deleteProductRoute, GET as getProductRoute, PATCH as patchProductRoute } from "@/app/api/admin/products/[id]/route";
@@ -285,6 +285,38 @@ describe("products admin service (Phase B1)", () => {
     assert.equal((await db.product.findUnique({ where: { id: b.id } }))?.status, "ARCHIVED");
   });
 
+  it("performBulkAction's adjust-price-pct skips a product that would push price past its compareAtPrice, applies the rest, and reports the skip (F6)", async () => {
+    const unique = randomUUID().slice(0, 8);
+    // No compareAtPrice at all — nothing to violate, a big bump applies cleanly.
+    const unguarded = await createProduct({ name: `Bulk PctUnguarded ${unique}`, categoryId, price: 100 }, adminId);
+    // compareAtPrice close enough to price that a +50% bump would land at
+    // or above it — createProduct/updateProduct would reject this shape
+    // via InvalidCompareAtPriceError; the bulk path must enforce the same
+    // invariant instead of writing a corrupt price straight to the DB.
+    const guarded = await createProduct(
+      { name: `Bulk PctGuarded ${unique}`, categoryId, price: 100, compareAtPrice: 120 },
+      adminId,
+    );
+    createdProductIds.push(unguarded.id, guarded.id);
+
+    const result = await performBulkAction({ action: "adjust-price-pct", ids: [unguarded.id, guarded.id], percent: 50 }, adminId);
+
+    assert.equal(result.affected, 1, "only the unguarded product should count as affected");
+    assert.equal(result.skipped?.length, 1);
+    assert.equal(result.skipped?.[0].id, guarded.id);
+    assert.equal(result.skipped?.[0].name, guarded.name);
+    assert.match(result.skipped?.[0].reason ?? "", /compare-at price/i);
+
+    const unguardedAfter = await db.product.findUnique({ where: { id: unguarded.id } });
+    assert.equal(Number(unguardedAfter?.price), 150);
+
+    // The skipped row must be left completely untouched — not clamped,
+    // not partially applied.
+    const guardedAfter = await db.product.findUnique({ where: { id: guarded.id } });
+    assert.equal(Number(guardedAfter?.price), 100);
+    assert.equal(Number(guardedAfter?.compareAtPrice), 120);
+  });
+
   it("import dry-run then commit creates products and variants, and re-running commit updates instead of duplicating", async () => {
     const unique = randomUUID().slice(0, 8);
     const slug = `import-test-${unique}`;
@@ -352,6 +384,31 @@ describe("products admin service (Phase B1)", () => {
     // all of them, creating none.
     assert.equal(recommit.productsCreated, 0);
     assert.ok(recommit.productsUpdated >= 1);
+  });
+
+  it("buildSkuOwnership excludes a variant whose owning product can't be resolved, instead of crashing (Bug 3 regression)", () => {
+    // Deterministic reproduction of the "export round-trip" flake: with
+    // the pg driver adapter, product-import.ts's fetchValidationContext
+    // resolves each ProductVariant's owning product via a *second*,
+    // separate `SELECT ... WHERE id IN (...)` query rather than a single
+    // atomic SQL join. A product deleted between those two queries left a
+    // variant whose `productId` doesn't resolve — previously that crashed
+    // with a null-deref (`v.product.slug`) roughly 1 run in 3 under the
+    // integration suite's concurrent test files. This exercises the exact
+    // same shape directly, with no DB and no timing dependency, so the
+    // regression can't flake either way.
+    const productSlugById = new Map([["prod-1", "product-one"]]);
+    const variants = [
+      { sku: "dk-a", productId: "prod-1" },
+      { sku: "dk-b", productId: "prod-deleted-mid-query" },
+    ];
+
+    const { existingSkus, skuOwner } = buildSkuOwnership(variants, productSlugById);
+
+    assert.deepEqual([...existingSkus].sort(), ["DK-A", "DK-B"]);
+    assert.equal(skuOwner.get("DK-A"), "product-one");
+    assert.equal(skuOwner.has("DK-B"), false, "a variant whose product can't be resolved must be excluded, never dereferenced");
+    assert.equal(skuOwner.size, 1);
   });
 });
 

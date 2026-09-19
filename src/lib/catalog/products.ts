@@ -822,14 +822,33 @@ export async function isSlugAvailable(slug: string, excludeId?: string): Promise
 // Bulk actions
 // ---------------------------------------------------------------------------
 
+export interface BulkActionSkippedProduct {
+  id: string;
+  name: string;
+  reason: string;
+}
+
 export interface BulkActionResult {
   action: BulkActionInput["action"];
   affected: number;
+  /** Rows the action matched but deliberately left untouched — currently
+   * only `adjust-price-pct`, when the computed price would violate the
+   * `compareAtPrice > price` invariant (F6). The batch still succeeds for
+   * every other row; callers should surface this list rather than drop it. */
+  skipped?: BulkActionSkippedProduct[];
 }
 
 export async function performBulkAction(input: BulkActionInput, userId: string): Promise<BulkActionResult> {
-  const products = await db.product.findMany({ where: { id: { in: input.ids } }, select: { id: true, slug: true, price: true } });
+  const products = await db.product.findMany({
+    where: { id: { in: input.ids } },
+    select: { id: true, slug: true, name: true, price: true, compareAtPrice: true },
+  });
   if (products.length === 0) return { action: input.action, affected: 0 };
+
+  const skipped: BulkActionSkippedProduct[] = [];
+  // Products actually mutated by this call — defaults to every matched
+  // product, narrowed below for adjust-price-pct's per-row skip.
+  let changed = products;
 
   switch (input.action) {
     case "publish": {
@@ -846,12 +865,28 @@ export async function performBulkAction(input: BulkActionInput, userId: string):
       break;
     }
     case "adjust-price-pct": {
-      await db.$transaction(
-        products.map((p) => {
-          const next = Math.max(0.01, Number(p.price) * (1 + input.percent / 100));
-          return db.product.update({ where: { id: p.id }, data: { price: Math.round(next * 100) / 100 } });
-        }),
-      );
+      const updatable: { id: string; nextPrice: number }[] = [];
+      for (const p of products) {
+        const next = Math.max(0.01, Number(p.price) * (1 + input.percent / 100));
+        const nextPrice = Math.round(next * 100) / 100;
+        const compareAtPrice = p.compareAtPrice != null ? Number(p.compareAtPrice) : null;
+        // Same invariant createProduct/updateProduct enforce as
+        // InvalidCompareAtPriceError (compareAtPrice must stay strictly
+        // greater than price) — a bulk "+20%" run must not be allowed to
+        // silently break it and corrupt the storefront's `onSale` flag
+        // (F6). Skip the offending row and report it instead of failing
+        // — or worse, partially applying — the whole batch.
+        if (compareAtPrice != null && compareAtPrice <= nextPrice) {
+          skipped.push({ id: p.id, name: p.name, reason: "price would exceed compare-at price" });
+          continue;
+        }
+        updatable.push({ id: p.id, nextPrice });
+      }
+      if (updatable.length > 0) {
+        await db.$transaction(updatable.map((p) => db.product.update({ where: { id: p.id }, data: { price: p.nextPrice } })));
+      }
+      const skippedIds = new Set(skipped.map((s) => s.id));
+      changed = products.filter((p) => !skippedIds.has(p.id));
       break;
     }
     case "set-stock": {
@@ -864,14 +899,19 @@ export async function performBulkAction(input: BulkActionInput, userId: string):
     userId,
     action: "bulk-update",
     entity: "product",
-    metadata: { bulkAction: input.action, count: products.length, ids: input.ids },
+    metadata: {
+      bulkAction: input.action,
+      count: changed.length,
+      ids: input.ids,
+      ...(skipped.length > 0 ? { skippedIds: skipped.map((s) => s.id) } : {}),
+    },
   });
 
   safeRevalidate(PRODUCTS_CACHE_TAG);
-  for (const p of products) safeRevalidate(productCacheTag(p.slug));
+  for (const p of changed) safeRevalidate(productCacheTag(p.slug));
   if (input.action === "move-category") safeRevalidate(CATEGORIES_CACHE_TAG);
 
-  return { action: input.action, affected: products.length };
+  return { action: input.action, affected: changed.length, skipped: skipped.length > 0 ? skipped : undefined };
 }
 
 // ---------------------------------------------------------------------------

@@ -446,30 +446,35 @@ describe("ORDER_REQUEST throttle — Finding B (release-hardening)", () => {
   // src/app/api/checkout/route.ts).
 });
 
+/**
+ * Shared by the /verify, /webhooks/razorpay, and F3-race describe blocks
+ * below: a PENDING_PAYMENT RAZORPAY order with one line item and a
+ * razorpayOrderId already attached, as if /api/checkout had already run.
+ */
+async function createPendingRazorpayOrder(stock: number) {
+  const { variant } = await createActiveProductWithVariant({ stock });
+  const order = await createOrderFromCart({
+    items: [{ variantId: variant.id, quantity: 1 }],
+    email: "razorpay-buyer@example.com",
+    shippingAddress: {
+      name: "Buyer",
+      line1: "1 Test Street",
+      city: "Hyderabad",
+      state: "Telangana",
+      pincode: "500032",
+      country: "IN",
+    },
+    paymentMethod: "RAZORPAY",
+  });
+  createdOrderIds.push(order.id);
+
+  const razorpayOrderId = `order_${randomUUID().slice(0, 12)}`;
+  await db.order.update({ where: { id: order.id }, data: { razorpayOrderId } });
+
+  return { order, variant, razorpayOrderId };
+}
+
 describe("POST /api/checkout/verify (Phase D3)", () => {
-  async function createPendingRazorpayOrder(stock: number) {
-    const { variant } = await createActiveProductWithVariant({ stock });
-    const order = await createOrderFromCart({
-      items: [{ variantId: variant.id, quantity: 1 }],
-      email: "razorpay-buyer@example.com",
-      shippingAddress: {
-        name: "Buyer",
-        line1: "1 Test Street",
-        city: "Hyderabad",
-        state: "Telangana",
-        pincode: "500032",
-        country: "IN",
-      },
-      paymentMethod: "RAZORPAY",
-    });
-    createdOrderIds.push(order.id);
-
-    const razorpayOrderId = `order_${randomUUID().slice(0, 12)}`;
-    await db.order.update({ where: { id: order.id }, data: { razorpayOrderId } });
-
-    return { order, variant, razorpayOrderId };
-  }
-
   it("rejects a tampered signature and leaves the order unpaid", async () => {
     const { order, razorpayOrderId } = await createPendingRazorpayOrder(5);
     const paymentId = `pay_${randomUUID().slice(0, 12)}`;
@@ -590,6 +595,71 @@ describe("POST /api/webhooks/razorpay (Phase D3)", () => {
     // Started at 5, ordered 2 — decremented exactly once across both
     // webhook deliveries.
     assert.equal(updatedVariant?.stock, 3);
+  });
+});
+
+describe("verify + webhook concurrency (F3 fix)", () => {
+  // Release-hardening Finding F3: /api/checkout/verify and the Razorpay
+  // webhook both read order.status outside any lock, then independently
+  // decide whether to decrement stock. If the browser's /verify call and
+  // Razorpay's webhook delivery for the *same* payment both observe
+  // "not yet PAID" before either commits, the old code let both
+  // transactions decrement stock and flip status to PAID — this test
+  // fires both real route handlers at once (not mocks) to reproduce that
+  // exact race and prove the atomic status-flip gate closes it.
+  it("a concurrent /verify call and webhook delivery for the same payment decrement stock exactly once and leave the order PAID", async () => {
+    const { order, variant, razorpayOrderId } = await createPendingRazorpayOrder(5);
+    const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+    const validSignature = createHmac("sha256", TEST_KEY_SECRET).update(`${razorpayOrderId}|${paymentId}`).digest("hex");
+
+    const webhookBody = JSON.stringify({
+      event: "payment.captured",
+      payload: { payment: { entity: { id: paymentId, order_id: razorpayOrderId, status: "captured" } } },
+    });
+
+    await withEnv({ RAZORPAY_KEY_SECRET: TEST_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {
+      const webhookSignature = createHmac("sha256", TEST_WEBHOOK_SECRET).update(webhookBody, "utf8").digest("hex");
+
+      // Promise.all, not sequential awaits: both handlers start from the
+      // same PENDING_PAYMENT row and must each do several awaited DB round
+      // trips (rate limit / signature checks, the order lookup) before
+      // reaching their own transaction — so both are guaranteed to observe
+      // the order as not-yet-PAID before either commits, exactly like the
+      // real browser-callback-vs-webhook race.
+      const [verifyResponse, webhookResponse] = await Promise.all([
+        verifyRoute(
+          jsonRequest("http://localhost/api/checkout/verify", {
+            orderNumber: order.number,
+            razorpayPaymentId: paymentId,
+            razorpayOrderId,
+            razorpaySignature: validSignature,
+          }),
+        ),
+        webhookRoute(rawRequest("http://localhost/api/webhooks/razorpay", webhookBody, { "x-razorpay-signature": webhookSignature })),
+      ]);
+
+      // Both callers must see success regardless of which one actually won
+      // the race — the browser gets a normal 200, and Razorpay must never
+      // see a failure that would trigger a webhook retry storm.
+      assert.equal(verifyResponse.status, 200);
+      const verifyData = (await verifyResponse.json()) as { ok: boolean };
+      assert.equal(verifyData.ok, true);
+
+      assert.equal(webhookResponse.status, 200);
+      const webhookData = (await webhookResponse.json()) as { ok: boolean };
+      assert.equal(webhookData.ok, true);
+    });
+
+    const dbOrder = await db.order.findUnique({ where: { id: order.id } });
+    assert.equal(dbOrder?.status, "PAID");
+    assert.equal(dbOrder?.razorpayPaymentId, paymentId);
+
+    const updatedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
+    // Started at stock 5, one unit ordered — must be decremented exactly
+    // once even though /verify and the webhook both ran concurrently for
+    // the same payment. Before the F3 fix this landed on 3 (decremented
+    // twice, one per caller).
+    assert.equal(updatedVariant?.stock, 4);
   });
 });
 

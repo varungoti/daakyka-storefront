@@ -14,8 +14,18 @@ import { verifyWebhookSignature } from "@/lib/payments/razorpay";
  * Idempotent on the Razorpay payment id, mirroring the existing Shopify
  * order webhook's dedupe-by-externalId check (see
  * src/app/api/webhooks/shopify/orders/route.ts): an order already marked
- * PAID with this payment id is left alone rather than reprocessed (so
- * stock is never decremented twice for the same payment).
+ * PAID is left alone rather than reprocessed (so stock is never
+ * decremented twice for the same payment).
+ *
+ * F3 fix: this webhook (including a redelivery of the same event) can run
+ * concurrently with /api/checkout/verify for the same order. The PAID
+ * transition itself is the atomic gate — a conditional `updateMany({
+ * where: { status: { not: "PAID" } } })` inside the transaction — and
+ * stock is only ever decremented by whichever caller's `updateMany`
+ * actually affects a row. The loser no-ops (no stock touched, no
+ * duplicate notification) and this handler still returns 200 to Razorpay
+ * so it doesn't retry forever. Keep this consistent with
+ * src/app/api/checkout/verify/route.ts's transaction shape.
  */
 
 interface RazorpayWebhookPayload {
@@ -35,13 +45,30 @@ async function handlePaymentCaptured(payment: { id?: string; order_id?: string }
   });
   if (!order) return;
 
-  // Idempotency: already reconciled (via /verify or an earlier delivery
-  // of this same webhook event) with this exact payment id.
-  if (order.status === "PAID" && order.razorpayPaymentId === payment.id) return;
+  // Fast path only — NOT the correctness guarantee. This read happens
+  // outside any lock, so it can be stale the instant this webhook
+  // (original delivery or a redelivery) races a concurrent /verify call.
+  // The real gate is the conditional `updateMany` inside the transaction
+  // below (F3): only whichever caller actually flips the row to PAID may
+  // decrement stock.
   if (order.status === "PAID") return;
 
   let stockConflict = false;
+  let wonTransition = false;
   await db.$transaction(async (tx) => {
+    // Atomic gate: `status: { not: "PAID" }` makes this a compare-and-swap
+    // on the row itself. If a concurrent /verify call (or an earlier
+    // delivery of this same webhook event) already flipped it to PAID,
+    // this affects 0 rows and we skip stock decrement entirely below —
+    // the loser must never touch stock a second time for the same
+    // payment.
+    const transition = await tx.order.updateMany({
+      where: { id: order.id, status: { not: "PAID" } },
+      data: { status: "PAID", razorpayPaymentId: payment.id },
+    });
+    wonTransition = transition.count === 1;
+    if (!wonTransition) return;
+
     for (const item of order.items) {
       if (!item.variantId) continue;
       const result = await tx.productVariant.updateMany({
@@ -51,19 +78,26 @@ async function handlePaymentCaptured(payment: { id?: string; order_id?: string }
       if (result.count === 0) stockConflict = true;
     }
 
-    await tx.order.update({
-      where: { id: order.id },
-      data: {
-        status: "PAID",
-        razorpayPaymentId: payment.id,
-        adminNotes: stockConflict
-          ? [order.adminNotes, "STOCK CONFLICT: manual review needed — an item sold out between order creation and payment."]
-              .filter(Boolean)
-              .join("\n")
-          : order.adminNotes,
-      },
-    });
+    if (stockConflict) {
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          adminNotes: [order.adminNotes, "STOCK CONFLICT: manual review needed — an item sold out between order creation and payment."]
+            .filter(Boolean)
+            .join("\n"),
+        },
+      });
+    }
   });
+
+  if (!wonTransition) {
+    // Lost the race to /verify (or an earlier delivery of this same
+    // webhook event): the order is already PAID and stock was already
+    // decremented exactly once by the winner. No-op cleanly — the caller
+    // (POST below) still returns 200 so Razorpay doesn't retry forever —
+    // and skip the notification so the customer isn't emailed twice.
+    return;
+  }
 
   if (stockConflict) {
     await db.adminNotification
