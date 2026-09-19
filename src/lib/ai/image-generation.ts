@@ -9,6 +9,7 @@ import {
   type PromptFields,
   type PromptPreset,
 } from "@/lib/ai/prompt-presets";
+import { isUploadOnlySlot } from "@/data/media/image-manifest";
 import { db } from "@/lib/db";
 import {
   defaultStorageDeps,
@@ -63,6 +64,15 @@ export class GenerationFailedError extends Error {
   constructor(message = "AI image generation failed") {
     super(message);
     this.name = "GenerationFailedError";
+  }
+}
+
+export class SlotNotAiGeneratableError extends Error {
+  constructor(slot: string) {
+    super(
+      `The "${slot}" slot depicts a real person or a real company's trademark and can only be set by uploading the real image — it is never AI-generated.`,
+    );
+    this.name = "SlotNotAiGeneratableError";
   }
 }
 
@@ -139,8 +149,12 @@ export interface GenerateImageDeps {
  * uploaded image (via `saveMediaAsset`), and records its prompt/model on
  * the resulting `MediaAsset`. Enforces the `ai:generate` daily cap before
  * ever calling OpenAI, so a request that would exceed it never spends
- * quota. Callers are responsible for the `ai:generate` permission check
- * and audit logging (see the API route).
+ * quota. Also refuses (`SlotNotAiGeneratableError`) any `input.slot` marked
+ * `uploadOnly` in the image manifest (real founder portraits, real client
+ * logos) — enforced here, server-side, rather than only hiding the
+ * "Generate with AI" button in the admin UI, since the UI check alone
+ * wouldn't stop a direct API call. Callers are responsible for the
+ * `ai:generate` permission check and audit logging (see the API route).
  */
 export async function generateImage(
   input: GenerateImageInput,
@@ -148,6 +162,10 @@ export async function generateImage(
 ): Promise<MediaAsset> {
   if (!isImageGenerationConfigured()) {
     throw new ImageGenerationNotConfiguredError();
+  }
+
+  if (isUploadOnlySlot(input.slot)) {
+    throw new SlotNotAiGeneratableError(input.slot as string);
   }
 
   const limit = getDailyLimit();

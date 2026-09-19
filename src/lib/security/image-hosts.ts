@@ -12,10 +12,27 @@
  * doesn't resolve tsconfig path aliases the way the main Next.js app
  * build does.
  */
+/**
+ * `daakyka.com` was removed from this list (2026-09-20): it hosted the
+ * founder photos, product-design collage, and client-trust-logo images
+ * that `src/data/media/catalog.ts` used to hotlink directly, but the
+ * domain is unreachable from this environment (DNS resolves; every TCP
+ * connect attempt times out — see the doc comment at the top of
+ * catalog.ts for how that was verified). Those assets are now served
+ * either as local placeholders or through the R2-backed `/cdn/...` route
+ * via the image manifest (src/data/media/image-manifest.ts), so nothing
+ * left in this app depends on `daakyka.com` being a trusted image host —
+ * confirmed by grepping every reference to it (the only other one,
+ * src/app/admin/(panel)/seo/page.tsx, uses it as plain JSON-LD example
+ * text, never as an image `src` or through this allowlist). If DNS is
+ * ever repointed so `daakyka.com` becomes this storefront's own
+ * production domain, that's still fine without re-adding it here: this
+ * list is for *remote* image hosts, and a same-origin request never
+ * consults it.
+ */
 export const TRUSTED_IMAGE_HOSTS = [
   "images.unsplash.com",
   "images.pexels.com",
-  "daakyka.com",
   "cdn.shopify.com",
 ] as const;
 

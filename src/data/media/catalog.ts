@@ -1,6 +1,26 @@
 /**
  * Curated medical scrub & institutional apparel imagery.
- * Priority: daakyka.com brand/uniform assets, then Pexels/Unsplash scrub-specific photos.
+ *
+ * Generic scene/product photography below (`daakykaMedia.hospitalUniforms`,
+ * `.schoolUniforms`, `.institutionalShowcase`, `.productDesigns`) used to
+ * hotlink directly to https://daakyka.com/images/*.jpg. That domain is
+ * unreachable from this environment — DNS resolves to several IPv4
+ * addresses, but every TCP connect attempt times out on every one of them,
+ * on both port 80 and 443, confirmed independently via curl and a
+ * .NET/PowerShell socket test (ruling out a client-specific quirk like the
+ * documented R2 TLS issue in src/lib/storage/r2.ts, where the TCP/TLS
+ * handshake itself succeeds). These fields now point at local neutral
+ * placeholders instead, so nothing site-wide renders a broken image box.
+ *
+ * Founder portraits and real client logos are NOT here — real people and
+ * real trademarks must never be a hardcoded hotlink (or an AI-generated
+ * substitute). They're admin-managed via the image manifest instead — see
+ * `about.founder.*` / `about.client.*` in src/data/media/image-manifest.ts,
+ * read through `getSiteImage`/`getSiteImages` from src/app/about/page.tsx
+ * and src/components/brand/client-logos-strip.tsx.
+ *
+ * Priority for the imagery that IS still here: Pexels/Unsplash scrub-
+ * specific photos (`scrubMedia`), then the local placeholders above.
  */
 
 /** Tuned widths for Lighthouse — cards ~560, PDP gallery ~800, hero ~960 */
@@ -20,7 +40,16 @@ export function unsplashPhoto(path: string, width: number = imageWidths.card) {
   return `https://images.unsplash.com/${path}?auto=format&fit=crop&w=${width}&q=80`;
 }
 
+/**
+ * Appends/replaces a `?w=` resize hint — the convention Pexels/Unsplash
+ * both accept on their CDN URLs. A no-op for a local/same-origin path
+ * (`/placeholder-*.svg` etc.): those aren't served by a resizing CDN, and
+ * next/image resolves its own `_next/image?url=...&w=...` for local
+ * assets, so appending a stray `?w=` here would just become part of the
+ * literal (and wrong) filename it looks up.
+ */
 export function withImageWidth(url: string, width: number): string {
+  if (url.startsWith("/")) return url;
   if (url.includes("w=")) {
     return url.replace(/w=\d+/, `w=${width}`);
   }
@@ -28,50 +57,23 @@ export function withImageWidth(url: string, width: number): string {
   return `${url}${separator}w=${width}`;
 }
 
-export function daakykaAsset(path: string) {
-  return `https://daakyka.com/${path.replace(/^\//, "")}`;
-}
-
-/** Official brand assets from https://daakyka.com */
+/**
+ * Generic uniform/manufacturing scene photography — NOT real, identifiable
+ * people or trademarks (contrast with the founder portraits and client
+ * logos, which are admin-managed via the image manifest; see the file
+ * doc comment above). Local placeholders until real photography (or an
+ * AI-generated stand-in via the `hospital-scene`/`school-scene` manifest
+ * presets) replaces them.
+ */
 export const daakykaMedia = {
-  logo: daakykaAsset("logo/logo.jpg"),
   /** Product design collage — scrubs, hospital linen, institutional uniforms */
-  productDesigns: daakykaAsset("images/why.jpg"),
+  productDesigns: "/placeholder-scene.svg",
   /** Healthcare & hospital uniform manufacturing showcase */
-  hospitalUniforms: daakykaAsset("images/20.jpg"),
+  hospitalUniforms: "/placeholder-scene.svg",
   /** School & sports uniform production */
-  schoolUniforms: daakykaAsset("images/21.jpg"),
+  schoolUniforms: "/placeholder-scene.svg",
   /** Institutional apparel & linen quality showcase */
-  institutionalShowcase: daakykaAsset("images/12.jpg"),
-  uniformShowcase: [
-    daakykaAsset("images/why.jpg"),
-    daakykaAsset("images/20.jpg"),
-    daakykaAsset("images/21.jpg"),
-    daakykaAsset("images/12.jpg"),
-  ],
-  founders: {
-    kamal: daakykaAsset("owner/kamal.jpg"),
-    dianeshree: daakykaAsset("owner/dianeshree.jpg"),
-  },
-  clientLogos: [
-    { name: "KIMS Hospitals", src: daakykaAsset("images/13.jpg") },
-    { name: "Pristyn Care", src: daakykaAsset("images/14.jpg") },
-    { name: "RENOVA Hospitals", src: daakykaAsset("images/3.jpg") },
-    { name: "Lotus Women & Children's Hospital", src: daakykaAsset("images/16.jpg") },
-    { name: "Chitral Hospital", src: daakykaAsset("images/19.jpg") },
-    { name: "MGM", src: daakykaAsset("images/15.jpg") },
-    { name: "GAR", src: daakykaAsset("images/7.jpg") },
-    { name: "ASSA ABLOY", src: daakykaAsset("images/2.jpg") },
-    { name: "Phenom", src: daakykaAsset("images/9.jpg") },
-    { name: "Pallavi International School", src: daakykaAsset("images/10.jpg") },
-    { name: "Delhi Public School", src: daakykaAsset("images/11.jpg") },
-    { name: "Meluha International School", src: daakykaAsset("images/8.jpg") },
-    { name: "Oasis Public School", src: daakykaAsset("images/17.jpg") },
-    { name: "Rockwell Public School", src: daakykaAsset("images/6.jpg") },
-    { name: "NRIS", src: daakykaAsset("images/1.jpg") },
-    { name: "Quick Smart Wash", src: daakykaAsset("images/4.jpg") },
-    { name: "TOS Winflora Residency", src: daakykaAsset("images/5.jpg") },
-  ],
+  institutionalShowcase: "/placeholder-scene.svg",
 } as const;
 
 /** People wearing medical scrubs / scrub suits — verified stock IDs */

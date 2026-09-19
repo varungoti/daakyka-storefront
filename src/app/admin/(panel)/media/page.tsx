@@ -51,6 +51,7 @@ export default async function AdminMediaPage() {
     aspect: entry.aspect,
     fields: entry.fields,
     current: currentImages[entry.slot] ?? null,
+    uploadOnly: entry.uploadOnly,
   }));
 
   return (
@@ -70,5 +71,6 @@ export default async function AdminMediaPage() {
 function groupForSlot(slot: string): string {
   if (slot.startsWith("home.")) return "Homepage";
   if (slot.startsWith("size-guide.")) return "Size Guide";
+  if (slot.startsWith("about.")) return "About Page";
   return "Content Pages";
 }

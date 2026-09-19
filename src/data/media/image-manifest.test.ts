@@ -3,12 +3,14 @@ import assert from "node:assert/strict";
 import { MediaUsage } from "@/generated/prisma/client";
 import type { AspectRatio, PromptPreset } from "@/lib/ai/prompt-presets";
 import {
+  ABOUT_CLIENT_LOGOS,
   IMAGE_MANIFEST,
   aspectClassName,
   blogPostImageSlot,
   categoryImageSlot,
   findDuplicateSlots,
   isManifestSlot,
+  isUploadOnlySlot,
   placeholderForAspect,
   toGenerationAspect,
   type ImageManifestEntry,
@@ -70,11 +72,17 @@ describe("IMAGE_MANIFEST structure", () => {
       "home.band.school",
       "our-story.hero",
       "about.hero",
+      "about.founder.kamal",
+      "about.founder.dianeshree",
+      "about.process",
       "bulk-orders.hero",
       "contact.banner",
       "size-guide.how-to-measure",
     ]) {
       assert.ok(slots.has(required), `missing required slot: ${required}`);
+    }
+    for (const client of ABOUT_CLIENT_LOGOS) {
+      assert.ok(slots.has(client.slot), `missing required client logo slot: ${client.slot}`);
     }
   });
 
@@ -151,5 +159,53 @@ describe("dynamic slot helpers", () => {
       assert.ok(!entry.slot.startsWith("category."));
       assert.ok(!entry.slot.startsWith("blog.post."));
     }
+  });
+});
+
+describe("ABOUT_CLIENT_LOGOS", () => {
+  it("lists at least the institutional clients from the plan, each with a non-blank name", () => {
+    assert.ok(ABOUT_CLIENT_LOGOS.length >= 10);
+    for (const client of ABOUT_CLIENT_LOGOS) {
+      assert.ok(client.name.trim().length > 0);
+      assert.match(client.slot, /^about\.client\./);
+    }
+  });
+
+  it("has no duplicate names or slots", () => {
+    assert.equal(new Set(ABOUT_CLIENT_LOGOS.map((c) => c.name)).size, ABOUT_CLIENT_LOGOS.length);
+    assert.equal(new Set(ABOUT_CLIENT_LOGOS.map((c) => c.slot)).size, ABOUT_CLIENT_LOGOS.length);
+  });
+});
+
+describe("uploadOnly slots (real people / real trademarks, never AI-generated)", () => {
+  it("marks every founder portrait, the process photo, and every client logo as uploadOnly", () => {
+    const uploadOnlySlots = new Set(
+      ["about.founder.kamal", "about.founder.dianeshree", "about.process", ...ABOUT_CLIENT_LOGOS.map((c) => c.slot)],
+    );
+    for (const entry of IMAGE_MANIFEST) {
+      if (uploadOnlySlots.has(entry.slot)) {
+        assert.equal(entry.uploadOnly, true, `${entry.slot} should be uploadOnly`);
+      }
+    }
+  });
+
+  it("leaves every AI-generatable slot without uploadOnly set", () => {
+    for (const entry of IMAGE_MANIFEST) {
+      if (entry.slot.startsWith("about.founder.") || entry.slot.startsWith("about.client.") || entry.slot === "about.process") {
+        continue;
+      }
+      assert.ok(!entry.uploadOnly, `${entry.slot} should not be uploadOnly`);
+    }
+  });
+
+  it("isUploadOnlySlot is true only for a real uploadOnly slot", () => {
+    assert.equal(isUploadOnlySlot("about.founder.kamal"), true);
+    assert.equal(isUploadOnlySlot("about.client.kims-hospitals"), true);
+    assert.equal(isUploadOnlySlot("home.hero.1"), false);
+    assert.equal(isUploadOnlySlot("not-a-real-slot"), false);
+    // Dynamic (admin-managed) slots are always fine to AI-generate.
+    assert.equal(isUploadOnlySlot(categoryImageSlot({ slug: "kids-wear", name: "Kids Wear" }).slot), false);
+    // No slot at all (e.g. a per-product generation call) is fine too.
+    assert.equal(isUploadOnlySlot(undefined), false);
   });
 });

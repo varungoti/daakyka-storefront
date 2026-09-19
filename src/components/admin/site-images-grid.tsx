@@ -16,6 +16,9 @@ export interface SiteImageSlotRow {
   aspect: ManifestAspect;
   fields?: PromptFields;
   current: { url: string; alt: string } | null;
+  /** Real person or real trademark — see `ImageManifestEntry.uploadOnly`.
+   * Hides the "Generate with AI" action; upload/replace only. */
+  uploadOnly?: boolean;
 }
 
 /**
@@ -166,16 +169,21 @@ function SiteImageCard({
         <p className="truncate font-mono text-[11px] text-muted" title={row.slot}>
           {row.slot}
         </p>
+        {row.uploadOnly ? (
+          <p className="text-xs text-muted">Real photo/logo required — upload only, never AI-generated.</p>
+        ) : null}
         {notice ? <p className="text-xs text-red-600">{notice}</p> : null}
         <div className="mt-auto flex flex-wrap gap-2 pt-1">
-          <button
-            type="button"
-            onClick={onGenerate}
-            disabled={generating}
-            className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
-          >
-            {generating ? "Generating…" : "Generate with AI"}
-          </button>
+          {row.uploadOnly ? null : (
+            <button
+              type="button"
+              onClick={onGenerate}
+              disabled={generating}
+              className="rounded-full bg-brand px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              {generating ? "Generating…" : "Generate with AI"}
+            </button>
+          )}
           <label className="cursor-pointer rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-muted hover:bg-lilac/40">
             {uploading ? "Uploading…" : row.current ? "Replace" : "Upload"}
             <input

@@ -92,7 +92,10 @@ export default async function RootLayout({
     <html lang="en" className={`${outfit.variable} ${dmSans.variable} h-full`}>
       <head>
         <link rel="preconnect" href="https://images.pexels.com" />
-        <link rel="preconnect" href="https://daakyka.com" />
+        {/* No preconnect to daakyka.com: that domain is currently
+            unreachable (see the doc comment atop src/data/media/catalog.ts)
+            and no rendered component hotlinks it any more, so this would
+            only cost every visitor a wasted DNS/TCP attempt. */}
       </head>
       <body className="min-h-full flex flex-col antialiased">
         <GlobalJsonLd />

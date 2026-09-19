@@ -16,6 +16,7 @@ import {
   GenerationFailedError,
   ImageGenerationNotConfiguredError,
   isImageGenerationConfigured,
+  SlotNotAiGeneratableError,
   type OpenAIImageClient,
 } from "@/lib/ai/image-generation";
 import { POST as postMediaUpload } from "@/app/api/admin/media/route";
@@ -179,6 +180,35 @@ describe("generateImage (integration, fake OpenAI client + fake storage — no r
           ),
         GenerationFailedError,
       );
+    });
+  });
+
+  it("refuses to generate for an uploadOnly slot (real founder portrait / client logo) before ever calling the client", async () => {
+    await withEnv({ OPENAI_API_KEY: "test-key-not-real", AI_IMAGE_DAILY_LIMIT: "999999" }, async () => {
+      let generateCalls = 0;
+      const countingClient: OpenAIImageClient = {
+        images: {
+          generate: async () => {
+            generateCalls += 1;
+            return { data: [{ b64_json: "unused" }] };
+          },
+        },
+      };
+
+      await assert.rejects(
+        () =>
+          generateImage(
+            {
+              preset: "avatar",
+              aspect: "portrait",
+              usage: "AVATAR",
+              slot: "about.founder.kamal",
+            },
+            { client: countingClient, storage: makeFakeStorage() },
+          ),
+        SlotNotAiGeneratableError,
+      );
+      assert.equal(generateCalls, 0, "the client must not be called for an uploadOnly slot");
     });
   });
 

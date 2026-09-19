@@ -6,6 +6,7 @@ import {
   generateImage,
   GenerationFailedError,
   ImageGenerationNotConfiguredError,
+  SlotNotAiGeneratableError,
 } from "@/lib/ai/image-generation";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { logAuditEvent } from "@/lib/auth/audit";
@@ -101,6 +102,9 @@ export async function POST(request: Request) {
   } catch (err) {
     if (err instanceof ImageGenerationNotConfiguredError) {
       return NextResponse.json({ error: err.message }, { status: 503 });
+    }
+    if (err instanceof SlotNotAiGeneratableError) {
+      return NextResponse.json({ error: err.message }, { status: 403 });
     }
     if (err instanceof DailyLimitReachedError) {
       return NextResponse.json({ error: err.message }, { status: 429 });

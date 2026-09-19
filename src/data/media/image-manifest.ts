@@ -82,7 +82,48 @@ export interface ImageManifestEntry {
   label: string;
   /** Preset-specific hint fields, pre-filling the AI generation prompt. */
   fields?: PromptFields;
+  /**
+   * True when this slot depicts a real, specific person or a real
+   * third-party's trademark (founder portraits, a named client's logo) —
+   * never a generic/anonymized scene. `preset` is still required for type
+   * simplicity but is inert for these slots: `isUploadOnlySlot()` blocks
+   * `generateImage()` server-side regardless of what a client sends, and
+   * the admin Site Images grid (`SiteImagesGrid`) hides the "Generate with
+   * AI" action for them. Upload is the only way to set these.
+   */
+  uploadOnly?: boolean;
 }
+
+/**
+ * Real institutional clients shown in the About page "Trusted by" strip
+ * (src/components/brand/client-logos-strip.tsx). A fixed, code-defined
+ * list — not admin-managed DB data — so these get static manifest slots
+ * (like `home.tile.*`) instead of the dynamic `category.{slug}` pattern,
+ * which is reserved for genuinely variable-length admin-managed lists.
+ * Every one of these is a real company's trademark, so the corresponding
+ * `about.client.*` manifest entries below are all `uploadOnly`. Slugs are
+ * spelled out explicitly (not derived at runtime) so they're stable and
+ * reviewable in a diff.
+ */
+export const ABOUT_CLIENT_LOGOS: readonly { name: string; slot: string }[] = [
+  { name: "KIMS Hospitals", slot: "about.client.kims-hospitals" },
+  { name: "Pristyn Care", slot: "about.client.pristyn-care" },
+  { name: "RENOVA Hospitals", slot: "about.client.renova-hospitals" },
+  { name: "Lotus Women & Children's Hospital", slot: "about.client.lotus-womens-hospital" },
+  { name: "Chitral Hospital", slot: "about.client.chitral-hospital" },
+  { name: "MGM", slot: "about.client.mgm" },
+  { name: "GAR", slot: "about.client.gar" },
+  { name: "ASSA ABLOY", slot: "about.client.assa-abloy" },
+  { name: "Phenom", slot: "about.client.phenom" },
+  { name: "Pallavi International School", slot: "about.client.pallavi-international-school" },
+  { name: "Delhi Public School", slot: "about.client.delhi-public-school" },
+  { name: "Meluha International School", slot: "about.client.meluha-international-school" },
+  { name: "Oasis Public School", slot: "about.client.oasis-public-school" },
+  { name: "Rockwell Public School", slot: "about.client.rockwell-public-school" },
+  { name: "NRIS", slot: "about.client.nris" },
+  { name: "Quick Smart Wash", slot: "about.client.quick-smart-wash" },
+  { name: "TOS Winflora Residency", slot: "about.client.tos-winflora-residency" },
+] as const;
 
 export const IMAGE_MANIFEST: ImageManifestEntry[] = [
   // --- Home hero (carousel slots; the current hero shows two of these
@@ -190,6 +231,52 @@ export const IMAGE_MANIFEST: ImageManifestEntry[] = [
       subject: "a coordinated group wearing DAAKYKA hospital, school, and kids apparel together",
     },
   },
+  // --- About page trust assets — real people and real clients' logos,
+  // never AI-generatable (see `uploadOnly` on ImageManifestEntry above and
+  // `isUploadOnlySlot` below). These were previously hotlinked directly to
+  // https://daakyka.com/owner/*.jpg and /images/*.jpg — that domain is
+  // unreachable from this environment (DNS resolves; every TCP connect
+  // times out on every resolved IP, both ports 80/443, confirmed via curl
+  // and an independent .NET/PowerShell stack) — so the about page now
+  // reads these through the same admin-upload path as every other slot,
+  // falling back to a text-only treatment (no image element at all) until
+  // an admin uploads the real photo/logo. `preset`/`fields` are present
+  // only for type-shape consistency and are never actually sent to the
+  // generation API for an `uploadOnly` slot.
+  {
+    slot: "about.founder.kamal",
+    usage: "AVATAR",
+    preset: "avatar",
+    aspect: "portrait",
+    label: "About — Founder Portrait: Kamal Agarwal",
+    uploadOnly: true,
+  },
+  {
+    slot: "about.founder.dianeshree",
+    usage: "AVATAR",
+    preset: "avatar",
+    aspect: "portrait",
+    label: "About — Founder Portrait: Dianeshree Agarwal",
+    uploadOnly: true,
+  },
+  {
+    slot: "about.process",
+    usage: "SECTION",
+    preset: "hero-banner",
+    aspect: "landscape",
+    label: "About — Our Process (Concept to Delivery)",
+    uploadOnly: true,
+  },
+  ...ABOUT_CLIENT_LOGOS.map(
+    ({ name, slot }): ImageManifestEntry => ({
+      slot,
+      usage: "SECTION",
+      preset: "category-tile",
+      aspect: "square",
+      label: `About — Client Logo: ${name}`,
+      uploadOnly: true,
+    }),
+  ),
   {
     slot: "bulk-orders.hero",
     usage: "BANNER",
@@ -223,6 +310,23 @@ const slotSet = new Set(IMAGE_MANIFEST.map((entry) => entry.slot));
 
 export function isManifestSlot(slot: string): boolean {
   return slotSet.has(slot);
+}
+
+const uploadOnlySlotSet = new Set(
+  IMAGE_MANIFEST.filter((entry) => entry.uploadOnly).map((entry) => entry.slot),
+);
+
+/**
+ * True for a static manifest slot marked `uploadOnly` (real people / real
+ * trademarks — see `ImageManifestEntry.uploadOnly`). `generateImage()`
+ * (src/lib/ai/image-generation.ts) calls this to refuse AI generation for
+ * these slots server-side, regardless of what a client request asks for.
+ * Always false for an unrecognized or dynamic (`category.*`/`blog.post.*`)
+ * slot, and false when no slot is given at all (e.g. a per-product
+ * generation call) — both of those are fine to generate.
+ */
+export function isUploadOnlySlot(slot: string | undefined): boolean {
+  return slot !== undefined && uploadOnlySlotSet.has(slot);
 }
 
 /** Returns every slot string that appears more than once in `entries`

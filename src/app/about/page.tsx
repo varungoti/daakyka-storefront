@@ -1,9 +1,8 @@
 import { ClientLogosStrip } from "@/components/brand/client-logos-strip";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
-import { daakykaMedia } from "@/data/media/catalog";
 import { brand } from "@/data/brand";
-import { getSiteImage } from "@/lib/media/get-site-image";
+import { getSiteImages } from "@/lib/media/get-site-image";
 import { canonicalPath } from "@/lib/seo/canonical";
 import { Award, CheckCircle2, MapPin, Sparkles } from "lucide-react";
 import type { Metadata } from "next";
@@ -16,8 +15,33 @@ export const metadata: Metadata = {
   alternates: { canonical: canonicalPath("/about") },
 };
 
+/** First letter of each word in a name, e.g. "Kamal Agarwal" -> "KA" — used
+ * for the founder monogram fallback when no portrait has been uploaded yet. */
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
+}
+
+const ABOUT_IMAGE_SLOTS = [
+  "about.hero",
+  "about.founder.kamal",
+  "about.founder.dianeshree",
+  "about.process",
+] as const;
+
 export default async function AboutPage() {
-  const heroImage = await getSiteImage("about.hero");
+  const images = await getSiteImages(ABOUT_IMAGE_SLOTS);
+  const heroImage = images["about.hero"];
+  const processImage = images["about.process"];
+  const founders = [
+    { ...brand.founders.kamal, image: images["about.founder.kamal"] },
+    { ...brand.founders.dianeshree, image: images["about.founder.dianeshree"] },
+  ] as const;
 
   return (
     <>
@@ -52,25 +76,31 @@ export default async function AboutPage() {
           align="center"
         />
         <div className="mt-12 grid gap-8 md:grid-cols-2">
-          {(
-            [
-              { ...brand.founders.kamal, image: daakykaMedia.founders.kamal },
-              { ...brand.founders.dianeshree, image: daakykaMedia.founders.dianeshree },
-            ] as const
-          ).map((founder) => (
+          {founders.map((founder) => (
             <article
               key={founder.name}
               className="overflow-hidden rounded-[2rem] border border-border bg-surface shadow-sm"
             >
-              <div className="relative aspect-[16/10] bg-lilac/20">
-                <Image
-                  src={founder.image}
-                  alt={founder.name}
-                  fill
-                  className="object-cover object-top"
-                  sizes="(max-width: 768px) 100vw, 50vw"
-                />
-              </div>
+              {founder.image ? (
+                <div className="relative aspect-[16/10] bg-lilac/20">
+                  <Image
+                    src={founder.image.url}
+                    alt={founder.image.alt || founder.name}
+                    fill
+                    className="object-cover object-top"
+                    sizes="(max-width: 768px) 100vw, 50vw"
+                  />
+                </div>
+              ) : (
+                // No portrait uploaded yet — a monogram stands in rather
+                // than an empty/broken image box or an AI-faked photo of a
+                // real person (see uploadOnly on the about.founder.* slots).
+                <div className="flex aspect-[16/10] items-center justify-center bg-lilac/20">
+                  <span className="flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-brand to-brand-violet font-display text-2xl font-bold text-white shadow-sm">
+                    {initials(founder.name)}
+                  </span>
+                </div>
+              )}
               <div className="p-8">
                 <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">
                   {founder.role}
@@ -106,21 +136,24 @@ export default async function AboutPage() {
       <ClientLogosStrip />
 
       <PageContentSection>
-        <div className="grid items-center gap-10 lg:grid-cols-2">
-          <div className="relative aspect-[4/3] overflow-hidden rounded-[2rem] border border-border">
-            <Image
-              src={daakykaMedia.productDesigns}
-              alt="DAAKYKA uniform and scrub manufacturing"
-              fill
-              className="object-cover"
-              sizes="(max-width: 1024px) 100vw, 50vw"
-            />
-          </div>
+        <div className={`grid items-center gap-10 ${processImage ? "lg:grid-cols-2" : "mx-auto max-w-2xl"}`}>
+          {processImage ? (
+            <div className="relative aspect-[4/3] overflow-hidden rounded-[2rem] border border-border">
+              <Image
+                src={processImage.url}
+                alt={processImage.alt || "DAAKYKA uniform and scrub manufacturing"}
+                fill
+                className="object-cover"
+                sizes="(max-width: 1024px) 100vw, 50vw"
+              />
+            </div>
+          ) : null}
           <div>
             <SectionHeading
               eyebrow="Our Process"
               title="From Concept to Delivery"
               description="A meticulous workflow designed for healthcare, education, and corporate clients."
+              align={processImage ? "left" : "center"}
             />
             <ol className="mt-8 space-y-4">
               {brand.processSteps.map((step, index) => (
