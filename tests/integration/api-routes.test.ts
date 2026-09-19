@@ -20,17 +20,34 @@ import { checkRateLimit, resetRateLimits } from "@/lib/security/rate-limit";
 
 describe("API integration", () => {
   describe("GET /api/health", () => {
-    it("returns ok with integration statuses", async () => {
+    // F4 (docs/audit-2026-09-19/security.md): unauthenticated callers now
+    // get only the DB-connectivity liveness signal, not the catalog
+    // source or per-provider integration statuses. Calling the route
+    // handler directly here (not through a real Next.js request) means
+    // requireAdminPermission()'s getSession() fails closed (cookies()
+    // throws outside a request scope, caught, returns null) — the same
+    // harness limitation documented in
+    // tests/integration/admin-auth.test.ts — which conveniently is
+    // exactly the "no session" case this test wants to exercise. The
+    // authenticated admin -> full-detail branch is not exercisable this
+    // way; see src/app/api/health/route.ts's doc comment.
+    it("returns only the minimal liveness shape for an unauthenticated caller", async () => {
       const response = await getHealth();
       assert.equal(response.status, 200);
       const body = (await response.json()) as {
         status: string;
-        catalog: string;
-        integrations: { provider: string; status: string }[];
+        timestamp: string;
+        catalog?: string;
+        integrations?: { provider: string; status: string }[];
       };
       assert.equal(body.status, "ok");
-      assert.ok(["db", "seed"].includes(body.catalog));
-      assert.ok(body.integrations.length >= 4);
+      assert.ok(typeof body.timestamp === "string" && body.timestamp.length > 0);
+      assert.equal(body.catalog, undefined, "catalog source must not leak to an unauthenticated caller");
+      assert.equal(
+        body.integrations,
+        undefined,
+        "integration statuses must not leak to an unauthenticated caller",
+      );
     });
   });
   describe("GET /api/products", () => {

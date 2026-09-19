@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { isVercel } from "@/lib/env";
 
 /**
  * DB-backed rate limiter (v1 2.1).
@@ -45,12 +46,111 @@ export async function resetRateLimits(): Promise<void> {
   }
 }
 
-export function getClientIp(request: Request): string {
+/**
+ * Trusted-proxy configuration (v1 2.4 — F1 fix).
+ *
+ * getClientIp() must never resolve to a value the client itself picked,
+ * or every rate limit in the app collapses to "send a different header
+ * each time" — verified live: rotating a fake X-Forwarded-For sailed a
+ * spoofed login straight through a 5-attempt 429 limit (see
+ * docs/audit-2026-09-19/security.md, F1). The only inputs safe to trust
+ * are ones a party we already trust — the hosting platform, or an
+ * operator-acknowledged reverse proxy — attaches to the request itself,
+ * never a header only the client controls.
+ *
+ * On Vercel (`VERCEL` is set on every Vercel deployment, preview and
+ * production alike — see isVercel()), the platform sets
+ * x-vercel-forwarded-for and x-real-ip from the real connecting client
+ * and, per https://vercel.com/docs/headers/request-headers, "overwrite[s]
+ * the X-Forwarded-For header and do[es] not forward external IPs" —
+ * i.e. it replaces (not appends to) any client-supplied x-forwarded-for
+ * with that same true client IP, unless the project has purchased and
+ * enabled Vercel's Enterprise "Trusted Proxy" add-on (not used by this
+ * deployment). All three headers are therefore safe to read automatically
+ * on Vercel.
+ *
+ * Off Vercel — a self-hosted `next start`, or plain `next dev`, which is
+ * how this bug was originally reproduced — there is no such guarantee:
+ * nothing rewrites the headers a client sends, so trusting them by
+ * default would just relocate the same bypass. Nothing is trusted there
+ * unless an operator explicitly opts in with TRUST_PROXY_HEADERS=1,
+ * meant for a deployment that terminates TLS through its own reverse
+ * proxy (nginx, etc. — see node_modules/next/dist/docs/01-app/02-guides/
+ * self-hosting.md's "Reverse Proxy" section) configured to set x-real-ip
+ * or append the true client to x-forwarded-for itself.
+ */
+function trustsProxyHeaders(): boolean {
+  return isVercel() || process.env.TRUST_PROXY_HEADERS === "1";
+}
+
+/**
+ * Returns the most-trusted client IP for `request`, or `null` when no
+ * trustworthy source is configured or present. Precedence (first present
+ * wins), all conditional on trustsProxyHeaders():
+ *
+ *   1. x-vercel-forwarded-for — Vercel's own header; not a conventional
+ *      name an upstream (non-Vercel) proxy in front of Vercel would also
+ *      be setting, so it survives even that case.
+ *   2. x-real-ip — platform/proxy-set to a single IP, never a hop chain.
+ *   3. x-forwarded-for — the RIGHTMOST hop only. In a single-trusted-hop
+ *      setup (Vercel, or one reverse proxy with TRUST_PROXY_HEADERS=1),
+ *      every hop the trusted party itself appends comes after whatever
+ *      the client sent, so the last entry is the one it actually
+ *      observed; the FIRST entry — the old, vulnerable behavior — is
+ *      always attacker-controlled and must never be used.
+ *
+ * Deliberately returns `null` rather than a constant placeholder like
+ * "unknown" when nothing trustworthy is available — see
+ * rateLimitOrResponse() for why a shared constant key would itself be an
+ * exploitable denial-of-service vector.
+ */
+export function getClientIp(request: Request): string | null {
+  if (!trustsProxyHeaders()) return null;
+
+  const vercelForwarded = request.headers.get("x-vercel-forwarded-for");
+  if (vercelForwarded) {
+    const ip = vercelForwarded.split(",")[0]?.trim();
+    if (ip) return ip;
+  }
+
+  const realIp = request.headers.get("x-real-ip")?.trim();
+  if (realIp) return realIp;
+
   const forwarded = request.headers.get("x-forwarded-for");
   if (forwarded) {
-    return forwarded.split(",")[0]?.trim() || "unknown";
+    const hops = forwarded
+      .split(",")
+      .map((hop) => hop.trim())
+      .filter(Boolean);
+    const trustedHop = hops.at(-1);
+    if (trustedHop) return trustedHop;
   }
-  return request.headers.get("x-real-ip") ?? "unknown";
+
+  return null;
+}
+
+let warnedAboutUnattributedIp = false;
+
+/**
+ * Warns (once per minute, mirroring checkRateLimit's DB-outage warning
+ * below) that a request couldn't be attributed to a trustworthy IP, so
+ * an operator running self-hosted without TRUST_PROXY_HEADERS notices in
+ * logs that rate limiting is effectively off rather than this degrading
+ * silently forever.
+ */
+function warnOnceAboutUnattributedIp(route: string): void {
+  if (warnedAboutUnattributedIp) return;
+  warnedAboutUnattributedIp = true;
+  console.warn(
+    `[rate-limit] no trustworthy client IP for route "${route}" (not on Vercel and ` +
+      "TRUST_PROXY_HEADERS is not set) — skipping rate limiting for this request rather " +
+      "than sharing one bucket across every unattributed caller. Set TRUST_PROXY_HEADERS=1 " +
+      "if this deployment sits behind a trusted reverse proxy. See getClientIp() in " +
+      "src/lib/security/rate-limit.ts.",
+  );
+  setTimeout(() => {
+    warnedAboutUnattributedIp = false;
+  }, 60_000).unref?.();
 }
 
 function checkRateLimitInMemory(
@@ -169,6 +269,21 @@ export async function rateLimitOrResponse(
   }
 
   const ip = getClientIp(request);
+  if (ip === null) {
+    // No trustworthy client IP for this request (see getClientIp).
+    // Bucketing every unattributed caller under one shared key (e.g.
+    // `${route}:unknown`, the pre-fix behavior) would hand a single
+    // attacker a way to exhaust that bucket and 429 every *other*
+    // unattributed user on the route — a worse outcome than the
+    // throttle this function exists to provide. Skip rate limiting for
+    // this request instead; it is still backstopped by the independent
+    // controls noted in docs/audit-2026-09-19/security.md's F1 entry
+    // (per-account lockout on login, server-side re-pricing on
+    // checkout, etc).
+    warnOnceAboutUnattributedIp(route);
+    return null;
+  }
+
   const result = await checkRateLimit(`${route}:${ip}`, limit, windowMs);
 
   if (!result.ok) {

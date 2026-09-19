@@ -87,14 +87,87 @@ describe("env validation", () => {
   });
 });
 
-describe("rate limiting", () => {
-  it("extracts client IP from x-forwarded-for", () => {
-    const request = new Request("http://localhost/api/test", {
-      headers: { "x-forwarded-for": "203.0.113.1, 70.41.3.18" },
+// F1 (docs/audit-2026-09-19/security.md): getClientIp() must never
+// resolve to a value the client itself can pick. These cover the
+// trusted-header precedence and the off-Vercel default-deny behavior;
+// the end-to-end "rotating a spoofed X-Forwarded-For can't reset the
+// rate-limit bucket" regression lives in
+// src/lib/security/rate-limit.test.ts alongside the rest of the bucket
+// behavior.
+describe("getClientIp (trusted-proxy resolution)", () => {
+  it("returns null with no trusted platform/proxy signal configured, even with a spoofed x-forwarded-for present (plain next dev/self-host default)", async () => {
+    await withEnv({ VERCEL: undefined, TRUST_PROXY_HEADERS: undefined }, () => {
+      const request = new Request("http://localhost/api/test", {
+        headers: { "x-forwarded-for": "203.0.113.1, 70.41.3.18" },
+      });
+      assert.equal(getClientIp(request), null);
     });
-    assert.equal(getClientIp(request), "203.0.113.1");
   });
 
+  it("returns null off Vercel even when every forwarded header is present, without an explicit opt-in", async () => {
+    await withEnv({ VERCEL: undefined, TRUST_PROXY_HEADERS: undefined }, () => {
+      const request = new Request("http://localhost/api/test", {
+        headers: {
+          "x-forwarded-for": "1.2.3.4",
+          "x-real-ip": "5.6.7.8",
+          "x-vercel-forwarded-for": "9.9.9.9",
+        },
+      });
+      assert.equal(getClientIp(request), null);
+    });
+  });
+
+  it("trusts x-vercel-forwarded-for first when VERCEL is set, ignoring a spoofed x-forwarded-for", async () => {
+    await withEnv({ VERCEL: "1" }, () => {
+      const request = new Request("http://localhost/api/test", {
+        headers: {
+          "x-vercel-forwarded-for": "203.0.113.9",
+          "x-forwarded-for": "10.0.0.1",
+          "x-real-ip": "10.0.0.2",
+        },
+      });
+      assert.equal(getClientIp(request), "203.0.113.9");
+    });
+  });
+
+  it("falls back to x-real-ip when x-vercel-forwarded-for is absent, on Vercel", async () => {
+    await withEnv({ VERCEL: "1" }, () => {
+      const request = new Request("http://localhost/api/test", {
+        headers: { "x-real-ip": "203.0.113.10", "x-forwarded-for": "10.0.0.1" },
+      });
+      assert.equal(getClientIp(request), "203.0.113.10");
+    });
+  });
+
+  it("falls back to the RIGHTMOST x-forwarded-for hop (not the client-controlled leftmost one) on Vercel", async () => {
+    await withEnv({ VERCEL: "1" }, () => {
+      const request = new Request("http://localhost/api/test", {
+        headers: { "x-forwarded-for": "attacker-spoofed-hop, 203.0.113.11" },
+      });
+      assert.equal(getClientIp(request), "203.0.113.11");
+    });
+  });
+
+  it("trusts the rightmost x-forwarded-for hop off Vercel when TRUST_PROXY_HEADERS=1 is explicitly set", async () => {
+    await withEnv({ VERCEL: undefined, TRUST_PROXY_HEADERS: "1" }, () => {
+      const request = new Request("http://localhost/api/test", {
+        headers: { "x-forwarded-for": "attacker-spoofed-hop, 203.0.113.12" },
+      });
+      assert.equal(getClientIp(request), "203.0.113.12");
+    });
+  });
+
+  it("does not trust proxy headers off Vercel just because TRUST_PROXY_HEADERS is set to a falsy-looking string", async () => {
+    await withEnv({ VERCEL: undefined, TRUST_PROXY_HEADERS: "0" }, () => {
+      const request = new Request("http://localhost/api/test", {
+        headers: { "x-forwarded-for": "1.2.3.4" },
+      });
+      assert.equal(getClientIp(request), null);
+    });
+  });
+});
+
+describe("rate limiting", () => {
   it("blocks after limit is exceeded", async () => {
     await resetRateLimits();
     const key = "test-route:127.0.0.1";

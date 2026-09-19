@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 import { fabricSeoRedirects, seoLandingPages } from "./src/data/seo-landing-pages";
-import { validateEnv } from "./src/lib/env";
+import { isProduction, validateEnv } from "./src/lib/env";
 import { getTrustedImageHosts } from "./src/lib/security/image-hosts";
 
 validateEnv();
@@ -50,7 +50,16 @@ const securityHeaders = [
   { key: "Content-Security-Policy", value: contentSecurityPolicy },
 ];
 
-if (process.env.VERCEL_ENV === "production") {
+// F6 fix: was gated on `VERCEL_ENV === "production"`, so a non-Vercel
+// production deploy (e.g. a Docker/VM self-host running `next start`)
+// silently shipped without HSTS. isProduction() (NODE_ENV === "production",
+// already used the same way in src/lib/auth/session-cookie.ts for the
+// Secure-cookie decision) covers that deploy too. `next build` always
+// forces NODE_ENV=production regardless of host, so this also now applies
+// to Vercel preview builds in addition to production ones — both are
+// real HTTPS-served origins, so that's a strictly safe broadening, not a
+// weakening, of the existing header.
+if (isProduction()) {
   securityHeaders.push({
     key: "Strict-Transport-Security",
     value: "max-age=63072000; includeSubDomains; preload",

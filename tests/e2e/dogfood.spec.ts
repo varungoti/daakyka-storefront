@@ -190,19 +190,27 @@ test.describe("Dogfood — interactive flows", () => {
 });
 
 test.describe("Dogfood — Hermes & AR APIs", () => {
-  test("Hermes runtime health reports inline Vercel runtime", async ({ request }) => {
+  test("Hermes runtime health reports minimal liveness for an unauthenticated request", async ({
+    request,
+  }) => {
+    // F4 (docs/audit-2026-09-19/security.md): platform/runtime detail
+    // (platform, fireworks, inline, mode) moved behind an authenticated
+    // admin session (requireAdminPermission("hermes:manage")) — this
+    // unauthenticated `request` fixture carries no admin cookie, so it
+    // must only ever see `ok`/`service`, which is all
+    // scripts/probe-deploy.mjs needs for liveness.
     const response = await request.get("/api/hermes/runtime/health");
     expect(response.ok()).toBeTruthy();
     const body = (await response.json()) as {
       ok: boolean;
       service: string;
-      inline: boolean;
-      mode: string;
+      inline?: boolean;
+      mode?: string;
     };
     expect(body.ok).toBe(true);
     expect(body.service).toBe("daakyka-hermes");
-    expect(body.inline).toBe(true);
-    expect(body.mode).toBe("SUGGEST_ONLY");
+    expect(body.inline).toBeUndefined();
+    expect(body.mode).toBeUndefined();
   });
 
   test("try-on API returns valid preview payload", async ({ request }) => {

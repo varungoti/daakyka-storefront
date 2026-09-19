@@ -116,10 +116,17 @@ describe("smoke — storefront pages", () => {
     assert.match(xml, new RegExp(`/products/${products.products[0].handle}`));
   });
 
-  it("health endpoint reports catalog source", async () => {
-    const body = await fetchJson<{ status: string; catalog: string }>("/api/health");
+  it("health endpoint reports ok without leaking catalog/integration detail to an anonymous caller", async () => {
+    // F4 (docs/audit-2026-09-19/security.md): the catalog source and
+    // integration statuses moved behind an authenticated admin session
+    // (requireAdminPermission("integrations:manage")); this unauthenticated
+    // smoke request must only ever see the minimal liveness shape.
+    const body = await fetchJson<{ status: string; catalog?: string; integrations?: unknown }>(
+      "/api/health",
+    );
     assert.equal(body.status, "ok");
-    assert.ok(["db", "seed"].includes(body.catalog), `unexpected catalog source: ${body.catalog}`);
+    assert.equal(body.catalog, undefined);
+    assert.equal(body.integrations, undefined);
   });
 
   it("admin API rejects unauthenticated requests", async () => {
