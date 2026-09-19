@@ -1,8 +1,50 @@
 import { z } from "zod";
+import { INDIAN_PHONE_HINT, INDIAN_PINCODE_HINT, normalizeIndianPhone, normalizeIndianPincode } from "./india";
 
 // Phase C7: kept as a plain string (not a Prisma enum) so the field stays
 // additive/backward-compatible — older clients that omit it are unaffected.
 export const bulkOrderOrganizationTypes = ["HOSPITAL", "SCHOOL", "CORPORATE", "OTHER"] as const;
+
+/**
+ * Release-hardening Finding A: a phone/PIN-code field that trims, then
+ * normalises to the canonical Indian format via src/lib/validation/india.ts,
+ * rejecting with a useful message (at this field's own path) when the
+ * input can't be read as a valid one. Used by every phone/PIN field below
+ * so checkout, saved addresses, and customer accounts all enforce and
+ * normalise the same rule — server-side, which is the authoritative layer
+ * since a client-side check (checkout-page-content.tsx, account-tabs.tsx)
+ * can always be bypassed by calling the API directly. `.max()` bounds the
+ * raw input before it ever reaches the regex.
+ */
+function indianPhoneField(message: string = INDIAN_PHONE_HINT) {
+  return z
+    .string()
+    .trim()
+    .max(40)
+    .transform((value, ctx) => {
+      const normalized = normalizeIndianPhone(value);
+      if (!normalized) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+        return z.NEVER;
+      }
+      return normalized;
+    });
+}
+
+function indianPincodeField(message: string = INDIAN_PINCODE_HINT) {
+  return z
+    .string()
+    .trim()
+    .max(20)
+    .transform((value, ctx) => {
+      const normalized = normalizeIndianPincode(value);
+      if (!normalized) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+        return z.NEVER;
+      }
+      return normalized;
+    });
+}
 
 // Phase D3: checkout / Razorpay.
 export const shippingAddressSchema = z.object({
@@ -11,7 +53,7 @@ export const shippingAddressSchema = z.object({
   line2: z.string().trim().max(200).optional(),
   city: z.string().trim().min(2, "City is required").max(100),
   state: z.string().trim().min(2, "State is required").max(100),
-  pincode: z.string().trim().min(4, "A valid pincode is required").max(12),
+  pincode: indianPincodeField(),
   country: z.string().trim().length(2, "Country must be a 2-letter code").default("IN"),
 });
 
@@ -25,7 +67,7 @@ export const checkoutItemSchema = z.object({
 export const checkoutSchema = z.object({
   items: z.array(checkoutItemSchema).min(1, "Your cart is empty").max(50),
   email: z.string().trim().email("Valid email is required").max(254),
-  phone: z.string().trim().min(8, "Valid phone number is required").max(20),
+  phone: indianPhoneField(),
   shippingAddress: shippingAddressSchema,
 });
 
@@ -36,6 +78,16 @@ export const checkoutVerifySchema = z.object({
   razorpayPaymentId: z.string().trim().min(1).max(100),
   razorpayOrderId: z.string().trim().min(1).max(100),
   razorpaySignature: z.string().trim().min(1).max(256),
+  // Optional: the guest-access token the client already received from
+  // POST /api/checkout (src/lib/orders/access-token.ts). Forwarded here
+  // only so the "payment received" email can link straight back to the
+  // same tokenised confirmation URL the browser is about to redirect to —
+  // it is re-verified against the order's stored hash before use (see
+  // /api/checkout/verify/route.ts) and never trusted as authorization for
+  // this endpoint, which relies solely on the Razorpay signature. Missing
+  // or wrong values just mean the email has no direct link, same as
+  // before this field existed.
+  orderToken: z.string().trim().min(1).max(200).optional(),
 });
 
 export type CheckoutVerifyInput = z.infer<typeof checkoutVerifySchema>;
@@ -199,7 +251,7 @@ export const userInviteSchema = z.object({
 // POST /api/account/login (identical {email, password} shape and bounds).
 
 const customerNameSchema = z.string().trim().min(2, "Name is required").max(120);
-const customerPhoneSchema = z.string().trim().min(8, "Enter a valid phone number").max(32);
+const customerPhoneSchema = indianPhoneField();
 
 export const customerRegisterSchema = z.object({
   name: customerNameSchema,
@@ -249,7 +301,7 @@ export const customerAddressSchema = z.object({
   line2: z.string().trim().max(200).optional(),
   city: z.string().trim().min(2, "City is required").max(100),
   state: z.string().trim().min(2, "State is required").max(100),
-  postalCode: z.string().trim().min(3, "Postal code is required").max(16),
+  postalCode: indianPincodeField(),
   country: z.string().trim().min(2).max(2).default("IN"),
   phone: customerPhoneSchema.optional(),
   isDefault: z.boolean().optional().default(false),

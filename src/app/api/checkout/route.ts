@@ -8,6 +8,7 @@ import {
 } from "@/lib/orders/create-order";
 import { notifyNewOrder } from "@/lib/orders/notify";
 import { createRazorpayOrder, getRazorpayKeyId, isRazorpayConfigured } from "@/lib/payments/razorpay";
+import { orderRequestThrottleOrResponse } from "@/lib/security/order-request-throttle";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { checkoutSchema } from "@/lib/validation/schemas";
@@ -64,6 +65,16 @@ export async function POST(request: Request) {
   const { items, email, phone, shippingAddress } = parsed.data;
   const razorpayReady = await isRazorpayConfigured();
 
+  // Finding B: the ORDER_REQUEST fallback below has no payment gate, so an
+  // IP-independent throttle keyed on the order's own email/phone guards it
+  // against a script that rotates IPs/headers to drain stock for free. A
+  // Razorpay-bound order still has to clear real payment, so it isn't
+  // throttled here.
+  if (!razorpayReady) {
+    const throttled = await orderRequestThrottleOrResponse(email, phone);
+    if (throttled) return throttled;
+  }
+
   try {
     const customerId = await getOptionalCustomerId();
     const order = await createOrderFromCart({
@@ -83,9 +94,10 @@ export async function POST(request: Request) {
         total: order.total,
         currency: order.currency,
         fallback: true,
+        orderToken: order.accessToken,
       }).catch(() => undefined);
 
-      return NextResponse.json({ orderNumber: order.number, fallback: true });
+      return NextResponse.json({ orderNumber: order.number, orderToken: order.accessToken, fallback: true });
     }
 
     let razorpayOrder;
@@ -110,6 +122,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       orderNumber: order.number,
+      orderToken: order.accessToken,
       razorpayOrderId: razorpayOrder.id,
       keyId: await getRazorpayKeyId(),
       amount: razorpayOrder.amount,

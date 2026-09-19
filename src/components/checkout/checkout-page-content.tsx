@@ -6,6 +6,7 @@ import { useCart } from "@/context/cart-provider";
 import { useCurrency } from "@/context/currency-provider";
 import { loadRazorpayCheckoutScript } from "@/lib/payments/load-razorpay-script";
 import { isShopifyConfigured } from "@/lib/shopify/config";
+import { INDIAN_PHONE_HINT, INDIAN_PINCODE_HINT, normalizeIndianPhone, normalizeIndianPincode } from "@/lib/validation/india";
 import { AlertCircle, Lock, ShoppingBag } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -19,6 +20,9 @@ interface CheckoutCustomerHint {
 
 interface CheckoutApiSuccess {
   orderNumber: string;
+  /** Guest-access token for the confirmation page (src/lib/orders/access-token.ts) — must
+   * be carried through every redirect to /order/[number]; see get-order.ts. */
+  orderToken: string;
   fallback?: boolean;
   razorpayOrderId?: string;
   keyId?: string;
@@ -26,8 +30,18 @@ interface CheckoutApiSuccess {
   currency?: string;
 }
 
+function orderConfirmationPath(orderNumber: string, orderToken: string): string {
+  return `/order/${encodeURIComponent(orderNumber)}?token=${encodeURIComponent(orderToken)}`;
+}
+
 interface CheckoutApiError {
   error: string;
+  issues?: Array<{ path: (string | number)[]; message: string }>;
+}
+
+interface CheckoutFieldErrors {
+  phone?: string;
+  pincode?: string;
 }
 
 function clearLocalCart(): void {
@@ -51,6 +65,7 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
   const [country] = useState("IN");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<CheckoutFieldErrors>({});
 
   if (mode === "shopify" && shopifyReady) {
     return (
@@ -81,6 +96,24 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setFieldErrors({});
+
+    // Client-side format check first, so a bad phone/pincode gets an
+    // immediate, specific inline message next to the field instead of a
+    // round trip (the server — src/lib/validation/schemas.ts — re-checks
+    // and normalises the same way regardless, since this check alone can
+    // always be bypassed by calling the API directly).
+    const normalizedPhone = normalizeIndianPhone(phone);
+    const normalizedPincode = normalizeIndianPincode(pincode);
+    const nextFieldErrors: CheckoutFieldErrors = {};
+    if (!normalizedPhone) nextFieldErrors.phone = INDIAN_PHONE_HINT;
+    if (!normalizedPincode) nextFieldErrors.pincode = INDIAN_PINCODE_HINT;
+    if (nextFieldErrors.phone || nextFieldErrors.pincode) {
+      setFieldErrors(nextFieldErrors);
+      setError("Please fix the highlighted field(s) below.");
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -90,14 +123,14 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
         body: JSON.stringify({
           items: cart.lines.map((line) => ({ variantId: line.variantId, quantity: line.quantity })),
           email,
-          phone,
+          phone: normalizedPhone,
           shippingAddress: {
             name,
             line1,
             line2: line2 || undefined,
             city,
             state: stateName,
-            pincode,
+            pincode: normalizedPincode,
             country,
           },
         }),
@@ -106,6 +139,15 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
       const data = (await response.json()) as CheckoutApiSuccess | CheckoutApiError;
 
       if (!response.ok || "error" in data) {
+        if ("issues" in data && data.issues) {
+          const mapped: CheckoutFieldErrors = {};
+          for (const issue of data.issues) {
+            const path = issue.path.join(".");
+            if (path === "phone") mapped.phone = issue.message;
+            if (path === "shippingAddress.pincode") mapped.pincode = issue.message;
+          }
+          if (Object.keys(mapped).length > 0) setFieldErrors(mapped);
+        }
         setError("error" in data ? data.error : "Could not process checkout. Please try again.");
         setSubmitting(false);
         return;
@@ -113,7 +155,7 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
 
       if (data.fallback) {
         clearLocalCart();
-        router.push(`/order/${data.orderNumber}`);
+        router.push(orderConfirmationPath(data.orderNumber, data.orderToken));
         return;
       }
 
@@ -131,6 +173,7 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
       }
 
       const orderNumber = data.orderNumber;
+      const orderToken = data.orderToken;
       const razorpay = new window.Razorpay({
         key: data.keyId,
         amount: data.amount,
@@ -152,6 +195,7 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 orderNumber,
+                orderToken,
                 razorpayPaymentId: paymentResponse.razorpay_payment_id,
                 razorpayOrderId: paymentResponse.razorpay_order_id,
                 razorpaySignature: paymentResponse.razorpay_signature,
@@ -164,7 +208,7 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
               return;
             }
             clearLocalCart();
-            router.push(`/order/${orderNumber}`);
+            router.push(orderConfirmationPath(orderNumber, orderToken));
           } catch {
             setError("Payment verification failed. Please contact us with your order number.");
             setSubmitting(false);
@@ -222,9 +266,21 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
                   required
                   type="tel"
                   value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-border bg-white px-3 py-2 text-ink"
+                  onChange={(e) => {
+                    setPhone(e.target.value);
+                    if (fieldErrors.phone) setFieldErrors((prev) => ({ ...prev, phone: undefined }));
+                  }}
+                  aria-invalid={Boolean(fieldErrors.phone)}
+                  aria-describedby={fieldErrors.phone ? "checkout-phone-error" : undefined}
+                  className={`mt-1 w-full rounded-md border bg-white px-3 py-2 text-ink ${
+                    fieldErrors.phone ? "border-red-400" : "border-border"
+                  }`}
                 />
+                {fieldErrors.phone && (
+                  <span id="checkout-phone-error" className="mt-1 block text-xs font-normal text-red-600">
+                    {fieldErrors.phone}
+                  </span>
+                )}
               </label>
               <label className="text-sm text-muted sm:col-span-2">
                 Email
@@ -282,9 +338,21 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
                 <input
                   required
                   value={pincode}
-                  onChange={(e) => setPincode(e.target.value)}
-                  className="mt-1 w-full rounded-md border border-border bg-white px-3 py-2 text-ink"
+                  onChange={(e) => {
+                    setPincode(e.target.value);
+                    if (fieldErrors.pincode) setFieldErrors((prev) => ({ ...prev, pincode: undefined }));
+                  }}
+                  aria-invalid={Boolean(fieldErrors.pincode)}
+                  aria-describedby={fieldErrors.pincode ? "checkout-pincode-error" : undefined}
+                  className={`mt-1 w-full rounded-md border bg-white px-3 py-2 text-ink ${
+                    fieldErrors.pincode ? "border-red-400" : "border-border"
+                  }`}
                 />
+                {fieldErrors.pincode && (
+                  <span id="checkout-pincode-error" className="mt-1 block text-xs font-normal text-red-600">
+                    {fieldErrors.pincode}
+                  </span>
+                )}
               </label>
               <label className="text-sm text-muted">
                 Country

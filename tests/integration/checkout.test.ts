@@ -41,6 +41,7 @@ function rawRequest(url: string, rawBody: string, headers: Record<string, string
 const createdOrderIds: string[] = [];
 const createdProductIds: string[] = [];
 const createdCategoryIds: string[] = [];
+const createdRateLimitKeys: string[] = [];
 
 after(async () => {
   if (createdOrderIds.length > 0) {
@@ -53,7 +54,39 @@ after(async () => {
   if (createdCategoryIds.length > 0) {
     await db.category.deleteMany({ where: { id: { in: createdCategoryIds } } }).catch(() => {});
   }
+  if (createdRateLimitKeys.length > 0) {
+    await db.rateLimitBucket.deleteMany({ where: { key: { in: createdRateLimitKeys } } }).catch(() => {});
+  }
 });
+
+/**
+ * The route's generic per-IP limiter (rateLimitOrResponse, 10 req/60s under
+ * key "checkout:unknown" since these direct route calls carry no
+ * x-forwarded-for header) is shared DB state across every `checkoutRoute`
+ * call in this file. Reset it before a test that makes several calls in a
+ * row, so it can't be mistaken for the identity-based ORDER_REQUEST
+ * throttle under test (Finding B) — this only ever touches the one
+ * "checkout:unknown" key, so it's safe alongside other test files/workers.
+ */
+async function resetCheckoutIpBucket(): Promise<void> {
+  await db.rateLimitBucket.deleteMany({ where: { key: "checkout:unknown" } }).catch(() => {});
+}
+
+/**
+ * A fresh, valid-looking Indian mobile number for tests that count exact
+ * requests against the phone-keyed ORDER_REQUEST throttle. Deliberately
+ * *not* the "9876543210" placeholder used pervasively elsewhere in this
+ * file (e.g. every other checkoutRoute call) — that phone's throttle
+ * bucket accumulates real hits across every test that submits it through
+ * the live route, which would make an exact-count test flaky depending on
+ * what ran earlier.
+ */
+function randomIndianMobile(): string {
+  const firstDigit = String(6 + Math.floor(Math.random() * 4)); // 6-9
+  let rest = "";
+  for (let i = 0; i < 9; i++) rest += String(Math.floor(Math.random() * 10));
+  return firstDigit + rest;
+}
 
 async function createActiveProductWithVariant(opts: { stock: number; price?: number }) {
   const unique = randomUUID().slice(0, 8);
@@ -237,16 +270,23 @@ describe("POST /api/checkout (Phase D3)", () => {
       );
 
       assert.equal(response.status, 200);
-      const data = (await response.json()) as { orderNumber: string; fallback: boolean; razorpayOrderId?: string };
+      const data = (await response.json()) as {
+        orderNumber: string;
+        orderToken: string;
+        fallback: boolean;
+        razorpayOrderId?: string;
+      };
       assert.equal(data.fallback, true);
       assert.equal(data.razorpayOrderId, undefined);
-      assert.match(data.orderNumber, /^DK-\d{4}-\d{6}$/);
+      assert.match(data.orderNumber, /^DK-\d{4}-\d{10}$/);
+      assert.ok(data.orderToken && data.orderToken.length > 0, "checkout response should include a guest access token");
 
       const order = await db.order.findUnique({ where: { number: data.orderNumber } });
       assert.ok(order);
       createdOrderIds.push(order!.id);
       assert.equal(order!.paymentMethod, "ORDER_REQUEST");
       assert.equal(order!.status, "PROCESSING");
+      assert.ok(order!.accessTokenHash, "the order row should have a persisted access-token hash");
     });
   });
 
@@ -261,6 +301,136 @@ describe("POST /api/checkout (Phase D3)", () => {
     );
     assert.equal(response.status, 400);
   });
+
+  // Release-hardening Finding A: a live order was placed with phone
+  // "12345" and pincode "AB123" — only the empty "Full name" field was
+  // ever blocked, by the browser's native `required`. These exercise the
+  // real route handler end-to-end.
+
+  it("rejects the exact garbage phone/pincode from the live audit, with a useful message, and creates no order", async () => {
+    await resetCheckoutIpBucket();
+    const { variant } = await createActiveProductWithVariant({ stock: 5 });
+    const email = `garbage-contact-${randomUUID()}@example.com`;
+
+    const response = await checkoutRoute(
+      jsonRequest("http://localhost/api/checkout", {
+        items: [{ variantId: variant.id, quantity: 1 }],
+        email,
+        phone: "12345",
+        shippingAddress: {
+          name: "Buyer",
+          line1: "1 Test Street",
+          city: "Hyderabad",
+          state: "Telangana",
+          pincode: "AB123",
+          country: "IN",
+        },
+      }),
+    );
+
+    assert.equal(response.status, 400);
+    const data = (await response.json()) as { error: string; issues: Array<{ path: (string | number)[]; message: string }> };
+    const phoneIssue = data.issues.find((issue) => issue.path.join(".") === "phone");
+    const pincodeIssue = data.issues.find((issue) => issue.path.join(".") === "shippingAddress.pincode");
+    assert.ok(phoneIssue?.message.length, "expected a useful message for the invalid phone");
+    assert.ok(pincodeIssue?.message.length, "expected a useful message for the invalid pincode");
+
+    const order = await db.order.findFirst({ where: { email } });
+    assert.equal(order, null, "no order should ever be created for an invalid contact/address");
+
+    const untouchedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(untouchedVariant?.stock, 5, "stock must be untouched when checkout is rejected");
+  });
+
+  it("accepts and normalises legitimate phone/pincode shapes (+91 prefix, spaces) all the way into the stored order", async () => {
+    await resetCheckoutIpBucket();
+    const { variant } = await createActiveProductWithVariant({ stock: 5 });
+    const email = `normalised-contact-${randomUUID()}@example.com`;
+
+    await withEnv({ RAZORPAY_KEY_ID: undefined, RAZORPAY_KEY_SECRET: undefined }, async () => {
+      const response = await checkoutRoute(
+        jsonRequest("http://localhost/api/checkout", {
+          items: [{ variantId: variant.id, quantity: 1 }],
+          email,
+          phone: "+91 98765 43210",
+          shippingAddress: {
+            name: "Buyer",
+            line1: "1 Test Street",
+            city: "Hyderabad",
+            state: "Telangana",
+            pincode: "500 032",
+            country: "IN",
+          },
+        }),
+      );
+
+      assert.equal(response.status, 200);
+      const data = (await response.json()) as { orderNumber: string };
+
+      const order = await db.order.findUnique({ where: { number: data.orderNumber } });
+      assert.ok(order);
+      createdOrderIds.push(order!.id);
+      assert.equal(order!.phone, "9876543210");
+      const storedAddress = order!.shippingAddress as unknown as { pincode: string };
+      assert.equal(storedAddress.pincode, "500032");
+    });
+  });
+});
+
+describe("ORDER_REQUEST throttle — Finding B (release-hardening)", () => {
+  it("allows 5 ORDER_REQUEST checkouts per email within the window, then blocks the 6th without touching stock", async () => {
+    await resetCheckoutIpBucket();
+    const { variant } = await createActiveProductWithVariant({ stock: 10 });
+    const email = `throttle-test-${randomUUID()}@example.com`;
+    const phone = randomIndianMobile();
+    createdRateLimitKeys.push(`order-request:email:${email.toLowerCase()}`, `order-request:phone:${phone}`);
+
+    const checkoutBody = {
+      items: [{ variantId: variant.id, quantity: 1 }],
+      email,
+      phone,
+      shippingAddress: {
+        name: "Buyer",
+        line1: "1 Test Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        pincode: "500032",
+        country: "IN",
+      },
+    };
+
+    await withEnv({ RAZORPAY_KEY_ID: undefined, RAZORPAY_KEY_SECRET: undefined }, async () => {
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        const response = await checkoutRoute(jsonRequest("http://localhost/api/checkout", checkoutBody));
+        assert.equal(response.status, 200, `expected attempt ${attempt} to succeed`);
+        const data = (await response.json()) as { orderNumber: string };
+        const order = await db.order.findUnique({ where: { number: data.orderNumber } });
+        if (order) createdOrderIds.push(order.id);
+      }
+
+      const blockedResponse = await checkoutRoute(jsonRequest("http://localhost/api/checkout", checkoutBody));
+      assert.equal(blockedResponse.status, 429);
+      const blockedData = (await blockedResponse.json()) as { error: string };
+      assert.match(blockedData.error, /too many/i);
+      assert.ok(blockedResponse.headers.get("Retry-After"), "expected a Retry-After header on the 429");
+    });
+
+    const updatedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
+    // Started at 10, 5 successful ORDER_REQUEST orders of qty 1 each — the
+    // blocked 6th attempt must never have reached createOrderFromCart, so
+    // stock must land at exactly 5, not 4.
+    assert.equal(updatedVariant?.stock, 5);
+  });
+
+  // The RAZORPAY path is deliberately not exercised here through the full
+  // route: with real Razorpay keys unset, isRazorpayConfigured() would
+  // still resolve to the ORDER_REQUEST fallback; with real-looking keys,
+  // createRazorpayOrder() would reach out to Razorpay's live API, which
+  // this sandbox has no business calling from a test. The route only ever
+  // calls orderRequestThrottleOrResponse when `!razorpayReady` (see
+  // src/app/api/checkout/route.ts), and
+  // src/lib/security/order-request-throttle.test.ts covers that function's
+  // own gating/limit behaviour directly and in isolation.
 });
 
 describe("POST /api/checkout/verify (Phase D3)", () => {

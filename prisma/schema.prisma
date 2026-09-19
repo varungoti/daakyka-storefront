@@ -839,6 +839,13 @@ model Review {
 model Order {
   id                String        @id @default(cuid())
   number            String        @unique
+  // Phase G / F2 fix: hash of the high-entropy capability token that lets a
+  // guest (no customer session) view their own order at /order/[number].
+  // Nullable so pre-existing seeded orders without a token still load
+  // (they simply can't be viewed by a guest until re-issued); NULL values
+  // never collide under the unique constraint (Postgres treats each NULL
+  // as distinct). See src/lib/orders/access-token.ts and get-order.ts.
+  accessTokenHash   String?       @unique
   customerId        String?
   customer          Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
   email             String

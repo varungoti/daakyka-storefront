@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { hashOrderAccessToken } from "@/lib/orders/access-token";
 import { notifyNewOrder } from "@/lib/orders/notify";
 import { verifyPaymentSignature } from "@/lib/payments/razorpay";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
+import { safeEquals } from "@/lib/security/timing-safe-equal";
 import { checkoutVerifySchema } from "@/lib/validation/schemas";
 
 /**
@@ -28,7 +30,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid verification payload" }, { status: 400 });
   }
 
-  const { orderNumber, razorpayPaymentId, razorpayOrderId, razorpaySignature } = parsed.data;
+  const { orderNumber, razorpayPaymentId, razorpayOrderId, razorpaySignature, orderToken } = parsed.data;
 
   const order = await db.order.findUnique({ where: { number: orderNumber }, include: { items: true } });
   if (!order || order.razorpayOrderId !== razorpayOrderId) {
@@ -83,12 +85,23 @@ export async function POST(request: Request) {
       .catch(() => undefined);
   }
 
+  // orderToken is client-supplied and only ever used to decide whether the
+  // confirmation email gets a direct link — it plays no part in
+  // authorizing this request (the Razorpay signature check above already
+  // did that). Re-verified against the order's own stored hash so a
+  // caller can't smuggle an unrelated/garbage value into the email.
+  const confirmedOrderToken =
+    orderToken && order.accessTokenHash && safeEquals(hashOrderAccessToken(orderToken), order.accessTokenHash)
+      ? orderToken
+      : undefined;
+
   await notifyNewOrder({
     orderNumber: order.number,
     email: order.email,
     total: Number(order.total),
     currency: order.currency,
     fallback: false,
+    orderToken: confirmedOrderToken,
   }).catch(() => undefined);
 
   return NextResponse.json({ ok: true, orderNumber: order.number });

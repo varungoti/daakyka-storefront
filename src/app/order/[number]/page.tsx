@@ -1,7 +1,10 @@
-import { getOrderByNumber } from "@/lib/orders/get-order";
+import { getCustomerSession } from "@/lib/customer-auth/session";
+import { checkOrderPageRateLimit, getAuthorizedOrder } from "@/lib/orders/get-order";
+import { getClientIp } from "@/lib/security/rate-limit";
 import type { ShippingAddressInput } from "@/lib/validation/schemas";
 import { CheckCircle2, Truck } from "lucide-react";
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 
 export const metadata: Metadata = {
@@ -29,11 +32,39 @@ const STATUS_LABELS: Record<string, string> = {
 
 export default async function OrderConfirmationPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ number: string }>;
+  searchParams: Promise<{ token?: string }>;
 }) {
   const { number } = await params;
-  const order = await getOrderByNumber(number);
+  const { token } = await searchParams;
+
+  // Rate-limited before anything else touches the DB: an unauthenticated,
+  // guessable-by-design URL (see get-order.ts's doc comment on finding F2)
+  // must never let enumeration run unthrottled, no matter how large the
+  // order-number keyspace is. getClientIp only ever reads
+  // `request.headers.get(...)`, so a minimal object exposing just
+  // `.headers` (from next/headers's headers(), which isn't itself a
+  // Request) satisfies it at runtime — `unknown` is required as an
+  // intermediate cast because the object literal doesn't structurally
+  // match the full Request interface.
+  const requestHeaders = await headers();
+  const ip = getClientIp({ headers: requestHeaders } as unknown as Request);
+  const rateLimit = await checkOrderPageRateLimit(ip);
+  if (!rateLimit.ok) {
+    return (
+      <div className="mx-auto max-w-3xl px-4 py-24 text-center lg:px-8">
+        <h1 className="font-display text-2xl font-bold text-ink">Too many requests</h1>
+        <p className="mt-2 text-muted">
+          You&rsquo;ve checked this a few too many times in a row — please wait a minute and try again.
+        </p>
+      </div>
+    );
+  }
+
+  const session = await getCustomerSession();
+  const order = await getAuthorizedOrder({ number, token: token ?? null, customerId: session?.id ?? null });
   if (!order) notFound();
 
   const address = order.shippingAddress as unknown as ShippingAddressInput;

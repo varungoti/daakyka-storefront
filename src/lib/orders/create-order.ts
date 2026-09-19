@@ -7,6 +7,7 @@ import {
   MAX_ORDER_NUMBER_ATTEMPTS,
   OrderNumberGenerationError,
 } from "@/lib/orders/number";
+import { generateOrderAccessToken, hashOrderAccessToken } from "@/lib/orders/access-token";
 
 /**
  * Phase D3: server-side order creation from the client cart.
@@ -48,6 +49,11 @@ export interface CreateOrderFromCartInput {
 export interface CreatedOrder {
   id: string;
   number: string;
+  /** Raw (unhashed) capability token for guest access to /order/[number] —
+   * exists only here, in the checkout redirect URL, and in the
+   * order-confirmation email link. Never persisted as-is; only its hash
+   * (Order.accessTokenHash) is stored. See src/lib/orders/access-token.ts. */
+  accessToken: string;
   subtotal: number;
   shipping: number;
   discount: number;
@@ -161,6 +167,13 @@ export async function createOrderFromCart(input: CreateOrderFromCartInput): Prom
 
   for (let attempt = 0; attempt < MAX_ORDER_NUMBER_ATTEMPTS; attempt++) {
     const number = generateOrderNumberCandidate();
+    // Generated fresh on every attempt (not hoisted above the loop) so a
+    // P2002 retry — astronomically unlikely to ever be *this* column, see
+    // the schema comment on Order.accessTokenHash, but cheap to make moot
+    // either way — can never retry with a stale token tied to an
+    // abandoned candidate row.
+    const accessToken = generateOrderAccessToken();
+    const accessTokenHash = hashOrderAccessToken(accessToken);
 
     try {
       const order = await db.$transaction(async (tx) => {
@@ -190,6 +203,7 @@ export async function createOrderFromCart(input: CreateOrderFromCartInput): Prom
         return tx.order.create({
           data: {
             number,
+            accessTokenHash,
             customerId: input.customerId,
             email: input.email,
             phone: input.phone,
@@ -219,6 +233,7 @@ export async function createOrderFromCart(input: CreateOrderFromCartInput): Prom
       return {
         id: order.id,
         number: order.number,
+        accessToken,
         subtotal,
         shipping,
         discount,

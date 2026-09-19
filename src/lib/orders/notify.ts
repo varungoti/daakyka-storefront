@@ -27,23 +27,47 @@ export interface NotifyNewOrderInput {
   /** True for an ORDER_REQUEST order (no online payment yet); false once a
    * Razorpay payment has actually been captured. */
   fallback: boolean;
+  /**
+   * Phase G hardening (fixes finding F2): the order's raw guest-access
+   * token (src/lib/orders/access-token.ts), when the caller has it —
+   * order creation always does; POST /api/checkout/verify forwards and
+   * re-verifies one from the client. Used to link the customer email
+   * straight to their tokenised /order/[number] confirmation page.
+   * Omitted (e.g. from the Razorpay webhook, which never sees the raw
+   * token — only its hash is ever persisted) just means the email has no
+   * direct link, same as before this field existed.
+   */
+  orderToken?: string;
 }
 
 function formatAmount(total: number, currency: string): string {
   return `${currency} ${total.toFixed(2)}`;
 }
 
+/** Matches the small per-file `siteUrl()` helper already duplicated in
+ * src/lib/customer-auth/mailer.ts and src/lib/engagement/unsubscribe.ts
+ * rather than centralizing it — same convention, different file. */
+function siteUrl(): string {
+  return (process.env.NEXT_PUBLIC_SITE_URL ?? "https://daakyka.com").replace(/\/$/, "");
+}
+
+function buildOrderConfirmationUrl(orderNumber: string, orderToken: string): string {
+  return `${siteUrl()}/order/${encodeURIComponent(orderNumber)}?token=${encodeURIComponent(orderToken)}`;
+}
+
 export async function notifyNewOrder(input: NotifyNewOrderInput): Promise<void> {
-  const { orderNumber, email, total, currency, fallback } = input;
+  const { orderNumber, email, total, currency, fallback, orderToken } = input;
   const amount = formatAmount(total, currency);
+  const orderLink = orderToken ? buildOrderConfirmationUrl(orderNumber, orderToken) : null;
+  const orderLinkHtml = orderLink ? `<p><a href="${orderLink}">View your order</a></p>` : "";
 
   try {
     const result = await sendEmail({
       to: email,
       subject: fallback ? `We received your order ${orderNumber}` : `Payment received — order ${orderNumber}`,
       html: fallback
-        ? `<p>Thanks for your order <strong>${orderNumber}</strong> (${amount}). Our team will contact you shortly to confirm payment and delivery.</p>`
-        : `<p>Your payment for order <strong>${orderNumber}</strong> (${amount}) was received. We'll let you know as soon as it ships.</p>`,
+        ? `<p>Thanks for your order <strong>${orderNumber}</strong> (${amount}). Our team will contact you shortly to confirm payment and delivery.</p>${orderLinkHtml}`
+        : `<p>Your payment for order <strong>${orderNumber}</strong> (${amount}) was received. We'll let you know as soon as it ships.</p>${orderLinkHtml}`,
     });
     if (!result.ok) {
       console.log(

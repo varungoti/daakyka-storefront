@@ -125,7 +125,7 @@ export async function createRazorpayOrder(
     amount: Math.round(amountInPaise),
     currency,
     // Razorpay caps receipt at 40 characters; our order numbers
-    // (DK-YYYY-NNNNNN) are well under that.
+    // (DK-YYYY-NNNNNNNNNN) are well under that.
     receipt,
     payment_capture: true,
   });
