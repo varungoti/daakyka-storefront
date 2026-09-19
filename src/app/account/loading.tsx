@@ -1,5 +1,5 @@
-import { PageLoadingState } from "@/components/ui/spinner";
+import { AccountPageSkeleton } from "@/components/ui/route-skeletons";
 
 export default function AccountLoading() {
-  return <PageLoadingState />;
+  return <AccountPageSkeleton />;
 }

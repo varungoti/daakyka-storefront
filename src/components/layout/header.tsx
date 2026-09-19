@@ -326,6 +326,7 @@ function NavPanel({ item, onNavigate }: { item: NavItem; onNavigate: () => void 
                     src={tile.image.url}
                     alt={tile.image.alt}
                     fill
+                    loading="eager"
                     className="object-cover transition duration-300 group-hover:scale-105"
                     sizes="200px"
                   />

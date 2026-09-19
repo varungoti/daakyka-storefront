@@ -1,5 +1,5 @@
-import { PageLoadingState } from "@/components/ui/spinner";
+import { ShopGridSkeleton } from "@/components/ui/route-skeletons";
 
 export default function ShopLoading() {
-  return <PageLoadingState />;
+  return <ShopGridSkeleton showExtras />;
 }

@@ -2,6 +2,7 @@
 
 import { AddToCartButton } from "@/components/cart/add-to-cart-button";
 import { ResendVerificationButton } from "@/components/account/resend-verification-button";
+import { MobileStickyAddToCart } from "@/components/product/mobile-sticky-add-to-cart";
 import { Badge } from "@/components/ui/badge";
 import { ImageLightbox, type LightboxImage } from "@/components/ui/image-lightbox";
 import { Modal } from "@/components/ui/modal";
@@ -17,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { ChevronDown, Minus, Plus } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 
 export type ReviewEligibility =
   | { status: "guest" }
@@ -58,6 +59,9 @@ export function ProductDetail({
   const [quantity, setQuantity] = useState(1);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
+  // Watched by the mobile sticky Add-to-Cart bar (storefront-ux F6) to know
+  // when the primary CTA row has scrolled out of the viewport.
+  const ctaRowRef = useRef<HTMLDivElement>(null);
 
   const gallery = useMemo<LightboxImage[]>(() => {
     const colorImages = product.images?.filter((img) => img.color === selectedColor) ?? [];
@@ -212,7 +216,7 @@ export function ProductDetail({
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-4 pt-2">
+          <div ref={ctaRowRef} className="flex flex-wrap gap-4 pt-2">
             <AddToCartButton product={product} variant={selectedVariant} quantity={quantity} size="lg" />
             <AddToCartButton
               product={product}
@@ -317,6 +321,14 @@ export function ProductDetail({
           )}
         </Modal>
       )}
+
+      <MobileStickyAddToCart
+        product={product}
+        variant={selectedVariant}
+        quantity={quantity}
+        displayPrice={displayPrice}
+        observeTarget={ctaRowRef}
+      />
     </div>
   );
 }

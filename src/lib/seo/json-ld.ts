@@ -54,6 +54,18 @@ export function siteUrlBase() {
   return siteUrl;
 }
 
+/**
+ * Schema.org/Google Rich Results expect absolute image URLs (storefront-ux
+ * F9) — this app's product images come back from `/cdn/media/...` (site-
+ * relative) in DB-native mode. Resolves against the same site-URL base
+ * already used for canonical/`og:image`, but leaves an already-absolute
+ * URL (e.g. a legacy Shopify-hosted image) untouched instead of
+ * double-prefixing it.
+ */
+function toAbsoluteUrl(url: string): string {
+  return /^https?:\/\//i.test(url) ? url : `${siteUrlBase()}${url.startsWith("/") ? "" : "/"}${url}`;
+}
+
 export function productJsonLd(product: {
   name: string;
   description?: string;
@@ -75,7 +87,7 @@ export function productJsonLd(product: {
     description:
       product.description ??
       "Premium medical apparel engineered for healthcare professionals.",
-    image: product.images ?? [product.image],
+    image: (product.images ?? [product.image]).map(toAbsoluteUrl),
     // Not a real SKU (Shopify variant SKUs aren't queried yet) — the
     // handle is at least a stable, human-readable identifier, unlike
     // product.id, which is Shopify's opaque GID for Shopify-backed

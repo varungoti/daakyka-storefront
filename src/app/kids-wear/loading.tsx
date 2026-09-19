@@ -1,5 +1,5 @@
-import { PageLoadingState } from "@/components/ui/spinner";
+import { SectionLandingSkeleton } from "@/components/ui/route-skeletons";
 
 export default function KidsWearLoading() {
-  return <PageLoadingState />;
+  return <SectionLandingSkeleton />;
 }
