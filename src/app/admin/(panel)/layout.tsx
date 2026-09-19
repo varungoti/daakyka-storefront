@@ -1,4 +1,5 @@
 import { AdminShell } from "@/components/admin/admin-shell";
+import { UnsavedChangesProvider } from "@/components/admin/unsaved-changes";
 import { getSession } from "@/lib/auth/session";
 import { getUnreadNotificationCount } from "@/lib/notifications";
 import { redirect } from "next/navigation";
@@ -26,8 +27,14 @@ export default async function AdminPanelLayout({
   const unreadNotifications = await getUnreadNotificationCount();
 
   return (
-    <AdminShell user={session} unreadNotifications={unreadNotifications}>
-      {children}
-    </AdminShell>
+    // F-13: shared dirty-form state so a <GuardedLink> in the sidebar
+    // (AdminShell) can confirm before navigating away from a dirty form
+    // rendered in `children`, two levels down. See
+    // src/components/admin/unsaved-changes.tsx.
+    <UnsavedChangesProvider>
+      <AdminShell user={session} unreadNotifications={unreadNotifications}>
+        {children}
+      </AdminShell>
+    </UnsavedChangesProvider>
   );
 }

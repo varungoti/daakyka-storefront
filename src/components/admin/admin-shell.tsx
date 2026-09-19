@@ -29,11 +29,11 @@ import {
   Users,
   X,
 } from "lucide-react";
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { SessionUser } from "@/lib/auth/session";
 import { formatRole, hasPermission, type Permission } from "@/lib/auth/rbac";
+import { GuardedLink, useUnsavedChangesNav } from "@/components/admin/unsaved-changes";
 
 interface NavItem {
   href: string;
@@ -126,7 +126,7 @@ function NavLinks({
           <p className="px-3 text-[11px] font-bold uppercase tracking-wider text-muted/70">{group.label}</p>
           <div className="mt-2 space-y-1">
             {group.items.map(({ href, label, icon: Icon }) => (
-              <Link
+              <GuardedLink
                 key={href}
                 href={href}
                 onClick={onNavigate}
@@ -144,7 +144,7 @@ function NavLinks({
                     {unreadNotifications > 99 ? "99+" : unreadNotifications}
                   </span>
                 )}
-              </Link>
+              </GuardedLink>
             ))}
           </div>
         </div>
@@ -219,9 +219,9 @@ function MobileNavDrawer({
       <div className="absolute inset-0 bg-ink/50" onClick={onClose} aria-hidden="true" />
       <div ref={panelRef} className="absolute inset-y-0 left-0 w-72 max-w-[85vw] overflow-y-auto bg-surface p-6 shadow-xl">
         <div className="flex items-center justify-between">
-          <Link href="/admin/dashboard" className="font-display text-xl font-extrabold text-brand" onClick={onClose}>
+          <GuardedLink href="/admin/dashboard" className="font-display text-xl font-extrabold text-brand" onClick={onClose}>
             DAAKYKA Admin
-          </Link>
+          </GuardedLink>
           <button
             ref={closeButtonRef}
             type="button"
@@ -250,8 +250,13 @@ export function AdminShell({
   const pathname = usePathname();
   const router = useRouter();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const { confirmLeave } = useUnsavedChangesNav();
 
   const handleLogout = async () => {
+    // F-13: signing out is exactly the kind of navigation a dirty form
+    // needs protecting from too — it's not a <Link>, so it isn't covered
+    // by GuardedLink's onNavigate check.
+    if (!confirmLeave()) return;
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/admin/login");
     router.refresh();
@@ -268,9 +273,9 @@ export function AdminShell({
     <div className="min-h-screen bg-lavender/40">
       <div className="mx-auto flex min-h-screen max-w-7xl">
         <aside className="hidden w-64 shrink-0 border-r border-border bg-surface p-6 lg:block">
-          <Link href="/admin/dashboard" className="font-display text-xl font-extrabold text-brand">
+          <GuardedLink href="/admin/dashboard" className="font-display text-xl font-extrabold text-brand">
             DAAKYKA Admin
-          </Link>
+          </GuardedLink>
           <p className="mt-1 text-xs text-muted">{formatRole(user.role)}</p>
 
           <NavLinks groups={visibleGroups} pathname={pathname} unreadNotifications={unreadNotifications} />
@@ -310,9 +315,9 @@ export function AdminShell({
                   <p className="font-display text-lg font-bold text-ink">{user.name}</p>
                 </div>
               </div>
-              <Link href="/" className="text-sm font-semibold text-brand hover:underline">
+              <GuardedLink href="/" className="text-sm font-semibold text-brand hover:underline">
                 View Storefront
-              </Link>
+              </GuardedLink>
             </div>
           </header>
           <main className="p-4 lg:p-8">{children}</main>

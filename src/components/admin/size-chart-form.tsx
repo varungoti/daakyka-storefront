@@ -3,6 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Trash2 } from "lucide-react";
+import { FormErrorBanner } from "@/components/admin/form-error-banner";
+import { useUnsavedChangesGuard, useUnsavedChangesNav } from "@/components/admin/unsaved-changes";
+import { isDirty } from "@/lib/admin/is-dirty";
+import { formatApiError } from "@/lib/validation/format-api-error";
 
 export interface SizeChartFormInitial {
   id: string;
@@ -33,7 +37,18 @@ export function SizeChartForm({ initial }: { initial?: SizeChartFormInitial }) {
 
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // F-13: unsaved-changes protection — see product-form.tsx's own
+  // buildSnapshot() for the fuller rationale.
+  function buildSnapshot() {
+    return { name, unit, columns, rows, notes };
+  }
+  const [initialSnapshot] = useState(buildSnapshot);
+  const dirty = isDirty(buildSnapshot(), initialSnapshot);
+  useUnsavedChangesGuard(dirty);
+  const { confirmLeave } = useUnsavedChangesNav();
 
   const addColumn = () => {
     setColumns((cols) => [...cols, `Column ${cols.length + 1}`]);
@@ -52,6 +67,7 @@ export function SizeChartForm({ initial }: { initial?: SizeChartFormInitial }) {
   const save = async () => {
     setStatus("saving");
     setErrorMessage(null);
+    setFieldErrors({});
 
     const payload = {
       name: name.trim(),
@@ -74,9 +90,20 @@ export function SizeChartForm({ initial }: { initial?: SizeChartFormInitial }) {
     });
 
     if (!response.ok) {
+      // F-02: same silent-failure pattern as the product form — see
+      // src/lib/validation/format-api-error.ts. The row-count mismatch
+      // check (sizeChartInputSchema's superRefine in
+      // src/lib/catalog/size-charts.ts) reports at path ["rows", index],
+      // which formatApiError still surfaces in the summary even though
+      // this form has no per-cell inline error UI.
       const body = await response.json().catch(() => ({}));
+      const { summary, fieldErrors: fe } = formatApiError(
+        body,
+        "Couldn't save — check the table for empty or mismatched rows.",
+      );
       setStatus("error");
-      setErrorMessage(body?.error ?? "Couldn't save — check the table for empty or mismatched rows.");
+      setErrorMessage(summary);
+      setFieldErrors(fe);
       return;
     }
 
@@ -95,7 +122,7 @@ export function SizeChartForm({ initial }: { initial?: SizeChartFormInitial }) {
       return;
     }
     const body = await response.json().catch(() => ({}));
-    setDeleteError(body?.error ?? "Couldn't delete — try again.");
+    setDeleteError(formatApiError(body, "Couldn't delete — try again.").summary);
   };
 
   return (
@@ -108,6 +135,7 @@ export function SizeChartForm({ initial }: { initial?: SizeChartFormInitial }) {
             onChange={(e) => setName(e.target.value)}
             className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
           />
+          {fieldErrors.name ? <span className="mt-1 block text-[11px] font-medium text-red-600">{fieldErrors.name}</span> : null}
         </label>
         <label className="block">
           <span className="mb-1 block text-xs font-semibold text-muted">Unit</span>
@@ -253,8 +281,8 @@ export function SizeChartForm({ initial }: { initial?: SizeChartFormInitial }) {
         </div>
       </div>
 
-      {errorMessage ? <p className="text-sm text-red-600">{errorMessage}</p> : null}
-      {deleteError ? <p className="text-sm text-red-600">{deleteError}</p> : null}
+      <FormErrorBanner message={errorMessage} />
+      <FormErrorBanner message={deleteError} />
 
       <div className="flex flex-wrap items-center gap-3">
         <button
@@ -267,7 +295,11 @@ export function SizeChartForm({ initial }: { initial?: SizeChartFormInitial }) {
         </button>
         <button
           type="button"
-          onClick={() => router.push("/admin/size-charts")}
+          onClick={() => {
+            // F-13 — see product-form.tsx's "Back to list" button for why.
+            if (!confirmLeave()) return;
+            router.push("/admin/size-charts");
+          }}
           className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-muted hover:bg-lilac/40"
         >
           Cancel

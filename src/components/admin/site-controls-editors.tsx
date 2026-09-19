@@ -3,14 +3,30 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { SettingKey } from "@/lib/settings";
+import { FormErrorBanner } from "@/components/admin/form-error-banner";
+import { formatApiError } from "@/lib/validation/format-api-error";
 
-async function saveSetting(key: SettingKey, value: unknown): Promise<boolean> {
+interface SaveSettingResult {
+  ok: boolean;
+  /** Populated on failure — the mapped, human-readable message from
+   * formatApiError() (see src/lib/validation/format-api-error.ts), not the
+   * API's raw `{error: "Invalid value"}` boilerplate. */
+  error?: string;
+}
+
+async function saveSetting(key: SettingKey, value: unknown): Promise<SaveSettingResult> {
   const response = await fetch(`/api/admin/settings/${key}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value }),
   });
-  return response.ok;
+  if (response.ok) return { ok: true };
+  // F-02: these editors used to discard the response body entirely and
+  // show a static, guessed message regardless of what the server actually
+  // rejected — now the real per-field reason (e.g. a too-long announcement
+  // line) reaches the admin.
+  const body = await response.json().catch(() => ({}));
+  return { ok: false, error: formatApiError(body, "Couldn't save.").summary };
 }
 
 function SaveButton({ saving, saved }: { saving: boolean; saved: boolean }) {
@@ -40,13 +56,13 @@ export function AnnouncementEditor({ initialMessages }: { initialMessages: strin
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
-    const ok = await saveSetting("announcement.messages", value);
+    const result = await saveSetting("announcement.messages", value);
     setSaving(false);
-    if (ok) {
+    if (result.ok) {
       setSaved(true);
       router.refresh();
     } else {
-      setErrorMessage("Couldn't save — check each line isn't empty or too long.");
+      setErrorMessage(result.error ?? "Couldn't save — check each line isn't empty or too long.");
     }
   };
 
@@ -63,7 +79,9 @@ export function AnnouncementEditor({ initialMessages }: { initialMessages: strin
           setSaved(false);
         }}
       />
-      {errorMessage ? <p className="mt-2 text-xs text-red-600">{errorMessage}</p> : null}
+      <div className="mt-2">
+        <FormErrorBanner message={errorMessage} />
+      </div>
       <div className="mt-3">
         <SaveButton saving={saving} saved={saved} />
       </div>
@@ -93,11 +111,12 @@ export function ContactEditor({
       saveSetting("contact.address", values.address),
     ]);
     setSaving(false);
-    if (results.every(Boolean)) {
+    const failed = results.find((r) => !r.ok);
+    if (!failed) {
       setSaved(true);
       router.refresh();
     } else {
-      setErrorMessage("Couldn't save one or more fields — check the values.");
+      setErrorMessage(failed.error ?? "Couldn't save one or more fields — check the values.");
     }
   };
 
@@ -138,7 +157,9 @@ export function ContactEditor({
           }}
         />
       </div>
-      {errorMessage ? <p className="mt-2 text-xs text-red-600">{errorMessage}</p> : null}
+      <div className="mt-2">
+        <FormErrorBanner message={errorMessage} />
+      </div>
       <div className="mt-3">
         <SaveButton saving={saving} saved={saved} />
       </div>
@@ -166,11 +187,12 @@ export function ShippingEditor({
       saveSetting("shipping.freeAbove", values.freeAbove),
     ]);
     setSaving(false);
-    if (results.every(Boolean)) {
+    const failed = results.find((r) => !r.ok);
+    if (!failed) {
       setSaved(true);
       router.refresh();
     } else {
-      setErrorMessage("Couldn't save — values must be positive numbers.");
+      setErrorMessage(failed.error ?? "Couldn't save — values must be positive numbers.");
     }
   };
 
@@ -197,7 +219,9 @@ export function ShippingEditor({
           }}
         />
       </div>
-      {errorMessage ? <p className="mt-2 text-xs text-red-600">{errorMessage}</p> : null}
+      <div className="mt-2">
+        <FormErrorBanner message={errorMessage} />
+      </div>
       <div className="mt-3">
         <SaveButton saving={saving} saved={saved} />
       </div>

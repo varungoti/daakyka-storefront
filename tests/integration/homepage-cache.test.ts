@@ -2,6 +2,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { db } from "@/lib/db";
 import { getTrustStatsContent, updateHomepageSection } from "@/lib/homepage";
+import { PUT as putHomepageSection } from "@/app/api/admin/homepage/[key]/route";
 
 async function findAnyAdminId(): Promise<string> {
   const user = await db.user.findFirst({ select: { id: true } });
@@ -68,5 +69,45 @@ describe("homepage section cache round trip", () => {
     });
     assert.ok(audit, "expected an audit log row for the homepage section change");
     assert.equal(audit.action, "update");
+  });
+});
+
+/**
+ * Release-hardening F-5: PUT /api/admin/homepage/[key] used to pass the
+ * raw request body straight into updateHomepageSection() with zero schema
+ * validation (see src/app/api/admin/homepage/[key]/route.ts and the new
+ * heroContentSchema / announcementContentSchema / trustStatsContentSchema
+ * in src/lib/validation/schemas.ts, unit-tested directly in
+ * src/lib/validation/schemas.test.ts). getSession() needs a real Next.js
+ * request scope for cookies() (see src/lib/auth/session.ts), which this
+ * `tsx --test` harness doesn't provide when calling a route handler
+ * directly — so, matching every other admin-route integration test in this
+ * repo (e.g. tests/integration/site-settings.test.ts,
+ * tests/integration/admin-crud-completion.test.ts), this only exercises
+ * the auth gate and the fact that it runs before any key/body validation.
+ * The Zod schemas themselves, and isHomepageSectionKey(), are fully
+ * unit-tested without needing a session at all.
+ */
+describe("PUT /api/admin/homepage/[key]", () => {
+  it("rejects with 401/403 when called with no session, for a known key", async () => {
+    const request = new Request("http://localhost/api/admin/homepage/hero", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ foo: "bar" }),
+    });
+    const response = await putHomepageSection(request, { params: Promise.resolve({ key: "hero" }) });
+    assert.ok([401, 403].includes(response.status), `expected 401 or 403, got ${response.status}`);
+  });
+
+  it("still rejects unauthenticated even for an unknown key (auth checked before the key is validated)", async () => {
+    const request = new Request("http://localhost/api/admin/homepage/not-a-real-section", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ foo: "bar" }),
+    });
+    const response = await putHomepageSection(request, {
+      params: Promise.resolve({ key: "not-a-real-section" }),
+    });
+    assert.ok([401, 403].includes(response.status), `expected 401 or 403, got ${response.status}`);
   });
 });

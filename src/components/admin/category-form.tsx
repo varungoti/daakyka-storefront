@@ -3,7 +3,11 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { MediaPicker, type PickedAsset } from "@/components/admin/media-picker";
+import { FormErrorBanner } from "@/components/admin/form-error-banner";
+import { useUnsavedChangesGuard, useUnsavedChangesNav } from "@/components/admin/unsaved-changes";
 import { SECTION_LABELS, categorySectionValues } from "@/lib/catalog/category-validation";
+import { isDirty } from "@/lib/admin/is-dirty";
+import { formatApiError } from "@/lib/validation/format-api-error";
 
 type Section = (typeof categorySectionValues)[number];
 
@@ -78,6 +82,19 @@ export function CategoryForm({
 
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  // F-13: unsaved-changes protection — see product-form.tsx's own
+  // buildSnapshot() for the fuller rationale. `image` is included since,
+  // unlike product-form's gallery, MediaPicker here just stages a pick
+  // locally until Save/Create is clicked.
+  function buildSnapshot() {
+    return { name, slug, description, section, parentId, sizeChartId, seoTitle, seoDescription, active, showInMenu, imageId: image?.id ?? null };
+  }
+  const [initialSnapshot] = useState(buildSnapshot);
+  const dirty = isDirty(buildSnapshot(), initialSnapshot);
+  useUnsavedChangesGuard(dirty);
+  const { confirmLeave } = useUnsavedChangesNav();
 
   const excludedParentIds = useMemo(
     () => (initial ? selfAndDescendantIds(initial.id, categoryOptions) : new Set<string>()),
@@ -115,6 +132,7 @@ export function CategoryForm({
   const save = async () => {
     setStatus("saving");
     setErrorMessage(null);
+    setFieldErrors({});
 
     const payload = {
       name: name.trim(),
@@ -137,9 +155,13 @@ export function CategoryForm({
     });
 
     if (!response.ok) {
+      // F-02: same silent-failure pattern as the product form — see
+      // src/lib/validation/format-api-error.ts.
       const body = await response.json().catch(() => ({}));
+      const { summary, fieldErrors: fe } = formatApiError(body, "Couldn't save — check the fields above.");
       setStatus("error");
-      setErrorMessage(body?.error ?? "Couldn't save — check the fields above.");
+      setErrorMessage(summary);
+      setFieldErrors(fe);
       return;
     }
 
@@ -150,14 +172,14 @@ export function CategoryForm({
   return (
     <div className="max-w-3xl space-y-6 rounded-2xl border border-border bg-surface p-6">
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Name">
+        <Field label="Name" error={fieldErrors.name}>
           <input
             value={name}
             onChange={(e) => onNameChange(e.target.value)}
             className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
           />
         </Field>
-        <Field label="Slug" hint="Lowercase letters, numbers, and hyphens">
+        <Field label="Slug" error={fieldErrors.slug} hint="Lowercase letters, numbers, and hyphens">
           <input
             value={slug}
             onChange={(e) => {
@@ -169,7 +191,7 @@ export function CategoryForm({
         </Field>
       </div>
 
-      <Field label="Description">
+      <Field label="Description" error={fieldErrors.description}>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -179,7 +201,7 @@ export function CategoryForm({
       </Field>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Section">
+        <Field label="Section" error={fieldErrors.section}>
           <select
             value={section}
             onChange={(e) => onSectionChange(e.target.value as Section)}
@@ -193,7 +215,7 @@ export function CategoryForm({
           </select>
         </Field>
 
-        <Field label="Parent category" hint="Must be in the same section">
+        <Field label="Parent category" error={fieldErrors.parentId} hint="Must be in the same section">
           <select
             value={parentId}
             onChange={(e) => setParentId(e.target.value)}
@@ -209,7 +231,7 @@ export function CategoryForm({
         </Field>
       </div>
 
-      <Field label="Size chart" hint="Products in this category inherit this unless overridden">
+      <Field label="Size chart" error={fieldErrors.sizeChartId} hint="Products in this category inherit this unless overridden">
         <select
           value={sizeChartId}
           onChange={(e) => setSizeChartId(e.target.value)}
@@ -230,14 +252,14 @@ export function CategoryForm({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="SEO title">
+        <Field label="SEO title" error={fieldErrors.seoTitle}>
           <input
             value={seoTitle}
             onChange={(e) => setSeoTitle(e.target.value)}
             className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
           />
         </Field>
-        <Field label="SEO description">
+        <Field label="SEO description" error={fieldErrors.seoDescription}>
           <input
             value={seoDescription}
             onChange={(e) => setSeoDescription(e.target.value)}
@@ -257,7 +279,7 @@ export function CategoryForm({
         </label>
       </div>
 
-      {errorMessage ? <p className="text-sm text-red-600">{errorMessage}</p> : null}
+      <FormErrorBanner message={errorMessage} />
 
       <div className="flex gap-3">
         <button
@@ -270,7 +292,11 @@ export function CategoryForm({
         </button>
         <button
           type="button"
-          onClick={() => router.push("/admin/categories")}
+          onClick={() => {
+            // F-13 — see product-form.tsx's "Back to list" button for why.
+            if (!confirmLeave()) return;
+            router.push("/admin/categories");
+          }}
           className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-muted hover:bg-lilac/40"
         >
           Cancel
@@ -280,12 +306,16 @@ export function CategoryForm({
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: React.ReactNode }) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-semibold text-muted">{label}</span>
       {children}
-      {hint ? <span className="mt-1 block text-[11px] text-muted">{hint}</span> : null}
+      {error ? (
+        <span className="mt-1 block text-[11px] font-medium text-red-600">{error}</span>
+      ) : hint ? (
+        <span className="mt-1 block text-[11px] text-muted">{hint}</span>
+      ) : null}
     </label>
   );
 }

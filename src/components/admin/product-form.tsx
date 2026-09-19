@@ -5,7 +5,11 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ProductVariantEditor, type VariantRow } from "@/components/admin/product-variant-editor";
 import { ProductImageGallery, type ProductImageRow } from "@/components/admin/product-image-gallery";
+import { FormErrorBanner } from "@/components/admin/form-error-banner";
+import { useUnsavedChangesGuard, useUnsavedChangesNav } from "@/components/admin/unsaved-changes";
 import { slugify } from "@/lib/catalog/category-validation";
+import { isDirty } from "@/lib/admin/is-dirty";
+import { formatApiError } from "@/lib/validation/format-api-error";
 
 const genderValues = ["MEN", "WOMEN", "UNISEX", "BOYS", "GIRLS", "KIDS"] as const;
 type Gender = (typeof genderValues)[number];
@@ -105,6 +109,8 @@ export function ProductForm({
 
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [saved, setSaved] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
 
   const flatCategories = useMemo(() => flattenCategories(categoryOptions), [categoryOptions]);
@@ -112,6 +118,44 @@ export function ProductForm({
   const productColors = useMemo(() => Array.from(new Set(variants.map((v) => v.color))), [variants]);
   const orderCount = initial?.orderCount ?? 0;
   const canDelete = isEdit && status === "DRAFT" && orderCount === 0;
+
+  // F-13: unsaved-changes protection. `images` is deliberately excluded —
+  // ProductImageGallery persists every add/reorder/delete immediately via
+  // its own API calls (see product-image-gallery.tsx), so there's never
+  // anything "unsaved" about it. `variants` is included: it's local state
+  // bundled into the same POST/PATCH as the rest of the form by
+  // saveVariantsIfChanged() below, not saved until then.
+  function buildSnapshot() {
+    return {
+      name,
+      slug,
+      shortDescription,
+      description,
+      categoryId,
+      status,
+      featured,
+      isNew,
+      price,
+      compareAtPrice,
+      gender,
+      fabric,
+      care,
+      tagsText,
+      sizeChartId,
+      seoTitle,
+      seoDescription,
+      variants,
+    };
+  }
+  // Captured once, at mount, via the lazy useState() initializer (a plain
+  // `useRef(buildSnapshot())` would read `.current` during render, which
+  // this repo's react-hooks/refs lint rule rejects — see
+  // src/lib/admin/is-dirty.ts) from the same state already initialized
+  // from `initial`.
+  const [initialSnapshot, setInitialSnapshot] = useState(buildSnapshot);
+  const dirty = isDirty(buildSnapshot(), initialSnapshot);
+  useUnsavedChangesGuard(dirty);
+  const { confirmLeave } = useUnsavedChangesNav();
 
   const onNameChange = (value: string) => {
     setName(value);
@@ -180,7 +224,7 @@ export function ProductForm({
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      setErrorMessage(body?.error ?? "Couldn't save variants.");
+      setErrorMessage(formatApiError(body, "Couldn't save variants.").summary);
       return false;
     }
     return true;
@@ -189,11 +233,14 @@ export function ProductForm({
   async function saveDraft() {
     setSaveStatus("saving");
     setErrorMessage(null);
+    setFieldErrors({});
+    setSaved(false);
 
     const payload = buildPayload();
     if (payload.compareAtPrice != null && payload.compareAtPrice <= payload.price) {
       setSaveStatus("error");
       setErrorMessage("Compare-at price must be greater than the price.");
+      setFieldErrors({ compareAtPrice: "Compare-at price must be greater than the price." });
       return;
     }
 
@@ -204,9 +251,17 @@ export function ProductForm({
     });
 
     if (!response.ok) {
+      // F-02: server validation failures (e.g. a negative price) used to
+      // 400 with nothing shown anywhere on the page. formatApiError() maps
+      // the Zod `issues` array the route returns (src/lib/catalog/products.ts's
+      // productInputSchema/productUpdateSchema) into a readable summary
+      // plus a per-field message, rather than dumping the raw `{error:
+      // "Invalid request"}` boilerplate at the admin.
       const body = await response.json().catch(() => ({}));
+      const { summary, fieldErrors: fe } = formatApiError(body, "Couldn't save — check the fields above.");
       setSaveStatus("error");
-      setErrorMessage(body?.error ?? "Couldn't save — check the fields above.");
+      setErrorMessage(summary);
+      setFieldErrors(fe);
       return;
     }
 
@@ -216,6 +271,18 @@ export function ProductForm({
 
     const variantsOk = await saveVariantsIfChanged(savedId);
     setSaveStatus(variantsOk ? "idle" : "error");
+
+    if (variantsOk) {
+      // F-13: this save just persisted exactly what's in the form, so it's
+      // no longer "dirty" relative to it — updating the snapshot here
+      // (rather than only at mount) means immediately navigating away
+      // right after a successful save doesn't trigger the guard.
+      setInitialSnapshot(buildSnapshot());
+      // F-03/F-16: match the Orders page's own "Saved." confirmation
+      // pattern (src/components/admin/order-detail-actions.tsx) instead of
+      // leaving a save with no visible confirmation at all.
+      setSaved(true);
+    }
 
     if (!isEdit) {
       router.push(`/admin/products/${savedId}`);
@@ -227,11 +294,15 @@ export function ProductForm({
   async function runAction(action: string, run: () => Promise<Response>) {
     setBusyAction(action);
     setErrorMessage(null);
+    setFieldErrors({});
+    setSaved(false);
     const response = await run();
     setBusyAction(null);
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
-      setErrorMessage(body?.error ?? `Couldn't ${action}.`);
+      const { summary, fieldErrors: fe } = formatApiError(body, `Couldn't ${action}.`);
+      setErrorMessage(summary);
+      setFieldErrors(fe);
       return false;
     }
     return true;
@@ -244,6 +315,12 @@ export function ProductForm({
     );
     if (ok) {
       setStatus("ACTIVE");
+      // Only fold `status` into the pristine snapshot — publish only
+      // persists the status flip, not any other pending, unsaved field
+      // edit, so this must not mark the rest of the form as "saved" too
+      // (that would silently defeat the F-13 guard for those fields).
+      setInitialSnapshot((prev) => ({ ...prev, status: "ACTIVE" }));
+      setSaved(true);
       router.refresh();
     }
   }
@@ -255,6 +332,9 @@ export function ProductForm({
     );
     if (ok) {
       setStatus("DRAFT");
+      // See the comment in publish() above — only `status` was persisted.
+      setInitialSnapshot((prev) => ({ ...prev, status: "DRAFT" }));
+      setSaved(true);
       router.refresh();
     }
   }
@@ -266,6 +346,9 @@ export function ProductForm({
     );
     if (ok) {
       setStatus("ARCHIVED");
+      // See the comment in publish() above — only `status` was persisted.
+      setInitialSnapshot((prev) => ({ ...prev, status: "ARCHIVED" }));
+      setSaved(true);
       router.refresh();
     }
   }
@@ -273,13 +356,15 @@ export function ProductForm({
   async function duplicate() {
     if (!productId) return;
     setBusyAction("duplicate");
+    setErrorMessage(null);
     const response = await fetch(`/api/admin/products/${productId}/duplicate`, { method: "POST" });
     setBusyAction(null);
     if (response.ok) {
       const body = await response.json();
       router.push(`/admin/products/${body.product.id}`);
     } else {
-      setErrorMessage("Couldn't duplicate the product.");
+      const body = await response.json().catch(() => ({}));
+      setErrorMessage(formatApiError(body, "Couldn't duplicate the product.").summary);
     }
   }
 
@@ -290,10 +375,11 @@ export function ProductForm({
     const response = await fetch(`/api/admin/products/${productId}`, { method: "DELETE" });
     setBusyAction(null);
     if (response.ok) {
+      setInitialSnapshot(buildSnapshot());
       router.push("/admin/products");
     } else {
       const body = await response.json().catch(() => ({}));
-      setErrorMessage(body?.error ?? "Couldn't delete the product.");
+      setErrorMessage(formatApiError(body, "Couldn't delete the product.").summary);
     }
   }
 
@@ -302,10 +388,14 @@ export function ProductForm({
       <section className="space-y-4 rounded-2xl border border-border bg-surface p-6">
         <h2 className="font-display text-lg font-bold text-ink">Basics</h2>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Name">
+          <Field label="Name" error={fieldErrors.name}>
             <input value={name} onChange={(e) => onNameChange(e.target.value)} className={inputClass} />
           </Field>
-          <Field label="Slug" hint={slugStatus === "checking" ? "Checking…" : slugStatus === "taken" ? "Already in use" : slugStatus === "available" ? "Available" : "Lowercase letters, numbers, and hyphens"}>
+          <Field
+            label="Slug"
+            error={fieldErrors.slug}
+            hint={slugStatus === "checking" ? "Checking…" : slugStatus === "taken" ? "Already in use" : slugStatus === "available" ? "Available" : "Lowercase letters, numbers, and hyphens"}
+          >
             <input
               value={slug}
               onChange={(e) => {
@@ -316,10 +406,10 @@ export function ProductForm({
             />
           </Field>
         </div>
-        <Field label="Short description">
+        <Field label="Short description" error={fieldErrors.shortDescription}>
           <input value={shortDescription} onChange={(e) => setShortDescription(e.target.value)} className={inputClass} />
         </Field>
-        <Field label="Description">
+        <Field label="Description" error={fieldErrors.description}>
           <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} className={inputClass} />
         </Field>
       </section>
@@ -331,22 +421,23 @@ export function ProductForm({
             + New category
           </Link>
         </div>
-        <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={inputClass}>
+        <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} aria-invalid={Boolean(fieldErrors.categoryId)} className={inputClass}>
           {flatCategories.map((option) => (
             <option key={option.id} value={option.id}>
               {option.label}
             </option>
           ))}
         </select>
+        {fieldErrors.categoryId ? <p className="text-[11px] font-medium text-red-600">{fieldErrors.categoryId}</p> : null}
       </section>
 
       <section className="space-y-4 rounded-2xl border border-border bg-surface p-6">
         <h2 className="font-display text-lg font-bold text-ink">Pricing</h2>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Price (INR)">
+          <Field label="Price (INR)" error={fieldErrors.price}>
             <input type="number" min={0} step="0.01" value={price} onChange={(e) => setPrice(e.target.value === "" ? "" : Number(e.target.value))} className={inputClass} />
           </Field>
-          <Field label="Compare-at price" hint="Must be greater than price to show a Sale badge">
+          <Field label="Compare-at price" error={fieldErrors.compareAtPrice} hint="Must be greater than price to show a Sale badge">
             <input
               type="number"
               min={0}
@@ -382,13 +473,13 @@ export function ProductForm({
       <section className="space-y-4 rounded-2xl border border-border bg-surface p-6">
         <h2 className="font-display text-lg font-bold text-ink">Details</h2>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Fabric">
+          <Field label="Fabric" error={fieldErrors.fabric}>
             <input value={fabric} onChange={(e) => setFabric(e.target.value)} className={inputClass} />
           </Field>
-          <Field label="Care instructions">
+          <Field label="Care instructions" error={fieldErrors.care}>
             <input value={care} onChange={(e) => setCare(e.target.value)} className={inputClass} />
           </Field>
-          <Field label="Gender">
+          <Field label="Gender" error={fieldErrors.gender}>
             <select value={gender} onChange={(e) => setGender(e.target.value as Gender)} className={inputClass}>
               {genderValues.map((g) => (
                 <option key={g} value={g}>
@@ -397,7 +488,7 @@ export function ProductForm({
               ))}
             </select>
           </Field>
-          <Field label="Size chart" hint="Leave as None to inherit the category's default">
+          <Field label="Size chart" error={fieldErrors.sizeChartId} hint="Leave as None to inherit the category's default">
             <select value={sizeChartId} onChange={(e) => setSizeChartId(e.target.value)} className={inputClass}>
               <option value="">None — inherit from category</option>
               {sizeChartOptions.map((chart) => (
@@ -408,7 +499,7 @@ export function ProductForm({
             </select>
           </Field>
         </div>
-        <Field label="Tags" hint="Comma-separated">
+        <Field label="Tags" error={fieldErrors.tags} hint="Comma-separated">
           <input value={tagsText} onChange={(e) => setTagsText(e.target.value)} className={inputClass} />
         </Field>
         <div className="flex flex-wrap gap-4">
@@ -425,10 +516,10 @@ export function ProductForm({
 
       <section className="space-y-4 rounded-2xl border border-border bg-surface p-6">
         <h2 className="font-display text-lg font-bold text-ink">SEO</h2>
-        <Field label="SEO title">
+        <Field label="SEO title" error={fieldErrors.seoTitle}>
           <input value={seoTitle} onChange={(e) => setSeoTitle(e.target.value)} className={inputClass} />
         </Field>
-        <Field label="SEO description">
+        <Field label="SEO description" error={fieldErrors.seoDescription}>
           <textarea value={seoDescription} onChange={(e) => setSeoDescription(e.target.value)} rows={2} className={inputClass} />
         </Field>
         <div className="rounded-xl border border-border bg-surface-muted p-3">
@@ -438,12 +529,14 @@ export function ProductForm({
         </div>
       </section>
 
-      {errorMessage ? <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-600">{errorMessage}</p> : null}
+      <FormErrorBanner message={errorMessage} />
 
       <div className="sticky bottom-4 z-10 flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-surface p-4 shadow-lg">
         <button type="button" onClick={saveDraft} disabled={saveStatus === "saving" || !name.trim() || !price} className="rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
-          {saveStatus === "saving" ? "Saving…" : "Save draft"}
+          {saveStatus === "saving" ? "Saving…" : status === "DRAFT" ? "Save draft" : "Save changes"}
         </button>
+
+        {saved && !errorMessage ? <span className="text-xs font-medium text-green-700">Saved.</span> : null}
 
         <span title={canPublish ? "" : "Requires products:publish"}>
           {status === "ACTIVE" ? (
@@ -477,7 +570,17 @@ export function ProductForm({
           </span>
         )}
 
-        <button type="button" onClick={() => router.push("/admin/products")} className="ml-auto rounded-full px-5 py-2.5 text-sm font-semibold text-muted hover:bg-lilac/40">
+        <button
+          type="button"
+          onClick={() => {
+            // F-13: a plain router.push here would silently discard a
+            // dirty form exactly like the reported bug — this is the same
+            // confirmLeave() the sidebar's GuardedLink uses.
+            if (!confirmLeave()) return;
+            router.push("/admin/products");
+          }}
+          className="ml-auto rounded-full px-5 py-2.5 text-sm font-semibold text-muted hover:bg-lilac/40"
+        >
           Back to list
         </button>
       </div>
@@ -487,12 +590,16 @@ export function ProductForm({
 
 const inputClass = "w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand";
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: React.ReactNode }) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-semibold text-muted">{label}</span>
       {children}
-      {hint ? <span className="mt-1 block text-[11px] text-muted">{hint}</span> : null}
+      {error ? (
+        <span className="mt-1 block text-[11px] font-medium text-red-600">{error}</span>
+      ) : hint ? (
+        <span className="mt-1 block text-[11px] text-muted">{hint}</span>
+      ) : null}
     </label>
   );
 }

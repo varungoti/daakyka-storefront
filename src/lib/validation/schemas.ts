@@ -332,6 +332,67 @@ export const adminReviewBulkSchema = z.object({
   ids: z.array(z.string().trim().min(1)).min(1, "At least one review id is required").max(100),
 });
 
+// Release-hardening F-5: admin homepage section content
+// (PUT /api/admin/homepage/[key]) previously passed the raw request body
+// straight into updateHomepageSection() with zero validation — a
+// wrongly-shaped body could corrupt the live hero/announcement/trust-stats
+// content (confirmed live; see the finding write-up). One schema per
+// section key, matching the corresponding interface in
+// src/lib/homepage/index.ts field-for-field. `.strict()` on every object
+// level so an unknown key is rejected rather than silently stored.
+
+export const heroContentSchema = z
+  .object({
+    eyebrow: z.string().trim().min(1, "Eyebrow is required").max(120),
+    headline: z.string().trim().min(1, "Headline is required").max(200),
+    subheadline: z.string().trim().min(1, "Subheadline is required").max(200),
+    description: z.string().trim().min(1, "Description is required").max(1000),
+    primaryCta: z.string().trim().min(1, "Primary CTA is required").max(60),
+    secondaryCta: z.string().trim().min(1, "Secondary CTA is required").max(60),
+    // Deliberately allowed empty: src/lib/homepage/index.ts only renders
+    // the star row when `rating` is non-empty — that's a legitimate,
+    // intentional state (see defaultHero's own comment there), not a
+    // validation failure.
+    rating: z.string().trim().max(20),
+    ratingLabel: z.string().trim().min(1, "Rating label is required").max(200),
+  })
+  .strict();
+
+export const announcementContentSchema = z
+  .object({
+    messages: z.array(z.string().trim().min(1, "A message can't be empty").max(200)).max(10),
+  })
+  .strict();
+
+export const trustStatsContentSchema = z
+  .object({
+    stats: z
+      .array(
+        z
+          .object({
+            value: z.string().trim().min(1, "Value is required").max(20),
+            label: z.string().trim().min(1, "Label is required").max(60),
+          })
+          .strict(),
+      )
+      .min(1, "At least one stat is required")
+      .max(12),
+  })
+  .strict();
+
+export const homepageSectionKeys = ["hero", "announcement", "trust-stats"] as const;
+export type HomepageSectionKey = (typeof homepageSectionKeys)[number];
+
+export function isHomepageSectionKey(key: string): key is HomepageSectionKey {
+  return (homepageSectionKeys as readonly string[]).includes(key);
+}
+
+export const homepageSectionSchemas = {
+  hero: heroContentSchema,
+  announcement: announcementContentSchema,
+  "trust-stats": trustStatsContentSchema,
+} satisfies Record<HomepageSectionKey, z.ZodTypeAny>;
+
 export const userUpdateSchema = z.object({
   name: z.string().min(2),
   role: z.enum([

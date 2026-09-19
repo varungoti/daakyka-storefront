@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  announcementContentSchema,
   bulkOrderSchema,
   checkoutSchema,
   checkoutVerifySchema,
@@ -9,6 +10,9 @@ import {
   customerForgotPasswordSchema,
   customerRegisterSchema,
   customerResetPasswordSchema,
+  heroContentSchema,
+  homepageSectionSchemas,
+  isHomepageSectionKey,
   loginSchema,
   newsletterSchema,
   notificationMarkReadSchema,
@@ -22,6 +26,7 @@ import {
   templateUpdateSchema,
   testimonialSchema,
   testimonialUpdateSchema,
+  trustStatsContentSchema,
   userInviteSchema,
 } from "@/lib/validation/schemas";
 
@@ -535,6 +540,132 @@ describe("notificationMarkReadSchema", () => {
 
   it("rejects a non-boolean read field", () => {
     assert.equal(notificationMarkReadSchema.safeParse({ read: "true" }).success, false);
+  });
+});
+
+// Release-hardening F-5: admin homepage section content
+// (PUT /api/admin/homepage/[key]) used to accept any JSON shape with zero
+// validation — see src/app/api/admin/homepage/[key]/route.ts and
+// tests/integration/homepage-cache.test.ts for the route-level auth-gate
+// checks (the DB-backed round trip is already covered there).
+
+describe("isHomepageSectionKey", () => {
+  it("only the three known section keys map to a valid route param", () => {
+    assert.equal(isHomepageSectionKey("hero"), true);
+    assert.equal(isHomepageSectionKey("announcement"), true);
+    assert.equal(isHomepageSectionKey("trust-stats"), true);
+    assert.equal(isHomepageSectionKey("not-a-real-section"), false);
+    assert.equal(isHomepageSectionKey(""), false);
+  });
+});
+
+describe("heroContentSchema", () => {
+  const valid = {
+    eyebrow: "Welcome to DAAKYKA",
+    headline: "Expertly Designed, Meticulously Crafted",
+    subheadline: "Quality Uniforms & Linens for Pan India",
+    description: "Hospital linens, medical scrubs, school uniforms, and corporate wear.",
+    primaryCta: "Shop All Scrubs",
+    secondaryCta: "Build Your Fit",
+    rating: "",
+    ratingLabel: "Hyderabad-Based · 9+ Years of Trusted Manufacturing",
+  };
+
+  it("accepts the real default hero content", () => {
+    assert.equal(heroContentSchema.safeParse(valid).success, true);
+  });
+
+  it("accepts an empty `rating` (the documented no-star-row state)", () => {
+    const result = heroContentSchema.safeParse({ ...valid, rating: "" });
+    assert.equal(result.success, true);
+  });
+
+  it("rejects a missing required field with a useful message at its own path", () => {
+    const withoutHeadline: Record<string, unknown> = { ...valid };
+    delete withoutHeadline.headline;
+    const result = heroContentSchema.safeParse(withoutHeadline);
+    assert.equal(result.success, false);
+    if (!result.success) {
+      const issue = result.error.issues.find((i) => i.path.join(".") === "headline");
+      assert.ok(issue?.message.length, "expected a useful message for the missing headline");
+    }
+  });
+
+  it("rejects an unrecognized key instead of silently storing it (.strict())", () => {
+    const result = heroContentSchema.safeParse({ ...valid, notAField: "surprise" });
+    assert.equal(result.success, false);
+  });
+
+  it("rejects the wrongly-shaped body from the live finding (an unrelated object) rather than corrupting the row", () => {
+    const result = heroContentSchema.safeParse({ foo: "bar" });
+    assert.equal(result.success, false);
+  });
+
+  it("rejects a non-string field (e.g. a number where a headline is expected)", () => {
+    const result = heroContentSchema.safeParse({ ...valid, headline: 12345 });
+    assert.equal(result.success, false);
+  });
+});
+
+describe("announcementContentSchema", () => {
+  it("accepts the real default announcement content", () => {
+    const result = announcementContentSchema.safeParse({
+      messages: ["Free Shipping on Orders Over ₹8,000", "30-Day Easy Returns", "Designed for Heroes"],
+    });
+    assert.equal(result.success, true);
+  });
+
+  it("accepts zero messages (announcement bar effectively disabled)", () => {
+    assert.equal(announcementContentSchema.safeParse({ messages: [] }).success, true);
+  });
+
+  it("rejects a non-array messages field", () => {
+    assert.equal(announcementContentSchema.safeParse({ messages: "not an array" }).success, false);
+  });
+
+  it("rejects an empty-string message", () => {
+    assert.equal(announcementContentSchema.safeParse({ messages: [""] }).success, false);
+  });
+
+  it("rejects an unrecognized top-level key", () => {
+    assert.equal(
+      announcementContentSchema.safeParse({ messages: ["ok"], extra: true }).success,
+      false,
+    );
+  });
+});
+
+describe("trustStatsContentSchema", () => {
+  it("accepts the real default trust-stats content", () => {
+    const result = trustStatsContentSchema.safeParse({
+      stats: [
+        { value: "9+", label: "Years Manufacturing" },
+        { value: "Pan India", label: "Delivery & Fulfillment" },
+        { value: "100%", label: "Secure Checkout" },
+      ],
+    });
+    assert.equal(result.success, true);
+  });
+
+  it("rejects an empty stats array", () => {
+    assert.equal(trustStatsContentSchema.safeParse({ stats: [] }).success, false);
+  });
+
+  it("rejects a stat missing its label", () => {
+    assert.equal(trustStatsContentSchema.safeParse({ stats: [{ value: "9+" }] }).success, false);
+  });
+
+  it("rejects an unrecognized key on a nested stat entry (.strict() applies at every level)", () => {
+    const result = trustStatsContentSchema.safeParse({
+      stats: [{ value: "9+", label: "Years", icon: "star" }],
+    });
+    assert.equal(result.success, false);
+  });
+});
+
+describe("homepageSectionSchemas", () => {
+  it("has exactly one schema per known section key", () => {
+    assert.deepEqual(Object.keys(homepageSectionSchemas).sort(), ["announcement", "hero", "trust-stats"]);
   });
 });
 
