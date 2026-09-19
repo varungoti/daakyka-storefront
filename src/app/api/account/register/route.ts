@@ -4,6 +4,7 @@ import { hashPassword } from "@/lib/customer-auth/password";
 import { issueCustomerToken } from "@/lib/customer-auth/tokens";
 import { sendVerificationEmail } from "@/lib/customer-auth/mailer";
 import { db } from "@/lib/db";
+import { linkGuestOrdersToCustomer } from "@/lib/orders/claim-guest-orders";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { customerRegisterSchema } from "@/lib/validation/schemas";
@@ -57,6 +58,16 @@ export async function POST(request: Request) {
         passwordHash,
       },
     });
+
+    // Attach any orders this person placed as a guest with the same
+    // address, so "My orders" isn't empty for a returning shopper who
+    // only now created an account. Never fails registration: an
+    // unclaimed order is recoverable later, a failed signup isn't.
+    try {
+      await linkGuestOrdersToCustomer(customer.id, customer.email);
+    } catch {
+      // Intentionally swallowed — see above.
+    }
 
     const { raw } = await issueCustomerToken(customer.id, "VERIFY");
     const origin = new URL(request.url).origin;
