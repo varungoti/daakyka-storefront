@@ -1,5 +1,6 @@
 "use client";
 
+import { ResendVerificationButton } from "@/components/account/resend-verification-button";
 import { Button, buttonClassNames } from "@/components/ui/button";
 import { useWishlist } from "@/context/wishlist-provider";
 import { INDIAN_PHONE_HINT, INDIAN_PINCODE_HINT, normalizeIndianPhone, normalizeIndianPincode } from "@/lib/validation/india";
@@ -525,6 +526,9 @@ function ProfileTab({ customer }: { customer: CustomerInfo }) {
         <p className="text-sm text-muted">
           {customer.email} {customer.emailVerified ? "· Verified" : "· Not yet verified"}
         </p>
+        {!customer.emailVerified && (
+          <ResendVerificationButton email={customer.email} className="-mt-2" />
+        )}
         <TextField label="Full Name *" name="name" required defaultValue={customer.name} />
         <TextField label="Phone" name="phone" defaultValue={customer.phone ?? ""} />
         {status === "error" && <p className="text-sm text-red-600">{error}</p>}

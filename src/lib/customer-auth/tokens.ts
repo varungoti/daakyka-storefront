@@ -82,3 +82,24 @@ export async function markTokenUsed(tokenId: string): Promise<void> {
     data: { usedAt: new Date() },
   });
 }
+
+/**
+ * Marks every currently-outstanding (unused — expired or not) token of
+ * `type` for this customer as used, without ever being consumed through
+ * consumeCustomerToken. Used before issuing a fresh token should supersede
+ * any earlier one still sitting in an old email — e.g. resend-verification
+ * (src/lib/customer-auth/resend-verification.ts) — so only the newest link
+ * works and a stale/leaked earlier link stops being valid. Not called by
+ * register/forgot-password today: only the flow that explicitly needs "one
+ * live token at a time" opts into it, so those two keep their existing
+ * (multiple-outstanding-tokens-allowed) behavior unchanged.
+ */
+export async function invalidateOutstandingTokens(
+  customerId: string,
+  type: CustomerTokenType,
+): Promise<void> {
+  await db.customerToken.updateMany({
+    where: { customerId, type, usedAt: null },
+    data: { usedAt: new Date() },
+  });
+}

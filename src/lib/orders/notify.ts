@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { sendEmail } from "@/lib/engagement/providers/email";
+import { EMAIL_KIND, sendTransactionalEmail } from "@/lib/engagement/outbox";
 import { getSetting } from "@/lib/settings";
 
 /**
@@ -12,6 +12,11 @@ import { getSetting } from "@/lib/settings";
  * src/app/api/webhooks/shopify/orders/route.ts,
  * src/lib/engagement/campaign-dispatcher.ts) so an admin always sees a new
  * order even when email is unconfigured.
+ *
+ * F7 fix: sends go through sendTransactionalEmail() (src/lib/engagement/
+ * outbox.ts) instead of sendEmail() directly, so a failed/unconfigured
+ * send is persisted to the EmailOutbox and retried once Brevo is
+ * configured, rather than only ever reaching this file's console.log.
  *
  * Every step is independently wrapped — an email or DB failure here is
  * logged and swallowed, never thrown, so it can't fail or block the
@@ -62,16 +67,22 @@ export async function notifyNewOrder(input: NotifyNewOrderInput): Promise<void> 
   const orderLinkHtml = orderLink ? `<p><a href="${orderLink}">View your order</a></p>` : "";
 
   try {
-    const result = await sendEmail({
-      to: email,
-      subject: fallback ? `We received your order ${orderNumber}` : `Payment received — order ${orderNumber}`,
-      html: fallback
-        ? `<p>Thanks for your order <strong>${orderNumber}</strong> (${amount}). Our team will contact you shortly to confirm payment and delivery.</p>${orderLinkHtml}`
-        : `<p>Your payment for order <strong>${orderNumber}</strong> (${amount}) was received. We'll let you know as soon as it ships.</p>${orderLinkHtml}`,
-    });
+    const result = await sendTransactionalEmail(
+      {
+        to: email,
+        subject: fallback ? `We received your order ${orderNumber}` : `Payment received — order ${orderNumber}`,
+        html: fallback
+          ? `<p>Thanks for your order <strong>${orderNumber}</strong> (${amount}). Our team will contact you shortly to confirm payment and delivery.</p>${orderLinkHtml}`
+          : `<p>Your payment for order <strong>${orderNumber}</strong> (${amount}) was received. We'll let you know as soon as it ships.</p>${orderLinkHtml}`,
+      },
+      EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER,
+    );
     if (!result.ok) {
+      // Not lost: recorded PENDING in EmailOutbox (outboxId) for the drain
+      // cron to retry — this log is now just a local breadcrumb, not the
+      // only record.
       console.log(
-        `[orders/notify] customer email not sent for ${orderNumber} (provider=${result.provider}): ${result.error ?? "unknown reason"}`,
+        `[orders/notify] customer email not sent for ${orderNumber} (provider=${result.provider}, outboxId=${result.outboxId}): ${result.error ?? "unknown reason"}`,
       );
     }
   } catch (error) {
@@ -81,18 +92,21 @@ export async function notifyNewOrder(input: NotifyNewOrderInput): Promise<void> 
   try {
     const adminEmail = await getSetting("contact.email");
     if (adminEmail) {
-      const result = await sendEmail({
-        to: adminEmail,
-        subject: `New order ${orderNumber}${fallback ? " (order request — payment pending)" : " (paid)"}`,
-        html: `<p>Order <strong>${orderNumber}</strong> from ${email} — ${amount}. ${
-          fallback
-            ? "Payment has not been collected online; contact the customer to confirm."
-            : "Payment received via Razorpay."
-        }</p>`,
-      });
+      const result = await sendTransactionalEmail(
+        {
+          to: adminEmail,
+          subject: `New order ${orderNumber}${fallback ? " (order request — payment pending)" : " (paid)"}`,
+          html: `<p>Order <strong>${orderNumber}</strong> from ${email} — ${amount}. ${
+            fallback
+              ? "Payment has not been collected online; contact the customer to confirm."
+              : "Payment received via Razorpay."
+          }</p>`,
+        },
+        EMAIL_KIND.ORDER_CONFIRMATION_ADMIN,
+      );
       if (!result.ok) {
         console.log(
-          `[orders/notify] admin email not sent for ${orderNumber} (provider=${result.provider}): ${result.error ?? "unknown reason"}`,
+          `[orders/notify] admin email not sent for ${orderNumber} (provider=${result.provider}, outboxId=${result.outboxId}): ${result.error ?? "unknown reason"}`,
         );
       }
     }

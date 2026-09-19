@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import { resetRateLimits } from "@/lib/security/rate-limit";
 import { hashPassword, verifyPassword } from "@/lib/customer-auth/password";
-import { issueCustomerToken } from "@/lib/customer-auth/tokens";
+import { hashToken, invalidateOutstandingTokens, issueCustomerToken } from "@/lib/customer-auth/tokens";
 import { loadOwnAddress } from "@/lib/customer-auth/addresses";
 
 import { POST as postRegister } from "@/app/api/account/register/route";
@@ -12,6 +12,7 @@ import { POST as postLogin } from "@/app/api/account/login/route";
 import { GET as getVerifyEmail } from "@/app/api/account/verify-email/route";
 import { POST as postForgotPassword } from "@/app/api/account/forgot-password/route";
 import { POST as postResetPassword } from "@/app/api/account/reset-password/route";
+import { POST as postResendVerification } from "@/app/api/account/resend-verification/route";
 import { GET as getProfile, PATCH as patchProfile } from "@/app/api/account/profile/route";
 import { GET as getAddresses, POST as postAddresses } from "@/app/api/account/addresses/route";
 import { PATCH as patchAddress, DELETE as deleteAddress } from "@/app/api/account/addresses/[id]/route";
@@ -318,6 +319,132 @@ describe("customer accounts (Phase D1)", () => {
         where: { customerId: customer.id, type: "RESET" },
       });
       assert.equal(tokenCount, 1);
+    });
+  });
+
+  describe("invalidateOutstandingTokens (F3)", () => {
+    it("marks every unused token of a given type used, leaving other types/customers untouched", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: { email: `invalidate-${unique}@example.com`, name: "Invalidate Test", passwordHash: "x" },
+      });
+      createdCustomerIds.push(customer.id);
+
+      const verifyOne = await issueCustomerToken(customer.id, "VERIFY");
+      const verifyTwo = await issueCustomerToken(customer.id, "VERIFY");
+      const reset = await issueCustomerToken(customer.id, "RESET");
+
+      await invalidateOutstandingTokens(customer.id, "VERIFY");
+
+      const tokens = await db.customerToken.findMany({ where: { customerId: customer.id } });
+      const byHash = new Map(tokens.map((t) => [t.tokenHash, t]));
+
+      assert.ok(byHash.get(hashToken(verifyOne.raw))?.usedAt, "first VERIFY token should now be used");
+      assert.ok(byHash.get(hashToken(verifyTwo.raw))?.usedAt, "second VERIFY token should now be used");
+      assert.equal(
+        byHash.get(hashToken(reset.raw))?.usedAt,
+        null,
+        "a RESET token must be untouched by invalidating VERIFY tokens",
+      );
+    });
+  });
+
+  describe("POST /api/account/resend-verification (F3)", () => {
+    it("returns an identical generic response for an unverified, an already-verified, and an unknown email", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const unverifiedEmail = `resend-unverified-${unique}@example.com`;
+      const verifiedEmail = `resend-verified-${unique}@example.com`;
+
+      const unverified = await db.customer.create({
+        data: { email: unverifiedEmail, name: "Unverified", passwordHash: "x" },
+      });
+      const verified = await db.customer.create({
+        data: { email: verifiedEmail, name: "Verified", passwordHash: "x", emailVerifiedAt: new Date() },
+      });
+      createdCustomerIds.push(unverified.id, verified.id);
+
+      await resetRateLimits();
+      const unverifiedResponse = await postResendVerification(
+        jsonRequest("http://localhost/api/account/resend-verification", "POST", { email: unverifiedEmail }),
+      );
+      const unverifiedBody = await unverifiedResponse.json();
+
+      await resetRateLimits();
+      const verifiedResponse = await postResendVerification(
+        jsonRequest("http://localhost/api/account/resend-verification", "POST", { email: verifiedEmail }),
+      );
+      const verifiedBody = await verifiedResponse.json();
+
+      await resetRateLimits();
+      const unknownResponse = await postResendVerification(
+        jsonRequest("http://localhost/api/account/resend-verification", "POST", {
+          email: `resend-unknown-${unique}@example.com`,
+        }),
+      );
+      const unknownBody = await unknownResponse.json();
+
+      assert.equal(unverifiedResponse.status, verifiedResponse.status);
+      assert.equal(verifiedResponse.status, unknownResponse.status);
+      assert.deepEqual(unverifiedBody, verifiedBody);
+      assert.deepEqual(verifiedBody, unknownBody);
+
+      // Only the genuinely-unverified customer actually got a new token.
+      assert.equal(
+        await db.customerToken.count({ where: { customerId: unverified.id, type: "VERIFY" } }),
+        1,
+      );
+      assert.equal(
+        await db.customerToken.count({ where: { customerId: verified.id, type: "VERIFY" } }),
+        0,
+      );
+    });
+
+    it("invalidates the previous outstanding VERIFY token before issuing a new one", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const email = `resend-reissue-${unique}@example.com`;
+      const customer = await db.customer.create({
+        data: { email, name: "Reissue Test", passwordHash: "x" },
+      });
+      createdCustomerIds.push(customer.id);
+
+      const original = await issueCustomerToken(customer.id, "VERIFY");
+
+      await resetRateLimits();
+      const response = await postResendVerification(
+        jsonRequest("http://localhost/api/account/resend-verification", "POST", { email }),
+      );
+      assert.equal(response.status, 200);
+
+      const originalRow = await db.customerToken.findUnique({
+        where: { tokenHash: hashToken(original.raw) },
+      });
+      assert.ok(originalRow?.usedAt, "the original token should be invalidated by the resend");
+
+      const liveTokens = await db.customerToken.findMany({
+        where: { customerId: customer.id, type: "VERIFY", usedAt: null },
+      });
+      assert.equal(liveTokens.length, 1, "exactly one live VERIFY token should remain after a resend");
+    });
+
+    it("rate-limits repeated resends for the same account", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const email = `resend-ratelimit-${unique}@example.com`;
+      const customer = await db.customer.create({
+        data: { email, name: "Rate Limit Test", passwordHash: "x" },
+      });
+      createdCustomerIds.push(customer.id);
+
+      await resetRateLimits();
+      const statuses: number[] = [];
+      for (let attempt = 1; attempt <= 4; attempt += 1) {
+        const response = await postResendVerification(
+          jsonRequest("http://localhost/api/account/resend-verification", "POST", { email }),
+        );
+        statuses.push(response.status);
+      }
+
+      assert.ok(statuses.slice(0, 3).every((status) => status === 200), `expected the first 3 to succeed, got ${statuses}`);
+      assert.equal(statuses[3], 429, `expected the 4th resend for the same account to be rate-limited, got ${statuses}`);
     });
   });
 

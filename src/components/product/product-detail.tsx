@@ -1,6 +1,7 @@
 "use client";
 
 import { AddToCartButton } from "@/components/cart/add-to-cart-button";
+import { ResendVerificationButton } from "@/components/account/resend-verification-button";
 import { Badge } from "@/components/ui/badge";
 import { ImageLightbox, type LightboxImage } from "@/components/ui/image-lightbox";
 import { Modal } from "@/components/ui/modal";
@@ -20,7 +21,7 @@ import { useMemo, useState, type ReactNode } from "react";
 
 export type ReviewEligibility =
   | { status: "guest" }
-  | { status: "unverified" }
+  | { status: "unverified"; email: string }
   | { status: "already-reviewed" }
   | { status: "eligible" };
 
@@ -519,10 +520,13 @@ function ReviewsSection({
       </div>
 
       {reviewEligibility.status === "unverified" && (
-        <p className="mt-3 rounded-lg bg-alt-surface px-4 py-3 text-sm text-muted">
-          Please verify your email address before writing a review — check your inbox for the
-          verification link we sent when you registered.
-        </p>
+        <div className="mt-3 rounded-lg bg-alt-surface px-4 py-3 text-sm text-muted">
+          <p>
+            Please verify your email address before writing a review. Check your inbox for the
+            verification link from when you registered — didn&apos;t get it, or has it expired?
+          </p>
+          <ResendVerificationButton email={reviewEligibility.email} className="mt-2 inline-block" />
+        </div>
       )}
 
       {reviewEligibility.status === "already-reviewed" && !submitted && (

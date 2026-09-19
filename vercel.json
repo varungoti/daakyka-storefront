@@ -35,6 +35,10 @@
     {
       "path": "/api/cron/cancel-stale-orders",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/drain-email-outbox",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

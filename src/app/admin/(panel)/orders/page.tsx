@@ -2,6 +2,7 @@ import Link from "next/link";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
+import { getUndeliveredEmailCount } from "@/lib/engagement/outbox";
 import { redirect } from "next/navigation";
 import { OrdersTable } from "@/components/admin/orders-table";
 
@@ -26,7 +27,13 @@ export default async function AdminOrdersPage() {
     redirect("/admin/dashboard");
   }
 
-  const legacyCount = await db.orderEvent.count();
+  const [legacyCount, undeliveredEmail] = await Promise.all([
+    db.orderEvent.count(),
+    // F7 fix: order confirmations are the highest-stakes transactional
+    // email this store sends — surface undelivered ones right where the
+    // store owner is already looking. See src/lib/engagement/outbox.ts.
+    getUndeliveredEmailCount(),
+  ]);
   const canManage = hasPermission(session.role, "orders:manage");
 
   return (
@@ -45,6 +52,16 @@ export default async function AdminOrdersPage() {
           </Link>
         )}
       </div>
+
+      {undeliveredEmail.total > 0 && (
+        <Link
+          href="/admin/notifications"
+          className="block rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 hover:bg-amber-100"
+        >
+          <strong>{undeliveredEmail.total}</strong> order-related email{undeliveredEmail.total === 1 ? "" : "s"} not
+          yet delivered — some customers may not have received their confirmation. View details →
+        </Link>
+      )}
 
       {!canManage && (
         <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">

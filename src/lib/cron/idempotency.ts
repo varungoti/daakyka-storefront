@@ -52,3 +52,18 @@ export async function claimCronRun(job: string, runKey: string): Promise<ClaimCr
 export function dailyRunKey(now: Date = new Date()): string {
   return now.toISOString().slice(0, 10);
 }
+
+/**
+ * Bucketed run key for a job scheduled more than once a day, e.g. every 15
+ * minutes (drain-email-outbox, per vercel.json). The ISO timestamp of the
+ * start of the current `windowMinutes`-sized bucket is stable for every
+ * call within that window and changes on the next one, so a duplicate
+ * invocation within the same scheduled tick (a Vercel retry, a manual
+ * re-curl) claims the same key and short-circuits via claimCronRun, the
+ * same mechanism dailyRunKey uses for once-a-day jobs.
+ */
+export function intervalRunKey(windowMinutes: number, now: Date = new Date()): string {
+  const bucketMs = windowMinutes * 60_000;
+  const bucketStart = Math.floor(now.getTime() / bucketMs) * bucketMs;
+  return new Date(bucketStart).toISOString();
+}

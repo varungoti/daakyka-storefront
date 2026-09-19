@@ -25,6 +25,7 @@ describe("account API routes are guarded where they should be", () => {
     "verify-email/route.ts",
     "forgot-password/route.ts",
     "reset-password/route.ts",
+    "resend-verification/route.ts",
   ]);
 
   const PROTECTED_ROUTES = ["profile/route.ts", "addresses/route.ts", "addresses/[id]/route.ts", "reviews/route.ts"];

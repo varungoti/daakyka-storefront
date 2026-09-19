@@ -12,8 +12,15 @@ import { isHoneypotTripped } from "@/lib/validation/honeypot";
 // distinguish "no such account" from "reset email sent". Both paths also
 // do comparable async work (a token issue + email send attempt) so this
 // isn't purely a status-code fig leaf.
+//
+// F7 fix: "we've sent" (past tense, claiming success) was true only when
+// Brevo happened to be configured — with Brevo unconfigured, nothing was
+// ever actually sent, only attempted and logged. sendPasswordResetEmail
+// now persists an unsent attempt to the EmailOutbox for the drain cron to
+// retry (src/lib/engagement/outbox.ts), so "on its way" is accurate either
+// way: sent momentarily, or queued until Brevo is configured.
 const GENERIC_RESPONSE = {
-  message: "If an account exists for that email, we've sent a password reset link.",
+  message: "If an account exists for that email, a password reset link is on its way.",
 };
 
 export async function POST(request: Request) {

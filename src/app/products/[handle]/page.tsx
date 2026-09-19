@@ -37,7 +37,7 @@ const SECTION_LANDING: Record<string, { label: string; href: string }> = {
 async function getReviewEligibility(productId: string): Promise<ReviewEligibility> {
   const session = await getCustomerSession();
   if (!session) return { status: "guest" };
-  if (!session.emailVerifiedAt) return { status: "unverified" };
+  if (!session.emailVerifiedAt) return { status: "unverified", email: session.email };
 
   const existing = await db.review.findUnique({
     where: { productId_customerId: { productId, customerId: session.id } },

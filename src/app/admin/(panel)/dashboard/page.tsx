@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import Link from "next/link";
 import { countDraftProductsAwaitingPublish, countLowStockVariants } from "@/lib/catalog/products";
+import { getUndeliveredEmailCount } from "@/lib/engagement/outbox";
 
 export default async function AdminDashboardPage() {
   const startOfToday = new Date();
@@ -18,6 +19,7 @@ export default async function AdminDashboardPage() {
     ordersTodayRevenue,
     recentLeads,
     recentLogs,
+    undeliveredEmail,
   ] = await Promise.all([
     db.bulkOrderLead.count(),
     db.blogPostRecord.count({ where: { status: "PUBLISHED" } }),
@@ -35,6 +37,10 @@ export default async function AdminDashboardPage() {
       take: 8,
       include: { user: { select: { name: true, email: true } } },
     }),
+    // F7 fix: undelivered transactional email (EmailOutbox PENDING/FAILED)
+    // — see src/lib/engagement/outbox.ts. getUndeliveredEmailCount() never
+    // throws, so a hiccup here can't break the rest of the dashboard.
+    getUndeliveredEmailCount(),
   ]);
 
   const newLeads = await db.bulkOrderLead.count({ where: { status: "NEW" } });
@@ -46,6 +52,18 @@ export default async function AdminDashboardPage() {
         <h1 className="font-display text-3xl font-bold text-ink">Dashboard</h1>
         <p className="text-muted">Overview of storefront content and bulk enquiries.</p>
       </div>
+
+      {undeliveredEmail.total > 0 && (
+        <Link
+          href="/admin/notifications"
+          className="block rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 hover:bg-amber-100"
+        >
+          <strong>{undeliveredEmail.total}</strong> transactional email
+          {undeliveredEmail.total === 1 ? "" : "s"} undelivered
+          {undeliveredEmail.failed > 0 ? ` (${undeliveredEmail.failed} failed permanently)` : ""} — order
+          confirmations, verification and reset links may not be reaching customers. View details →
+        </Link>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <StatCard label="Bulk Enquiries" value={String(leadCount)} hint={`${newLeads} new`} />
