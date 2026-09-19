@@ -9,7 +9,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-interface CustomerInfo {
+export interface CustomerInfo {
   id: string;
   email: string;
   name: string;
@@ -17,7 +17,7 @@ interface CustomerInfo {
   emailVerified: boolean;
 }
 
-interface AddressInfo {
+export interface AddressInfo {
   id: string;
   label: string | null;
   line1: string;
@@ -30,7 +30,7 @@ interface AddressInfo {
   isDefault: boolean;
 }
 
-interface ReviewInfo {
+export interface ReviewInfo {
   id: string;
   rating: number;
   title: string | null;
@@ -41,69 +41,26 @@ interface ReviewInfo {
   productSlug: string;
 }
 
-const TABS = ["Orders", "Addresses", "Reviews", "Wishlist", "Profile"] as const;
-type Tab = (typeof TABS)[number];
-
-export function AccountTabs({
-  customer,
-  initialAddresses,
-  initialReviews,
-}: {
-  customer: CustomerInfo;
-  initialAddresses: AddressInfo[];
-  initialReviews: ReviewInfo[];
-}) {
-  const [tab, setTab] = useState<Tab>("Orders");
-
-  return (
-    <div>
-      <div className="flex flex-wrap gap-2 border-b border-border pb-2">
-        {TABS.map((item) => (
-          <button
-            key={item}
-            type="button"
-            onClick={() => setTab(item)}
-            className={cn(
-              "rounded-full px-4 py-2 text-sm font-semibold transition",
-              tab === item ? "bg-brand text-white" : "text-ink hover:bg-lilac/40",
-            )}
-          >
-            {item}
-          </button>
-        ))}
-      </div>
-
-      <div className="mt-8">
-        {tab === "Orders" && <OrdersTab />}
-        {tab === "Addresses" && <AddressesTab initialAddresses={initialAddresses} />}
-        {tab === "Reviews" && <ReviewsTab reviews={initialReviews} />}
-        {tab === "Wishlist" && <WishlistTab />}
-        {tab === "Profile" && <ProfileTab customer={customer} />}
-      </div>
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------------------
-// Orders (empty state only — order history read API is D4/D3 territory)
+// Release-hardening item 1 (F4 — see docs/audit-2026-09-19/storefront-ux.md):
+// this file used to also export an `AccountTabs` component that switched
+// between these sections with client-side `useState` (no real URL per
+// section — see the finding). Each section below is now rendered from its
+// own route under src/app/account/(dashboard)/{orders,addresses,reviews,
+// wishlist,profile}/page.tsx, with src/components/account/account-nav.tsx
+// providing the <Link>-based tab navigation instead. The section
+// components themselves (and the shared helpers below) are unchanged and
+// still named "*Tab" — only their container changed, not their behavior.
+// Orders now has its own real data (src/lib/orders/customer-orders.ts,
+// src/app/account/(dashboard)/orders/page.tsx) instead of the old
+// empty-state-only placeholder that used to live in this file.
 // ---------------------------------------------------------------------------
-
-function OrdersTab() {
-  return (
-    <EmptyState
-      title="No Orders Yet"
-      description="Once you place an order, it will show up here with its status and tracking details."
-      actionHref="/shop"
-      actionLabel="Start Shopping"
-    />
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Addresses (full CRUD)
 // ---------------------------------------------------------------------------
 
-function AddressesTab({ initialAddresses }: { initialAddresses: AddressInfo[] }) {
+export function AddressesTab({ initialAddresses }: { initialAddresses: AddressInfo[] }) {
   const router = useRouter();
   const [addresses, setAddresses] = useState(initialAddresses);
   const [editing, setEditing] = useState<AddressInfo | "new" | null>(null);
@@ -356,7 +313,7 @@ function TextField({
 // Reviews (read-only list across all statuses; submission is D2)
 // ---------------------------------------------------------------------------
 
-function ReviewsTab({ reviews }: { reviews: ReviewInfo[] }) {
+export function ReviewsTab({ reviews }: { reviews: ReviewInfo[] }) {
   if (reviews.length === 0) {
     return (
       <EmptyState
@@ -405,7 +362,7 @@ function StatusBadge({ status }: { status: string }) {
 // server-side merge on login)
 // ---------------------------------------------------------------------------
 
-function WishlistTab() {
+export function WishlistTab() {
   const { items } = useWishlist();
 
   if (items.length === 0) {
@@ -444,7 +401,7 @@ function WishlistTab() {
 // Profile
 // ---------------------------------------------------------------------------
 
-function ProfileTab({ customer }: { customer: CustomerInfo }) {
+export function ProfileTab({ customer }: { customer: CustomerInfo }) {
   const router = useRouter();
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "saved">("idle");
   const [error, setError] = useState("");
@@ -611,7 +568,7 @@ function LogoutButton() {
 // Shared
 // ---------------------------------------------------------------------------
 
-function EmptyState({
+export function EmptyState({
   title,
   description,
   actionHref,
