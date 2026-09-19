@@ -1,3 +1,4 @@
+import { revalidateTag, unstable_cache } from "next/cache";
 import { db } from "@/lib/db";
 import { testimonials as seedTestimonials } from "@/data/testimonials";
 import type { Testimonial } from "@/lib/types";
@@ -34,7 +35,7 @@ function mapRecord(record: {
   };
 }
 
-export async function getTestimonials(): Promise<Testimonial[]> {
+async function readTestimonialsFromDb(): Promise<Testimonial[]> {
   try {
     const records = await db.testimonialRecord.findMany({
       where: { active: true },
@@ -44,6 +45,48 @@ export async function getTestimonials(): Promise<Testimonial[]> {
     return records.map((r) => mapRecord(r));
   } catch {
     return seedTestimonials;
+  }
+}
+
+// Cached with Next's data cache, tagged "testimonials" so the admin CRUD
+// below can invalidate it via revalidateTag — same pattern as
+// src/lib/settings/index.ts's getSetting().
+export const TESTIMONIALS_CACHE_TAG = "testimonials";
+
+const cachedGetTestimonials = unstable_cache(
+  readTestimonialsFromDb,
+  ["active-testimonials"],
+  { tags: [TESTIMONIALS_CACHE_TAG] },
+);
+
+export async function getTestimonials(): Promise<Testimonial[]> {
+  try {
+    return await cachedGetTestimonials();
+  } catch {
+    // unstable_cache needs Next's incremental cache / request store, which
+    // isn't present outside an actual Next server (unit tests, scripts,
+    // etc). Fall back to an uncached read rather than throwing.
+    return readTestimonialsFromDb();
+  }
+}
+
+/**
+ * Invalidates the cached getTestimonials() read. Split out (rather than
+ * inlining revalidateTag in each CRUD function below) so it's
+ * independently testable — see src/lib/homepage/index.ts's
+ * revalidateHomepageCache() for why: next/cache's exports can't be
+ * mocked from a test (non-configurable accessor properties, and this
+ * project's tests run as real ESM anyway), so tests inject a fake
+ * `revalidate` here instead of spying on the real one.
+ */
+export function revalidateTestimonialsCache(
+  revalidate: (tag: string, profile: string) => void = revalidateTag,
+): void {
+  try {
+    revalidate(TESTIMONIALS_CACHE_TAG, "max");
+  } catch {
+    // No static generation store in this context (unit/integration tests,
+    // one-off scripts) — nothing to revalidate.
   }
 }
 
@@ -59,13 +102,21 @@ export async function getTestimonialForAdmin(id: string): Promise<TestimonialRec
   return record;
 }
 
-// Note: getTestimonials()/getAllTestimonialsForAdmin() read straight from
-// the DB (no unstable_cache wrapper, unlike src/lib/settings/index.ts or
-// src/lib/catalog/categories.ts), and the storefront pages that render
-// testimonials (src/app/page.tsx, src/app/shop/page.tsx,
-// src/app/category/[slug]/page.tsx) don't set `revalidate`/`dynamic`
-// either — so there's no cache tag to invalidate here. Writes are visible
-// on the next request without a revalidateTag() call.
+// getTestimonials() above is cached via unstable_cache and tagged
+// TESTIMONIALS_CACHE_TAG. src/app/page.tsx ("/") is fully static, so it
+// bakes that read into its prerendered HTML at build time regardless of
+// caching — every write below calls revalidateTestimonialsCache(), or an
+// edit would never reach the live site short of a full redeploy.
+// src/app/shop/page.tsx and src/app/category/[slug]/page.tsx render
+// per-request (both read `searchParams`, which opts a route out of static
+// rendering), so they'd pick up a write on their very next request
+// regardless of tagging — but they still share the same cached Data Cache
+// entry getTestimonials() populates, so revalidating the tag keeps them
+// consistent too. getAllTestimonialsForAdmin()/getTestimonialForAdmin()
+// are intentionally left uncached — the admin UI should always show live
+// data. See src/lib/homepage/index.ts's HOMEPAGE_CACHE_TAG comment for the
+// doc citation on why revalidateTag alone (no revalidatePath) is
+// sufficient for the static route.
 
 export async function createTestimonial(
   input: TestimonialInput,
@@ -80,6 +131,7 @@ export async function createTestimonial(
     entityId: created.id,
   });
 
+  revalidateTestimonialsCache();
   return created;
 }
 
@@ -101,6 +153,7 @@ export async function updateTestimonial(
     metadata: input,
   });
 
+  revalidateTestimonialsCache();
   return updated;
 }
 
@@ -117,4 +170,6 @@ export async function deleteTestimonial(id: string, userId: string): Promise<voi
     entityId: id,
     metadata: { name: existing.name },
   });
+
+  revalidateTestimonialsCache();
 }

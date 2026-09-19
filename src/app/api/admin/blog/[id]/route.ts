@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { logAuditEvent } from "@/lib/auth/audit";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
+import { revalidateBlogCache } from "@/lib/blog";
 import { db } from "@/lib/db";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { blogPostSchema } from "@/lib/validation/schemas";
@@ -41,6 +42,8 @@ export async function PUT(request: Request, { params }: RouteParams) {
     entityId: id,
   });
 
+  revalidateBlogCache();
+
   return NextResponse.json(post);
 }
 
@@ -57,6 +60,8 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
     entity: "blog_post",
     entityId: id,
   });
+
+  revalidateBlogCache();
 
   return NextResponse.json({ success: true });
 }

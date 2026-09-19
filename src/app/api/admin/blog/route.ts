@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { logAuditEvent } from "@/lib/auth/audit";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
+import { revalidateBlogCache } from "@/lib/blog";
 import { db } from "@/lib/db";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { blogPostSchema } from "@/lib/validation/schemas";
@@ -45,6 +46,8 @@ export async function POST(request: Request) {
     entity: "blog_post",
     entityId: post.id,
   });
+
+  revalidateBlogCache();
 
   return NextResponse.json(post, { status: 201 });
 }

@@ -1,3 +1,4 @@
+import { revalidateTag, unstable_cache } from "next/cache";
 import { db } from "@/lib/db";
 import { logAuditEvent } from "@/lib/auth/audit";
 import type { OfferRecommendation } from "@/generated/prisma/client";
@@ -12,7 +13,7 @@ export interface StoreOffer {
   config: Record<string, unknown>;
 }
 
-export async function getActiveOffers(): Promise<StoreOffer[]> {
+async function readActiveOffersFromDb(): Promise<StoreOffer[]> {
   try {
     const rows = await db.offerRecommendation.findMany({
       where: { active: true },
@@ -31,14 +32,59 @@ export async function getActiveOffers(): Promise<StoreOffer[]> {
   }
 }
 
+// Cached with Next's data cache, tagged "offers" so the admin CRUD below
+// can invalidate it via revalidateTag — same pattern as
+// src/lib/settings/index.ts's getSetting().
+export const OFFERS_CACHE_TAG = "offers";
+
+const cachedGetActiveOffers = unstable_cache(
+  readActiveOffersFromDb,
+  ["active-offers"],
+  { tags: [OFFERS_CACHE_TAG] },
+);
+
+export async function getActiveOffers(): Promise<StoreOffer[]> {
+  try {
+    return await cachedGetActiveOffers();
+  } catch {
+    // unstable_cache needs Next's incremental cache / request store, which
+    // isn't present outside an actual Next server (unit tests, scripts,
+    // etc). Fall back to an uncached read rather than throwing.
+    return readActiveOffersFromDb();
+  }
+}
+
+/**
+ * Invalidates the cached getActiveOffers() read. Split out (rather than
+ * inlining revalidateTag in each CRUD function below) so it's
+ * independently testable — see src/lib/homepage/index.ts's
+ * revalidateHomepageCache() for why: next/cache's exports can't be
+ * mocked from a test (non-configurable accessor properties, and this
+ * project's tests run as real ESM anyway), so tests inject a fake
+ * `revalidate` here instead of spying on the real one.
+ */
+export function revalidateOffersCache(
+  revalidate: (tag: string, profile: string) => void = revalidateTag,
+): void {
+  try {
+    revalidate(OFFERS_CACHE_TAG, "max");
+  } catch {
+    // No static generation store in this context (unit/integration tests,
+    // one-off scripts) — nothing to revalidate.
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Admin CRUD (audit gap: "Offers can't be toggled or edited. No API.")
 //
 // getActiveOffers() above (consumed by src/components/home/offers-strip.tsx
-// on the homepage) is a plain, uncached db call — no unstable_cache/tag,
-// and the home page doesn't set `revalidate`/`dynamic` either — so writes
-// below are visible on the next request without a revalidateTag() call,
-// same reasoning as src/lib/testimonials/index.ts.
+// on the static "/" home page) is cached via unstable_cache and tagged
+// OFFERS_CACHE_TAG. Next bakes that read into the prerendered HTML at
+// build time regardless of caching, so every write below calls
+// revalidateOffersCache() — without it, an edit would never reach the
+// live site short of a full redeploy. See src/lib/homepage/index.ts's
+// HOMEPAGE_CACHE_TAG comment for the doc citation on why revalidateTag
+// alone (no revalidatePath) is sufficient here.
 // ---------------------------------------------------------------------------
 
 export type OfferInput = z.infer<typeof offerSchema>;
@@ -79,6 +125,7 @@ export async function createOffer(input: OfferInput, userId: string): Promise<Of
     entityId: offer.id,
   });
 
+  revalidateOffersCache();
   return offer;
 }
 
@@ -109,6 +156,7 @@ export async function updateOffer(
     metadata: { name: updated.name, active: updated.active },
   });
 
+  revalidateOffersCache();
   return updated;
 }
 
@@ -125,4 +173,6 @@ export async function deleteOffer(id: string, userId: string): Promise<void> {
     entityId: id,
     metadata: { name: existing.name },
   });
+
+  revalidateOffersCache();
 }
