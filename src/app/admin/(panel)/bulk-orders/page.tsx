@@ -21,7 +21,11 @@ export default async function AdminBulkOrdersPage() {
         <p className="text-muted">Hospital and team uniform enquiries from the storefront.</p>
       </div>
 
-      <div className="overflow-x-auto rounded-3xl border border-border bg-surface">
+      {/* F-05 (docs/audit-2026-09-19/admin-ux.md): desktop table unchanged,
+          `lg` and up only — see the matching comment in products-table.tsx
+          for why `lg` (matching the sidebar's own hamburger breakpoint) was
+          chosen over the more common `sm`. */}
+      <div className="hidden overflow-x-auto rounded-3xl border border-border bg-surface lg:block">
         <table className="min-w-full text-left text-sm">
           <thead className="border-b border-border bg-lavender/30 text-xs uppercase tracking-wide text-muted">
             <tr>
@@ -67,6 +71,42 @@ export default async function AdminBulkOrdersPage() {
         </table>
         {leads.length === 0 && (
           <p className="p-8 text-center text-muted">No bulk enquiries captured yet.</p>
+        )}
+      </div>
+
+      {/* Mobile/tablet stacked-card layout (below `lg`). */}
+      <div className="space-y-3 lg:hidden">
+        {leads.length === 0 ? (
+          <p className="rounded-2xl border border-border bg-surface p-8 text-center text-muted">No bulk enquiries captured yet.</p>
+        ) : (
+          leads.map((lead) => (
+            <div key={lead.id} className="rounded-2xl border border-border bg-surface p-4">
+              <p className="font-semibold text-ink">{lead.organization}</p>
+              <p className="text-xs text-muted">{lead.city ?? "—"}</p>
+              <dl className="mt-3 grid grid-cols-2 gap-y-2 border-t border-border pt-3 text-xs">
+                <div>
+                  <dt className="text-muted">Contact</dt>
+                  <dd className="text-ink">{lead.contactPerson}</dd>
+                  <dd className="text-muted">{lead.email}</dd>
+                  <dd className="text-muted">{lead.phone}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Staff</dt>
+                  <dd className="text-ink">{lead.staffCount ?? "—"}</dd>
+                </div>
+                <div className="col-span-2">
+                  <dt className="text-muted">Type / Interests</dt>
+                  <dd className="text-ink">{lead.organizationType ?? "—"}</dd>
+                  {lead.categoryInterest.length > 0 && <dd className="text-muted">{lead.categoryInterest.join(", ")}</dd>}
+                </div>
+              </dl>
+              {lead.notes && <p className="mt-2 text-xs text-muted">{lead.notes}</p>}
+              <div className="mt-3 flex items-center justify-between gap-2 border-t border-border pt-3">
+                <BulkLeadStatusSelect leadId={lead.id} currentStatus={lead.status} />
+                <span className="shrink-0 text-xs text-muted">{lead.createdAt.toLocaleDateString("en-IN")}</span>
+              </div>
+            </div>
+          ))
         )}
       </div>
     </div>

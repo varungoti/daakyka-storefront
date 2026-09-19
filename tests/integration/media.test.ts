@@ -1,14 +1,21 @@
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import sharp from "sharp";
 import { db } from "@/lib/db";
 import { MediaSource } from "@/generated/prisma/client";
 import {
+  deleteUnattachedMediaAsset,
+  MediaAssetAttachedError,
+  MediaAssetInUseError,
+  MediaAssetNotFoundError,
   saveMediaAsset,
   StorageNotConfiguredForMediaError,
   type StorageDeps,
 } from "@/lib/media/store";
+import { addProductImage, createProduct } from "@/lib/catalog/products";
 import { isR2Configured } from "@/lib/storage/r2";
+import { DELETE as deleteMediaAsset } from "@/app/api/admin/media/[id]/route";
 import {
   countAiImagesGeneratedToday,
   DailyLimitReachedError,
@@ -249,6 +256,141 @@ describe("generateImage (integration, fake OpenAI client + fake storage — no r
         assert.equal(generateCalls, 1, "the client must not be called once the cap is reached");
       },
     );
+  });
+});
+
+describe("deleteUnattachedMediaAsset (F-04 orphan cleanup — docs/audit-2026-09-19/admin-ux.md)", () => {
+  const createdCategoryIds: string[] = [];
+  const createdProductIds: string[] = [];
+
+  after(async () => {
+    if (createdProductIds.length > 0) {
+      await db.product.deleteMany({ where: { id: { in: createdProductIds } } });
+    }
+    if (createdCategoryIds.length > 0) {
+      await db.category.deleteMany({ where: { id: { in: createdCategoryIds } } });
+    }
+  });
+
+  it("deletes the R2 object (via the injected fake) and the MediaAsset row when nothing references it", async () => {
+    const buffer = await tinyPngBuffer();
+    const removedKeys: string[] = [];
+    const storage = makeFakeStorage({ remove: async (key) => { removedKeys.push(key); } });
+
+    const asset = await saveMediaAsset({ buffer, usage: "PRODUCT", source: MediaSource.UPLOAD }, storage);
+
+    await deleteUnattachedMediaAsset(asset.id, storage);
+
+    assert.deepEqual(removedKeys, [asset.key]);
+    assert.equal(await db.mediaAsset.findUnique({ where: { id: asset.id } }), null);
+  });
+
+  it("still deletes the DB row when the storage backend has no remove() (defaults gracefully)", async () => {
+    const buffer = await tinyPngBuffer();
+    // makeFakeStorage() doesn't set `remove` unless overridden — exercises
+    // the `storage.remove &&` guard in deleteUnattachedMediaAsset.
+    const storage = makeFakeStorage();
+
+    const asset = await saveMediaAsset({ buffer, usage: "PRODUCT", source: MediaSource.UPLOAD }, storage);
+    await deleteUnattachedMediaAsset(asset.id, storage);
+
+    assert.equal(await db.mediaAsset.findUnique({ where: { id: asset.id } }), null);
+  });
+
+  it("still deletes the DB row when the injected remove() throws (best-effort R2 cleanup, matching saveMediaAsset's own slot-replacement tradeoff)", async () => {
+    const buffer = await tinyPngBuffer();
+    const storage = makeFakeStorage({
+      remove: async () => {
+        throw new Error("simulated transient R2 failure");
+      },
+    });
+
+    const asset = await saveMediaAsset({ buffer, usage: "PRODUCT", source: MediaSource.UPLOAD }, storage);
+    await deleteUnattachedMediaAsset(asset.id, storage);
+
+    assert.equal(await db.mediaAsset.findUnique({ where: { id: asset.id } }), null);
+  });
+
+  it("throws MediaAssetNotFoundError for an id that doesn't exist", async () => {
+    await assert.rejects(() => deleteUnattachedMediaAsset(`missing-${randomUUID()}`, makeFakeStorage()), MediaAssetNotFoundError);
+  });
+
+  it("refuses to delete an asset already attached to a product (ProductImage row exists), and never calls remove()", async () => {
+    const unique = randomUUID().slice(0, 8);
+    let removeCalls = 0;
+    const storage = makeFakeStorage({ remove: async () => { removeCalls += 1; } });
+
+    const category = await db.category.create({
+      data: { name: `Media Delete Test Category ${unique}`, slug: `media-delete-test-category-${unique}`, section: "GENERAL" },
+    });
+    createdCategoryIds.push(category.id);
+
+    const adminId = await findAnyAdminId();
+    const product = await createProduct({ name: `Media Delete Test Product ${unique}`, categoryId: category.id, price: 500 }, adminId);
+    createdProductIds.push(product.id);
+
+    const buffer = await tinyPngBuffer();
+    const asset = await saveMediaAsset({ buffer, usage: "PRODUCT", source: MediaSource.UPLOAD }, storage);
+    await addProductImage(product.id, asset.id, {}, adminId);
+
+    await assert.rejects(() => deleteUnattachedMediaAsset(asset.id, storage), MediaAssetAttachedError);
+    assert.equal(removeCalls, 0, "must refuse before ever touching storage");
+    assert.ok(await db.mediaAsset.findUnique({ where: { id: asset.id } }), "the row must survive the refused delete");
+
+    // Cleanup: the product's own cascade (ProductImage.onDelete: Cascade)
+    // handles the ProductImage row when createdProductIds is torn down
+    // above; the MediaAsset row still needs its own cleanup since deleting
+    // it isn't what this test is exercising.
+    await db.mediaAsset.delete({ where: { id: asset.id } }).catch(() => {});
+  });
+
+  it("refuses to delete a manifest-slotted asset, and never calls remove()", async () => {
+    let removeCalls = 0;
+    const storage = makeFakeStorage({ remove: async () => { removeCalls += 1; } });
+    const buffer = await tinyPngBuffer();
+
+    const asset = await saveMediaAsset(
+      { buffer, usage: "SECTION", source: MediaSource.UPLOAD, slot: `test.delete-guard.${randomUUID()}` },
+      storage,
+    );
+
+    await assert.rejects(() => deleteUnattachedMediaAsset(asset.id, storage), MediaAssetInUseError);
+    assert.equal(removeCalls, 0);
+
+    await db.mediaAsset.delete({ where: { id: asset.id } }).catch(() => {});
+  });
+
+  it("refuses to delete an asset used as a Category's image, and never calls remove()", async () => {
+    const unique = randomUUID().slice(0, 8);
+    let removeCalls = 0;
+    const storage = makeFakeStorage({ remove: async () => { removeCalls += 1; } });
+    const buffer = await tinyPngBuffer();
+
+    const asset = await saveMediaAsset({ buffer, usage: "CATEGORY", source: MediaSource.UPLOAD }, storage);
+    const category = await db.category.create({
+      data: {
+        name: `Media Delete Test Category Image ${unique}`,
+        slug: `media-delete-test-category-image-${unique}`,
+        section: "GENERAL",
+        imageId: asset.id,
+      },
+    });
+    createdCategoryIds.push(category.id);
+
+    await assert.rejects(() => deleteUnattachedMediaAsset(asset.id, storage), MediaAssetInUseError);
+    assert.equal(removeCalls, 0);
+
+    // Clear the category's imageId before the MediaAsset can be deleted for
+    // real (the relation is onDelete: SetNull, but this test wants a clean,
+    // explicit teardown rather than relying on that).
+    await db.category.update({ where: { id: category.id }, data: { imageId: null } });
+    await db.mediaAsset.delete({ where: { id: asset.id } }).catch(() => {});
+  });
+
+  it("DELETE /api/admin/media/[id] rejects with 401/403 before any lookup", async () => {
+    const request = new Request("http://localhost/api/admin/media/some-id", { method: "DELETE" });
+    const response = await deleteMediaAsset(request, { params: Promise.resolve({ id: "some-id" }) });
+    assert.ok(response.status === 401 || response.status === 403, `expected 401 or 403, got ${response.status}`);
   });
 });
 

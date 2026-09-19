@@ -138,7 +138,11 @@ export function OrdersTable() {
         </a>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border border-border">
+      {/* F-05 (docs/audit-2026-09-19/admin-ux.md): desktop table unchanged,
+          `lg` and up only — see the matching comment in products-table.tsx
+          for why `lg` (matching the sidebar's own hamburger breakpoint) was
+          chosen over the more common `sm`. */}
+      <div className="hidden overflow-x-auto rounded-2xl border border-border lg:block">
         <table className="w-full min-w-[900px] text-sm">
           <thead className="bg-surface-muted text-left text-xs font-semibold text-muted">
             <tr>
@@ -198,7 +202,56 @@ export function OrdersTable() {
         </table>
       </div>
 
-      <div className="flex items-center justify-between text-sm text-muted">
+      {/* Mobile/tablet stacked-card layout (below `lg`). */}
+      <div className="space-y-3 lg:hidden">
+        {loading ? (
+          <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">Loading…</p>
+        ) : items.length === 0 ? (
+          <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">No orders found.</p>
+        ) : (
+          items.map((order) => (
+            <div key={order.id} className="rounded-2xl border border-border bg-surface p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <Link href={`/admin/orders/${order.id}`} className="font-semibold text-ink hover:underline">
+                    {order.number}
+                  </Link>
+                  <p className="text-ink">{order.customerName ?? order.guestName ?? "Guest"}</p>
+                  <p className="truncate text-xs text-muted">{order.email}</p>
+                </div>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${STATUS_STYLES[order.status] ?? "bg-gray-100 text-gray-700"}`}>
+                  {order.status.replace("_", " ")}
+                </span>
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-y-2 border-t border-border pt-3 text-xs">
+                <div>
+                  <dt className="text-muted">Date</dt>
+                  <dd className="text-ink">{new Date(order.createdAt).toLocaleDateString("en-IN")}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Items</dt>
+                  <dd className="text-ink">{order.itemCount}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Total</dt>
+                  <dd className="font-semibold text-ink">{formatInr(order.total)}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Payment</dt>
+                  <dd className="text-ink">{order.paymentMethod === "RAZORPAY" ? "Razorpay" : "Order Request"}</dd>
+                </div>
+              </dl>
+              <div className="mt-3 text-right">
+                <Link href={`/admin/orders/${order.id}`} className="text-xs font-semibold text-brand hover:underline">
+                  View
+                </Link>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
         <span>{total} orders</span>
         <div className="flex items-center gap-2">
           <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold disabled:opacity-40">

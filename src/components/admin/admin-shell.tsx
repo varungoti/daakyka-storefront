@@ -298,7 +298,23 @@ export function AdminShell({
           unreadNotifications={unreadNotifications}
         />
 
-        <div className="flex-1">
+        {/* F-05 (docs/audit-2026-09-19/admin-ux.md): `min-w-0` is required
+            here, not decorative. This div is a flex item with no explicit
+            width; a flex item's default `min-width: auto` means it refuses
+            to shrink below its content's intrinsic (min-content) width —
+            and that computation recurses straight through a descendant's
+            `overflow-x-auto` (e.g. a `min-w-[900px]` table wrapper several
+            levels down in `main`), since only the flex item itself having
+            `overflow` set suppresses that. Without `min-w-0` here, a single
+            wide table anywhere in `children` silently stretches this whole
+            column past the viewport — which is exactly what pushed the
+            page header's filters and "New Product" button off-screen at
+            390px, confirmed via a live DOM measurement (innerWidth/
+            body.scrollWidth reported ~935px until this was added, 390px
+            after). `min-w-0` lets this item shrink to the viewport's actual
+            width again, so `overflow-x-auto` descendants scroll within
+            their own box instead of blowing out the shell. */}
+        <div className="min-w-0 flex-1">
           <header className="border-b border-border bg-surface px-4 py-4 lg:px-8">
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">

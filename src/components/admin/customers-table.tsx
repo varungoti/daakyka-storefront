@@ -75,7 +75,11 @@ export function CustomersTable() {
         </select>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border border-border">
+      {/* F-05 (docs/audit-2026-09-19/admin-ux.md): desktop table unchanged,
+          `lg` and up only — see the matching comment in products-table.tsx
+          for why `lg` (matching the sidebar's own hamburger breakpoint) was
+          chosen over the more common `sm`. */}
+      <div className="hidden overflow-x-auto rounded-2xl border border-border lg:block">
         <table className="w-full min-w-[840px] text-sm">
           <thead className="bg-surface-muted text-left text-xs font-semibold text-muted">
             <tr>
@@ -138,7 +142,59 @@ export function CustomersTable() {
         </table>
       </div>
 
-      <div className="flex items-center justify-between text-sm text-muted">
+      {/* Mobile/tablet stacked-card layout (below `lg`). */}
+      <div className="space-y-3 lg:hidden">
+        {loading ? (
+          <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">Loading…</p>
+        ) : items.length === 0 ? (
+          <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">No customers found.</p>
+        ) : (
+          items.map((c) => (
+            <div key={c.id} className="rounded-2xl border border-border bg-surface p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <Link href={`/admin/customers/${c.id}`} className="font-semibold text-ink hover:underline">
+                    {c.name}
+                  </Link>
+                  <p className="text-ink">{c.email}</p>
+                  {c.phone && <p className="text-xs text-muted">{c.phone}</p>}
+                </div>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${c.active ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-700"}`}>
+                  {c.active ? "Active" : "Inactive"}
+                </span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {c.emailVerified ? (
+                  <span className="rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-semibold text-green-700">Verified</span>
+                ) : (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Unverified</span>
+                )}
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-y-2 border-t border-border pt-3 text-xs">
+                <div>
+                  <dt className="text-muted">Orders</dt>
+                  <dd className="text-ink">{c.orderCount}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Total spent</dt>
+                  <dd className="font-semibold text-ink">{formatInr(c.totalSpent)}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Joined</dt>
+                  <dd className="text-ink">{new Date(c.createdAt).toLocaleDateString("en-IN")}</dd>
+                </div>
+              </dl>
+              <div className="mt-3 text-right">
+                <Link href={`/admin/customers/${c.id}`} className="text-xs font-semibold text-brand hover:underline">
+                  View
+                </Link>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
         <span>{total} customers</span>
         <div className="flex items-center gap-2">
           <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold disabled:opacity-40">

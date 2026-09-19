@@ -1,14 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { cloneElement, useEffect, useId, useMemo, useState, type ReactElement } from "react";
 import { useRouter } from "next/navigation";
 import { ProductVariantEditor, type VariantRow } from "@/components/admin/product-variant-editor";
 import { ProductImageGallery, type ProductImageRow } from "@/components/admin/product-image-gallery";
+import { StagedProductImageGallery } from "@/components/admin/staged-product-image-gallery";
 import { FormErrorBanner } from "@/components/admin/form-error-banner";
 import { useUnsavedChangesGuard, useUnsavedChangesNav } from "@/components/admin/unsaved-changes";
 import { slugify } from "@/lib/catalog/category-validation";
 import { isDirty } from "@/lib/admin/is-dirty";
+import { attachStagedImages } from "@/lib/admin/attach-staged-images";
+import type { StagedImage } from "@/lib/admin/staged-images";
 import { formatApiError } from "@/lib/validation/format-api-error";
 
 const genderValues = ["MEN", "WOMEN", "UNISEX", "BOYS", "GIRLS", "KIDS"] as const;
@@ -106,6 +109,12 @@ export function ProductForm({
   const [seoDescription, setSeoDescription] = useState(initial?.seoDescription ?? "");
   const [variants, setVariants] = useState<VariantRow[]>(initial?.variants ?? []);
   const [images, setImages] = useState<ProductImageRow[]>(initial?.images ?? []);
+  // F-04 (docs/audit-2026-09-19/admin-ux.md): images picked/generated
+  // before the product itself has ever been saved — see
+  // StagedProductImageGallery and attachStagedImages(). Always empty once
+  // `productId` is set (edit mode, or right after a successful create),
+  // since the real ProductImageGallery takes over at that point.
+  const [stagedImages, setStagedImages] = useState<StagedImage[]>([]);
 
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -153,7 +162,12 @@ export function ProductForm({
   // src/lib/admin/is-dirty.ts) from the same state already initialized
   // from `initial`.
   const [initialSnapshot, setInitialSnapshot] = useState(buildSnapshot);
-  const dirty = isDirty(buildSnapshot(), initialSnapshot);
+  // F-04: unlike `images` (see the comment above buildSnapshot), a staged
+  // image is real, already-uploaded storage with nothing pointing to it
+  // yet — leaving the form without saving is exactly the kind of loss this
+  // guard exists for, so it counts as "dirty" even though it isn't part of
+  // buildSnapshot()'s own JSON-comparable shape.
+  const dirty = isDirty(buildSnapshot(), initialSnapshot) || stagedImages.length > 0;
   useUnsavedChangesGuard(dirty);
   const { confirmLeave } = useUnsavedChangesNav();
 
@@ -268,6 +282,54 @@ export function ProductForm({
     const body = await response.json();
     const savedId: string = body.product.id;
     setProductId(savedId);
+
+    // F-04 (docs/audit-2026-09-19/admin-ux.md): the product now has a real
+    // id for the first time, so this is where every staged image (already
+    // uploaded/generated — see StagedProductImageGallery — just not yet
+    // linked to a product) gets attached, via the same
+    // POST /api/admin/products/[id]/images route the saved-product gallery
+    // already uses. This is what turns "add a product with a photo" back
+    // into a single pass instead of the old save → reload → scroll to
+    // Images → upload two-round-trip flow.
+    //
+    // Only ever non-empty when `!isEdit`: an edit form starts with
+    // `productId` already set, so StagedProductImageGallery never renders
+    // and stagedImages never gets populated. Individual attach failures are
+    // tolerated (attachStagedImages never throws) rather than blocking the
+    // rest of the save — the product itself already saved successfully by
+    // this point, and every staged image is a real, already-persisted
+    // MediaAsset, so losing one photo must not cost the admin the whole
+    // product. A failed one simply won't appear in the gallery; the
+    // already-uploaded file isn't lost (it becomes an unattached MediaAsset
+    // the admin can re-add, or that scripts/cleanup-orphaned-media.ts will
+    // eventually sweep) — see that script's file comment for the full
+    // orphan-lifecycle story. There's no in-UI warning for this specific
+    // rare case: the very next thing that happens on success is a
+    // navigation to the real edit page (see `router.push` below), which
+    // unmounts this form before any message set here could ever be seen.
+    if (!isEdit && stagedImages.length > 0) {
+      const { attached } = await attachStagedImages(savedId, stagedImages, {
+        attach: async (id, staged) => {
+          const attachResponse = await fetch(`/api/admin/products/${id}/images`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mediaAssetId: staged.mediaAssetId, color: staged.color, alt: staged.alt || undefined }),
+          });
+          if (!attachResponse.ok) return null;
+          const attachBody = await attachResponse.json();
+          return {
+            id: attachBody.image.id,
+            mediaId: attachBody.image.mediaId,
+            url: attachBody.image.media.url,
+            alt: attachBody.image.alt,
+            color: attachBody.image.color,
+            sortOrder: attachBody.image.sortOrder,
+          };
+        },
+      });
+      setImages(attached);
+      setStagedImages([]);
+    }
 
     const variantsOk = await saveVariantsIfChanged(savedId);
     setSaveStatus(variantsOk ? "idle" : "error");
@@ -421,14 +483,24 @@ export function ProductForm({
             + New category
           </Link>
         </div>
-        <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} aria-invalid={Boolean(fieldErrors.categoryId)} className={inputClass}>
+        <select
+          value={categoryId}
+          onChange={(e) => setCategoryId(e.target.value)}
+          aria-invalid={Boolean(fieldErrors.categoryId)}
+          aria-describedby={fieldErrors.categoryId ? "product-category-error" : undefined}
+          className={inputClass}
+        >
           {flatCategories.map((option) => (
             <option key={option.id} value={option.id}>
               {option.label}
             </option>
           ))}
         </select>
-        {fieldErrors.categoryId ? <p className="text-[11px] font-medium text-red-600">{fieldErrors.categoryId}</p> : null}
+        {fieldErrors.categoryId ? (
+          <p id="product-category-error" className="text-[11px] font-medium text-red-600">
+            {fieldErrors.categoryId}
+          </p>
+        ) : null}
       </section>
 
       <section className="space-y-4 rounded-2xl border border-border bg-surface p-6">
@@ -466,7 +538,15 @@ export function ProductForm({
             onChange={setImages}
           />
         ) : (
-          <p className="rounded-xl border border-dashed border-border p-4 text-center text-xs text-muted">Save the product as a draft first to add images.</p>
+          // F-04: images can now be selected/generated before the first
+          // save — see StagedProductImageGallery and the attach step in
+          // saveDraft() above.
+          <StagedProductImageGallery
+            images={stagedImages}
+            productColors={productColors}
+            aiFields={{ name, category: selectedCategory?.name, gender, fabric }}
+            onChange={setStagedImages}
+          />
         )}
       </section>
 
@@ -590,13 +670,29 @@ export function ProductForm({
 
 const inputClass = "w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand";
 
-function Field({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: React.ReactNode }) {
+/**
+ * Wraps a single form control with its label + (error or hint) text.
+ * release-hardening a11y fix: the control now gets `aria-invalid` plus an
+ * `aria-describedby` pointing at the error message's `id` whenever there
+ * is one, so a screen reader announces the association — previously the
+ * error text rendered inline with no programmatic link to its input.
+ * Visual design is unchanged; only these two ARIA attributes are added to
+ * whatever single element `children` already is.
+ */
+function Field({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: ReactElement }) {
+  const errorId = useId();
+  const control = cloneElement(children as ReactElement<Record<string, unknown>>, {
+    "aria-invalid": Boolean(error),
+    "aria-describedby": error ? errorId : undefined,
+  });
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-semibold text-muted">{label}</span>
-      {children}
+      {control}
       {error ? (
-        <span className="mt-1 block text-[11px] font-medium text-red-600">{error}</span>
+        <span id={errorId} className="mt-1 block text-[11px] font-medium text-red-600">
+          {error}
+        </span>
       ) : hint ? (
         <span className="mt-1 block text-[11px] text-muted">{hint}</span>
       ) : null}

@@ -21,12 +21,17 @@ export interface StorageDeps {
   isConfigured: () => boolean;
   upload: (key: string, body: Buffer, contentType: string) => Promise<void>;
   publicUrl: (key: string) => string;
+  /** Optional so every existing `StorageDeps` literal (upload-only fakes in
+   * tests/integration/media.test.ts, scripts/generate-images.ts) keeps
+   * compiling unchanged. Only `deleteUnattachedMediaAsset` below reads it. */
+  remove?: (key: string) => Promise<void>;
 }
 
 export const defaultStorageDeps: StorageDeps = {
   isConfigured: isR2Configured,
   upload: uploadObject,
   publicUrl: publicUrlForKey,
+  remove: deleteObject,
 };
 
 export class StorageNotConfiguredForMediaError extends Error {
@@ -123,4 +128,88 @@ export async function saveMediaAsset(
   }
 
   return asset;
+}
+
+// ---------------------------------------------------------------------------
+// Deleting an unattached asset (F-04 orphan cleanup)
+// ---------------------------------------------------------------------------
+
+export class MediaAssetNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Media asset ${id} not found`);
+    this.name = "MediaAssetNotFoundError";
+  }
+}
+
+export class MediaAssetAttachedError extends Error {
+  constructor() {
+    super("This image is attached to a product — remove it from the product instead of deleting it here.");
+    this.name = "MediaAssetAttachedError";
+  }
+}
+
+export class MediaAssetInUseError extends Error {
+  constructor() {
+    super("This image is a managed site image and can't be deleted here — replace it from the Media Library instead.");
+    this.name = "MediaAssetInUseError";
+  }
+}
+
+/**
+ * Deletes a `MediaAsset` that nothing references yet (R2 object + DB row).
+ *
+ * This exists for the F-04 single-pass product creation flow (see
+ * docs/audit-2026-09-19/admin-ux.md, and product-form.tsx /
+ * staged-product-image-gallery.tsx for the caller): an admin can now
+ * upload or AI-generate a product photo *before* the product itself has
+ * been saved, via the exact same `saveMediaAsset`/`generateImage` pipeline
+ * as every other image — which means a "staged" photo is a real
+ * `MediaAsset` row (and a real R2 object) from the moment it's added, not
+ * a browser-only draft. If the admin removes it from the staging gallery
+ * before saving, or never saves the product at all, that row would
+ * otherwise sit in R2/Postgres forever with nothing pointing to it — this
+ * is the one place that actually deletes it rather than just detaching it.
+ *
+ * Deliberately narrower than a generic "delete any media asset": refuses
+ * (rather than silently no-op'ing) to delete anything that's still in use,
+ * so this can never become a backdoor around the product gallery's own
+ * detach flow or the Site Images grid's replace-only-never-delete model:
+ *  - already attached to a product (has a `ProductImage` row) — use
+ *    `DELETE /api/admin/products/[id]/images/[imageId]` instead, which
+ *    intentionally *keeps* the `MediaAsset` row (see `removeProductImage`
+ *    above) so a detached-but-still-uploaded photo can be re-attached
+ *    elsewhere; this function is only for a photo nothing has ever used.
+ *  - a manifest slot (`slot` is set) or a category's image — both are only
+ *    ever replaced (re-upload/regenerate), never deleted, by design.
+ */
+export async function deleteUnattachedMediaAsset(
+  id: string,
+  storage: StorageDeps = defaultStorageDeps,
+): Promise<void> {
+  const asset = await db.mediaAsset.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      key: true,
+      slot: true,
+      _count: { select: { productImages: true, categories: true } },
+    },
+  });
+  if (!asset) throw new MediaAssetNotFoundError(id);
+  if (asset.slot || asset._count.categories > 0) throw new MediaAssetInUseError();
+  if (asset._count.productImages > 0) throw new MediaAssetAttachedError();
+
+  if (storage.isConfigured() && storage.remove) {
+    try {
+      await storage.remove(asset.key);
+    } catch {
+      // Best-effort, mirroring the exact same tradeoff saveMediaAsset's own
+      // slot-replacement cleanup makes above: a transient R2 failure must
+      // not block removing the DB row, which is what makes this asset
+      // visible/actionable at all. See scripts/cleanup-orphaned-media.ts
+      // for the backstop that sweeps up anything this ever misses.
+    }
+  }
+
+  await db.mediaAsset.delete({ where: { id: asset.id } });
 }

@@ -224,7 +224,13 @@ export function ProductsTable({
 
       {notice ? <p className="text-xs text-red-600">{notice}</p> : null}
 
-      <div className="overflow-x-auto rounded-2xl border border-border">
+      {/* F-05 (docs/audit-2026-09-19/admin-ux.md): the desktop table below
+          is unchanged and still renders at `lg` (1024px) and up — the same
+          breakpoint the sidebar itself collapses to a hamburger at (see
+          admin-shell.tsx), so a stacked card layout takes over for exactly
+          the range where the persistent sidebar is already gone, covering
+          both audited widths (390×844 and 768×1024). */}
+      <div className="hidden overflow-x-auto rounded-2xl border border-border lg:block">
         <table className="w-full min-w-[900px] text-sm">
           <thead className="bg-surface-muted text-left text-xs font-semibold text-muted">
             <tr>
@@ -309,7 +315,76 @@ export function ProductsTable({
         </table>
       </div>
 
-      <div className="flex items-center justify-between text-sm text-muted">
+      {/* Mobile/tablet stacked-card layout (below `lg`) — mirrors the
+          table's own columns and every action (checkbox select, Edit link)
+          so nothing needs horizontal scrolling to reach. */}
+      <div className="space-y-3 lg:hidden">
+        {loading ? (
+          <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">Loading…</p>
+        ) : items.length === 0 ? (
+          <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">No products found.</p>
+        ) : (
+          items.map((item) => (
+            <div key={item.id} className="rounded-2xl border border-border bg-surface p-4">
+              <div className="flex items-start gap-3">
+                {canManage && (
+                  <input
+                    type="checkbox"
+                    checked={selected.has(item.id)}
+                    onChange={() => toggleSelected(item.id)}
+                    aria-label={`Select ${item.name}`}
+                    className="mt-2 shrink-0"
+                  />
+                )}
+                <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-border bg-lavender/40">
+                  {item.thumbnailUrl ? <Image src={item.thumbnailUrl} alt={item.name} fill className="object-cover" sizes="56px" /> : null}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <Link href={`/admin/products/${item.id}`} className="font-semibold text-ink hover:underline">
+                    {item.name}
+                  </Link>
+                  {item.hasAiImage ? <span className="ml-2 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-semibold text-brand">AI image</span> : null}
+                  <p className="text-xs text-muted">{item.categoryName}</p>
+                </div>
+                <span
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                    item.status === "ACTIVE" ? "bg-green-100 text-green-700" : item.status === "ARCHIVED" ? "bg-gray-200 text-gray-700" : "bg-amber-100 text-amber-700"
+                  }`}
+                >
+                  {item.status}
+                </span>
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-y-2 border-t border-border pt-3 text-xs">
+                <div>
+                  <dt className="text-muted">Price</dt>
+                  <dd className="font-semibold text-ink">
+                    ₹{item.price.toLocaleString("en-IN")}
+                    {item.compareAtPrice ? <span className="ml-1 font-normal text-muted line-through">₹{item.compareAtPrice.toLocaleString("en-IN")}</span> : null}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted">Stock</dt>
+                  <dd className="text-ink">
+                    {item.totalStock}
+                    {item.totalStock === 0 ? (
+                      <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold text-red-700">Out of stock</span>
+                    ) : item.totalStock < 10 ? (
+                      <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">Low stock</span>
+                    ) : null}
+                  </dd>
+                </div>
+              </dl>
+              <div className="mt-3 text-right">
+                <Link href={`/admin/products/${item.id}`} className="text-xs font-semibold text-brand hover:underline">
+                  Edit
+                </Link>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
         {/* F-03: `total` starts at 0, so rendering it unconditionally
             raced the table body's own "Loading…" state and flashed "0
             products" on every fresh navigation, before the same fetch
