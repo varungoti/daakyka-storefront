@@ -1,5 +1,5 @@
 import { ProductCard } from "@/components/ui/product-card";
-import { Button } from "@/components/ui/button";
+import { buttonClassNames } from "@/components/ui/button";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { JsonLdScript } from "@/components/seo/json-ld-script";
 import { breadcrumbJsonLd, siteUrlBase } from "@/lib/seo/json-ld";
@@ -67,17 +67,16 @@ export function SeoLandingLayout({
         <h1 className="mt-3 font-display text-4xl font-bold text-ink md:text-5xl">{page.h1}</h1>
         <p className="mx-auto mt-5 max-w-2xl text-base leading-relaxed text-muted">{page.intro}</p>
         <div className="mt-8 flex flex-wrap justify-center gap-3">
-          <Link href={page.shopHref}>
-            <Button size="lg">
-              {page.shopLabel}
-              <ArrowRight size={18} />
-            </Button>
+          <Link href={page.shopHref} className={buttonClassNames({ size: "lg" })}>
+            {page.shopLabel}
+            <ArrowRight size={18} />
           </Link>
           {page.secondaryHref && page.secondaryLabel && (
-            <Link href={page.secondaryHref}>
-              <Button variant="outline" size="lg">
-                {page.secondaryLabel}
-              </Button>
+            <Link
+              href={page.secondaryHref}
+              className={buttonClassNames({ variant: "outline", size: "lg" })}
+            >
+              {page.secondaryLabel}
             </Link>
           )}
         </div>
@@ -213,11 +212,9 @@ export function SeoLandingLayout({
       </PageContentSection>
 
       <PageContentSection innerClassName="text-center" className="py-8 md:py-10">
-        <Link href={page.shopHref}>
-          <Button size="lg">
-            {page.shopLabel}
-            <ArrowRight size={18} />
-          </Button>
+        <Link href={page.shopHref} className={buttonClassNames({ size: "lg" })}>
+          {page.shopLabel}
+          <ArrowRight size={18} />
         </Link>
       </PageContentSection>
     </>

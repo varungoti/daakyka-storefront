@@ -1,6 +1,6 @@
 import { marketingMedia } from "@/data/media/catalog";
 import { getPublishedBlogPosts } from "@/lib/blog";
-import { Button } from "@/components/ui/button";
+import { buttonClassNames } from "@/components/ui/button";
 import { ArrowRight, Move } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -35,11 +35,12 @@ export async function InsightsStrip({
             <p className="mt-2 text-sm text-muted">
               Explore layered fabric engineering and performance benefits.
             </p>
-            <Link href={fabricTechHref} className="mt-4 inline-block">
-              <Button variant="outline" size="sm">
-                {fabricTechEnabled ? "Explore Fabric Tech" : "Shop Now"}
-                <ArrowRight size={14} />
-              </Button>
+            <Link
+              href={fabricTechHref}
+              className={buttonClassNames({ variant: "outline", size: "sm", className: "mt-4" })}
+            >
+              {fabricTechEnabled ? "Explore Fabric Tech" : "Shop Now"}
+              <ArrowRight size={14} />
             </Link>
           </div>
         </article>
@@ -62,11 +63,12 @@ export async function InsightsStrip({
             <p className="mt-2 text-sm text-muted">
               Moves with you in every direction for ultimate comfort during long shifts.
             </p>
-            <Link href={fourWayStretchHref} className="mt-4 inline-block">
-              <Button variant="outline" size="sm">
-                {fabricTechEnabled ? "Learn More" : "Shop Now"}
-                <ArrowRight size={14} />
-              </Button>
+            <Link
+              href={fourWayStretchHref}
+              className={buttonClassNames({ variant: "outline", size: "sm", className: "mt-4" })}
+            >
+              {fabricTechEnabled ? "Learn More" : "Shop Now"}
+              <ArrowRight size={14} />
             </Link>
           </div>
         </article>

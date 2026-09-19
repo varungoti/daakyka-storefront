@@ -3,7 +3,7 @@ import { HeroFeatureStrip } from "@/components/home/hero-section";
 import { InsightsStrip } from "@/components/home/insights-strip";
 import { JournalSection } from "@/components/home/journal-section";
 import { ScienceSection } from "@/components/home/science-section";
-import { Button } from "@/components/ui/button";
+import { buttonClassNames } from "@/components/ui/button";
 import { PageHeroBand } from "@/components/ui/page-shell";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { brand } from "@/data/brand";
@@ -54,16 +54,12 @@ export default async function OurStoryPage() {
           titleAs="h1"
         />
         <div className="mt-8 flex flex-wrap justify-center gap-3">
-          <Link href="/about">
-            <Button size="lg">
-              Meet the Founders
-              <ArrowRight size={18} />
-            </Button>
+          <Link href="/about" className={buttonClassNames({ size: "lg" })}>
+            Meet the Founders
+            <ArrowRight size={18} />
           </Link>
-          <Link href="/shop">
-            <Button variant="outline" size="lg">
-              Shop Now
-            </Button>
+          <Link href="/shop" className={buttonClassNames({ variant: "outline", size: "lg" })}>
+            Shop Now
           </Link>
         </div>
       </PageHeroBand>

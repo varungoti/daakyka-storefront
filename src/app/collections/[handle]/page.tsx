@@ -1,5 +1,5 @@
 import { collectionPages, getCollection } from "@/data/seo-landing-pages";
-import { Button } from "@/components/ui/button";
+import { buttonClassNames } from "@/components/ui/button";
 import { ProductCard } from "@/components/ui/product-card";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { SectionHeading } from "@/components/ui/section-heading";
@@ -47,8 +47,8 @@ export default async function CollectionPage({ params }: PageProps) {
             align="center"
             titleAs="h1"
           />
-          <Link href={shopHref} className="mt-8 inline-block">
-            <Button size="lg">Continue to {collection.title}</Button>
+          <Link href={shopHref} className={buttonClassNames({ size: "lg", className: "mt-8" })}>
+            Continue to {collection.title}
           </Link>
         </PageHeroBand>
       </>

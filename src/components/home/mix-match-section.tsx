@@ -2,7 +2,7 @@
 
 import { MixMatchControls } from "@/components/mix-match/mix-match-controls";
 import { MixMatchVisualizer } from "@/components/mix-match/mix-match-visualizer";
-import { Button } from "@/components/ui/button";
+import { buttonClassNames } from "@/components/ui/button";
 import { mixMatchModels } from "@/data/media/catalog";
 import {
   defaultMixMatchConfig,
@@ -72,16 +72,18 @@ export function MixMatchSection() {
             </ul>
 
             <div className="flex flex-wrap gap-3">
-              <Link href="/mix-and-match/studio">
-                <Button size="lg" className="min-w-[200px]">
-                  Start Mix & Match
-                  <ArrowRight size={18} />
-                </Button>
+              <Link
+                href="/mix-and-match/studio"
+                className={buttonClassNames({ size: "lg", className: "min-w-[200px]" })}
+              >
+                Start Mix & Match
+                <ArrowRight size={18} />
               </Link>
-              <Link href="/mix-and-match">
-                <Button variant="outline" size="lg">
-                  Learn More
-                </Button>
+              <Link
+                href="/mix-and-match"
+                className={buttonClassNames({ variant: "outline", size: "lg" })}
+              >
+                Learn More
               </Link>
             </div>
           </div>

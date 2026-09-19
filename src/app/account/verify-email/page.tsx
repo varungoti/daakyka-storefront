@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { buttonClassNames } from "@/components/ui/button";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { verifyEmailToken } from "@/lib/customer-auth/verify-email";
@@ -36,8 +36,8 @@ export default async function VerifyEmailPage({ searchParams }: VerifyEmailPageP
             : result.error}
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-4">
-          <Link href="/account">
-            <Button size="lg">Go to My Account</Button>
+          <Link href="/account" className={buttonClassNames({ size: "lg" })}>
+            Go to My Account
           </Link>
         </div>
       </PageContentSection>

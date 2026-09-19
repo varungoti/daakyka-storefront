@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { buttonClassNames } from "@/components/ui/button";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { SectionHeading } from "@/components/ui/section-heading";
 import type { Metadata } from "next";
@@ -35,8 +35,8 @@ export default async function NewsletterConfirmedPage({
             : "That confirmation link is invalid or has already been used."}
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-4">
-          <Link href="/">
-            <Button size="lg">Back to Home</Button>
+          <Link href="/" className={buttonClassNames({ size: "lg" })}>
+            Back to Home
           </Link>
         </div>
       </PageContentSection>

@@ -1,5 +1,5 @@
 import { marketingMedia } from "@/data/media/catalog";
-import { Button } from "@/components/ui/button";
+import { buttonClassNames } from "@/components/ui/button";
 import { ArrowRight, Crown, Gem, Sparkles, Star } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -65,11 +65,9 @@ export function BespokeSection() {
             ))}
           </div>
 
-          <Link href="/shop/bespoke">
-            <Button variant="luxury" size="lg">
-              Explore Bespoke Collection
-              <ArrowRight size={18} />
-            </Button>
+          <Link href="/shop/bespoke" className={buttonClassNames({ variant: "luxury", size: "lg" })}>
+            Explore Bespoke Collection
+            <ArrowRight size={18} />
           </Link>
         </div>
       </div>

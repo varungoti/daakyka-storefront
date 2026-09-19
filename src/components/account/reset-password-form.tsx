@@ -1,6 +1,6 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { Button, buttonClassNames } from "@/components/ui/button";
 import Link from "next/link";
 import { useState } from "react";
 
@@ -51,8 +51,8 @@ export function ResetPasswordForm({ token }: { token: string }) {
         <p className="mt-2 text-sm text-muted">
           Your password has been changed and other sessions have been signed out.
         </p>
-        <Link href="/account/login">
-          <Button className="mt-4">Sign In</Button>
+        <Link href="/account/login" className={buttonClassNames({ className: "mt-4" })}>
+          Sign In
         </Link>
       </div>
     );

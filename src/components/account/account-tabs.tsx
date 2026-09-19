@@ -1,6 +1,6 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { Button, buttonClassNames } from "@/components/ui/button";
 import { useWishlist } from "@/context/wishlist-provider";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -573,8 +573,8 @@ function EmptyState({
     <div className="rounded-2xl border border-dashed border-border p-10 text-center">
       <h3 className="font-display text-lg font-bold text-ink">{title}</h3>
       <p className="mx-auto mt-2 max-w-md text-sm text-muted">{description}</p>
-      <Link href={actionHref}>
-        <Button className="mt-4">{actionLabel}</Button>
+      <Link href={actionHref} className={buttonClassNames({ className: "mt-4" })}>
+        {actionLabel}
       </Link>
     </div>
   );
