@@ -15,6 +15,22 @@ import { buildOrdersCsv, type OrderCsvRow } from "@/lib/orders/csv";
  * isn't worth a second, differently-shaped query path.
  */
 
+/**
+ * Release-hardening F-01 / plan item 1.4: a guest order's real name lives
+ * only in `Order.shippingAddress` (JSON, shaped like `ShippingAddressInput`
+ * — see src/lib/validation/schemas.ts) since guest checkout never creates a
+ * `Customer` row (see create-order.ts). Every admin-facing read of an order
+ * exposes it as `guestName` below, alongside `customerName` (which stays
+ * strictly "the name of the linked Customer, if any" so callers can still
+ * tell a real account from a guest). Written defensively against
+ * malformed/legacy JSON — never throws, just falls back to `null`.
+ */
+function extractGuestName(shippingAddress: unknown): string | null {
+  if (!shippingAddress || typeof shippingAddress !== "object") return null;
+  const name = (shippingAddress as { name?: unknown }).name;
+  return typeof name === "string" && name.trim() ? name.trim() : null;
+}
+
 export const orderStatusValues = [
   "PENDING_PAYMENT",
   "PAID",
@@ -72,6 +88,10 @@ export interface AdminOrderListItem {
   email: string;
   phone: string | null;
   customerName: string | null;
+  /** Real name the shopper typed at checkout (from shippingAddress), only
+   * ever populated for a guest order (no linked Customer) — see
+   * extractGuestName's doc comment. */
+  guestName: string | null;
   itemCount: number;
   subtotal: number;
   shipping: number;
@@ -135,6 +155,7 @@ async function fetchOrdersForAdmin(where: Prisma.OrderWhereInput): Promise<Admin
     email: row.email,
     phone: row.phone,
     customerName: row.customer?.name ?? null,
+    guestName: row.customer ? null : extractGuestName(row.shippingAddress),
     itemCount: row._count.items,
     subtotal: Number(row.subtotal),
     shipping: Number(row.shipping),
@@ -234,6 +255,8 @@ export interface AdminOrderDetail {
   number: string;
   customerId: string | null;
   customerName: string | null;
+  /** Same fallback as AdminOrderListItem.guestName — see extractGuestName. */
+  guestName: string | null;
   email: string;
   phone: string | null;
   shippingAddress: unknown;
@@ -262,6 +285,7 @@ export function serializeOrderDetail(row: OrderDetailRow): AdminOrderDetail {
     number: row.number,
     customerId: row.customerId,
     customerName: row.customer?.name ?? null,
+    guestName: row.customer ? null : extractGuestName(row.shippingAddress),
     email: row.email,
     phone: row.phone,
     shippingAddress: row.shippingAddress,

@@ -28,6 +28,22 @@ import { generateOrderAccessToken, hashOrderAccessToken } from "@/lib/orders/acc
  * decremented immediately, inside this same transaction, for
  * ORDER_REQUEST orders, and the order is created straight into
  * `PROCESSING` (a Razorpay order stays `PENDING_PAYMENT` until paid).
+ *
+ * Release-hardening F-01 / plan item 1.4 ("guest checkout mints a fake
+ * Customer not linked to the order"): guest checkout (no session ->
+ * `input.customerId` is `undefined`) deliberately never creates a
+ * `Customer` row here or anywhere else in this function. `Order.email`,
+ * `Order.phone` and `Order.shippingAddress` (which carries the shopper's
+ * typed name) are the complete, self-contained, real record of a guest's
+ * contact details — see src/lib/orders/admin-orders.ts, which surfaces
+ * them to the admin as-is, never fabricated. `customerId` is only ever set
+ * from an ID the caller already resolved to an existing, authenticated
+ * session (see getOptionalCustomerId in src/app/api/checkout/route.ts) —
+ * this function never invents one. A shopper who checks out as a guest and
+ * later registers with the same email can have their prior guest orders
+ * retroactively attached via linkGuestOrdersToCustomer (see
+ * src/lib/orders/claim-guest-orders.ts), which sets `Order.customerId` on
+ * exactly those rows without ever touching `Order.email`/`phone`.
  */
 
 export interface CreateOrderItemInput {
@@ -204,6 +220,11 @@ export async function createOrderFromCart(input: CreateOrderFromCartInput): Prom
           data: {
             number,
             accessTokenHash,
+            // F-01: never a fabricated/looked-up value — undefined for a
+            // guest (Order.customerId simply stays null), or the real
+            // session id for a logged-in shopper. email/phone below are
+            // always exactly what was typed and validated by
+            // checkoutSchema, never substituted.
             customerId: input.customerId,
             email: input.email,
             phone: input.phone,

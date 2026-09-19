@@ -116,7 +116,12 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
           <section className="rounded-2xl border border-border bg-surface p-5">
             <h2 className="mb-3 font-display text-lg font-bold text-ink">Customer</h2>
             <div className="text-sm">
-              <p className="font-semibold text-ink">{order.customerName ?? "Guest checkout"}</p>
+              <p className="font-semibold text-ink">
+                {order.customerName ?? order.guestName ?? "Guest checkout"}
+              </p>
+              {!order.customerId && (
+                <p className="text-xs text-muted">Guest checkout — not a registered account</p>
+              )}
               <p className="text-muted">{order.email}</p>
               {order.phone && <p className="text-muted">{order.phone}</p>}
               {order.customerId && (

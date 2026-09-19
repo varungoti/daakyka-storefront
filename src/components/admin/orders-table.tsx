@@ -8,6 +8,7 @@ interface OrderListItem {
   number: string;
   email: string;
   customerName: string | null;
+  guestName: string | null;
   itemCount: number;
   total: number;
   currency: string;
@@ -173,7 +174,7 @@ export function OrdersTable() {
                     </Link>
                   </td>
                   <td className="p-3">
-                    <p className="text-ink">{order.customerName ?? "Guest"}</p>
+                    <p className="text-ink">{order.customerName ?? order.guestName ?? "Guest"}</p>
                     <p className="text-xs text-muted">{order.email}</p>
                   </td>
                   <td className="p-3 text-muted">{new Date(order.createdAt).toLocaleDateString("en-IN")}</td>
