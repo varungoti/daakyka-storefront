@@ -169,7 +169,7 @@ describe("getClientIp (trusted-proxy resolution)", () => {
 
 describe("rate limiting", () => {
   it("blocks after limit is exceeded", async () => {
-    await resetRateLimits();
+    await resetRateLimits(["test-route"]);
     const key = "test-route:127.0.0.1";
     assert.equal((await checkRateLimit(key, 2, 60_000)).ok, true);
     assert.equal((await checkRateLimit(key, 2, 60_000)).ok, true);

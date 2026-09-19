@@ -419,11 +419,11 @@ describe("API integration", () => {
 
   describe("rate limiting helper", () => {
     after(async () => {
-      await resetRateLimits();
+      await resetRateLimits(["test-route", "newsletter", "contact", "bulk-orders"]);
     });
 
     it("returns retryAfter when bucket is full", async () => {
-      await resetRateLimits();
+      await resetRateLimits(["test-route", "newsletter", "contact", "bulk-orders"]);
       const key = "integration:test";
       await checkRateLimit(key, 1, 60_000);
       const blocked = await checkRateLimit(key, 1, 60_000);

@@ -14,7 +14,7 @@ import { withEnv } from "../../../tests/helpers/env";
  */
 describe("rate-limit (DB-backed)", () => {
   after(async () => {
-    await resetRateLimits();
+    await resetRateLimits(["unit-test"]);
   });
 
   it("persists the bucket in RateLimitBucket and increments atomically", async () => {
@@ -88,7 +88,7 @@ describe("rate-limit (DB-backed)", () => {
  */
 describe("rateLimitOrResponse resists X-Forwarded-For spoofing (F1)", () => {
   after(async () => {
-    await resetRateLimits();
+    await resetRateLimits(["unit-test"]);
   });
 
   function silenceConsoleWarn<T>(fn: () => Promise<T>): Promise<T> {
@@ -100,7 +100,7 @@ describe("rateLimitOrResponse resists X-Forwarded-For spoofing (F1)", () => {
   }
 
   it("rotating a spoofed X-Forwarded-For no longer resets/evades the bucket once a trusted platform header is present (Vercel)", async () => {
-    await resetRateLimits();
+    await resetRateLimits(["unit-test"]);
     await withEnv(
       { NODE_ENV: "production", DISABLE_RATE_LIMIT: undefined, VERCEL: "1" },
       async () => {
@@ -134,7 +134,7 @@ describe("rateLimitOrResponse resists X-Forwarded-For spoofing (F1)", () => {
   });
 
   it("never lets unattributed callers share one bucket off-platform (no shared-lockout DoS)", async () => {
-    await resetRateLimits();
+    await resetRateLimits(["unit-test"]);
     await silenceConsoleWarn(() =>
       withEnv(
         {

@@ -27,7 +27,7 @@ const createdCategoryIds: string[] = [];
 const createdCustomerIds: string[] = [];
 
 after(async () => {
-  await resetRateLimits();
+  await resetRateLimits(["order-page"]);
   if (createdOrderIds.length > 0) {
     await db.orderItem.deleteMany({ where: { orderId: { in: createdOrderIds } } }).catch(() => {});
     await db.order.deleteMany({ where: { id: { in: createdOrderIds } } }).catch(() => {});
@@ -214,7 +214,7 @@ describe("order access authorization (Phase G / F2 fix)", () => {
 
   describe("page-level rate limiting (enumeration resistance)", () => {
     after(async () => {
-      await resetRateLimits();
+      await resetRateLimits(["order-page"]);
     });
 
     it("throttles repeated lookups from the same IP after 20 requests/minute", async () => {

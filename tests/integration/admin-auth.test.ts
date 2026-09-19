@@ -54,7 +54,7 @@ describe("admin auth (Phase G)", () => {
       // the User row, not the separate per-IP rate limiter that would
       // otherwise return 429 well before the 10th attempt.
       for (let attempt = 1; attempt <= 9; attempt += 1) {
-        await resetRateLimits();
+        await resetRateLimits(["auth-login", "admin-login"]);
         const response = await postLogin(
           jsonRequest("http://localhost/api/auth/login", "POST", {
             email,
@@ -64,7 +64,7 @@ describe("admin auth (Phase G)", () => {
         assert.equal(response.status, 401, `attempt ${attempt} should still be a plain 401`);
       }
 
-      await resetRateLimits();
+      await resetRateLimits(["auth-login", "admin-login"]);
       const lockedResponse = await postLogin(
         jsonRequest("http://localhost/api/auth/login", "POST", {
           email,
@@ -77,7 +77,7 @@ describe("admin auth (Phase G)", () => {
       assert.ok(locked!.lockedUntil && locked!.lockedUntil.getTime() > Date.now());
 
       // Even the correct password is rejected while locked.
-      await resetRateLimits();
+      await resetRateLimits(["auth-login", "admin-login"]);
       const correctButLocked = await postLogin(
         jsonRequest("http://localhost/api/auth/login", "POST", {
           email,
@@ -102,7 +102,7 @@ describe("admin auth (Phase G)", () => {
       });
       createdUserIds.push(user.id);
 
-      await resetRateLimits();
+      await resetRateLimits(["auth-login", "admin-login"]);
       const stillLocked = await postLogin(
         jsonRequest("http://localhost/api/auth/login", "POST", { email, password: "correct-password-1" }),
       );
@@ -111,7 +111,7 @@ describe("admin auth (Phase G)", () => {
       // Simulate the 15-minute window passing without literally sleeping.
       await db.user.update({ where: { id: user.id }, data: { lockedUntil: new Date(Date.now() - 1000) } });
 
-      await resetRateLimits();
+      await resetRateLimits(["auth-login", "admin-login"]);
       const response = await postLogin(
         jsonRequest("http://localhost/api/auth/login", "POST", { email, password: "correct-password-1" }),
       );
@@ -125,7 +125,7 @@ describe("admin auth (Phase G)", () => {
     });
 
     it("returns 401 (not 423) for an unknown email via the timing-safe dummy compare", async () => {
-      await resetRateLimits();
+      await resetRateLimits(["auth-login", "admin-login"]);
       const response = await postLogin(
         jsonRequest("http://localhost/api/auth/login", "POST", {
           email: `nope-${randomUUID().slice(0, 8)}@example.com`,

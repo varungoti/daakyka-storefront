@@ -9,7 +9,7 @@ import {
   InvalidVariantError,
   OutOfStockError,
 } from "@/lib/orders/create-order";
-import { checkRateLimit } from "@/lib/security/rate-limit";
+import { checkRateLimit, resetRateLimits } from "@/lib/security/rate-limit";
 import { POST as checkoutRoute } from "@/app/api/checkout/route";
 import { POST as verifyRoute } from "@/app/api/checkout/verify/route";
 import { POST as webhookRoute } from "@/app/api/webhooks/razorpay/route";
@@ -61,16 +61,17 @@ after(async () => {
 });
 
 /**
- * The route's generic per-IP limiter (rateLimitOrResponse, 10 req/60s under
- * key "checkout:unknown" since these direct route calls carry no
- * x-forwarded-for header) is shared DB state across every `checkoutRoute`
- * call in this file. Reset it before a test that makes several calls in a
- * row, so it can't be mistaken for the identity-based ORDER_REQUEST
- * throttle under test (Finding B) — this only ever touches the one
- * "checkout:unknown" key, so it's safe alongside other test files/workers.
+ * Clears every throttle bucket this file can trip: the IP-keyed checkout
+ * limiter and the email/phone-keyed ORDER_REQUEST throttle. The latter
+ * matters because several tests here reuse the same placeholder phone,
+ * so its hourly bucket accumulates across them and would eventually
+ * block a later test's checkout. That used to be masked by other test
+ * files calling an unscoped resetRateLimits() (a full-table wipe) at
+ * arbitrary moments; now that those are correctly scoped, this file has
+ * to clean up after itself.
  */
 async function resetCheckoutIpBucket(): Promise<void> {
-  await db.rateLimitBucket.deleteMany({ where: { key: "checkout:unknown" } }).catch(() => {});
+  await resetRateLimits(["checkout:", "order-request:"]);
 }
 
 /**

@@ -360,7 +360,7 @@ describe("review submission + moderation (Phase D2)", () => {
   });
 
   it("POST /api/reviews rejects an unauthenticated request with 401", async () => {
-    await resetRateLimits();
+    await resetRateLimits(["reviews-create", "reviews-photo-upload"]);
     const response = await postReviews(
       jsonRequest("http://localhost/api/reviews", "POST", {
         productId,

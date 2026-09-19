@@ -37,10 +37,38 @@ const fallbackBuckets = new Map<string, Bucket>();
 
 let warnedAboutDbFailure = false;
 
-export async function resetRateLimits(): Promise<void> {
-  fallbackBuckets.clear();
+/**
+ * Clears rate-limit buckets. Test-only.
+ *
+ * Always pass `keyPrefixes`: the integration suite runs ~28 files
+ * concurrently against one Postgres, so an unscoped wipe from one file
+ * deletes buckets another file is mid-assertion on — which is exactly
+ * what made the ORDER_REQUEST throttle test fail on roughly half of all
+ * runs. Scope the reset to the key namespaces your test owns (the
+ * `route` string passed to rateLimitOrResponse, or the prefix of a key
+ * passed to checkRateLimit) and you can't disturb anyone else.
+ *
+ * Omitting the argument still wipes everything, for the limiter's own
+ * unit tests where that's the subject under test.
+ */
+export async function resetRateLimits(keyPrefixes?: readonly string[]): Promise<void> {
+  if (!keyPrefixes) {
+    fallbackBuckets.clear();
+    try {
+      await db.rateLimitBucket.deleteMany({});
+    } catch {
+      // Best-effort: if the DB isn't reachable there's nothing to reset.
+    }
+    return;
+  }
+
+  for (const key of fallbackBuckets.keys()) {
+    if (keyPrefixes.some((prefix) => key.startsWith(prefix))) fallbackBuckets.delete(key);
+  }
   try {
-    await db.rateLimitBucket.deleteMany({});
+    await db.rateLimitBucket.deleteMany({
+      where: { OR: keyPrefixes.map((prefix) => ({ key: { startsWith: prefix } })) },
+    });
   } catch {
     // Best-effort: if the DB isn't reachable there's nothing to reset.
   }
