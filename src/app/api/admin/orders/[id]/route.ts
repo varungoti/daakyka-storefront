@@ -6,6 +6,7 @@ import {
   getOrderForAdmin,
   MissingTrackingInfoError,
   OrderNotFoundError,
+  OrderUpdateConflictError,
   orderUpdateSchema,
   updateOrderAdmin,
 } from "@/lib/orders/admin-orders";
@@ -62,6 +63,9 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     }
     if (err instanceof InvalidOrderStatusTransitionError || err instanceof MissingTrackingInfoError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof OrderUpdateConflictError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
     }
     throw err;
   }

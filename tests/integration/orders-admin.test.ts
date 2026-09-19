@@ -1,5 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import {
   exportOrdersCsv,
@@ -7,8 +8,10 @@ import {
   listOrdersForAdmin,
   MissingTrackingInfoError,
   OrderNotFoundError,
+  OrderUpdateConflictError,
   updateOrderAdmin,
 } from "@/lib/orders/admin-orders";
+import { createOrderFromCart } from "@/lib/orders/create-order";
 import { InvalidOrderStatusTransitionError } from "@/lib/orders/status-transitions";
 import { GET as getOrders } from "@/app/api/admin/orders/route";
 import { GET as getOrder, PATCH as patchOrder } from "@/app/api/admin/orders/[id]/route";
@@ -33,6 +36,55 @@ async function findAnyAdminId(): Promise<string> {
 }
 
 const createdOrderIds: string[] = [];
+const createdProductIds: string[] = [];
+const createdCategoryIds: string[] = [];
+
+/**
+ * Release-hardening Finding B: a real Product/ProductVariant, plus an
+ * ORDER_REQUEST order created the same way checkout does (createOrderFromCart,
+ * which decrements stock immediately — see its own docstring), so the
+ * stock-restore-on-cancel tests below exercise the real decrement/restore
+ * pair rather than a hand-built fixture.
+ */
+async function createOrderRequestOrder(stock: number, quantity: number) {
+  const unique = randomUUID().slice(0, 8);
+  const category = await db.category.create({
+    data: { name: `Orders Admin Stock Category ${unique}`, slug: `orders-admin-stock-category-${unique}`, section: "GENERAL" },
+  });
+  createdCategoryIds.push(category.id);
+
+  const product = await db.product.create({
+    data: {
+      name: `Orders Admin Stock Product ${unique}`,
+      slug: `orders-admin-stock-product-${unique}`,
+      categoryId: category.id,
+      status: "ACTIVE",
+      price: 500,
+    },
+  });
+  createdProductIds.push(product.id);
+
+  const variant = await db.productVariant.create({
+    data: { productId: product.id, sku: `DK-OA-${unique}`, size: "M", color: "Navy", stock, active: true },
+  });
+
+  const order = await createOrderFromCart({
+    items: [{ variantId: variant.id, quantity }],
+    email: `orders-admin-stock-${unique}@example.com`,
+    shippingAddress: {
+      name: "Buyer",
+      line1: "1 Test Street",
+      city: "Hyderabad",
+      state: "Telangana",
+      pincode: "500032",
+      country: "IN",
+    },
+    paymentMethod: "ORDER_REQUEST",
+  });
+  createdOrderIds.push(order.id);
+
+  return { order, variant };
+}
 
 function baseOrderData(overrides: Partial<Prisma.OrderUncheckedCreateInput> = {}): Prisma.OrderUncheckedCreateInput {
   return {
@@ -54,6 +106,12 @@ function baseOrderData(overrides: Partial<Prisma.OrderUncheckedCreateInput> = {}
 after(async () => {
   if (createdOrderIds.length > 0) {
     await db.order.deleteMany({ where: { id: { in: createdOrderIds } } }).catch(() => {});
+  }
+  if (createdProductIds.length > 0) {
+    await db.product.deleteMany({ where: { id: { in: createdProductIds } } }).catch(() => {});
+  }
+  if (createdCategoryIds.length > 0) {
+    await db.category.deleteMany({ where: { id: { in: createdCategoryIds } } }).catch(() => {});
   }
 });
 
@@ -174,6 +232,85 @@ describe("orders admin service (Phase D4)", () => {
     const csv = await exportOrdersCsv({ search: "example.com" });
     assert.match(csv, /order_number/);
     assert.match(csv, /alpha@example\.com/);
+  });
+
+  // Release-hardening Finding B: an ORDER_REQUEST order decrements stock
+  // immediately at creation, with no payment gate (see createOrderFromCart).
+  // Cancelling one before it ships must give that stock back — but exactly
+  // once, never more.
+
+  it("restores stock when an ORDER_REQUEST order is cancelled", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createOrderRequestOrder(5, 2);
+
+    const beforeCancel = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(beforeCancel?.stock, 3, "stock should already be decremented by checkout");
+
+    const updated = await updateOrderAdmin(order.id, { status: "CANCELLED" }, adminId);
+    assert.equal(updated.status, "CANCELLED");
+
+    const afterCancel = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(afterCancel?.stock, 5, "cancelling should restore the 2 reserved units");
+  });
+
+  it("does not restock a second time when the same order is 'cancelled' again (no-op, no double-restore)", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createOrderRequestOrder(5, 2);
+
+    await updateOrderAdmin(order.id, { status: "CANCELLED" }, adminId);
+    const afterFirstCancel = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(afterFirstCancel?.stock, 5);
+
+    // Same status again — updateOrderAdmin's `input.status !== existing.status`
+    // guard makes this a no-op (mirrors the existing behaviour any
+    // same-status resubmission already had before this change), so it must
+    // not restock a second time.
+    const updatedAgain = await updateOrderAdmin(order.id, { status: "CANCELLED" }, adminId);
+    assert.equal(updatedAgain.status, "CANCELLED");
+
+    const afterSecondCancel = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(afterSecondCancel?.stock, 5, "a repeated cancel must not restock the same units twice");
+  });
+
+  it("does not restock a RAZORPAY order on cancel (unchanged, pre-existing behaviour)", async () => {
+    const adminId = await findAnyAdminId();
+    const unique = randomUUID().slice(0, 8);
+    const category = await db.category.create({
+      data: { name: `Orders Admin Razorpay Category ${unique}`, slug: `orders-admin-razorpay-category-${unique}`, section: "GENERAL" },
+    });
+    createdCategoryIds.push(category.id);
+    const product = await db.product.create({
+      data: { name: `Orders Admin Razorpay Product ${unique}`, slug: `orders-admin-razorpay-product-${unique}`, categoryId: category.id, status: "ACTIVE", price: 500 },
+    });
+    createdProductIds.push(product.id);
+    const variant = await db.productVariant.create({
+      data: { productId: product.id, sku: `DK-OA-RZP-${unique}`, size: "M", color: "Navy", stock: 3, active: true },
+    });
+
+    // Simulate a paid Razorpay order: stock already decremented (as the
+    // verify/webhook flow would have done at payment time), order at PAID.
+    const order = await db.order.create({
+      data: baseOrderData({
+        email: `orders-admin-razorpay-${unique}@example.com`,
+        status: "PAID",
+        paymentMethod: "RAZORPAY",
+        items: { create: [{ variantId: variant.id, productName: "Test Scrub Set", unitPrice: 500, quantity: 2 }] },
+      }),
+    });
+    createdOrderIds.push(order.id);
+    await db.productVariant.update({ where: { id: variant.id }, data: { stock: { decrement: 2 } } });
+
+    const updated = await updateOrderAdmin(order.id, { status: "CANCELLED" }, adminId);
+    assert.equal(updated.status, "CANCELLED");
+
+    const afterCancel = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(afterCancel?.stock, 1, "a RAZORPAY order's stock must be untouched by this Finding B change");
+  });
+
+  it("OrderUpdateConflictError is exported and constructs a useful message", () => {
+    const err = new OrderUpdateConflictError("some-id");
+    assert.match(err.message, /some-id/);
+    assert.equal(err.name, "OrderUpdateConflictError");
   });
 });
 

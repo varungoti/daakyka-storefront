@@ -44,6 +44,13 @@ export class MissingTrackingInfoError extends Error {
   }
 }
 
+export class OrderUpdateConflictError extends Error {
+  constructor(id: string) {
+    super(`Order ${id} was updated concurrently — please refresh and try again`);
+    this.name = "OrderUpdateConflictError";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // List
 // ---------------------------------------------------------------------------
@@ -313,10 +320,22 @@ export const orderUpdateSchema = z
 export type OrderUpdateInput = z.infer<typeof orderUpdateSchema>;
 
 export async function updateOrderAdmin(id: string, input: OrderUpdateInput, userId: string): Promise<Order> {
-  const existing = await db.order.findUnique({ where: { id } });
+  const existing = await db.order.findUnique({ where: { id }, include: { items: true } });
   if (!existing) throw new OrderNotFoundError(id);
 
   const data: Prisma.OrderUpdateInput = {};
+  // Finding B (release-hardening): an ORDER_REQUEST order decrements stock
+  // immediately at creation (see createOrderFromCart's docstring) because
+  // it has no payment step to gate on — unlike a RAZORPAY order, which
+  // never decrements until payment is verified, so cancelling one
+  // pre-payment has nothing to give back (see the cancel-stale-orders
+  // cron). If an ORDER_REQUEST order is cancelled before it ships, that
+  // stock was never actually sold, so it's released back to inventory
+  // here. PROCESSING -> CANCELLED is the only path to CANCELLED an
+  // ORDER_REQUEST order can take (see status-transitions.ts — SHIPPED has
+  // no CANCELLED edge), so this is the only point its stock was ever
+  // committed, and `restockItems` is only ever computed once per order.
+  let restockItems: { variantId: string; quantity: number }[] | null = null;
 
   if (input.status !== undefined && input.status !== existing.status) {
     assertValidOrderStatusTransition(existing.status, input.status);
@@ -328,13 +347,48 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
       }
     }
     data.status = input.status;
+
+    if (existing.paymentMethod === "ORDER_REQUEST" && input.status === "CANCELLED") {
+      restockItems = existing.items
+        .filter((item): item is typeof item & { variantId: string } => item.variantId !== null)
+        .map((item) => ({ variantId: item.variantId, quantity: item.quantity }));
+    }
   }
 
   if (input.trackingNumber !== undefined) data.trackingNumber = input.trackingNumber;
   if (input.courier !== undefined) data.courier = input.courier;
   if (input.adminNotes !== undefined) data.adminNotes = input.adminNotes;
 
-  const updated = await db.order.update({ where: { id }, data });
+  let updated: Order;
+  if (restockItems && restockItems.length > 0) {
+    const itemsToRestock = restockItems;
+    updated = await db.$transaction(async (tx) => {
+      // Optimistic-concurrency guard, scoped to only this restocking path
+      // (every other update below keeps the simple unconditional
+      // `db.order.update` — adding this guard there too would make an
+      // unrelated concurrent notes/tracking edit spuriously fail). The
+      // `status: existing.status` condition means only one of two
+      // concurrent cancel requests for the same order can ever win this
+      // update; the loser's `count` comes back 0 and it throws instead of
+      // also restocking — that's what prevents a double-restore.
+      const result = await tx.order.updateMany({
+        where: { id, status: existing.status },
+        data,
+      });
+      if (result.count === 0) {
+        throw new OrderUpdateConflictError(id);
+      }
+      for (const item of itemsToRestock) {
+        await tx.productVariant.update({
+          where: { id: item.variantId },
+          data: { stock: { increment: item.quantity } },
+        });
+      }
+      return tx.order.findUniqueOrThrow({ where: { id } });
+    });
+  } else {
+    updated = await db.order.update({ where: { id }, data });
+  }
 
   await logAuditEvent({
     userId,
@@ -346,6 +400,9 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
       ...(input.trackingNumber !== undefined ? { trackingNumber: input.trackingNumber } : {}),
       ...(input.courier !== undefined ? { courier: input.courier } : {}),
       ...(input.adminNotes !== undefined ? { adminNotesUpdated: true } : {}),
+      ...(restockItems && restockItems.length > 0
+        ? { restockedUnits: restockItems.reduce((sum, item) => sum + item.quantity, 0) }
+        : {}),
     },
   });
 

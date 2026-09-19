@@ -2,6 +2,7 @@
 
 import { Button, buttonClassNames } from "@/components/ui/button";
 import { useWishlist } from "@/context/wishlist-provider";
+import { INDIAN_PHONE_HINT, INDIAN_PINCODE_HINT, normalizeIndianPhone, normalizeIndianPincode } from "@/lib/validation/india";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -198,23 +199,45 @@ function AddressForm({
 }) {
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const formElement = event.currentTarget;
-    setStatus("loading");
     setError("");
+    setFieldErrors({});
 
     const form = new FormData(formElement);
+    const rawPhone = ((form.get("phone") as string) || "").trim();
+    const rawPostalCode = ((form.get("postalCode") as string) || "").trim();
+
+    // Client-side format check first (same rule as the server —
+    // src/lib/validation/schemas.ts — which is authoritative and re-checks
+    // regardless, since this can always be bypassed by calling the API
+    // directly). Phone is optional on a saved address; postal code isn't.
+    const normalizedPhone = rawPhone ? normalizeIndianPhone(rawPhone) : null;
+    const normalizedPostalCode = normalizeIndianPincode(rawPostalCode);
+    const nextFieldErrors: Record<string, string> = {};
+    if (rawPhone && !normalizedPhone) nextFieldErrors.phone = INDIAN_PHONE_HINT;
+    if (!normalizedPostalCode) nextFieldErrors.postalCode = INDIAN_PINCODE_HINT;
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setStatus("error");
+      setFieldErrors(nextFieldErrors);
+      setError("Please fix the highlighted field(s) below.");
+      return;
+    }
+
+    setStatus("loading");
+
     const payload = {
       label: form.get("label") || undefined,
       line1: form.get("line1"),
       line2: form.get("line2") || undefined,
       city: form.get("city"),
       state: form.get("state"),
-      postalCode: form.get("postalCode"),
+      postalCode: normalizedPostalCode,
       country: (form.get("country") as string) || "IN",
-      phone: form.get("phone") || undefined,
+      phone: normalizedPhone ?? undefined,
       isDefault: form.get("isDefault") === "on",
     };
 
@@ -231,6 +254,14 @@ function AddressForm({
         const data = await response.json().catch(() => null);
         setStatus("error");
         setError(data?.error ?? "Could not save this address.");
+        const details = data?.details?.fieldErrors as Record<string, string[]> | undefined;
+        if (details) {
+          const flattened: Record<string, string> = {};
+          for (const [key, messages] of Object.entries(details)) {
+            if (messages?.[0]) flattened[key] = messages[0];
+          }
+          setFieldErrors(flattened);
+        }
         return;
       }
       onSaved();
@@ -244,14 +275,20 @@ function AddressForm({
     <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl border border-border p-6">
       <div className="grid gap-4 md:grid-cols-2">
         <TextField label="Label" name="label" defaultValue={address?.label ?? ""} />
-        <TextField label="Phone" name="phone" defaultValue={address?.phone ?? ""} />
+        <TextField label="Phone" name="phone" defaultValue={address?.phone ?? ""} error={fieldErrors.phone} />
       </div>
       <TextField label="Address Line 1 *" name="line1" required defaultValue={address?.line1 ?? ""} />
       <TextField label="Address Line 2" name="line2" defaultValue={address?.line2 ?? ""} />
       <div className="grid gap-4 md:grid-cols-3">
         <TextField label="City *" name="city" required defaultValue={address?.city ?? ""} />
         <TextField label="State *" name="state" required defaultValue={address?.state ?? ""} />
-        <TextField label="Postal Code *" name="postalCode" required defaultValue={address?.postalCode ?? ""} />
+        <TextField
+          label="Postal Code *"
+          name="postalCode"
+          required
+          defaultValue={address?.postalCode ?? ""}
+          error={fieldErrors.postalCode}
+        />
       </div>
       <label className="flex items-center gap-2 text-sm text-ink">
         <input
@@ -280,11 +317,13 @@ function TextField({
   name,
   required,
   defaultValue,
+  error,
 }: {
   label: string;
   name: string;
   required?: boolean;
   defaultValue?: string;
+  error?: string;
 }) {
   return (
     <div>
@@ -296,8 +335,18 @@ function TextField({
         name={name}
         required={required}
         defaultValue={defaultValue}
-        className="w-full rounded-2xl border border-border px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? `${name}-error` : undefined}
+        className={cn(
+          "w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand/20",
+          error ? "border-red-400 focus:border-red-500" : "border-border focus:border-brand",
+        )}
       />
+      {error && (
+        <p id={`${name}-error`} className="mt-1 text-xs text-red-600">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

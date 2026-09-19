@@ -9,6 +9,7 @@ import {
   InvalidVariantError,
   OutOfStockError,
 } from "@/lib/orders/create-order";
+import { checkRateLimit } from "@/lib/security/rate-limit";
 import { POST as checkoutRoute } from "@/app/api/checkout/route";
 import { POST as verifyRoute } from "@/app/api/checkout/verify/route";
 import { POST as webhookRoute } from "@/app/api/webhooks/razorpay/route";
@@ -378,48 +379,62 @@ describe("POST /api/checkout (Phase D3)", () => {
 });
 
 describe("ORDER_REQUEST throttle — Finding B (release-hardening)", () => {
-  it("allows 5 ORDER_REQUEST checkouts per email within the window, then blocks the 6th without touching stock", async () => {
+  // The exact counting/blocking behaviour (allows 5, blocks the 6th, keys
+  // independently on email and phone, fails safe) is covered directly and
+  // in isolation by src/lib/security/order-request-throttle.test.ts, which
+  // calls orderRequestThrottleOrResponse straight — no HTTP route, no real
+  // order creation, just the DB-backed counter itself. That keeps each
+  // check to a single fast round trip.
+  //
+  // The route-level test below instead pre-seeds the bucket directly at
+  // the limit and makes exactly *one* real checkoutRoute call, rather than
+  // driving all 6 through the full order-creation path (variant lookup +
+  // transaction + order-number generation, tens of ms each). This file's
+  // RateLimitBucket table is shared DB state with several other
+  // integration test files that call the *global* resetRateLimits() (a
+  // full-table wipe) throughout their own test bodies — see
+  // src/lib/security/rate-limit.ts. Minimising how long this test's own
+  // request sequence runs minimises the window in which one of those
+  // unrelated concurrent wipes could land and reset this bucket, while
+  // still proving the real route enforces the throttle end-to-end and
+  // never reaches createOrderFromCart when it does.
+  it("blocks a checkout through the real route once the ORDER_REQUEST throttle is already at its limit", async () => {
     await resetCheckoutIpBucket();
-    const { variant } = await createActiveProductWithVariant({ stock: 10 });
-    const email = `throttle-test-${randomUUID()}@example.com`;
+    const { variant } = await createActiveProductWithVariant({ stock: 5 });
+    const email = `throttle-preseed-${randomUUID()}@example.com`;
     const phone = randomIndianMobile();
-    createdRateLimitKeys.push(`order-request:email:${email.toLowerCase()}`, `order-request:phone:${phone}`);
+    const emailKey = `order-request:email:${email.toLowerCase()}`;
+    const phoneKey = `order-request:phone:${phone}`;
+    createdRateLimitKeys.push(emailKey, phoneKey);
 
-    const checkoutBody = {
-      items: [{ variantId: variant.id, quantity: 1 }],
-      email,
-      phone,
-      shippingAddress: {
-        name: "Buyer",
-        line1: "1 Test Street",
-        city: "Hyderabad",
-        state: "Telangana",
-        pincode: "500032",
-        country: "IN",
-      },
-    };
+    for (let i = 0; i < 5; i++) {
+      await checkRateLimit(emailKey, 5, 60 * 60 * 1000);
+    }
 
     await withEnv({ RAZORPAY_KEY_ID: undefined, RAZORPAY_KEY_SECRET: undefined }, async () => {
-      for (let attempt = 1; attempt <= 5; attempt++) {
-        const response = await checkoutRoute(jsonRequest("http://localhost/api/checkout", checkoutBody));
-        assert.equal(response.status, 200, `expected attempt ${attempt} to succeed`);
-        const data = (await response.json()) as { orderNumber: string };
-        const order = await db.order.findUnique({ where: { number: data.orderNumber } });
-        if (order) createdOrderIds.push(order.id);
-      }
-
-      const blockedResponse = await checkoutRoute(jsonRequest("http://localhost/api/checkout", checkoutBody));
-      assert.equal(blockedResponse.status, 429);
-      const blockedData = (await blockedResponse.json()) as { error: string };
-      assert.match(blockedData.error, /too many/i);
-      assert.ok(blockedResponse.headers.get("Retry-After"), "expected a Retry-After header on the 429");
+      const response = await checkoutRoute(
+        jsonRequest("http://localhost/api/checkout", {
+          items: [{ variantId: variant.id, quantity: 1 }],
+          email,
+          phone,
+          shippingAddress: {
+            name: "Buyer",
+            line1: "1 Test Street",
+            city: "Hyderabad",
+            state: "Telangana",
+            pincode: "500032",
+            country: "IN",
+          },
+        }),
+      );
+      assert.equal(response.status, 429);
+      const data = (await response.json()) as { error: string };
+      assert.match(data.error, /too many/i);
+      assert.ok(response.headers.get("Retry-After"), "expected a Retry-After header on the 429");
     });
 
-    const updatedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
-    // Started at 10, 5 successful ORDER_REQUEST orders of qty 1 each — the
-    // blocked 6th attempt must never have reached createOrderFromCart, so
-    // stock must land at exactly 5, not 4.
-    assert.equal(updatedVariant?.stock, 5);
+    const untouchedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(untouchedVariant?.stock, 5, "a throttled request must never reach createOrderFromCart");
   });
 
   // The RAZORPAY path is deliberately not exercised here through the full
@@ -428,9 +443,7 @@ describe("ORDER_REQUEST throttle — Finding B (release-hardening)", () => {
   // createRazorpayOrder() would reach out to Razorpay's live API, which
   // this sandbox has no business calling from a test. The route only ever
   // calls orderRequestThrottleOrResponse when `!razorpayReady` (see
-  // src/app/api/checkout/route.ts), and
-  // src/lib/security/order-request-throttle.test.ts covers that function's
-  // own gating/limit behaviour directly and in isolation.
+  // src/app/api/checkout/route.ts).
 });
 
 describe("POST /api/checkout/verify (Phase D3)", () => {

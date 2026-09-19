@@ -158,6 +158,15 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
               )}
               {!order.razorpayOrderId && !order.razorpayPaymentId && <p className="text-muted">No online payment on this order.</p>}
             </div>
+            {order.paymentMethod === "ORDER_REQUEST" && (
+              <p className="mt-3 rounded-xl bg-lavender/30 p-3 text-xs text-muted">
+                {order.status === "CANCELLED"
+                  ? "This unpaid order request was cancelled — the stock it had reserved was restored to inventory."
+                  : order.status === "SHIPPED" || order.status === "DELIVERED"
+                    ? "Stock for this unpaid order request was decremented at checkout and has already shipped."
+                    : "This is an unpaid order request: stock was decremented at checkout (no online payment step). Cancelling it will restore that stock to inventory."}
+              </p>
+            )}
           </section>
 
           <OrderDetailActions

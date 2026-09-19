@@ -5,6 +5,7 @@ import {
   checkoutSchema,
   checkoutVerifySchema,
   customerAddressSchema,
+  customerAddressUpdateSchema,
   customerForgotPasswordSchema,
   customerRegisterSchema,
   customerResetPasswordSchema,
@@ -192,6 +193,72 @@ describe("validation schemas", () => {
     assert.equal(result.success, false);
   });
 
+  // Release-hardening Finding A: a customer address must pass the same
+  // Indian phone/PIN-code rule as checkout, and normalised, so a bad
+  // address can't be saved here and then reused at checkout.
+
+  it("normalises a customer address's postal code and optional phone", () => {
+    const result = customerAddressSchema.safeParse({
+      line1: "221B Baker Street",
+      city: "Hyderabad",
+      state: "Telangana",
+      postalCode: "500 032",
+      phone: "+91 98765 43210",
+    });
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.data.postalCode, "500032");
+      assert.equal(result.data.phone, "9876543210");
+    }
+  });
+
+  it("accepts a customer address without a phone at all (optional)", () => {
+    const result = customerAddressSchema.safeParse({
+      line1: "221B Baker Street",
+      city: "Hyderabad",
+      state: "Telangana",
+      postalCode: "500032",
+    });
+    assert.equal(result.success, true);
+  });
+
+  it("rejects a customer address with the exact garbage postal code from the live audit", () => {
+    const result = customerAddressSchema.safeParse({
+      line1: "221B Baker Street",
+      city: "Hyderabad",
+      state: "Telangana",
+      postalCode: "AB123",
+    });
+    assert.equal(result.success, false);
+    if (!result.success) {
+      const flat = result.error.flatten();
+      assert.ok(flat.fieldErrors.postalCode?.[0]);
+    }
+  });
+
+  it("rejects a customer address with a malformed phone", () => {
+    const result = customerAddressSchema.safeParse({
+      line1: "221B Baker Street",
+      city: "Hyderabad",
+      state: "Telangana",
+      postalCode: "500032",
+      phone: "12345",
+    });
+    assert.equal(result.success, false);
+  });
+
+  it("customerAddressUpdateSchema accepts a partial payload and still normalises a provided postal code", () => {
+    const result = customerAddressUpdateSchema.safeParse({ postalCode: "110 001" });
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.data.postalCode, "110001");
+    }
+  });
+
+  it("customerAddressUpdateSchema still rejects an invalid postal code", () => {
+    assert.equal(customerAddressUpdateSchema.safeParse({ postalCode: "AB123" }).success, false);
+  });
+
   // Phase D3: checkout / Razorpay.
 
   const validCheckoutPayload = {
@@ -247,6 +314,62 @@ describe("validation schemas", () => {
     const result = checkoutSchema.safeParse({
       ...validCheckoutPayload,
       shippingAddress: { ...validCheckoutPayload.shippingAddress, country: "IND" },
+    });
+    assert.equal(result.success, false);
+  });
+
+  // Release-hardening Finding A: a live order was placed with phone
+  // "12345" and pincode "AB123" — checkoutSchema now normalises legitimate
+  // shapes to a canonical form and rejects everything else with a useful
+  // message, at the field's own path.
+
+  it("normalises common valid phone shapes to a bare 10-digit number", () => {
+    for (const phone of ["9876543210", "+91 98765 43210", "098765 43210", "91-9876543210"]) {
+      const result = checkoutSchema.safeParse({ ...validCheckoutPayload, phone });
+      assert.equal(result.success, true, `expected "${phone}" to be accepted`);
+      if (result.success) {
+        assert.equal(result.data.phone, "9876543210", `expected "${phone}" to normalise to 9876543210`);
+      }
+    }
+  });
+
+  it("normalises a spaced pincode to 6 bare digits", () => {
+    const result = checkoutSchema.safeParse({
+      ...validCheckoutPayload,
+      shippingAddress: { ...validCheckoutPayload.shippingAddress, pincode: "500 032" },
+    });
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.data.shippingAddress.pincode, "500032");
+    }
+  });
+
+  it("rejects the exact garbage phone/pincode from the live audit, with a useful message", () => {
+    const result = checkoutSchema.safeParse({
+      ...validCheckoutPayload,
+      phone: "12345",
+      shippingAddress: { ...validCheckoutPayload.shippingAddress, pincode: "AB123" },
+    });
+    assert.equal(result.success, false);
+    if (!result.success) {
+      const phoneIssue = result.error.issues.find((issue) => issue.path.join(".") === "phone");
+      const pincodeIssue = result.error.issues.find(
+        (issue) => issue.path.join(".") === "shippingAddress.pincode",
+      );
+      assert.ok(phoneIssue?.message.length, "expected a useful message for the invalid phone");
+      assert.ok(pincodeIssue?.message.length, "expected a useful message for the invalid pincode");
+    }
+  });
+
+  it("rejects a phone number starting with a non-mobile digit (e.g. a landline range)", () => {
+    const result = checkoutSchema.safeParse({ ...validCheckoutPayload, phone: "1234567890" });
+    assert.equal(result.success, false);
+  });
+
+  it("rejects a pincode starting with 0", () => {
+    const result = checkoutSchema.safeParse({
+      ...validCheckoutPayload,
+      shippingAddress: { ...validCheckoutPayload.shippingAddress, pincode: "012345" },
     });
     assert.equal(result.success, false);
   });
