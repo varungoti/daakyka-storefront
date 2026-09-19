@@ -18,9 +18,17 @@ export interface ShopFilterCategory {
   name: string;
 }
 
+/** `transient: true` marks a change that fires continuously (dragging the
+ * price slider) so the caller can `replace` instead of `push` — see
+ * ShopPageContent.applyFilters. Omitted/false means a discrete, one-shot
+ * toggle (swatch/checkbox/category click). */
+export interface ShopFilterChangeMeta {
+  transient?: boolean;
+}
+
 interface ShopFiltersPanelProps {
   filters: ShopFilters;
-  onChange: (filters: ShopFilters) => void;
+  onChange: (filters: ShopFilters, meta?: ShopFilterChangeMeta) => void;
   categories: ShopFilterCategory[];
   categoryCounts: Record<string, number>;
   totalCount: number;
@@ -169,7 +177,12 @@ export function ShopFiltersPanel({
           max={PRICE_FILTER_MAX_INR}
           value={filters.priceMax}
           onChange={(event) =>
-            onChange({ ...filters, priceMax: Number(event.target.value) })
+            // Fires on every drag tick — always transient (replace), never
+            // push, or dragging the slider would flood browser history.
+            onChange(
+              { ...filters, priceMax: Number(event.target.value) },
+              { transient: true },
+            )
           }
           className="w-full accent-brand"
         />
@@ -177,6 +190,29 @@ export function ShopFiltersPanel({
           <span>{formatPrice(PRICE_FILTER_MIN_INR)}</span>
           <span className="font-semibold text-brand">{formatPrice(filters.priceMax)}+</span>
           <span>{formatPrice(PRICE_FILTER_MAX_INR)}+</span>
+        </div>
+      </FilterBlock>
+
+      <FilterBlock title="Availability">
+        <div className="space-y-2">
+          <label className="flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 hover:bg-lilac/30">
+            <input
+              type="checkbox"
+              checked={filters.inStock ?? false}
+              onChange={() => onChange({ ...filters, inStock: !filters.inStock })}
+              className="h-4 w-4 rounded border-border text-brand focus:ring-brand"
+            />
+            <span className="text-sm text-ink">In Stock Only</span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 hover:bg-lilac/30">
+            <input
+              type="checkbox"
+              checked={filters.onSale ?? false}
+              onChange={() => onChange({ ...filters, onSale: !filters.onSale })}
+              className="h-4 w-4 rounded border-border text-brand focus:ring-brand"
+            />
+            <span className="text-sm text-ink">On Sale</span>
+          </label>
         </div>
       </FilterBlock>
     </div>

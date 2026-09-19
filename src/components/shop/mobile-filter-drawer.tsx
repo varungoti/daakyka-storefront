@@ -1,6 +1,10 @@
 "use client";
 
-import { ShopFiltersPanel, type ShopFilterCategory } from "@/components/shop/shop-filters-panel";
+import {
+  ShopFiltersPanel,
+  type ShopFilterCategory,
+  type ShopFilterChangeMeta,
+} from "@/components/shop/shop-filters-panel";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import type { ShopFilters } from "@/lib/shop/filters";
 import { cn } from "@/lib/utils";
@@ -11,7 +15,7 @@ interface MobileFilterDrawerProps {
   open: boolean;
   onClose: () => void;
   filters: ShopFilters;
-  onChange: (filters: ShopFilters) => void;
+  onChange: (filters: ShopFilters, meta?: ShopFilterChangeMeta) => void;
   categories: ShopFilterCategory[];
   categoryCounts: Record<string, number>;
   totalCount: number;

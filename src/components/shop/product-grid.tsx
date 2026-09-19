@@ -15,6 +15,11 @@ interface ProductGridProps {
   showToolbar?: boolean;
   searchQuery?: string;
   onSearchQueryChange?: (query: string) => void;
+  /** storefront-ux F5: when provided (i.e. at least one facet or the
+   * search query is active), a zero-result grid shows a "Clear all
+   * filters" button that calls this instead of a dead end. Omitted on
+   * grids with no filter UI at all (e.g. /sale, section landing pages). */
+  onClearFilters?: () => void;
 }
 
 export function ProductGrid({
@@ -26,6 +31,7 @@ export function ProductGrid({
   showToolbar = true,
   searchQuery,
   onSearchQueryChange,
+  onClearFilters,
 }: ProductGridProps) {
   const [internalSort, setInternalSort] = useState<SortOption>("featured");
   const sort = controlledSort ?? internalSort;
@@ -89,10 +95,23 @@ export function ProductGrid({
 
       {products.length === 0 ? (
         <div className="rounded-3xl border border-dashed border-border bg-surface-muted px-6 py-16 text-center">
-          <p className="font-display text-xl font-bold text-ink">No products found</p>
-          <p className="mt-2 text-sm text-muted">
-            Try adjusting your filters to see more results.
+          <p className="font-display text-xl font-bold text-ink">
+            {onClearFilters ? "No products match these filters" : "No products found"}
           </p>
+          <p className="mt-2 text-sm text-muted">
+            {onClearFilters
+              ? "Try removing a filter, or start over to see the full catalog."
+              : "Try adjusting your filters to see more results."}
+          </p>
+          {onClearFilters && (
+            <button
+              type="button"
+              onClick={onClearFilters}
+              className="mt-5 inline-flex items-center justify-center rounded-full border border-border bg-surface-elevated px-5 py-2.5 text-sm font-semibold text-ink transition hover:border-brand hover:text-brand"
+            >
+              Clear all filters
+            </button>
+          )}
         </div>
       ) : (
         <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
