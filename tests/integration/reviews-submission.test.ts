@@ -22,6 +22,7 @@ import { GET as getAdminReviews } from "@/app/api/admin/reviews/route";
 import { PATCH as patchAdminReview } from "@/app/api/admin/reviews/[id]/route";
 import { POST as postAdminReviewsBulk } from "@/app/api/admin/reviews/bulk/route";
 import { POST as postReviews } from "@/app/api/reviews/route";
+import { findAnyAdminId } from "../helpers/admin-user";
 
 /**
  * Phase D2: review submission (lib/reviews/create-review.ts) and
@@ -40,12 +41,6 @@ import { POST as postReviews } from "@/app/api/reviews/route";
  * exercised against a live `npm run start` server in the D2 runtime
  * verification step.
  */
-
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
-}
 
 function jsonRequest(url: string, method: string, body?: unknown): Request {
   return new Request(url, {

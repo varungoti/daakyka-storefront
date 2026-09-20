@@ -10,16 +10,14 @@ import {
   setSetting,
   settingDefaults,
 } from "@/lib/settings";
+import { findAnyAdminId } from "../helpers/admin-user";
 
-// Any admin user works for attributing the audit-logged setting change —
-// this repo's dev DB may or may not have the documented seed admin
-// (DEFAULT_ADMIN_SEED_EMAIL), so find whichever admin user exists instead
-// of depending on a specific seeded email.
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
-}
+// The audit-logged setting change just needs *an* acting admin id, but it
+// has to be one that still exists when the write lands: see
+// tests/helpers/admin-user.ts for why "whichever user comes back first"
+// raced with the files that create and delete their own admins. The helper
+// keys on the SUPER_ADMIN role rather than a specific seeded email, so it
+// still doesn't depend on DEFAULT_ADMIN_SEED_EMAIL being the local value.
 
 describe("site settings integration", () => {
   describe("PATCH /api/admin/settings/[key] without a session", () => {

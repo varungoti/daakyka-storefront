@@ -34,6 +34,7 @@ import {
   GET as getSizeChart,
   PATCH as patchSizeChart,
 } from "@/app/api/admin/size-charts/[id]/route";
+import { findAnyAdminId } from "../helpers/admin-user";
 
 /**
  * Phase B2: categories + size-chart admin CRUD, exercised at the library
@@ -47,12 +48,6 @@ import {
  * functions the routes call, and every test category/size-chart created
  * here is cleaned up in `after()` hooks.
  */
-
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
-}
 
 const createdCategoryIds: string[] = [];
 const createdSizeChartIds: string[] = [];

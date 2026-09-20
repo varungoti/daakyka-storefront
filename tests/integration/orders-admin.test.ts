@@ -17,6 +17,7 @@ import { GET as getOrders } from "@/app/api/admin/orders/route";
 import { GET as getOrder, PATCH as patchOrder } from "@/app/api/admin/orders/[id]/route";
 import { GET as exportOrders } from "@/app/api/admin/orders/export/route";
 import type { Prisma } from "@/generated/prisma/client";
+import { findAnyAdminId } from "../helpers/admin-user";
 
 /**
  * Phase D4: orders admin service layer (list filters, status transitions,
@@ -28,12 +29,6 @@ import type { Prisma } from "@/generated/prisma/client";
  * directly against the service functions the routes call. Every order
  * created here is cleaned up in `after()`.
  */
-
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
-}
 
 const createdOrderIds: string[] = [];
 const createdProductIds: string[] = [];
@@ -125,6 +120,19 @@ describe("orders admin service (Phase D4)", () => {
         number: `DK-TEST-A-${Date.now()}`,
         email: "alpha@example.com",
         status: "PENDING_PAYMENT",
+        // Deliberately NOT the baseOrderData default of RAZORPAY.
+        // tests/integration/checkout.test.ts drives the real
+        // POST /api/cron/cancel-stale-orders route, whose updateMany is
+        // global by design: it cancels *every* PENDING_PAYMENT RAZORPAY
+        // order with a null razorpayPaymentId created before the 30-minute
+        // cutoff, with no way to scope it to one file's rows. The 2020
+        // createdAt below (load-bearing for the date-range filter test) put
+        // this fixture squarely inside that predicate, so a concurrent run
+        // of that cron flipped orderA to CANCELLED mid-file and failed
+        // "updates adminNotes independently of status" roughly 1 run in 12.
+        // ORDER_REQUEST is the carve-out the cron itself asserts it skips,
+        // and nothing here reads orderA.paymentMethod.
+        paymentMethod: "ORDER_REQUEST",
         createdAt: new Date("2020-01-01T00:00:00.000Z"),
       }),
     });

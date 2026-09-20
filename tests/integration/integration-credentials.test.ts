@@ -10,14 +10,10 @@ import {
 } from "@/lib/integrations/credential-store";
 import { isRazorpayConfigured } from "@/lib/payments/razorpay";
 import { withEnv } from "../helpers/env";
+import { findAnyAdminId } from "../helpers/admin-user";
 
-// Any admin user works for attributing the audit-logged credential change —
-// mirrors tests/integration/site-settings.test.ts's findAnyAdminId helper.
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
-}
+// The audit-logged credential change needs an acting admin id that still
+// exists when the write lands — see tests/helpers/admin-user.ts.
 
 function jsonRequest(url: string, method: string, body: unknown): Request {
   return new Request(url, {

@@ -22,6 +22,7 @@ import {
 } from "@/lib/discounts";
 import { getSetting } from "@/lib/settings";
 import { withEnv } from "../helpers/env";
+import { findAnyAdminId } from "../helpers/admin-user";
 
 /**
  * Release-hardening F7 (docs/audit-2026-09-19/storefront-ux.md finding F7):
@@ -44,12 +45,6 @@ function jsonRequest(url: string, body: unknown): Request {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-}
-
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
 }
 
 const createdOrderIds: string[] = [];

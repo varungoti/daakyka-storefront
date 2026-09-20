@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { db } from "@/lib/db";
 import { getFooterLinks } from "@/lib/navigation/get-footer-links";
 import { setSetting, settingDefaults } from "@/lib/settings";
+import { findAnyAdminId } from "../helpers/admin-user";
 
 /**
  * Phase C6: the footer's DB-backed getFooterLinks() reflects the live
@@ -11,12 +12,6 @@ import { setSetting, settingDefaults } from "@/lib/settings";
  * src/lib/navigation/get-footer-links.test.ts for the pure builder-function
  * unit tests that don't need a database.
  */
-
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
-}
 
 describe("getFooterLinks integration", () => {
   const originalFabricTech = settingDefaults["pages.fabricTech.enabled"];

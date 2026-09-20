@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { CustomerNotFoundError, getCustomerForAdmin, listCustomersForAdmin, setCustomerActive } from "@/lib/customers/admin-customers";
 import { GET as getCustomers } from "@/app/api/admin/customers/route";
 import { GET as getCustomer, PATCH as patchCustomer } from "@/app/api/admin/customers/[id]/route";
+import { findAnyAdminId } from "../helpers/admin-user";
 
 /**
  * Phase D4: customers admin service layer (list aggregation, detail,
@@ -12,12 +13,6 @@ import { GET as getCustomer, PATCH as patchCustomer } from "@/app/api/admin/cust
  * check on every route handler. Same route-handler constraint as
  * tests/integration/catalog-admin.test.ts and orders-admin.test.ts.
  */
-
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
-}
 
 const createdCustomerIds: string[] = [];
 const createdOrderIds: string[] = [];

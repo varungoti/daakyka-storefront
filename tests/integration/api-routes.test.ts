@@ -1,6 +1,6 @@
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { setNodeEnv } from "../helpers/env";
 import { GET as getProducts } from "@/app/api/products/route";
 import { GET as getHealth } from "@/app/api/health/route";
@@ -403,7 +403,11 @@ describe("API integration", () => {
 
     it("returns retryAfter when bucket is full", async () => {
       await resetRateLimits(["test-route", "newsletter", "contact", "bulk-orders"]);
-      const key = "integration:test";
+      // Prefixed so the describe's own after() reset reaches it, and
+      // uuid-suffixed so a leftover row from an earlier run inside the
+      // 60s window can't pre-fill the bucket under test. The previous
+      // fixed "integration:test" key matched neither and leaked.
+      const key = `test-route:integration-${randomUUID()}`;
       await checkRateLimit(key, 1, 60_000);
       const blocked = await checkRateLimit(key, 1, 60_000);
       assert.equal(blocked.ok, false);

@@ -42,6 +42,22 @@ function jsonRequest(url: string, method: string, body?: unknown): Request {
  * two cases. The full cookie-based flow is exercised against a live
  * `npm run start` server in the D1 runtime verification step.
  */
+/**
+ * Every rate-limit key namespace this file writes to. The integration
+ * suite runs ~36 files concurrently against one Postgres, so a reset has
+ * to name the namespaces it owns rather than wiping the table — and the
+ * after() sweep below has to cover exactly the same set, or the last
+ * bucket each run touches survives into the next one. Keeping both on one
+ * constant is what stops those two lists drifting apart.
+ */
+const ACCOUNT_RATE_LIMIT_PREFIXES = [
+  "account-login",
+  "account-register",
+  "account-forgot-password",
+  "account-reset-password",
+  "account-resend-verification",
+] as const;
+
 describe("customer accounts (Phase D1)", () => {
   const createdCustomerIds: string[] = [];
 
@@ -50,11 +66,12 @@ describe("customer accounts (Phase D1)", () => {
     await db.customerAddress.deleteMany({ where: { customerId: { in: createdCustomerIds } } }).catch(() => {});
     await db.review.deleteMany({ where: { customerId: { in: createdCustomerIds } } }).catch(() => {});
     await db.customer.deleteMany({ where: { id: { in: createdCustomerIds } } }).catch(() => {});
+    await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
   });
 
   describe("POST /api/account/register", () => {
     it("creates an unverified customer and issues a VERIFY token, logging the dev fallback link", async () => {
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const unique = randomUUID().slice(0, 8);
       const email = `register-${unique}@example.com`;
 
@@ -94,7 +111,7 @@ describe("customer accounts (Phase D1)", () => {
     });
 
     it("returns a fake success and creates no customer when the honeypot is tripped", async () => {
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const unique = randomUUID().slice(0, 8);
       const email = `honeypot-${unique}@example.com`;
       const response = await postRegister(
@@ -112,7 +129,7 @@ describe("customer accounts (Phase D1)", () => {
     });
 
     it("rejects a duplicate email", async () => {
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const unique = randomUUID().slice(0, 8);
       const email = `dup-${unique}@example.com`;
       const customer = await db.customer.create({
@@ -120,7 +137,7 @@ describe("customer accounts (Phase D1)", () => {
       });
       createdCustomerIds.push(customer.id);
 
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const response = await postRegister(
         jsonRequest("http://localhost/api/account/register", "POST", {
           name: "Duplicate",
@@ -135,7 +152,7 @@ describe("customer accounts (Phase D1)", () => {
 
   describe("POST /api/account/login", () => {
     it("returns 401 for an unknown email (timing-safe dummy compare path)", async () => {
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const response = await postLogin(
         jsonRequest("http://localhost/api/account/login", "POST", {
           email: `nope-${randomUUID().slice(0, 8)}@example.com`,
@@ -153,7 +170,7 @@ describe("customer accounts (Phase D1)", () => {
       });
       createdCustomerIds.push(customer.id);
 
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const response = await postLogin(
         jsonRequest("http://localhost/api/account/login", "POST", {
           email,
@@ -177,7 +194,7 @@ describe("customer accounts (Phase D1)", () => {
       });
       createdCustomerIds.push(customer.id);
 
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const response = await postLogin(
         jsonRequest("http://localhost/api/account/login", "POST", {
           email,
@@ -204,7 +221,7 @@ describe("customer accounts (Phase D1)", () => {
       // row, not the separate per-IP rate limiter that would otherwise
       // return 429 well before the 10th attempt.
       for (let attempt = 1; attempt <= 9; attempt += 1) {
-        await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+        await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
         const response = await postLogin(
           jsonRequest("http://localhost/api/account/login", "POST", {
             email,
@@ -214,7 +231,7 @@ describe("customer accounts (Phase D1)", () => {
         assert.equal(response.status, 401, `attempt ${attempt} should still be a plain 401`);
       }
 
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const lockedResponse = await postLogin(
         jsonRequest("http://localhost/api/account/login", "POST", {
           email,
@@ -227,7 +244,7 @@ describe("customer accounts (Phase D1)", () => {
       assert.ok(locked!.lockedUntil && locked!.lockedUntil.getTime() > Date.now());
 
       // Even the correct password is rejected while locked.
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const correctButLocked = await postLogin(
         jsonRequest("http://localhost/api/account/login", "POST", {
           email,
@@ -297,13 +314,13 @@ describe("customer accounts (Phase D1)", () => {
       });
       createdCustomerIds.push(customer.id);
 
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const existingResponse = await postForgotPassword(
         jsonRequest("http://localhost/api/account/forgot-password", "POST", { email }),
       );
       const existingBody = await existingResponse.json();
 
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const missingResponse = await postForgotPassword(
         jsonRequest("http://localhost/api/account/forgot-password", "POST", {
           email: `nonexistent-${unique}@example.com`,
@@ -363,19 +380,19 @@ describe("customer accounts (Phase D1)", () => {
       });
       createdCustomerIds.push(unverified.id, verified.id);
 
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const unverifiedResponse = await postResendVerification(
         jsonRequest("http://localhost/api/account/resend-verification", "POST", { email: unverifiedEmail }),
       );
       const unverifiedBody = await unverifiedResponse.json();
 
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const verifiedResponse = await postResendVerification(
         jsonRequest("http://localhost/api/account/resend-verification", "POST", { email: verifiedEmail }),
       );
       const verifiedBody = await verifiedResponse.json();
 
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const unknownResponse = await postResendVerification(
         jsonRequest("http://localhost/api/account/resend-verification", "POST", {
           email: `resend-unknown-${unique}@example.com`,
@@ -409,7 +426,7 @@ describe("customer accounts (Phase D1)", () => {
 
       const original = await issueCustomerToken(customer.id, "VERIFY");
 
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const response = await postResendVerification(
         jsonRequest("http://localhost/api/account/resend-verification", "POST", { email }),
       );
@@ -434,7 +451,7 @@ describe("customer accounts (Phase D1)", () => {
       });
       createdCustomerIds.push(customer.id);
 
-      await resetRateLimits(["account-login", "account-register", "account-forgot-password", "account-reset-password", "account-resend-verification"]);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
       const statuses: number[] = [];
       for (let attempt = 1; attempt <= 4; attempt += 1) {
         const response = await postResendVerification(

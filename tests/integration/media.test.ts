@@ -29,12 +29,7 @@ import {
 import { POST as postMediaUpload } from "@/app/api/admin/media/route";
 import { POST as postMediaGenerate } from "@/app/api/admin/media/generate/route";
 import { withEnv } from "../helpers/env";
-
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
-}
+import { findAnyAdminId } from "../helpers/admin-user";
 
 /** An in-memory fake storage backend — no network call ever leaves this process. */
 function makeFakeStorage(overrides: Partial<StorageDeps> = {}): StorageDeps {
@@ -385,6 +380,61 @@ describe("deleteUnattachedMediaAsset (F-04 orphan cleanup — docs/audit-2026-09
     // explicit teardown rather than relying on that).
     await db.category.update({ where: { id: category.id }, data: { imageId: null } });
     await db.mediaAsset.delete({ where: { id: asset.id } }).catch(() => {});
+  });
+
+  it("refuses to delete an asset referenced by a hero carousel slide, and never calls remove()", async () => {
+    let removeCalls = 0;
+    const storage = makeFakeStorage({ remove: async () => { removeCalls += 1; } });
+    const buffer = await tinyPngBuffer();
+
+    const asset = await saveMediaAsset({ buffer, usage: "BANNER", source: MediaSource.UPLOAD }, storage);
+    createdAssetIds.push(asset.id);
+
+    // Save/restore whatever "hero-slides" content already exists (real
+    // seeded slides, in a seeded DB) — mirrors
+    // tests/integration/homepage-cache.test.ts's save/restore dance for
+    // "trust-stats", so this test never permanently clobbers real content.
+    const existing = await db.homepageSection.findUnique({ where: { key: "hero-slides" } });
+    const testContent = JSON.stringify({
+      slides: [
+        {
+          id: "test-slide",
+          enabled: true,
+          eyebrow: "Test",
+          headline: "Test Headline",
+          subheadline: "Test Subheadline",
+          description: "Test description.",
+          primaryCta: { label: "Shop", href: "/shop" },
+          secondaryCta: { label: "Learn more", href: "/for-hospitals" },
+          image: { assetId: asset.id, url: asset.url, alt: "" },
+          secondaryImage: null,
+        },
+      ],
+      autoAdvanceMs: 6000,
+    });
+
+    if (existing) {
+      await db.homepageSection.update({ where: { key: "hero-slides" }, data: { content: testContent } });
+    } else {
+      await db.homepageSection.create({
+        data: { key: "hero-slides", title: "Hero Carousel Slides", content: testContent },
+      });
+    }
+
+    try {
+      await assert.rejects(() => deleteUnattachedMediaAsset(asset.id, storage), MediaAssetInUseError);
+      assert.equal(removeCalls, 0);
+      assert.ok(await db.mediaAsset.findUnique({ where: { id: asset.id } }), "the row must survive the refused delete");
+    } finally {
+      if (existing) {
+        await db.homepageSection.update({
+          where: { key: "hero-slides" },
+          data: { content: existing.content, enabled: existing.enabled },
+        });
+      } else {
+        await db.homepageSection.delete({ where: { key: "hero-slides" } }).catch(() => {});
+      }
+    }
   });
 
   it("DELETE /api/admin/media/[id] rejects with 401/403 before any lookup", async () => {

@@ -3,12 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import { createTestimonial, deleteTestimonial, getTestimonials, updateTestimonial } from "@/lib/testimonials";
-
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
-}
+import { findAnyAdminId } from "../helpers/admin-user";
 
 function fixture(name: string) {
   return {

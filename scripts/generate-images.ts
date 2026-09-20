@@ -172,7 +172,23 @@ export async function planProductJobs(database: Database): Promise<ProductJob[]>
       fabric: true,
       gender: true,
       category: { select: { name: true } },
-      variants: { select: { color: true } },
+      // Explicitly ordered: the colours are sliced to MAX_COLORS_PER_PRODUCT
+      // below, so *which* colours a product gets images for depends entirely
+      // on the order this returns. Without an orderBy, Postgres is free to
+      // choose — a seq scan on a small table yields insertion order, but once
+      // the table is large enough (or the stats shift, as they do while the
+      // integration suite hammers this database concurrently) the planner
+      // switches to the ProductVariant_productId_size_color_key index and
+      // yields the colours alphabetically instead. That silently changed
+      // which colours got generated, and flaked
+      // "caps at MAX_COLORS_PER_PRODUCT jobs, one per distinct colour"
+      // roughly 1 run in 16. createdAt alone isn't a total order — a nested
+      // `create` of several variants shares one transaction timestamp — so
+      // id breaks the tie (Prisma's cuids are generated in call order).
+      variants: {
+        select: { color: true },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      },
     },
   });
 

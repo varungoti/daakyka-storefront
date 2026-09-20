@@ -29,6 +29,7 @@ import { DELETE as deleteProductRoute, GET as getProductRoute, PATCH as patchPro
 import { POST as bulkRoute } from "@/app/api/admin/products/bulk/route";
 import { POST as publishRoute } from "@/app/api/admin/products/[id]/publish/route";
 import { POST as variantsRoute } from "@/app/api/admin/products/[id]/variants/route";
+import { findAnyAdminId } from "../helpers/admin-user";
 
 /**
  * Phase B1: product admin CRUD, exercised at the library layer
@@ -37,12 +38,6 @@ import { POST as variantsRoute } from "@/app/api/admin/products/[id]/variants/ro
  * getSession() needs a real Next.js request context, so the business
  * rules are tested directly, plus a 401/403 sweep of the route handlers.
  */
-
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
-}
 
 const createdProductIds: string[] = [];
 const createdCategoryIds: string[] = [];

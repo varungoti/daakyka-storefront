@@ -3,12 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import { createOffer, deleteOffer, getActiveOffers, updateOffer } from "@/lib/offers";
-
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
-}
+import { findAnyAdminId } from "../helpers/admin-user";
 
 /**
  * Covers the P0 fix: an admin's offer create/update/delete reaching the

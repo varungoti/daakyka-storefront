@@ -5,6 +5,7 @@ import { getNavigation } from "@/lib/navigation/get-navigation";
 import { db } from "@/lib/db";
 import { getSetting, setSetting } from "@/lib/settings";
 import { seedCatalog } from "../../prisma/seed-catalog";
+import { findAnyAdminId } from "../helpers/admin-user";
 
 /**
  * Phase C2/C3 routing integration tests, run against the real local dev
@@ -23,12 +24,6 @@ import { seedCatalog } from "../../prisma/seed-catalog";
  * matching this repo's existing split between node:test integration
  * tests and tests/smoke/pages.test.ts's HTTP-level checks.
  */
-
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
-}
 
 describe("getNavigation() integration (Phase C2)", () => {
   before(async () => {

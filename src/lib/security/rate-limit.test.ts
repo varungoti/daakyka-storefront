@@ -104,7 +104,12 @@ describe("rateLimitOrResponse resists X-Forwarded-For spoofing (F1)", () => {
     await withEnv(
       { NODE_ENV: "production", DISABLE_RATE_LIMIT: undefined, VERCEL: "1" },
       async () => {
-        const route = `f1-vercel-spoof-${randomUUID()}`;
+        // "unit-test" prefix so this file's after() sweep
+        // (resetRateLimits(["unit-test"])) actually reaches the bucket.
+        // Without it the row this test creates matched no cleanup at all
+        // and leaked one RateLimitBucket row per run, forever, into the
+        // shared dev/CI database.
+        const route = `unit-test-f1-vercel-spoof-${randomUUID()}`;
         const realIp = "203.0.113.50";
         const makeRequest = (spoofedHop: string) =>
           new Request("http://localhost/api/auth/login", {

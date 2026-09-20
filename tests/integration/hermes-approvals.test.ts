@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { db } from "@/lib/db";
 import { reviewHermesApproval } from "@/lib/hermes/approval-executor";
 import { PATCH as patchApproval } from "@/app/api/admin/hermes/approvals/[id]/route";
+import { findAnyAdminId } from "../helpers/admin-user";
 
 /**
  * Phase G: Hermes approvals idempotency + output preview.
@@ -13,12 +14,6 @@ import { PATCH as patchApproval } from "@/app/api/admin/hermes/approvals/[id]/ro
  * tested directly against reviewHermesApproval, the service function the
  * route calls. Only the 401/403 no-session path is tested through the route.
  */
-
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
-}
 
 const createdApprovalIds: string[] = [];
 const createdCampaignNames: string[] = [];

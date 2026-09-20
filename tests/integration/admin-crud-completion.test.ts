@@ -86,6 +86,7 @@ import {
 import { POST as postUser } from "@/app/api/admin/users/route";
 import { DELETE as deleteUserRoute } from "@/app/api/admin/users/[id]/route";
 import { POST as resetPasswordRoute } from "@/app/api/admin/users/[id]/reset-password/route";
+import { findAnyAdminId } from "../helpers/admin-user";
 
 /**
  * Admin CRUD-completion phase: testimonials, segments, templates, offers,
@@ -100,12 +101,6 @@ import { POST as resetPasswordRoute } from "@/app/api/admin/users/[id]/reset-pas
  * separately checked for a 401/403 rejection with no session. Every row
  * created here is cleaned up in `after()`.
  */
-
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
-}
 
 const idParams = Promise.resolve({ id: "any-id" });
 const jsonRequest = (url: string, method: string, body?: unknown) =>
