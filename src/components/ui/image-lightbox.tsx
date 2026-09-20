@@ -191,7 +191,7 @@ export function ImageLightbox({ images, startIndex = 0, onClose }: ImageLightbox
             className="object-contain transition-transform duration-150 ease-out"
             style={{ transform: `scale(${scale}) translate(${translate.x}px, ${translate.y}px)` }}
             sizes="100vw"
-            priority
+            preload
           />
         </div>
 

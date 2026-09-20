@@ -4,7 +4,7 @@ import { AddToCartButton } from "@/components/cart/add-to-cart-button";
 import { ResendVerificationButton } from "@/components/account/resend-verification-button";
 import { MobileStickyAddToCart } from "@/components/product/mobile-sticky-add-to-cart";
 import { Badge } from "@/components/ui/badge";
-import { ImageLightbox, type LightboxImage } from "@/components/ui/image-lightbox";
+import type { LightboxImage } from "@/components/ui/image-lightbox";
 import { Modal } from "@/components/ui/modal";
 import { StarRating } from "@/components/ui/star-rating";
 import { WishlistButton } from "@/components/wishlist/wishlist-button";
@@ -17,9 +17,21 @@ import type { DisplayReview, GetApprovedReviewsResult, ReviewSort, ReviewSummary
 import type { Product } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ChevronDown, Minus, Plus } from "lucide-react";
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { useMemo, useRef, useState, type ReactNode } from "react";
+
+// release-hardening perf pass: the full-screen viewer is only ever
+// mounted once a shopper clicks a thumbnail or a review photo
+// (`{lightboxIndex !== null && <ImageLightbox .../>}` below) — it was
+// already conditionally *rendered*, but a static top-level import still
+// ships its code in the PDP's main bundle whether or not it's ever
+// opened. next/dynamic makes the fetch itself on-demand too. See
+// docs/PERFORMANCE.md.
+const ImageLightbox = dynamic(() => import("@/components/ui/image-lightbox").then((mod) => mod.ImageLightbox), {
+  ssr: false,
+});
 
 export type ReviewEligibility =
   | { status: "guest" }
@@ -421,7 +433,7 @@ function GalleryColumn({
           src={active.url}
           alt={active.alt ?? productName}
           fill
-          priority
+          preload
           unoptimized={active.url.endsWith(".svg")}
           className="object-cover"
           sizes="(max-width: 1024px) 100vw, 50vw"

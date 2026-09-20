@@ -52,6 +52,11 @@ const TestimonialsSection = dynamic(
   { loading: () => <div className="min-h-[320px]" aria-hidden /> },
 );
 
+// Tried next/dynamic(ssr:false) here too — reverted along with
+// CartDrawer/WishlistDrawer/SearchDialog (see site-shell.tsx). Same
+// result: MobileFilterDrawer is unconditionally rendered (controlled via
+// `open`), so it measured no unused-JS improvement and a worse median LCP.
+
 interface ShopPageHeading {
   eyebrow?: string;
   title: string;
@@ -261,7 +266,7 @@ export function ShopPageContent({
               src={headingImage.url}
               alt={headingImage.alt}
               fill
-              priority
+              preload
               className="object-cover"
               sizes="100vw"
             />

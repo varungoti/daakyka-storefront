@@ -143,7 +143,7 @@ export function HeroSection({
                   src={mainImage.url}
                   alt={mainImage.alt || "Healthcare team in DAAKYKA scrubs"}
                   fill
-                  priority
+                  preload
                   fetchPriority="high"
                   quality={75}
                   className="object-cover object-top"

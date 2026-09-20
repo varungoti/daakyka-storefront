@@ -34,7 +34,7 @@ export function PageHeroBand({
             src={image.url}
             alt={image.alt}
             fill
-            priority
+            preload
             className="object-cover"
             sizes="100vw"
           />

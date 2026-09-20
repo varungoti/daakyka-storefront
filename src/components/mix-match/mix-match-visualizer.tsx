@@ -111,7 +111,7 @@ export function MixMatchVisualizer({
                 )}
                 sizes="320px"
                 draggable={false}
-                priority
+                preload
               />
             )}
             {loading && (

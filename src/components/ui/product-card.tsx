@@ -3,7 +3,7 @@
 import { useCart } from "@/context/cart-provider";
 import { useCurrency } from "@/context/currency-provider";
 import { Badge } from "@/components/ui/badge";
-import { ImageLightbox, type LightboxImage } from "@/components/ui/image-lightbox";
+import type { LightboxImage } from "@/components/ui/image-lightbox";
 import { StarRating } from "@/components/ui/star-rating";
 import { WishlistButton } from "@/components/wishlist/wishlist-button";
 import { computePercentOff } from "@/lib/pricing/percent-off";
@@ -11,13 +11,34 @@ import { resolveVariant } from "@/lib/products/resolve-variant";
 import type { Product } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ShoppingBag } from "lucide-react";
+import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
 
+// ProductCard renders once per grid item (a dozen-plus times on /shop, /,
+// and a PDP's related-products row) — see product-detail.tsx's ImageLightbox
+// note. Deferring this the same way keeps its code out of every one of
+// those instances' contribution to the shared bundle.
+const ImageLightbox = dynamic(() => import("@/components/ui/image-lightbox").then((mod) => mod.ImageLightbox), {
+  ssr: false,
+});
+
 interface ProductCardProps {
   product: Product;
   className?: string;
+  /** Grid callers (see ProductGrid) set this for the first few cards in
+   * a listing so their image is fetched eagerly, at high priority, and
+   * preloaded via a `<link>` in `<head>` — that first row is frequently
+   * the actual LCP element on `/shop` and `/category/[slug]` (confirmed
+   * via Lighthouse's largest-contentful-paint-element audit, see
+   * docs/PERFORMANCE.md), but every card previously fell back to
+   * next/image's default `loading="lazy"`, which defers the fetch until
+   * the browser thinks it's near the viewport — actively delaying the
+   * LCP paint instead of racing it. Named to avoid any confusion with
+   * next/image's own deprecated `priority` prop (see the `preload` prop
+   * this sets below). */
+  loadEagerly?: boolean;
 }
 
 /**
@@ -32,7 +53,7 @@ interface ProductCardProps {
  *  - only the name/price/"View Product" text sits inside the `<Link>`.
  * No button-inside-anchor or anchor-inside-button remains.
  */
-export function ProductCard({ product, className }: ProductCardProps) {
+export function ProductCard({ product, className, loadEagerly = false }: ProductCardProps) {
   const { formatPrice } = useCurrency();
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [displayImage, setDisplayImage] = useState(product.images?.[0]?.url ?? product.image);
@@ -76,6 +97,8 @@ export function ProductCard({ product, className }: ProductCardProps) {
               unoptimized={displayImage.endsWith(".svg")}
               className="object-cover transition-transform duration-500 group-hover:scale-105"
               sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
+              preload={loadEagerly}
+              fetchPriority={loadEagerly ? "high" : undefined}
             />
             <div className="absolute inset-0 flex items-end justify-center bg-gradient-to-t from-ink/50 via-transparent to-transparent p-5 opacity-0 transition duration-300 group-hover:opacity-100">
               <span className="rounded-md bg-surface px-4 py-2 text-xs font-bold uppercase tracking-wide text-ink shadow-lg">

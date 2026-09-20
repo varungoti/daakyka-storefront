@@ -115,8 +115,22 @@ export function ProductGrid({
         </div>
       ) : (
         <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
-          {products.map((product) => (
-            <ProductCard key={product.id} product={product} />
+          {products.map((product, index) => (
+            // Only the very first card — this grid is a single column
+            // below the `sm:` (640px) breakpoint, and the mobile Lighthouse
+            // profile this app is gated on (lighthouserc.js) runs at
+            // 412px, so index 0 is the only card actually above the fold
+            // there. Measured trying index < 4 (one full xl: row): it
+            // regressed median LCP on /shop (~4.5s -> ~4.8s) instead of
+            // improving it, because next/image's `preload` inserts a
+            // `<link rel=preload>` per image — 3 of those 4 were for
+            // below-the-fold-on-mobile cards, competing for bandwidth
+            // against the one that's actually the LCP candidate. Matches
+            // the Image doc's own guidance against `preload` "when you
+            // have multiple images that could be considered the LCP
+            // element depending on viewport" — see ProductCard's
+            // loadEagerly doc and docs/PERFORMANCE.md.
+            <ProductCard key={product.id} product={product} loadEagerly={index === 0} />
           ))}
         </div>
       )}

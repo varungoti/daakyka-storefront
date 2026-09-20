@@ -21,6 +21,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+// See site-shell.tsx's comment on CartDrawer/WishlistDrawer: next/dynamic
+// here measured worse (higher LCP, no unused-JS improvement, since
+// SearchDialog is unconditionally rendered too), so this stays a static
+// import.
+
 export function Header({ navigation }: { navigation: NavigationTree }) {
   const pathname = usePathname();
   const { cart, openCart } = useCart();
