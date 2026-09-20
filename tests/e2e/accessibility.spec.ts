@@ -96,3 +96,57 @@ test.describe("Accessibility (axe)", () => {
     await scanForSeriousViolations(page);
   });
 });
+
+/**
+ * Release-hardening — configurable hero carousel
+ * (src/components/home/hero-carousel.tsx). The axe scan above already
+ * covers static markup/contrast/name-role-value rules for "/" (which now
+ * includes the carousel); these cover the *behavioral* accessibility
+ * requirements that a static scan can't: reduced motion actually stopping
+ * auto-advance, and the prev/next controls actually being keyboard
+ * operable and not trapping or silently moving focus. Each test skips
+ * itself when only one hero slide is configured (a fresh/never-admin-
+ * edited environment) — carousel controls don't render for a single slide
+ * (see HeroCarousel's `multiSlide` gate), so there'd be nothing to test.
+ */
+test.describe("Hero carousel", () => {
+  test("respects prefers-reduced-motion: no auto-advance", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/");
+    const slides = page.locator('[aria-roledescription="slide"]');
+    test.skip((await slides.count()) < 2, "only one hero slide configured — auto-advance is moot");
+
+    const firstSlide = slides.first();
+    await expect(firstSlide).toHaveAttribute("aria-hidden", "false");
+    // Comfortably longer than the seeded 6s auto-advance interval.
+    await page.waitForTimeout(8000);
+    await expect(firstSlide).toHaveAttribute("aria-hidden", "false");
+  });
+
+  test("prev/next controls are real, keyboard-operable buttons that change the active slide", async ({ page }) => {
+    await page.goto("/");
+    const slides = page.locator('[aria-roledescription="slide"]');
+    test.skip((await slides.count()) < 2, "only one hero slide configured — no carousel controls render");
+
+    const nextButton = page.getByRole("button", { name: "Next slide" });
+    await expect(nextButton).toBeVisible();
+    await expect(slides.nth(0)).toHaveAttribute("aria-hidden", "false");
+
+    await nextButton.focus();
+    await nextButton.press("Enter");
+
+    await expect(slides.nth(1)).toHaveAttribute("aria-hidden", "false");
+    await expect(slides.nth(0)).toHaveAttribute("aria-hidden", "true");
+  });
+
+  test("hovering the carousel pauses auto-advance", async ({ page }) => {
+    await page.goto("/");
+    const slides = page.locator('[aria-roledescription="slide"]');
+    test.skip((await slides.count()) < 2, "only one hero slide configured — auto-advance is moot");
+
+    await page.locator('section[aria-label="Featured collections"]').hover();
+    // Comfortably longer than the seeded 6s auto-advance interval.
+    await page.waitForTimeout(8000);
+    await expect(slides.first()).toHaveAttribute("aria-hidden", "false");
+  });
+});

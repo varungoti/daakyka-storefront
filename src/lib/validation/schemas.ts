@@ -397,7 +397,102 @@ export const trustStatsContentSchema = z
   })
   .strict();
 
-export const homepageSectionKeys = ["hero", "announcement", "trust-stats"] as const;
+// Animated hero carousel (release-hardening — configurable hero carousel):
+// PUT /api/admin/homepage/hero-slides, validated the same way and for the
+// same reason as heroContentSchema above (F-5). A slide's `id` is a
+// stable client-generated identifier (not a DB row id — slides live
+// inside this section's single JSON `content` blob, exactly like
+// heroContentSchema's fields do for the legacy single hero), used for
+// React keys and reorder identity in the admin editor
+// (src/components/admin/hero-slides-editor.tsx).
+//
+// `href` on a CTA accepts a same-origin relative path ("/shop") or a full
+// http(s) URL only — never `javascript:`, `data:`, or any other
+// non-navigational scheme. `new URL(value).protocol` rejects those
+// outright (and a scheme-less bare string like "example.com" fails to
+// parse at all, forcing an explicit "/" or "https://"); a leading "//" or
+// "/\\" is rejected too since browsers can treat either as
+// protocol-relative, which would silently leave the site.
+const ctaHrefSchema = z
+  .string()
+  .trim()
+  .min(1, "Link is required")
+  .max(300, "Link is too long")
+  .refine((value) => {
+    if (value.startsWith("/")) {
+      return !value.startsWith("//") && !value.startsWith("/\\");
+    }
+    try {
+      const protocol = new URL(value).protocol;
+      return protocol === "http:" || protocol === "https:";
+    } catch {
+      return false;
+    }
+  }, "Link must be a relative path starting with / or a full http(s) URL");
+
+const heroSlideCtaSchema = z
+  .object({
+    label: z.string().trim().min(1, "CTA label is required").max(60, "CTA label is too long"),
+    href: ctaHrefSchema,
+  })
+  .strict();
+
+// Snapshots the picked MediaLibraryBrowser asset's id/url/alt at save time
+// (mirrors testimonialSchema's `avatar` — a plain URL string, not a live
+// FK join) rather than re-resolving a MediaAsset relation on every
+// homepage read. `assetId` is kept alongside the resolved url/alt purely
+// so the admin editor can show "currently selected" state and so
+// deleteUnattachedMediaAsset (src/lib/media/store.ts) can refuse to
+// delete an asset a live slide still references.
+//
+// `url` is deliberately NOT `.url()`-validated: publicUrlForKey
+// (src/lib/storage/r2.ts) returns a *relative* `/cdn/<key>` path whenever
+// R2_PUBLIC_BASE_URL isn't configured (this app's own proxy route, since
+// the bucket has no public-read access) — confirmed against real seeded
+// MediaAsset rows in this environment — and only an absolute URL once
+// that env var is set. `z.string().url()` rejects the relative form
+// outright, which would reject every real asset MediaLibraryBrowser can
+// actually return here.
+const heroSlideImageSchema = z
+  .object({
+    assetId: z.string().trim().min(1).max(200),
+    url: z.string().trim().min(1, "Image URL is required").max(1000),
+    alt: z.string().trim().max(300),
+  })
+  .strict();
+
+export const heroSlideSchema = z
+  .object({
+    id: z.string().trim().min(1).max(100),
+    enabled: z.boolean(),
+    eyebrow: z.string().trim().min(1, "Eyebrow is required").max(120),
+    headline: z.string().trim().min(1, "Headline is required").max(200),
+    subheadline: z.string().trim().min(1, "Subheadline is required").max(200),
+    description: z.string().trim().min(1, "Description is required").max(1000),
+    primaryCta: heroSlideCtaSchema,
+    secondaryCta: heroSlideCtaSchema,
+    image: heroSlideImageSchema.nullable(),
+    secondaryImage: heroSlideImageSchema.nullable(),
+  })
+  .strict();
+
+// No `.min(1)` on `slides` — saving an empty array is a legitimate,
+// intentional admin action ("remove every slide") that reverts the
+// storefront to the legacy single-hero fallback (see
+// getHeroSlidesContent() in src/lib/homepage/index.ts), not a validation
+// failure.
+export const heroSlidesContentSchema = z
+  .object({
+    slides: z.array(heroSlideSchema).max(12, "At most 12 slides are allowed"),
+    autoAdvanceMs: z
+      .number()
+      .int()
+      .min(2000, "Interval must be at least 2 seconds")
+      .max(60_000, "Interval must be at most 60 seconds"),
+  })
+  .strict();
+
+export const homepageSectionKeys = ["hero", "hero-slides", "announcement", "trust-stats"] as const;
 export type HomepageSectionKey = (typeof homepageSectionKeys)[number];
 
 export function isHomepageSectionKey(key: string): key is HomepageSectionKey {
@@ -406,6 +501,7 @@ export function isHomepageSectionKey(key: string): key is HomepageSectionKey {
 
 export const homepageSectionSchemas = {
   hero: heroContentSchema,
+  "hero-slides": heroSlidesContentSchema,
   announcement: announcementContentSchema,
   "trust-stats": trustStatsContentSchema,
 } satisfies Record<HomepageSectionKey, z.ZodTypeAny>;

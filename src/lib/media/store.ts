@@ -182,6 +182,31 @@ export class MediaAssetInUseError extends Error {
  *  - a manifest slot (`slot` is set) or a category's image — both are only
  *    ever replaced (re-upload/regenerate), never deleted, by design.
  */
+/**
+ * True when `assetId` is currently picked as a hero carousel slide's main
+ * or secondary image (the "hero-slides" HomepageSection's JSON `content` —
+ * see src/lib/homepage/index.ts's HeroSlideImage). That reference is a
+ * snapshotted id/url/alt, not a real MediaAsset foreign key (see
+ * heroSlideImageSchema's doc comment in src/lib/validation/schemas.ts), so
+ * nothing in `asset._count` below would ever catch this on its own —
+ * without this check, deleting the asset here would silently leave a live
+ * slide pointing at a 404ing image.
+ */
+async function isReferencedByHeroSlide(assetId: string): Promise<boolean> {
+  try {
+    const section = await db.homepageSection.findUnique({ where: { key: "hero-slides" } });
+    if (!section) return false;
+    const content = JSON.parse(section.content) as { slides?: { image?: { assetId?: string } | null; secondaryImage?: { assetId?: string } | null }[] };
+    return (content.slides ?? []).some(
+      (slide) => slide.image?.assetId === assetId || slide.secondaryImage?.assetId === assetId,
+    );
+  } catch {
+    // Malformed/missing content must never block an otherwise-legitimate
+    // delete — same fail-open tradeoff readSectionContentFromDb makes.
+    return false;
+  }
+}
+
 export async function deleteUnattachedMediaAsset(
   id: string,
   storage: StorageDeps = defaultStorageDeps,
@@ -198,6 +223,7 @@ export async function deleteUnattachedMediaAsset(
   if (!asset) throw new MediaAssetNotFoundError(id);
   if (asset.slot || asset._count.categories > 0) throw new MediaAssetInUseError();
   if (asset._count.productImages > 0) throw new MediaAssetAttachedError();
+  if (await isReferencedByHeroSlide(asset.id)) throw new MediaAssetInUseError();
 
   if (storage.isConfigured() && storage.remove) {
     try {

@@ -1,12 +1,12 @@
 import { BulkOrdersSection } from "@/components/home/bulk-orders-section";
 import { FeaturedProductsGrid } from "@/components/home/featured-products-grid";
-import { HeroSection } from "@/components/home/hero-section";
+import { HeroCarousel } from "@/components/home/hero-carousel";
 import { OffersStrip } from "@/components/home/offers-strip";
 import { SectionFeatureBand } from "@/components/home/section-feature-band";
 import { ShopByCategorySection, type ShopByCategoryTile } from "@/components/home/shop-by-category-section";
 import { TestimonialsSection } from "@/components/home/testimonials-section";
 import { TrustBar } from "@/components/layout/trust-bar";
-import { getHeroContent, getTrustStatsContent } from "@/lib/homepage";
+import { getHeroContent, getHeroSlidesContent, getTrustStatsContent } from "@/lib/homepage";
 import { getSiteImages } from "@/lib/media/get-site-image";
 import { getCategoryTree, getProducts } from "@/lib/products";
 import { getSeoOverrideForPath } from "@/lib/seo/records";
@@ -16,10 +16,13 @@ import { GraduationCap, HeartPulse } from "lucide-react";
 import type { Metadata } from "next";
 
 /** Phase E2 manifest slots this page reads via getSiteImage/getSiteImages —
- * see src/data/media/image-manifest.ts for the full declaration. */
+ * see src/data/media/image-manifest.ts for the full declaration.
+ * "home.hero.1"/"home.hero.2" are no longer read here directly — the hero
+ * carousel gets its images per-slide from getHeroSlidesContent(), which
+ * only falls back to those two slots itself, internally, when no admin
+ * slide has ever been configured (see getHeroSlidesContent()'s doc comment
+ * in src/lib/homepage/index.ts). */
 const HOME_IMAGE_SLOTS = [
-  "home.hero.1",
-  "home.hero.2",
   "home.tile.for-hospitals",
   "home.tile.school-uniforms",
   "home.tile.kids-wear",
@@ -44,14 +47,16 @@ export async function generateMetadata(): Promise<Metadata> {
  * testimonials -> a values row.
  */
 export default async function HomePage() {
-  const [categoryTree, saleEnabled, heroContent, trustStats, testimonials, siteImages] = await Promise.all([
-    getCategoryTree(),
-    isSaleEnabled(),
-    getHeroContent(),
-    getTrustStatsContent(),
-    getTestimonials(),
-    getSiteImages(HOME_IMAGE_SLOTS),
-  ]);
+  const [categoryTree, saleEnabled, heroContent, heroSlidesContent, trustStats, testimonials, siteImages] =
+    await Promise.all([
+      getCategoryTree(),
+      isSaleEnabled(),
+      getHeroContent(),
+      getHeroSlidesContent(),
+      getTrustStatsContent(),
+      getTestimonials(),
+      getSiteImages(HOME_IMAGE_SLOTS),
+    ]);
 
   const topLevelMenu = categoryTree.filter((category) => category.showInMenu);
   const findTopLevel = (slug: string) => topLevelMenu.find((category) => category.slug === slug);
@@ -107,11 +112,12 @@ export default async function HomePage() {
 
   return (
     <>
-      <HeroSection
-        content={heroContent}
+      <HeroCarousel
+        slides={heroSlidesContent.slides}
+        autoAdvanceMs={heroSlidesContent.autoAdvanceMs}
         trustStats={trustStats.stats}
-        heroMainImage={siteImages["home.hero.1"]}
-        heroSecondaryImage={siteImages["home.hero.2"]}
+        rating={heroContent.rating}
+        ratingLabel={heroContent.ratingLabel}
       />
       <OffersStrip />
       <ShopByCategorySection categories={categoryTiles} />

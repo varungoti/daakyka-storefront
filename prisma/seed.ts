@@ -231,6 +231,111 @@ async function main() {
     });
   }
 
+  // release-hardening — configurable hero carousel: seeds three real slides
+  // (Hospital Scrubs / School Uniforms / Kids Wear) via the same
+  // create-only upsert as defaultHomepageSections above, so this only ever
+  // writes once — a later admin edit (including emptying the slide list
+  // entirely, which intentionally reverts the storefront to the legacy
+  // "hero" section above — see getHeroSlidesContent() in
+  // src/lib/homepage/index.ts) is never clobbered by a re-seed. This also
+  // guarantees the "hero-slides" row exists before the first admin visit,
+  // which PUT /api/admin/homepage/hero-slides requires: updateHomepageSection
+  // uses `update`, not `upsert`, same as every other homepage section key.
+  //
+  // Images are never generated or uploaded here — each slide reuses
+  // whatever MediaAsset already exists for that section (the homepage tile
+  // slot, the section's feature-band slot, or the category's own image),
+  // mirroring src/app/page.tsx's own home.tile.*-then-category.image
+  // fallback chain. A section with none of those seeded yet just gets
+  // `image: null`/`secondaryImage: null`, which the storefront already
+  // renders as a neutral placeholder.
+  type SeedMediaAsset = { id: string; url: string; alt: string | null };
+
+  async function resolveHeroSlideImages(slug: string, bandSlot?: string) {
+    const slotsToTry = [`home.tile.${slug}`, ...(bandSlot ? [bandSlot] : []), `category.${slug}`];
+    const [bySlot, category] = await Promise.all([
+      Promise.all(slotsToTry.map((slot) => prisma.mediaAsset.findUnique({ where: { slot } }))),
+      prisma.category.findUnique({ where: { slug }, include: { image: true } }),
+    ]);
+    const candidates: (SeedMediaAsset | null)[] = [...bySlot, category?.image ?? null];
+    const seen = new Set<string>();
+    const unique: { assetId: string; url: string; alt: string }[] = [];
+    for (const asset of candidates) {
+      if (!asset || seen.has(asset.id)) continue;
+      seen.add(asset.id);
+      unique.push({ assetId: asset.id, url: asset.url, alt: asset.alt ?? "" });
+    }
+    return { main: unique[0] ?? null, secondary: unique[1] ?? null };
+  }
+
+  const heroSlideSeeds = [
+    {
+      id: "hospital-scrubs",
+      slug: "for-hospitals",
+      bandSlot: "home.band.hospital",
+      eyebrow: "For Hospitals",
+      headline: "Scrubs, Gowns & Hospital Linens",
+      subheadline: "Built for Demanding Healthcare Environments",
+      description:
+        "Hygienic, durable scrubs, gowns, staff uniforms, and hospital linens — with department-wise color standardization and logo embroidery available.",
+      primaryCta: { label: "Shop Hospital Range", href: "/for-hospitals" },
+      secondaryCta: { label: "Request Bulk Quote", href: "/bulk-orders" },
+    },
+    {
+      id: "school-uniforms",
+      slug: "school-uniforms",
+      bandSlot: "home.band.school",
+      eyebrow: "School Uniforms",
+      headline: "Uniforms Built for the Classroom and Beyond",
+      subheadline: "Reflecting Institutional Pride",
+      description:
+        "Shirts, tunics, trousers, skirts, pinafores, made-to-measure blazers, sweaters, and sportswear — smart, comfortable uniforms for every school.",
+      primaryCta: { label: "Shop School Uniforms", href: "/school-uniforms" },
+      secondaryCta: { label: "Request Bulk Quote", href: "/bulk-orders" },
+    },
+    {
+      id: "kids-wear",
+      slug: "kids-wear",
+      bandSlot: undefined as string | undefined,
+      eyebrow: "Kids Wear",
+      headline: "Comfortable, Everyday Wear for Kids",
+      subheadline: "T-Shirts, Joggers, Frocks, Co-ord Sets & Hoodies",
+      description:
+        "Comfortable, everyday wear for kids — T-shirts, joggers, frocks, co-ord sets, and hoodies from DAAKYKA Apparels.",
+      primaryCta: { label: "Shop Kids Wear", href: "/kids-wear" },
+      secondaryCta: { label: "Request Bulk Quote", href: "/bulk-orders" },
+    },
+  ];
+
+  const heroSlides = await Promise.all(
+    heroSlideSeeds.map(async (seed) => {
+      const { main, secondary } = await resolveHeroSlideImages(seed.slug, seed.bandSlot);
+      return {
+        id: seed.id,
+        enabled: true,
+        eyebrow: seed.eyebrow,
+        headline: seed.headline,
+        subheadline: seed.subheadline,
+        description: seed.description,
+        primaryCta: seed.primaryCta,
+        secondaryCta: seed.secondaryCta,
+        image: main,
+        secondaryImage: secondary,
+      };
+    }),
+  );
+
+  await prisma.homepageSection.upsert({
+    where: { key: "hero-slides" },
+    update: {},
+    create: {
+      key: "hero-slides",
+      title: "Hero Carousel Slides",
+      sortOrder: 3,
+      content: JSON.stringify({ slides: heroSlides, autoAdvanceMs: 6000 }),
+    },
+  });
+
   for (const post of seedBlogPosts) {
     await prisma.blogPostRecord.upsert({
       where: { slug: post.slug },

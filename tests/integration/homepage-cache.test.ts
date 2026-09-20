@@ -1,14 +1,9 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { db } from "@/lib/db";
-import { getTrustStatsContent, updateHomepageSection } from "@/lib/homepage";
+import { getHeroSlidesContent, getTrustStatsContent, updateHomepageSection } from "@/lib/homepage";
 import { PUT as putHomepageSection } from "@/app/api/admin/homepage/[key]/route";
-
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
-}
+import { findAnyAdminId } from "../helpers/admin-user";
 
 /**
  * Covers the P0 fix: an admin's homepage-section edit reaching the live
@@ -69,6 +64,107 @@ describe("homepage section cache round trip", () => {
     });
     assert.ok(audit, "expected an audit log row for the homepage section change");
     assert.equal(audit.action, "update");
+  });
+});
+
+/**
+ * Same P0-fix coverage as the "trust-stats" round trip above, for the
+ * "hero-slides" section (release-hardening — configurable hero carousel).
+ * getHeroSlidesContent() is more than a plain cached passthrough — it
+ * filters disabled slides and falls back to the legacy "hero" section when
+ * that leaves nothing enabled (see its doc comment in
+ * src/lib/homepage/index.ts) — so this covers both: a real admin write
+ * reaching the storefront's read, and that fallback actually engaging.
+ */
+describe("hero-slides section cache round trip", () => {
+  let adminId: string;
+  let original: { content: string; enabled: boolean } | null = null;
+
+  before(async () => {
+    adminId = await findAnyAdminId();
+    const existing = await db.homepageSection.findUnique({ where: { key: "hero-slides" } });
+    if (existing) {
+      original = { content: existing.content, enabled: existing.enabled };
+    } else {
+      await db.homepageSection.create({
+        data: {
+          key: "hero-slides",
+          title: "Hero Carousel Slides",
+          content: JSON.stringify({ slides: [], autoAdvanceMs: 6000 }),
+        },
+      });
+    }
+  });
+
+  after(async () => {
+    if (original) {
+      await db.homepageSection.update({
+        where: { key: "hero-slides" },
+        data: { content: original.content, enabled: original.enabled },
+      });
+    } else {
+      await db.homepageSection.delete({ where: { key: "hero-slides" } }).catch(() => {});
+    }
+  });
+
+  it("updateHomepageSection's write is visible through getHeroSlidesContent(), and is audit-logged", async () => {
+    const marker = `Integration Test ${Date.now()}`;
+    const newContent = {
+      slides: [
+        {
+          id: "test-slide",
+          enabled: true,
+          eyebrow: marker,
+          headline: "Test Headline",
+          subheadline: "Test Subheadline",
+          description: "Test description.",
+          primaryCta: { label: "Shop", href: "/shop" },
+          secondaryCta: { label: "Learn more", href: "/for-hospitals" },
+          image: null,
+          secondaryImage: null,
+        },
+      ],
+      autoAdvanceMs: 5000,
+    };
+
+    await updateHomepageSection("hero-slides", newContent, adminId);
+
+    const read = await getHeroSlidesContent();
+    assert.deepEqual(read, newContent);
+
+    const audit = await db.auditLog.findFirst({
+      where: { entity: "homepage_section", entityId: "hero-slides" },
+      orderBy: { createdAt: "desc" },
+    });
+    assert.ok(audit, "expected an audit log row for the hero-slides change");
+    assert.equal(audit.action, "update");
+  });
+
+  it("falls back to the legacy hero section (never blank) once every configured slide is disabled", async () => {
+    const disabledContent = {
+      slides: [
+        {
+          id: "test-slide-disabled",
+          enabled: false,
+          eyebrow: "Disabled",
+          headline: "Disabled Headline",
+          subheadline: "Disabled Subheadline",
+          description: "Disabled description.",
+          primaryCta: { label: "Shop", href: "/shop" },
+          secondaryCta: { label: "Learn more", href: "/for-hospitals" },
+          image: null,
+          secondaryImage: null,
+        },
+      ],
+      autoAdvanceMs: 7000,
+    };
+
+    await updateHomepageSection("hero-slides", disabledContent, adminId);
+
+    const read = await getHeroSlidesContent();
+    assert.equal(read.slides.length, 1, "must never render zero slides");
+    assert.notEqual(read.slides[0].id, "test-slide-disabled", "the disabled slide must not be the one shown");
+    assert.equal(read.autoAdvanceMs, 7000, "the admin-configured interval survives the legacy fallback");
   });
 });
 

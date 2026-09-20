@@ -11,6 +11,8 @@ import {
   customerRegisterSchema,
   customerResetPasswordSchema,
   heroContentSchema,
+  heroSlideSchema,
+  heroSlidesContentSchema,
   homepageSectionSchemas,
   isHomepageSectionKey,
   loginSchema,
@@ -550,8 +552,9 @@ describe("notificationMarkReadSchema", () => {
 // checks (the DB-backed round trip is already covered there).
 
 describe("isHomepageSectionKey", () => {
-  it("only the three known section keys map to a valid route param", () => {
+  it("only the four known section keys map to a valid route param", () => {
     assert.equal(isHomepageSectionKey("hero"), true);
+    assert.equal(isHomepageSectionKey("hero-slides"), true);
     assert.equal(isHomepageSectionKey("announcement"), true);
     assert.equal(isHomepageSectionKey("trust-stats"), true);
     assert.equal(isHomepageSectionKey("not-a-real-section"), false);
@@ -663,9 +666,141 @@ describe("trustStatsContentSchema", () => {
   });
 });
 
+describe("heroSlideSchema / heroSlidesContentSchema", () => {
+  const validSlide = {
+    id: "hospital-scrubs",
+    enabled: true,
+    eyebrow: "For Hospitals",
+    headline: "Scrubs, Gowns & Hospital Linens",
+    subheadline: "Built for demanding healthcare environments",
+    description: "Hygienic, durable scrubs, gowns, staff uniforms, and hospital linens.",
+    primaryCta: { label: "Shop Hospital Range", href: "/for-hospitals" },
+    secondaryCta: { label: "Request Bulk Quote", href: "/bulk-orders" },
+    image: { assetId: "asset-1", url: "https://cdn.example.com/hero-1.webp", alt: "Hospital team in scrubs" },
+    secondaryImage: null,
+  };
+
+  it("accepts a fully populated slide", () => {
+    assert.equal(heroSlideSchema.safeParse(validSlide).success, true);
+  });
+
+  it("accepts a slide with both images null", () => {
+    const result = heroSlideSchema.safeParse({ ...validSlide, image: null, secondaryImage: null });
+    assert.equal(result.success, true);
+  });
+
+  it("accepts a relative /cdn/... image url (publicUrlForKey's own-proxy form, no R2_PUBLIC_BASE_URL configured)", () => {
+    const result = heroSlideSchema.safeParse({
+      ...validSlide,
+      image: { assetId: "asset-1", url: "/cdn/media/section/2026/09/de9a9319.webp", alt: "" },
+    });
+    assert.equal(result.success, true);
+  });
+
+  it("accepts a relative CTA href", () => {
+    const result = heroSlideSchema.safeParse(validSlide);
+    assert.equal(result.success, true);
+  });
+
+  it("accepts a full https CTA href", () => {
+    const result = heroSlideSchema.safeParse({
+      ...validSlide,
+      primaryCta: { label: "Learn more", href: "https://example.com/promo" },
+    });
+    assert.equal(result.success, true);
+  });
+
+  it("rejects a javascript: CTA href", () => {
+    const result = heroSlideSchema.safeParse({
+      ...validSlide,
+      primaryCta: { label: "Shop", href: "javascript:alert(1)" },
+    });
+    assert.equal(result.success, false);
+  });
+
+  it("rejects a data: CTA href", () => {
+    const result = heroSlideSchema.safeParse({
+      ...validSlide,
+      secondaryCta: { label: "Shop", href: "data:text/html,<script>alert(1)</script>" },
+    });
+    assert.equal(result.success, false);
+  });
+
+  it("rejects a protocol-relative (//) CTA href", () => {
+    const result = heroSlideSchema.safeParse({
+      ...validSlide,
+      primaryCta: { label: "Shop", href: "//evil.example.com" },
+    });
+    assert.equal(result.success, false);
+  });
+
+  it("rejects a scheme-less bare CTA href", () => {
+    const result = heroSlideSchema.safeParse({
+      ...validSlide,
+      primaryCta: { label: "Shop", href: "evil.example.com" },
+    });
+    assert.equal(result.success, false);
+  });
+
+  it("rejects an unrecognized key on a slide (.strict())", () => {
+    const result = heroSlideSchema.safeParse({ ...validSlide, subtitle: "surprise" });
+    assert.equal(result.success, false);
+  });
+
+  it("rejects an unrecognized key on a nested CTA (.strict() at every level)", () => {
+    const result = heroSlideSchema.safeParse({
+      ...validSlide,
+      primaryCta: { label: "Shop", href: "/shop", icon: "arrow" },
+    });
+    assert.equal(result.success, false);
+  });
+
+  it("rejects a headline over the length bound", () => {
+    const result = heroSlideSchema.safeParse({ ...validSlide, headline: "x".repeat(201) });
+    assert.equal(result.success, false);
+  });
+
+  it("accepts zero slides (reverts the storefront to the legacy hero fallback)", () => {
+    const result = heroSlidesContentSchema.safeParse({ slides: [], autoAdvanceMs: 6000 });
+    assert.equal(result.success, true);
+  });
+
+  it("accepts up to 12 slides", () => {
+    const slides = Array.from({ length: 12 }, (_, i) => ({ ...validSlide, id: `slide-${i}` }));
+    const result = heroSlidesContentSchema.safeParse({ slides, autoAdvanceMs: 6000 });
+    assert.equal(result.success, true);
+  });
+
+  it("rejects more than 12 slides", () => {
+    const slides = Array.from({ length: 13 }, (_, i) => ({ ...validSlide, id: `slide-${i}` }));
+    const result = heroSlidesContentSchema.safeParse({ slides, autoAdvanceMs: 6000 });
+    assert.equal(result.success, false);
+  });
+
+  it("rejects an interval below 2 seconds", () => {
+    const result = heroSlidesContentSchema.safeParse({ slides: [validSlide], autoAdvanceMs: 500 });
+    assert.equal(result.success, false);
+  });
+
+  it("rejects an interval above 60 seconds", () => {
+    const result = heroSlidesContentSchema.safeParse({ slides: [validSlide], autoAdvanceMs: 120_000 });
+    assert.equal(result.success, false);
+  });
+
+  it("rejects a non-integer interval", () => {
+    const result = heroSlidesContentSchema.safeParse({ slides: [validSlide], autoAdvanceMs: 3000.5 });
+    assert.equal(result.success, false);
+  });
+});
+
 describe("homepageSectionSchemas", () => {
   it("has exactly one schema per known section key", () => {
-    assert.deepEqual(Object.keys(homepageSectionSchemas).sort(), ["announcement", "hero", "trust-stats"]);
+    assert.deepEqual(Object.keys(homepageSectionSchemas).sort(), [
+      "announcement",
+      "hero",
+      "hero-slides",
+      "trust-stats",
+    ]);
   });
 });
 
