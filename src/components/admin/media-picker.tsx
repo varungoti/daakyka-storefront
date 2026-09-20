@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useState } from "react";
+import { MediaLibraryBrowser } from "@/components/admin/media-library-browser";
 import { cn } from "@/lib/utils";
 
 export interface PickedAsset {
@@ -10,19 +11,19 @@ export interface PickedAsset {
   alt: string | null;
 }
 
-interface MediaAssetRow {
-  id: string;
-  url: string;
-  alt: string | null;
-}
-
-type Mode = "closed" | "recent" | "generate";
+type Mode = "closed" | "generate";
 
 /**
- * Simple image picker used by the category form (Phase B2): pick a
- * recent asset for the given `usage`, upload a new one, or generate one
- * with AI. Intentionally minimal — the full media library (grid, filters,
- * "which products use this") is a separate, later admin screen.
+ * Single-value image picker used by the category form (Phase B2): pick an
+ * existing asset, upload a new one, or generate one with AI.
+ *
+ * "Choose existing" opens the shared `MediaLibraryBrowser` (F-07,
+ * docs/audit-2026-09-19/admin-ux.md) — the same searchable/filterable
+ * modal the product gallery uses — rather than the flat "24 most recent
+ * CATEGORY assets" list this component used to render itself, so there is
+ * one "pick an image" implementation instead of two. Upload and AI
+ * generation stay here: the browser is pick-only, and both of those still
+ * post to the same admin routes keyed by this field's `usage`.
  */
 export function MediaPicker({
   usage,
@@ -37,30 +38,11 @@ export function MediaPicker({
   aiFields?: { name?: string; category?: string };
 }) {
   const [mode, setMode] = useState<Mode>("closed");
-  const [recent, setRecent] = useState<MediaAssetRow[] | null>(null);
-  const [loadingRecent, setLoadingRecent] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [promptOverride, setPromptOverride] = useState("");
-
-  const openRecent = () => {
-    if (mode === "recent") {
-      setMode("closed");
-      return;
-    }
-    setMode("recent");
-    if (recent !== null) return;
-    setLoadingRecent(true);
-    fetch(`/api/admin/media?usage=${usage}&limit=24`)
-      .then(async (res) => {
-        if (!res.ok) throw new Error("failed");
-        const body = await res.json();
-        setRecent(body.assets ?? []);
-      })
-      .catch(() => setNotice("Couldn't load recent images — try again."))
-      .finally(() => setLoadingRecent(false));
-  };
 
   const onUpload = async (file: File) => {
     setUploading(true);
@@ -128,10 +110,10 @@ export function MediaPicker({
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={openRecent}
+            onClick={() => setLibraryOpen(true)}
             className={cn(
               "rounded-full border border-border px-3 py-1.5 text-xs font-semibold",
-              mode === "recent" ? "bg-brand/10 text-brand" : "text-muted hover:bg-lilac/40",
+              libraryOpen ? "bg-brand/10 text-brand" : "text-muted hover:bg-lilac/40",
             )}
           >
             Choose existing
@@ -174,30 +156,17 @@ export function MediaPicker({
 
       {notice ? <p className="text-xs text-red-600">{notice}</p> : null}
 
-      {mode === "recent" && (
-        <div className="rounded-xl border border-border bg-surface-muted p-3">
-          {loadingRecent && <p className="text-xs text-muted">Loading…</p>}
-          {!loadingRecent && recent?.length === 0 && (
-            <p className="text-xs text-muted">No existing category images yet — upload or generate one.</p>
-          )}
-          {!loadingRecent && recent && recent.length > 0 && (
-            <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
-              {recent.map((asset) => (
-                <button
-                  key={asset.id}
-                  type="button"
-                  onClick={() => {
-                    onChange({ id: asset.id, url: asset.url, alt: asset.alt });
-                    setMode("closed");
-                  }}
-                  className="relative aspect-square overflow-hidden rounded-lg border border-border hover:ring-2 hover:ring-brand"
-                >
-                  <Image src={asset.url} alt={asset.alt ?? ""} fill className="object-cover" sizes="80px" />
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+      {libraryOpen && (
+        <MediaLibraryBrowser
+          title="Choose a category image"
+          defaultUsage={usage}
+          onClose={() => setLibraryOpen(false)}
+          onSelect={(asset) => {
+            setLibraryOpen(false);
+            onChange({ id: asset.id, url: asset.url, alt: asset.alt });
+            setMode("closed");
+          }}
+        />
       )}
 
       {mode === "generate" && (

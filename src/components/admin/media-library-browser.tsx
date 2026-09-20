@@ -73,9 +73,10 @@ function usageSummary(asset: MediaLibraryAsset): string {
  *
  * Wired in first for the product gallery (product-image-gallery.tsx,
  * staged-product-image-gallery.tsx) per the audit's "the product gallery
- * especially" — nothing about this component is product-specific, so any
- * other image field (the category picker, a future homepage slot picker,
- * ...) can reuse it the same way.
+ * especially" — nothing about this component is product-specific, so the
+ * category form's single-value picker (media-picker.tsx) now opens this
+ * for its "Choose existing" path too, and any other image field (a future
+ * homepage slot picker, ...) can reuse it the same way.
  */
 export function MediaLibraryBrowser({
   title = "Media Library",
