@@ -6,6 +6,7 @@ import { CATEGORIES_CACHE_TAG, PRODUCTS_CACHE_TAG, productCacheTag } from "@/lib
 import type { Prisma, Product, ProductGender, ProductStatus } from "@/generated/prisma/client";
 import { slugify } from "@/lib/catalog/category-validation";
 import { assertUniqueVariants, generateSku } from "@/lib/catalog/product-validation";
+import { prepareDescriptionForStorage } from "@/lib/catalog/description-html";
 
 /**
  * Phase B1: admin CRUD for `Product`, `ProductVariant`, and `ProductImage`,
@@ -30,7 +31,12 @@ export const productInputSchema = z.object({
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and hyphens only")
     .optional(),
   shortDescription: optionalTrimmed(300),
-  description: optionalTrimmed(5000),
+  // F-12: now rich-text HTML (sanitized in createProduct/updateProduct via
+  // prepareDescriptionForStorage) rather than always-plain text, so the
+  // ceiling is higher than 5000 to leave headroom for markup overhead
+  // (tags, entity-escaped characters) around the same amount of visible
+  // text a plain textarea would have allowed.
+  description: optionalTrimmed(8000),
   categoryId: z.string().trim().min(1, "Category is required"),
   status: z.enum(productStatusValues).optional(),
   featured: z.boolean().optional(),
@@ -233,7 +239,9 @@ export async function createProduct(input: ProductInput, userId: string): Promis
       name: input.name.trim(),
       slug,
       shortDescription: input.shortDescription ?? null,
-      description: input.description ?? null,
+      // F-12: sanitize on the way in — the one place a description is
+      // safe to persist (see description-html.ts's file comment).
+      description: prepareDescriptionForStorage(input.description),
       categoryId: category.id,
       status: input.status ?? "DRAFT",
       featured: input.featured ?? false,
@@ -291,7 +299,7 @@ export async function updateProduct(id: string, input: ProductUpdateInput, userI
   if (input.name !== undefined) data.name = input.name.trim();
   if (input.slug !== undefined) data.slug = nextSlug;
   if (input.shortDescription !== undefined) data.shortDescription = input.shortDescription;
-  if (input.description !== undefined) data.description = input.description;
+  if (input.description !== undefined) data.description = prepareDescriptionForStorage(input.description);
   if (input.categoryId !== undefined) data.category = { connect: { id: input.categoryId } };
   if (input.status !== undefined) data.status = input.status;
   if (input.featured !== undefined) data.featured = input.featured;

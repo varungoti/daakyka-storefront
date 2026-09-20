@@ -33,6 +33,7 @@ export function HermesTaskLauncher() {
           type="button"
           disabled={loading !== null}
           onClick={() => launch(task.id)}
+          title={`Runs once and adds one item to the Approval Queue below — see the note above for exactly what "${task.label}" does in this environment.`}
           className="rounded-full border border-border bg-surface px-4 py-2 text-xs font-semibold text-ink transition hover:border-brand hover:text-brand disabled:opacity-50"
         >
           {loading === task.id ? "Running…" : task.label}

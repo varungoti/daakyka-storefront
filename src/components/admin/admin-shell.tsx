@@ -4,19 +4,14 @@ import { cn } from "@/lib/utils";
 import {
   BarChart3,
   Bell,
-  Bot,
   ClipboardList,
   FileText,
-  GitBranch,
-  Globe,
   Image as ImageIcon,
   LayoutDashboard,
   LayoutTemplate,
-  LineChart,
   LogOut,
   Mail,
   Megaphone,
-  MessageSquareQuote,
   Menu,
   Package,
   Plug,
@@ -39,7 +34,31 @@ interface NavItem {
   href: string;
   label: string;
   icon: typeof LayoutDashboard;
-  permission: Permission;
+  /** An array means "visible if the user has ANY of these" — used by the
+   * consolidated Marketing hub link below, which fans out to 9 pages that
+   * each had their own permission before release-hardening F-10. */
+  permission: Permission | Permission[];
+  /** Extra path prefixes that should also highlight this link as active —
+   * for the Marketing hub link, whose 10 sections live at their own
+   * original URLs (e.g. `/admin/hermes`), not under `/admin/marketing/`. */
+  activePrefixes?: string[];
+}
+
+const MARKETING_HUB_SECTION_PATHS = [
+  "/admin/engagement",
+  "/admin/campaigns",
+  "/admin/journeys",
+  "/admin/offers",
+  "/admin/discounts",
+  "/admin/testimonials",
+  "/admin/market",
+  "/admin/intelligence",
+  "/admin/reputation",
+  "/admin/hermes",
+];
+
+function canSeeNavItem(role: SessionUser["role"], permission: Permission | Permission[]): boolean {
+  return Array.isArray(permission) ? permission.some((p) => hasPermission(role, p)) : hasPermission(role, permission);
 }
 
 interface NavGroup {
@@ -77,15 +96,30 @@ const navGroups: NavGroup[] = [
   {
     label: "Marketing",
     items: [
-      { href: "/admin/engagement", label: "Engagement", icon: Megaphone, permission: "engagement:manage" },
-      { href: "/admin/campaigns", label: "Campaigns", icon: Megaphone, permission: "engagement:manage" },
-      { href: "/admin/journeys", label: "Journeys", icon: GitBranch, permission: "journeys:manage" },
-      { href: "/admin/offers", label: "Offers", icon: Tag, permission: "offers:manage" },
-      { href: "/admin/testimonials", label: "Testimonials", icon: MessageSquareQuote, permission: "testimonials:manage" },
-      { href: "/admin/market", label: "Market", icon: Globe, permission: "market:view" },
-      { href: "/admin/intelligence", label: "Intelligence", icon: LineChart, permission: "intelligence:view" },
-      { href: "/admin/reputation", label: "Reputation", icon: Star, permission: "intelligence:view" },
-      { href: "/admin/hermes", label: "Hermes", icon: Bot, permission: "hermes:manage" },
+      // F-10 (docs/audit-2026-09-19/admin-ux.md): this used to be 9 (now
+      // 10, with Discount Codes) separate top-level links — collapsed
+      // behind one hub with tabs (src/app/admin/(panel)/marketing/page.tsx)
+      // so the sidebar isn't the thing listing every Marketing sub-area.
+      // Nothing was deleted: every page below is still reachable directly
+      // by its own URL, and the hub links out to each one unchanged. The
+      // permission array means "show this link if the user can reach *any*
+      // one of those pages" — see canSeeNavItem above; the hub page itself
+      // re-checks each section's own permission before showing its tab.
+      {
+        href: "/admin/marketing",
+        label: "Marketing",
+        icon: Megaphone,
+        permission: [
+          "engagement:manage",
+          "journeys:manage",
+          "offers:manage",
+          "testimonials:manage",
+          "market:view",
+          "intelligence:view",
+          "hermes:manage",
+        ],
+        activePrefixes: MARKETING_HUB_SECTION_PATHS,
+      },
     ],
   },
   {
@@ -125,27 +159,29 @@ function NavLinks({
         <div key={group.label}>
           <p className="px-3 text-[11px] font-bold uppercase tracking-wider text-muted/70">{group.label}</p>
           <div className="mt-2 space-y-1">
-            {group.items.map(({ href, label, icon: Icon }) => (
-              <GuardedLink
-                key={href}
-                href={href}
-                onClick={onNavigate}
-                className={cn(
-                  "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition",
-                  pathname === href || pathname.startsWith(`${href}/`)
-                    ? "bg-brand/10 text-brand"
-                    : "text-muted hover:bg-lilac/40 hover:text-ink",
-                )}
-              >
-                <Icon size={18} />
-                <span className="flex-1">{label}</span>
-                {href === "/admin/notifications" && unreadNotifications > 0 && (
-                  <span className="rounded-full bg-brand px-2 py-0.5 text-[11px] font-bold text-white">
-                    {unreadNotifications > 99 ? "99+" : unreadNotifications}
-                  </span>
-                )}
-              </GuardedLink>
-            ))}
+            {group.items.map(({ href, label, icon: Icon, activePrefixes }) => {
+              const matchesPrefix = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
+              const isActive = matchesPrefix(href) || (activePrefixes?.some(matchesPrefix) ?? false);
+              return (
+                <GuardedLink
+                  key={href}
+                  href={href}
+                  onClick={onNavigate}
+                  className={cn(
+                    "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition",
+                    isActive ? "bg-brand/10 text-brand" : "text-muted hover:bg-lilac/40 hover:text-ink",
+                  )}
+                >
+                  <Icon size={18} />
+                  <span className="flex-1">{label}</span>
+                  {href === "/admin/notifications" && unreadNotifications > 0 && (
+                    <span className="rounded-full bg-brand px-2 py-0.5 text-[11px] font-bold text-white">
+                      {unreadNotifications > 99 ? "99+" : unreadNotifications}
+                    </span>
+                  )}
+                </GuardedLink>
+              );
+            })}
           </div>
         </div>
       ))}
@@ -265,7 +301,7 @@ export function AdminShell({
   const visibleGroups = navGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => hasPermission(user.role, item.permission)),
+      items: group.items.filter((item) => canSeeNavItem(user.role, item.permission)),
     }))
     .filter((group) => group.items.length > 0);
 

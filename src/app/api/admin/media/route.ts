@@ -3,44 +3,90 @@ import { MediaSource, MediaUsage } from "@/generated/prisma/client";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { logAuditEvent } from "@/lib/auth/audit";
 import { db } from "@/lib/db";
+import { buildMediaAssetWhere, InvalidMediaQueryError, parseMediaAssetQuery } from "@/lib/media/query";
 import { saveMediaAsset, StorageNotConfiguredForMediaError } from "@/lib/media/store";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 
 const ALLOWED_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const MEDIA_USAGE_VALUES = new Set<string>(Object.values(MediaUsage));
-const MAX_LIST_LIMIT = 60;
 
 /**
- * Lists recent media assets, optionally filtered by usage — backs the
- * simple "pick an existing image" picker used by the categories admin
- * form (Phase B2). The full media library grid (filters, replace,
- * regenerate) is a separate, later admin screen; this is intentionally
- * minimal.
+ * Lists media assets — filterable by usage, source (upload vs AI), a free
+ * text search (alt/prompt/key), and a createdAt date range (see
+ * src/lib/media/query.ts for the pure parsing/query-building this defers
+ * to), with "where is this used" info per asset.
+ *
+ * Backs two callers: the categories admin form's lightweight "pick a
+ * recent image" flow (Phase B2, just `usage` + `limit`), and the general
+ * F-07 media library browser (src/components/admin/media-library-browser.tsx,
+ * release-hardening) that any image field — the product gallery
+ * especially — can open to reuse an existing asset instead of re-uploading
+ * it. Picking an existing asset never touches R2: callers just reference
+ * the returned `id` (e.g. `POST /api/admin/products/[id]/images` with
+ * `mediaAssetId`), so nothing here duplicates the underlying object.
  */
 export async function GET(request: Request) {
   const { error } = await requireAdminPermission("media:manage");
   if (error) return error;
 
   const url = new URL(request.url);
-  const usageParam = url.searchParams.get("usage");
-  if (usageParam && !MEDIA_USAGE_VALUES.has(usageParam)) {
-    return NextResponse.json(
-      { error: `usage must be one of: ${[...MEDIA_USAGE_VALUES].join(", ")}` },
-      { status: 400 },
-    );
+  let query;
+  try {
+    query = parseMediaAssetQuery({
+      usage: url.searchParams.get("usage"),
+      source: url.searchParams.get("source"),
+      search: url.searchParams.get("search"),
+      from: url.searchParams.get("from"),
+      to: url.searchParams.get("to"),
+      limit: url.searchParams.get("limit"),
+      offset: url.searchParams.get("offset"),
+    });
+  } catch (err) {
+    if (err instanceof InvalidMediaQueryError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    throw err;
   }
 
-  const limitParam = Number(url.searchParams.get("limit"));
-  const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, MAX_LIST_LIMIT) : 24;
+  const where = buildMediaAssetWhere(query);
 
-  const assets = await db.mediaAsset.findMany({
-    where: usageParam ? { usage: usageParam as MediaUsage } : undefined,
-    orderBy: { createdAt: "desc" },
-    take: limit,
+  const [rows, total] = await Promise.all([
+    db.mediaAsset.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: query.limit,
+      skip: query.offset,
+      include: {
+        _count: { select: { productImages: true, categories: true } },
+        productImages: {
+          take: 3,
+          distinct: ["productId"],
+          select: { product: { select: { id: true, name: true, slug: true } } },
+        },
+      },
+    }),
+    db.mediaAsset.count({ where }),
+  ]);
+
+  // F-07: "where is each asset used" — a manifest/site slot, a category
+  // tile, and/or a handful of products (a sample, not every product, so
+  // this stays cheap for a heavily-reused photo) — so an admin browsing
+  // the library can tell a fresh upload apart from one already in use.
+  const assets = rows.map((row) => {
+    const { _count, productImages, ...asset } = row;
+    return {
+      ...asset,
+      usageInfo: {
+        slot: row.slot,
+        categoryCount: _count.categories,
+        productCount: _count.productImages,
+        sampleProductNames: productImages.map((pi) => pi.product.name),
+      },
+    };
   });
 
-  return NextResponse.json({ assets });
+  return NextResponse.json({ assets, total, limit: query.limit, offset: query.offset });
 }
 
 /**

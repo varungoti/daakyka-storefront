@@ -3,6 +3,7 @@ import { ProductForm } from "@/components/admin/product-form";
 import { getProductForAdmin, ProductNotFoundError } from "@/lib/catalog/products";
 import { listCategoryOptions } from "@/lib/catalog/categories";
 import { listSizeChartsForAdmin } from "@/lib/catalog/size-charts";
+import { descriptionToSafeHtml } from "@/lib/catalog/description-html";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 
@@ -37,7 +38,12 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
           name: product.name,
           slug: product.slug,
           shortDescription: product.shortDescription,
-          description: product.description,
+          // F-12: upgrades a legacy plain-text description into the same
+          // safe paragraph HTML the storefront now renders, so the
+          // rich-text editor shows it already formatted instead of one
+          // unbroken blob — re-saving then persists real HTML. Already
+          // sanitized either way (see description-html.ts).
+          description: descriptionToSafeHtml(product.description),
           categoryId: product.categoryId,
           status: product.status,
           featured: product.featured,

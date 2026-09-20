@@ -2,6 +2,10 @@
 
 import Image from "next/image";
 import { useState } from "react";
+import { GripVertical } from "lucide-react";
+import { moveArrayItem, swapStepsForMove } from "@/lib/admin/reorder";
+import { MediaLibraryBrowser } from "@/components/admin/media-library-browser";
+import { cn } from "@/lib/utils";
 
 export interface ProductImageRow {
   id: string; // ProductImage id
@@ -48,6 +52,10 @@ export function ProductImageGallery({
   const [promptOverride, setPromptOverride] = useState("");
   const [variationCount, setVariationCount] = useState(1);
   const [candidates, setCandidates] = useState<GeneratedCandidate[]>([]);
+  const [reordering, setReordering] = useState(false);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   async function attachAsset(assetId: string, altGuess: string) {
     const response = await fetch(`/api/admin/products/${productId}/images`, {
@@ -159,13 +167,21 @@ export function ProductImageGallery({
     onChange(images.filter((img) => img.id !== id));
   }
 
-  async function move(id: string, direction: "up" | "down") {
+  /** Single-step "swap with adjacent sibling" call — shared by the ↑/↓
+   * buttons and the drag-and-drop handler below (see
+   * src/lib/admin/reorder.ts). */
+  async function reorderStep(id: string, direction: "up" | "down"): Promise<boolean> {
     const response = await fetch(`/api/admin/products/${productId}/images/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ reorder: direction }),
     });
-    if (response.ok) {
+    return response.ok;
+  }
+
+  async function move(id: string, direction: "up" | "down") {
+    const ok = await reorderStep(id, direction);
+    if (ok) {
       const index = images.findIndex((img) => img.id === id);
       const swapWith = direction === "up" ? index - 1 : index + 1;
       if (swapWith >= 0 && swapWith < images.length) {
@@ -174,6 +190,29 @@ export function ProductImageGallery({
         onChange(next);
       }
     }
+  }
+
+  /** F-06 (docs/audit-2026-09-19/admin-ux.md): drag-and-drop reorder,
+   * expressed as a sequence of the same single-step swap the ↑/↓ buttons
+   * use (see reorder.ts's doc comment for why that's equivalent to a
+   * direct splice-to-position). Sequential and awaited so each step's
+   * server-side "swap with current neighbour" logic sees the previous
+   * step's result rather than racing. */
+  async function reorderByDrag(fromIndex: number, toIndex: number) {
+    if (fromIndex === toIndex) return;
+    const steps = swapStepsForMove(fromIndex, toIndex);
+    const id = images[fromIndex].id;
+    setReordering(true);
+    for (const direction of steps) {
+      const ok = await reorderStep(id, direction);
+      if (!ok) {
+        setNotice("Couldn't reorder — try again.");
+        setReordering(false);
+        return;
+      }
+    }
+    setReordering(false);
+    onChange(moveArrayItem(images, fromIndex, toIndex));
   }
 
   return (
@@ -193,7 +232,29 @@ export function ProductImageGallery({
             }}
           />
         </label>
+        {/* F-07 (docs/audit-2026-09-19/admin-ux.md): reuse an already-
+            uploaded/generated photo instead of re-uploading the same image
+            for every similar product/colourway. */}
+        <button
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-muted hover:bg-lilac/40"
+        >
+          Browse library
+        </button>
       </div>
+
+      {pickerOpen && (
+        <MediaLibraryBrowser
+          title="Choose a product image"
+          defaultUsage="PRODUCT"
+          onClose={() => setPickerOpen(false)}
+          onSelect={(asset) => {
+            setPickerOpen(false);
+            void attachAsset(asset.id, asset.alt ?? aiFields.name ?? "");
+          }}
+        />
+      )}
 
       <div className="space-y-2 rounded-xl border border-border bg-surface-muted p-3">
         <p className="text-xs font-semibold text-muted">Generate with AI</p>
@@ -248,9 +309,51 @@ export function ProductImageGallery({
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {images.map((img, index) => (
-            <div key={img.id} className="space-y-2 rounded-xl border border-border p-2">
+            <div
+              key={img.id}
+              onDragOver={(event) => {
+                if (dragIndex === null) return;
+                event.preventDefault();
+                if (overIndex !== index) setOverIndex(index);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const from = dragIndex;
+                setDragIndex(null);
+                setOverIndex(null);
+                if (from !== null) void reorderByDrag(from, index);
+              }}
+              className={cn(
+                "space-y-2 rounded-xl border border-border p-2 transition",
+                overIndex === index && dragIndex !== null && dragIndex !== index && "outline outline-2 outline-offset-2 outline-brand",
+              )}
+            >
               <div className="relative aspect-square overflow-hidden rounded-lg bg-lavender/40">
                 <Image src={img.url} alt={img.alt ?? ""} fill className="object-cover" sizes="200px" />
+                {/* F-06 (docs/audit-2026-09-19/admin-ux.md): drag handle —
+                    mouse/touch only. The ↑/↓ buttons below stay the
+                    keyboard-and-screen-reader-accessible fallback, since
+                    native drag-and-drop has no keyboard equivalent. */}
+                <span
+                  aria-hidden="true"
+                  title="Drag to reorder"
+                  draggable={!reordering}
+                  onDragStart={(event) => {
+                    setDragIndex(index);
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/plain", img.id);
+                  }}
+                  onDragEnd={() => {
+                    setDragIndex(null);
+                    setOverIndex(null);
+                  }}
+                  className={cn(
+                    "absolute left-1.5 top-1.5 cursor-grab touch-none rounded-md bg-surface/90 p-1 text-muted shadow-sm active:cursor-grabbing",
+                    reordering && "pointer-events-none opacity-40",
+                  )}
+                >
+                  <GripVertical size={14} />
+                </span>
               </div>
               <select value={img.color ?? ""} onChange={(e) => setColor(img.id, e.target.value)} className="w-full rounded border border-border p-1 text-xs">
                 <option value="">No colour tag</option>
@@ -269,10 +372,10 @@ export function ProductImageGallery({
               />
               <div className="flex items-center justify-between text-[11px]">
                 <div className="flex gap-1">
-                  <button type="button" disabled={index === 0} onClick={() => move(img.id, "up")} className="rounded border border-border px-1.5 py-0.5 disabled:opacity-30">
+                  <button type="button" disabled={index === 0 || reordering} onClick={() => move(img.id, "up")} aria-label="Move image up" className="rounded border border-border px-1.5 py-0.5 disabled:opacity-30">
                     ↑
                   </button>
-                  <button type="button" disabled={index === images.length - 1} onClick={() => move(img.id, "down")} className="rounded border border-border px-1.5 py-0.5 disabled:opacity-30">
+                  <button type="button" disabled={index === images.length - 1 || reordering} onClick={() => move(img.id, "down")} aria-label="Move image down" className="rounded border border-border px-1.5 py-0.5 disabled:opacity-30">
                     ↓
                   </button>
                 </div>

@@ -7,6 +7,7 @@ import {
   DuplicateVariantSkuError,
   generateSku,
   generateVariantMatrix,
+  productNameToken,
 } from "@/lib/catalog/product-validation";
 
 describe("categoryCode", () => {
@@ -23,15 +24,59 @@ describe("categoryCode", () => {
   });
 });
 
+describe("productNameToken", () => {
+  it("is short — at most 6 letters + a 4-character checksum (10 total)", () => {
+    const token = productNameToken("ux-audit-classic-comfort-scrub-set");
+    assert.ok(token.length <= 10, `expected <=10 chars, got "${token}" (${token.length})`);
+    // F-11: this is the exact real-world example from the audit
+    // (docs/audit-2026-09-19/admin-ux.md), where the old scheme produced
+    // the unreadable "UXAUDITCLASSICCOMFOR" (20 chars).
+    assert.ok(token.length < "UXAUDITCLASSICCOMFOR".length);
+  });
+
+  it("is deterministic — same slug always produces the same token", () => {
+    const a = productNameToken("classic-scrub-set");
+    const b = productNameToken("classic-scrub-set");
+    assert.equal(a, b);
+  });
+
+  it("is collision-resistant for slugs sharing a common word prefix", () => {
+    // These would have collided under a naive "first N letters only"
+    // scheme; the checksum suffix keeps them apart.
+    const a = productNameToken("classic-comfort-scrub-top");
+    const b = productNameToken("classic-comfort-scrub-set");
+    assert.notEqual(a, b);
+  });
+
+  it("falls back to PRD when nothing alphanumeric survives, still with a checksum", () => {
+    const token = productNameToken("---");
+    assert.match(token, /^PRD[0-9A-Z]{4}$/);
+  });
+});
+
 describe("generateSku", () => {
-  it("builds the canonical DK-{CAT}-{SLUG}-{SIZE}-{COLOR} pattern", () => {
+  it("builds the canonical DK-{CAT}-{NAMETOKEN}-{SIZE}-{COLOR} pattern", () => {
     const sku = generateSku({ categoryName: "Scrub Sets", productSlug: "classic-scrub-set", size: "M", color: "Ceil Blue" });
-    assert.equal(sku, "DK-SCRSET-CLASSICSCRUBSET-M-CEILBLUE");
+    assert.match(sku, /^DK-SCRSET-CLASCR[0-9A-Z]{4}-M-CEILBLUE$/);
   });
 
   it("strips non-alphanumeric characters from size and color tokens", () => {
     const sku = generateSku({ categoryName: "Kids Wear", productSlug: "kids-tee", size: "2-3Y", color: "Sky Blue" });
-    assert.equal(sku, "DK-KIDWEA-KIDSTEE-23Y-SKYBLUE");
+    assert.match(sku, /^DK-KIDWEA-KIDTEE[0-9A-Z]{4}-23Y-SKYBLUE$/);
+  });
+
+  it("is deterministic for identical inputs", () => {
+    const params = { categoryName: "Scrub Sets", productSlug: "classic-scrub-set", size: "M", color: "Navy" };
+    assert.equal(generateSku(params), generateSku(params));
+  });
+
+  it("produces a materially shorter SKU than the old unbounded-slug scheme for a long product name", () => {
+    const longSlug = "ux-audit-classic-comfort-scrub-set-institutional-grade";
+    const sku = generateSku({ categoryName: "Hospital Uniforms", productSlug: longSlug, size: "XS", color: "Navy" });
+    // Old scheme: DK-{6}-{up to 20}-{size}-{color}; new scheme's name
+    // token is capped at 10, so the whole SKU is well under the old
+    // worst case for a name this long.
+    assert.ok(sku.length < `DK-FORHOS-${longSlug.toUpperCase().replace(/-/g, "").slice(0, 20)}-XS-NAVY`.length);
   });
 });
 

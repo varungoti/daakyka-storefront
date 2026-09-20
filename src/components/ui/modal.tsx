@@ -4,11 +4,17 @@ import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { X } from "lucide-react";
 import { createPortal } from "react-dom";
 import type { ReactNode } from "react";
+import { cn } from "@/lib/utils";
 
 interface ModalProps {
   title: string;
   onClose: () => void;
   children: ReactNode;
+  /** Overrides the dialog's max-width class (default `max-w-2xl`) — e.g.
+   * the admin media library browser (release-hardening F-07) wants more
+   * horizontal room for a thumbnail grid than the size-guide table this
+   * component was originally built for. */
+  widthClassName?: string;
 }
 
 /**
@@ -19,7 +25,7 @@ interface ModalProps {
  * parent, reuses useFocusTrap from C2 for focus containment,
  * Escape-to-close and body scroll lock.
  */
-export function Modal({ title, onClose, children }: ModalProps) {
+export function Modal({ title, onClose, children, widthClassName = "max-w-2xl" }: ModalProps) {
   const containerRef = useFocusTrap<HTMLDivElement>(true, onClose, { lockScroll: true });
 
   return createPortal(
@@ -36,7 +42,10 @@ export function Modal({ title, onClose, children }: ModalProps) {
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
-        className="relative z-10 max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-2xl outline-none"
+        className={cn(
+          "relative z-10 max-h-[85vh] w-full overflow-y-auto rounded-2xl border border-border bg-surface p-6 shadow-2xl outline-none",
+          widthClassName,
+        )}
       >
         <div className="mb-4 flex items-center justify-between gap-4">
           <h2 className="font-display text-xl font-bold text-ink">{title}</h2>

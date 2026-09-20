@@ -41,7 +41,65 @@ function skuToken(input: string): string {
   return token || "X";
 }
 
-/** Builds the canonical variant SKU: DK-{CATCODE}-{SLUG}-{SIZE}-{COLOR}. */
+/** Deterministic 4-character base36 checksum (FNV-1a 32-bit, no crypto
+ * dependency needed for a non-cryptographic use case like this) of the
+ * *full* input string. Two different inputs collide here only by chance
+ * (1 in 36^4 ≈ 1.7M) — see `productNameToken`'s doc comment for why that,
+ * combined with the DB's own `@unique` constraint on `ProductVariant.sku`,
+ * is enough to call this "collision-safe" without a database round trip. */
+function shortChecksum(value: string): string {
+  let hash = 0x811c9dc5; // FNV offset basis
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193); // FNV prime
+  }
+  return (hash >>> 0).toString(36).toUpperCase().padStart(4, "0").slice(-4);
+}
+
+/**
+ * F-11 (docs/audit-2026-09-19/admin-ux.md): the short, human-readable
+ * product-name portion of a SKU — e.g. `DK-FORHOS-UXAUDXXXX-XS-NAVY`
+ * instead of the old `DK-FORHOS-UXAUDITCLASSICCOMFOR-XS-NAVY`, which
+ * truncated the full slug to 20 characters and was awkward to read on a
+ * pick list or read out over the phone/WhatsApp.
+ *
+ * Takes up to 2 significant words from the slug (3 letters each, so at
+ * most 6 characters) for a human-readable hint, then appends a 4-character
+ * deterministic checksum of the *full* slug so two products that abbreviate
+ * to the same prefix (e.g. "Classic Comfort Scrub Top" and "Classic
+ * Comfort Scrub Set") still very likely get different tokens — this is
+ * what "collision-safe" means here in a pure, synchronous, DB-free helper
+ * that can't itself check the database: the input slug is already globally
+ * unique (`Product.slug` is `@unique`), so hashing the *whole* slug (not
+ * just the truncated prefix) carries that uniqueness through with very
+ * high probability, and `ProductVariant.sku`'s own `@unique` constraint
+ * (enforced by Postgres at save time, surfaced today as a normal save
+ * error) is the hard backstop on the rare chance two slugs ever did hash
+ * to the same 4 characters — exactly the same backstop the old, longer
+ * scheme also implicitly relied on rather than proving collision-freedom
+ * itself.
+ */
+export function productNameToken(productSlug: string): string {
+  const words = productSlug
+    .toUpperCase()
+    .split(/[^A-Z0-9]+/)
+    .filter(Boolean);
+  const prefix = words.slice(0, 2).map((word) => word.slice(0, 3)).join("");
+  return `${prefix || "PRD"}${shortChecksum(productSlug)}`;
+}
+
+/** Builds the canonical variant SKU: DK-{CATCODE}-{NAMETOKEN}-{SIZE}-{COLOR}.
+ *
+ * IMPORTANT: this function is only ever called to mint a SKU for a *new*
+ * variant row — the size×colour matrix generator, the admin's per-row
+ * "regen" button, and product duplication (see generateVariantMatrix
+ * below, product-variant-editor.tsx, and duplicateProduct in
+ * src/lib/catalog/products.ts). Nothing in this codebase calls it against
+ * an already-persisted variant as part of an ordinary save, so shortening
+ * its output here changes what *newly generated* SKUs look like without
+ * touching a single existing `ProductVariant.sku` value already in the
+ * database (they're `@unique` and may already be on stock records) — see
+ * that same doc comment for the collision-safety argument. */
 export function generateSku(params: {
   categoryName: string;
   productSlug: string;
@@ -49,10 +107,10 @@ export function generateSku(params: {
   color: string;
 }): string {
   const catCode = categoryCode(params.categoryName);
-  const slugToken = params.productSlug.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 20) || "PRODUCT";
+  const nameToken = productNameToken(params.productSlug || "product");
   const sizeToken = skuToken(params.size);
   const colorToken = skuToken(params.color);
-  return `DK-${catCode}-${slugToken}-${sizeToken}-${colorToken}`;
+  return `DK-${catCode}-${nameToken}-${sizeToken}-${colorToken}`;
 }
 
 export interface VariantDraft {

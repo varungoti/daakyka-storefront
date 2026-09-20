@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { IMAGE_MANIFEST, blogPostImageSlot, categoryImageSlot } from "@/data/media/image-manifest";
 import type { SiteImageSlotRow } from "@/components/admin/site-images-grid";
 import { SiteImagesGrid } from "@/components/admin/site-images-grid";
+import { MediaLibraryEntryPoint } from "@/components/admin/media-library-entry-point";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { getAllBlogPostsForAdmin } from "@/lib/blog";
@@ -56,12 +57,20 @@ export default async function AdminMediaPage() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="font-display text-3xl font-bold text-ink">Media Library</h1>
-        <p className="text-muted">
-          Site images — hero banners, category tiles, and page heroes. Uploads and AI generation for
-          product images still happen from the product/category editors.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-3xl font-bold text-ink">Media Library</h1>
+          <p className="text-muted">
+            Site images — hero banners, category tiles, and page heroes — below. Uploads and AI generation for
+            product images still happen from the product editor, which can now also pick from everything already
+            uploaded instead of always starting fresh.
+          </p>
+        </div>
+        {/* F-07 (docs/audit-2026-09-19/admin-ux.md): a real "browse
+            everything I've uploaded" view, searchable/filterable by usage,
+            source, and date — see media-library-browser.tsx, the same
+            component the product gallery's "Browse library" button opens. */}
+        <MediaLibraryEntryPoint />
       </div>
       <SiteImagesGrid rows={rows} />
     </div>

@@ -50,7 +50,15 @@ export interface Product {
   id: string;
   handle: string;
   name: string;
+  /** Always plain text (HTML tags stripped) — safe for the SEO/OpenGraph
+   * meta description, JSON-LD, and any other non-HTML-rendering context.
+   * See `descriptionHtml` for the rich-rendered version, and
+   * src/lib/catalog/description-html.ts for how both are derived from the
+   * one stored `Product.description` value (release-hardening F-12). */
   description?: string;
+  /** Sanitized HTML, safe for `dangerouslySetInnerHTML` — used by the PDP's
+   * Description accordion only. Empty when there's no description. */
+  descriptionHtml?: string;
   colorName: string;
   price: number;
   compareAtPrice?: number;

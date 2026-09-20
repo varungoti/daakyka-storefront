@@ -45,7 +45,29 @@ export default async function AdminHermesPage() {
 
       <section className="rounded-3xl border border-border bg-surface-elevated p-6">
         <h2 className="font-display text-xl font-bold text-ink">Run Hermes Workflow</h2>
-        <p className="mt-1 text-sm text-muted">Outputs land in the approval queue — never auto-published.</p>
+        {/* F-10/F-18 (docs/audit-2026-09-19/admin-ux.md): explicit,
+            environment-accurate copy about what clicking one of these
+            buttons actually does, read out of the real handlers rather
+            than guessed — see src/app/api/admin/hermes/tasks/route.ts,
+            src/lib/hermes/client.ts (dispatchHermesTask), and
+            src/lib/hermes/approval-executor.ts (what Approve does). */}
+        <p className="mt-1 max-w-2xl text-sm text-muted">
+          Each button below runs <strong>once</strong> and adds exactly one new item to the Approval Queue —{" "}
+          {configured ? (
+            <>
+              it calls the configured {runtimeLabel} (a real external request; may incur cost or take a few seconds).
+            </>
+          ) : (
+            <>
+              since no runtime is configured (Runtime: Not configured, above), it returns a harmless local placeholder
+              instead — <strong>no external call is made</strong> right now.
+            </>
+          )}{" "}
+          Nothing is published or sent by clicking a workflow button itself: that only records a suggestion. Approving
+          a queued item below goes one step further but still only ever creates a <em>draft</em> — a blog post left
+          unpublished, or a campaign left at &ldquo;Pending Approval&rdquo; — never a live publish or an outbound
+          send.
+        </p>
         <div className="mt-4">
           <HermesTaskLauncher />
         </div>

@@ -15,6 +15,13 @@ export default function AdminLoginPage() {
           <h1 className="mt-2 font-display text-3xl font-bold text-ink">Admin Sign In</h1>
         </div>
         <LoginForm />
+        {/* F-17 (docs/audit-2026-09-19/admin-ux.md): a short recovery hint
+            rather than a self-serve reset flow — `users:manage` (Users →
+            Reset password) is intentionally SUPER_ADMIN-only, so this
+            deliberately doesn't add a "forgot password" link/flow here. */}
+        <p className="mt-6 text-center text-sm text-muted">
+          Locked out? Ask a Super Admin to reset your password from Users.
+        </p>
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ProductVariantEditor, type VariantRow } from "@/components/admin/product-variant-editor";
 import { ProductImageGallery, type ProductImageRow } from "@/components/admin/product-image-gallery";
 import { StagedProductImageGallery } from "@/components/admin/staged-product-image-gallery";
+import { RichTextEditor } from "@/components/admin/rich-text-editor";
 import { FormErrorBanner } from "@/components/admin/form-error-banner";
 import { useUnsavedChangesGuard, useUnsavedChangesNav } from "@/components/admin/unsaved-changes";
 import { slugify } from "@/lib/catalog/category-validation";
@@ -472,7 +473,7 @@ export function ProductForm({
           <input value={shortDescription} onChange={(e) => setShortDescription(e.target.value)} className={inputClass} />
         </Field>
         <Field label="Description" error={fieldErrors.description}>
-          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} className={inputClass} />
+          <RichTextEditor editorKey={initial?.id ?? "new"} value={description} onChange={setDescription} />
         </Field>
       </section>
 

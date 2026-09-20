@@ -7,13 +7,17 @@ import {
 import { db } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
 import type { Product, ProductColor, ProductImage, ProductVariant } from "@/lib/types";
+import { descriptionToPlainText, descriptionToSafeHtml } from "@/lib/catalog/description-html";
 
 /**
  * Phase B3: the storefront's product/category read path, backed by
- * Prisma. The DB is now the source of truth — Shopify is no longer read
- * for catalog data here (see plan Phase B3 and Phase F for the later
- * push-sync direction). `lib/shopify/*` files stay in place for that
- * later phase; only this module stopped calling them.
+ * Prisma. The DB is the sole source of truth for catalog data — the
+ * Shopify Storefront-API client/queries/mappers this module used to be
+ * able to fall back to were removed as dead code (release-hardening,
+ * audit finding F5): that path was never wired to real DB products
+ * (Shopify GIDs vs. Prisma cuids) and had no callers left anywhere in the
+ * app. `src/lib/shopify/` still exists for the unrelated, working order
+ * webhook (see src/app/api/webhooks/shopify/orders/route.ts).
  *
  * Every exported read helper:
  *  - only ever returns `status: ACTIVE` products from `active` categories
@@ -144,11 +148,19 @@ function mapDbProductToUi(p: DbProduct): Product {
   const compareAtPrice = p.compareAtPrice !== null ? Number(p.compareAtPrice) : undefined;
   const onSale = compareAtPrice !== undefined && compareAtPrice > price;
 
+  // F-12 (docs/audit-2026-09-19/admin-ux.md): `p.description` may now be
+  // sanitized rich-text HTML *or* one of the pre-existing plain-text rows —
+  // both projections below handle either shape safely (see
+  // src/lib/catalog/description-html.ts), so every consumer of `Product`
+  // gets the right guarantee for its context without re-deriving it.
+  const rawDescription = p.description ?? p.shortDescription ?? null;
+
   return {
     id: p.id,
     handle: p.slug,
     name: p.name,
-    description: p.description ?? p.shortDescription ?? undefined,
+    description: descriptionToPlainText(rawDescription) || undefined,
+    descriptionHtml: rawDescription ? descriptionToSafeHtml(rawDescription) : undefined,
     colorName: colors[0]?.name ?? "Default",
     price,
     compareAtPrice,

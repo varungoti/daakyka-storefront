@@ -13,6 +13,7 @@ import {
   type RowValidationResult,
 } from "@/lib/catalog/csv";
 import { generateImage, isImageGenerationConfigured } from "@/lib/ai/image-generation";
+import { prepareDescriptionForStorage } from "@/lib/catalog/description-html";
 
 /**
  * Phase B1: CSV import/export for products. Row-level parsing/validation
@@ -185,7 +186,11 @@ export async function commitProductImport(
         name: first.productName,
         categoryId: category.id,
         shortDescription: first.shortDescription,
-        description: first.description,
+        // Defense in depth: a CSV cell is always plain text in practice,
+        // but this guarantees a description can never reach the DB
+        // without going through the same allowlist a rich-text editor
+        // save would (see description-html.ts's file comment).
+        description: prepareDescriptionForStorage(first.description),
         price: first.price,
         compareAtPrice: first.compareAtPrice,
         fabric: first.fabric,

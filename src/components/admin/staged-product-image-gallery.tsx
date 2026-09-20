@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useState } from "react";
+import { GripVertical } from "lucide-react";
 import {
   addStagedImage,
   addStagedImages,
@@ -10,6 +11,9 @@ import {
   updateStagedImage,
   type StagedImage,
 } from "@/lib/admin/staged-images";
+import { moveArrayItem } from "@/lib/admin/reorder";
+import { MediaLibraryBrowser } from "@/components/admin/media-library-browser";
+import { cn } from "@/lib/utils";
 
 interface GeneratedCandidate {
   id: string;
@@ -64,7 +68,10 @@ export function StagedProductImageGallery({
   const [notice, setNotice] = useState<string | null>(null);
   const [promptOverride, setPromptOverride] = useState("");
   const [variationCount, setVariationCount] = useState(1);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [overIndex, setOverIndex] = useState<number | null>(null);
   const [candidates, setCandidates] = useState<GeneratedCandidate[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   async function onUploadFiles(files: FileList) {
     setUploading(true);
@@ -84,7 +91,7 @@ export function StagedProductImageGallery({
         continue;
       }
       const body = await response.json();
-      current = addStagedImage(current, { mediaAssetId: body.asset.id, url: body.asset.url, alt: aiFields.name ?? "", color: null });
+      current = addStagedImage(current, { mediaAssetId: body.asset.id, url: body.asset.url, alt: aiFields.name ?? "", color: null, origin: "new" });
       onChange(current);
     }
     setUploading(false);
@@ -131,11 +138,31 @@ export function StagedProductImageGallery({
     // Unlike the saved gallery, nothing needs attaching here — the
     // generate call above already created a real MediaAsset for each
     // candidate, so accepting one just means staging it.
-    onChange(addStagedImages(images, selected.map((c) => ({ mediaAssetId: c.id, url: c.url, alt: aiFields.name ?? "", color: null }))));
+    onChange(addStagedImages(images, selected.map((c) => ({ mediaAssetId: c.id, url: c.url, alt: aiFields.name ?? "", color: null, origin: "new" as const }))));
     setCandidates([]);
   }
 
+  /** F-07 (docs/audit-2026-09-19/admin-ux.md): picking an existing library
+   * asset never duplicates it — it's already a persisted `MediaAsset`, so
+   * staging it is exactly the same "point at this id" bookkeeping as
+   * staging a freshly generated candidate above, just tagged `origin:
+   * "library"` so `remove()` below knows not to delete it. */
+  function addLibraryAsset(asset: { id: string; url: string; alt: string | null }) {
+    onChange(addStagedImage(images, { mediaAssetId: asset.id, url: asset.url, alt: asset.alt ?? aiFields.name ?? "", color: null, origin: "library" }));
+    setPickerOpen(false);
+  }
+
   async function remove(mediaAssetId: string) {
+    const staged = images.find((img) => img.mediaAssetId === mediaAssetId);
+    // A library-picked asset is only ever *unstaged* here, never deleted —
+    // it may already be attached to other products, or just belongs in the
+    // library regardless of this draft (see StagedImage.origin's doc
+    // comment in staged-images.ts). Only a photo *this session* freshly
+    // uploaded/generated is actually removed from storage on "Remove".
+    if (staged?.origin === "library") {
+      onChange(removeStagedImage(images, mediaAssetId));
+      return;
+    }
     setRemovingId(mediaAssetId);
     setNotice(null);
     const response = await fetch(`/api/admin/media/${mediaAssetId}`, { method: "DELETE" });
@@ -165,7 +192,26 @@ export function StagedProductImageGallery({
             }}
           />
         </label>
+        {/* F-07 (docs/audit-2026-09-19/admin-ux.md): the new-product form
+            can now pick an already-uploaded/generated photo too, not just
+            upload a fresh one — same picker as the saved-product gallery. */}
+        <button
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-muted hover:bg-lilac/40"
+        >
+          Browse library
+        </button>
       </div>
+
+      {pickerOpen && (
+        <MediaLibraryBrowser
+          title="Choose a product image"
+          defaultUsage="PRODUCT"
+          onClose={() => setPickerOpen(false)}
+          onSelect={addLibraryAsset}
+        />
+      )}
 
       <div className="space-y-2 rounded-xl border border-border bg-surface-muted p-3">
         <p className="text-xs font-semibold text-muted">Generate with AI</p>
@@ -222,9 +268,47 @@ export function StagedProductImageGallery({
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {images.map((img, index) => (
-            <div key={img.mediaAssetId} className="space-y-2 rounded-xl border border-border p-2">
+            <div
+              key={img.mediaAssetId}
+              onDragOver={(event) => {
+                if (dragIndex === null) return;
+                event.preventDefault();
+                if (overIndex !== index) setOverIndex(index);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const from = dragIndex;
+                setDragIndex(null);
+                setOverIndex(null);
+                if (from !== null && from !== index) onChange(moveArrayItem(images, from, index));
+              }}
+              className={cn(
+                "space-y-2 rounded-xl border border-border p-2 transition",
+                overIndex === index && dragIndex !== null && dragIndex !== index && "outline outline-2 outline-offset-2 outline-brand",
+              )}
+            >
               <div className="relative aspect-square overflow-hidden rounded-lg bg-lavender/40">
                 <Image src={img.url} alt={img.alt ?? ""} fill className="object-cover" sizes="200px" />
+                {/* F-06 (docs/audit-2026-09-19/admin-ux.md): drag handle —
+                    mouse/touch only; the ↑/↓ buttons stay the
+                    keyboard-and-screen-reader-accessible fallback. */}
+                <span
+                  aria-hidden="true"
+                  title="Drag to reorder"
+                  draggable
+                  onDragStart={(event) => {
+                    setDragIndex(index);
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/plain", img.mediaAssetId);
+                  }}
+                  onDragEnd={() => {
+                    setDragIndex(null);
+                    setOverIndex(null);
+                  }}
+                  className="absolute left-1.5 top-1.5 cursor-grab touch-none rounded-md bg-surface/90 p-1 text-muted shadow-sm active:cursor-grabbing"
+                >
+                  <GripVertical size={14} />
+                </span>
               </div>
               <select
                 value={img.color ?? ""}
@@ -250,6 +334,7 @@ export function StagedProductImageGallery({
                     type="button"
                     disabled={index === 0}
                     onClick={() => onChange(moveStagedImage(images, img.mediaAssetId, "up"))}
+                    aria-label="Move image up"
                     className="rounded border border-border px-1.5 py-0.5 disabled:opacity-30"
                   >
                     ↑
@@ -258,6 +343,7 @@ export function StagedProductImageGallery({
                     type="button"
                     disabled={index === images.length - 1}
                     onClick={() => onChange(moveStagedImage(images, img.mediaAssetId, "down"))}
+                    aria-label="Move image down"
                     className="rounded border border-border px-1.5 py-0.5 disabled:opacity-30"
                   >
                     ↓

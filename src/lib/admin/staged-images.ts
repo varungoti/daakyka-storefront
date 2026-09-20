@@ -29,6 +29,21 @@ export interface StagedImage {
   url: string;
   alt: string;
   color: string | null;
+  /**
+   * F-07 (docs/audit-2026-09-19/admin-ux.md): distinguishes a photo this
+   * session freshly uploaded/generated (`"new"`, the default — matches
+   * every staged image before F-07) from one picked from the shared media
+   * library (`"library"`). Both are equally real, already-persisted
+   * `MediaAsset` rows, but "Remove" needs to treat them differently: a
+   * fresh upload that's abandoned before saving the product should be
+   * deleted outright (see StagedProductImageGallery's `remove()`, and
+   * deleteUnattachedMediaAsset's file comment in
+   * src/lib/media/store.ts), while unstaging a *reused* library asset must
+   * never delete it — that asset may already be attached to other
+   * products, or simply belongs in the library for later reuse regardless
+   * of this particular draft.
+   */
+  origin?: "new" | "library";
 }
 
 export function addStagedImage(list: readonly StagedImage[], image: StagedImage): StagedImage[] {

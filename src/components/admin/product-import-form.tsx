@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { canCommitImport } from "@/lib/catalog/import-commit-gate";
+import { cn } from "@/lib/utils";
 
 interface RowResult {
   rowNumber: number;
@@ -31,7 +33,12 @@ export function ProductImportForm() {
   const [busy, setBusy] = useState<"idle" | "dryRun" | "commit">("idle");
   const [notice, setNotice] = useState<string | null>(null);
 
-  const canCommit = dryRun !== null && dryRun.summary.error === 0 && dryRun.summary.total > 0;
+  // F-08 (docs/audit-2026-09-19/admin-ux.md): "a dry run has completed in
+  // the current session with zero errors" — see import-commit-gate.ts for
+  // the (unit-tested) rule itself. `dryRun` is reset to null below
+  // whenever a new file is chosen or a commit just succeeded, which is
+  // what keeps this scoped to "this session" rather than a stale run.
+  const canCommit = canCommitImport(dryRun);
 
   async function runDryRun() {
     if (!file) return;
@@ -96,14 +103,38 @@ export function ProductImportForm() {
         </label>
 
         <div className="flex flex-wrap items-center gap-3">
-          <button type="button" onClick={runDryRun} disabled={!file || busy !== "idle"} className="rounded-full border border-brand px-5 py-2.5 text-sm font-semibold text-brand disabled:cursor-not-allowed disabled:opacity-40">
+          <button type="button" onClick={runDryRun} disabled={!file || busy !== "idle"} className="rounded-full border border-brand px-5 py-2.5 text-sm font-semibold text-brand disabled:cursor-not-allowed disabled:border-border disabled:text-muted disabled:opacity-60">
             {busy === "dryRun" ? "Validating…" : "Run dry run"}
           </button>
           <label className="flex items-center gap-2 text-sm text-ink">
             <input type="checkbox" checked={generateImages} onChange={(e) => setGenerateImages(e.target.checked)} />
             Generate AI images for imported products without any
           </label>
-          <button type="button" onClick={runCommit} disabled={!canCommit || busy !== "idle"} className="rounded-full bg-brand px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">
+          {/* F-08 (docs/audit-2026-09-19/admin-ux.md): before a dry run has
+              completed in this session with zero errors, this used to keep
+              the exact same solid brand-purple fill as when it's genuinely
+              ready to click — `disabled:opacity-40` alone barely reads as
+              "off" against a saturated fill the way it does on the
+              outlined "Run dry run" button next to it. `canCommit` already
+              gated the click handler correctly; only the *styling* needed
+              to stop pretending the button was equally ready either way, so
+              the not-ready state now falls back to the same flat, neutral
+              "clearly inactive" treatment as every other disabled control
+              in this admin (see e.g. category-tree.tsx's disabled:opacity-40
+              on a *neutral* button) instead of a dimmed version of the
+              active color. */}
+          <button
+            type="button"
+            onClick={runCommit}
+            disabled={!canCommit || busy !== "idle"}
+            title={canCommit ? "" : "Run a dry run with zero errors first"}
+            className={cn(
+              "rounded-full px-5 py-2.5 text-sm font-semibold transition",
+              canCommit
+                ? "bg-brand text-white hover:bg-brand/90 disabled:cursor-not-allowed disabled:opacity-60"
+                : "cursor-not-allowed border border-border bg-surface-muted text-muted",
+            )}
+          >
             {busy === "commit" ? "Importing…" : "Commit import"}
           </button>
         </div>
