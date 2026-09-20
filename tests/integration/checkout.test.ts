@@ -58,6 +58,21 @@ after(async () => {
   if (createdRateLimitKeys.length > 0) {
     await db.rateLimitBucket.deleteMany({ where: { key: { in: createdRateLimitKeys } } }).catch(() => {});
   }
+
+  // Orders this file creates *through the real route* never get their id
+  // pushed to createdOrderIds (the route returns a number, not the row),
+  // so they used to survive every run and accumulate in the shared dev
+  // and CI databases — 11 had piled up before this sweep was added.
+  // Matching on the generated address is reliable because these emails
+  // are uuid-suffixed and used nowhere else.
+  const leaked = await db.order
+    .findMany({ where: { email: { startsWith: "throttle-preseed-" } }, select: { id: true } })
+    .catch(() => []);
+  if (leaked.length > 0) {
+    const ids = leaked.map((o) => o.id);
+    await db.orderItem.deleteMany({ where: { orderId: { in: ids } } }).catch(() => {});
+    await db.order.deleteMany({ where: { id: { in: ids } } }).catch(() => {});
+  }
 });
 
 /**
