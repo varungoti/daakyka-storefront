@@ -37,11 +37,27 @@ function orderConfirmationPath(orderNumber: string, orderToken: string): string 
 interface CheckoutApiError {
   error: string;
   issues?: Array<{ path: (string | number)[]; message: string }>;
+  field?: string;
 }
 
 interface CheckoutFieldErrors {
   phone?: string;
   pincode?: string;
+}
+
+interface AppliedDiscount {
+  code: string;
+  type: "PERCENTAGE" | "FIXED";
+  value: number;
+  amount: number;
+}
+
+interface DiscountPreviewResponse {
+  code: string;
+  type: "PERCENTAGE" | "FIXED";
+  value: number;
+  amount: number;
+  subtotal: number;
 }
 
 function clearLocalCart(): void {
@@ -67,6 +83,16 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<CheckoutFieldErrors>({});
 
+  // Release-hardening F7: "Have a discount code?" — appliedDiscount is a
+  // live preview only (POST /api/checkout/discount), never authoritative.
+  // The final POST /api/checkout submission re-validates and re-computes
+  // the discount from scratch server-side; nothing here is ever trusted as
+  // the actual amount charged.
+  const [discountCodeInput, setDiscountCodeInput] = useState("");
+  const [appliedDiscount, setAppliedDiscount] = useState<AppliedDiscount | null>(null);
+  const [discountApplying, setDiscountApplying] = useState(false);
+  const [discountError, setDiscountError] = useState<string | null>(null);
+
   if (mode === "shopify" && shopifyReady) {
     return (
       <div className="mx-auto max-w-lg px-4 py-24 text-center">
@@ -91,6 +117,46 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
         </Link>
       </div>
     );
+  }
+
+  async function handleApplyDiscount() {
+    const code = discountCodeInput.trim();
+    if (!code) return;
+
+    setDiscountApplying(true);
+    setDiscountError(null);
+
+    try {
+      const response = await fetch("/api/checkout/discount", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: cart.lines.map((line) => ({ variantId: line.variantId, quantity: line.quantity })),
+          code,
+          email: email || undefined,
+        }),
+      });
+      const data = (await response.json()) as DiscountPreviewResponse | { error: string };
+
+      if (!response.ok || "error" in data) {
+        setAppliedDiscount(null);
+        setDiscountError("error" in data ? data.error : "Could not apply this code. Please try again.");
+        return;
+      }
+
+      setAppliedDiscount({ code: data.code, type: data.type, value: data.value, amount: data.amount });
+    } catch {
+      setAppliedDiscount(null);
+      setDiscountError("Could not apply this code. Please check your connection and try again.");
+    } finally {
+      setDiscountApplying(false);
+    }
+  }
+
+  function handleRemoveDiscount() {
+    setAppliedDiscount(null);
+    setDiscountCodeInput("");
+    setDiscountError(null);
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -133,6 +199,7 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
             pincode: normalizedPincode,
             country,
           },
+          discountCode: appliedDiscount?.code,
         }),
       });
 
@@ -147,6 +214,15 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
             if (path === "shippingAddress.pincode") mapped.pincode = issue.message;
           }
           if (Object.keys(mapped).length > 0) setFieldErrors(mapped);
+        }
+        // The discount was valid when previewed but the server rejected it
+        // at the authoritative final check (e.g. its usage cap filled up in
+        // the meantime) — surface that inline next to the field, same as a
+        // phone/pincode issue, and drop the stale preview so the summary
+        // stops showing a discount that was never actually applied.
+        if ("field" in data && data.field === "discountCode") {
+          setAppliedDiscount(null);
+          setDiscountError(data.error);
         }
         setError("error" in data ? data.error : "Could not process checkout. Please try again.");
         setSubmitting(false);
@@ -388,7 +464,64 @@ export function CheckoutPageContent({ customerHint = {} }: { customerHint?: Chec
             <span className="text-muted">Subtotal</span>
             <span className="font-display text-2xl font-bold text-ink">{formatPrice(cart.subtotal)}</span>
           </div>
+
+          {appliedDiscount && (
+            <div className="mt-2 flex items-center justify-between text-sm">
+              <span className="text-muted">Discount ({appliedDiscount.code})</span>
+              <span className="font-semibold text-trust">-{formatPrice(appliedDiscount.amount)}</span>
+            </div>
+          )}
+
           <p className="mt-2 text-xs text-muted">Shipping is calculated at the next step.</p>
+
+          <div className="mt-4 border-t border-border pt-4">
+            {appliedDiscount ? (
+              <div className="flex items-center justify-between gap-2 rounded-md bg-trust/10 px-3 py-2 text-sm text-trust">
+                <span>
+                  Code <span className="font-semibold">{appliedDiscount.code}</span> applied
+                </span>
+                <button
+                  type="button"
+                  onClick={handleRemoveDiscount}
+                  className="text-xs font-semibold underline underline-offset-2 hover:no-underline"
+                >
+                  Remove
+                </button>
+              </div>
+            ) : (
+              <label className="text-sm text-muted">
+                Have a discount code?
+                <div className="mt-1 flex gap-2">
+                  <input
+                    value={discountCodeInput}
+                    onChange={(e) => {
+                      setDiscountCodeInput(e.target.value);
+                      if (discountError) setDiscountError(null);
+                    }}
+                    placeholder="Enter code"
+                    aria-invalid={Boolean(discountError)}
+                    aria-describedby={discountError ? "checkout-discount-error" : undefined}
+                    className={`w-full rounded-md border bg-white px-3 py-2 text-ink ${
+                      discountError ? "border-red-400" : "border-border"
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleApplyDiscount}
+                    disabled={discountApplying || !discountCodeInput.trim()}
+                    className="shrink-0 rounded-md border border-ink px-4 py-2 text-sm font-semibold text-ink transition hover:bg-ink hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {discountApplying ? "Applying…" : "Apply"}
+                  </button>
+                </div>
+                {discountError && (
+                  <span id="checkout-discount-error" className="mt-1 block text-xs font-normal text-red-600">
+                    {discountError}
+                  </span>
+                )}
+              </label>
+            )}
+          </div>
 
           <Button type="submit" className="mt-6 w-full" size="lg" disabled={submitting}>
             <Lock size={18} />

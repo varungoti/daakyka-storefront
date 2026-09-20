@@ -119,6 +119,7 @@ model User {
   reviewsModerated    Review[]
   siteSettingsUpdated SiteSetting[]
   integrationCredentialsUpdated IntegrationCredential[]
+  discountsCreated    Discount[]
 }
 
 /// DB-backed rate limit buckets (v1 2.1). Replaces the old in-memory Map so
@@ -617,6 +618,11 @@ enum OrderStatus {
   REFUNDED
 }
 
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
 enum PaymentMethod {
   RAZORPAY
   ORDER_REQUEST
@@ -687,6 +693,7 @@ model Product {
   images            ProductImage[]
   reviews           Review[]
   wishlistItems     WishlistItem[]
+  backInStockSubscriptions BackInStockSubscription[]
 
   @@index([status, categoryId])
   @@index([featured])
@@ -707,6 +714,7 @@ model ProductVariant {
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
   orderItems       OrderItem[]
+  backInStockSubscriptions BackInStockSubscription[]
 
   @@unique([productId, size, color])
 }
@@ -867,9 +875,27 @@ model Order {
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
   items             OrderItem[]
+  // Release-hardening F7 (discount codes at checkout): `discountId` is the
+  // discount actually priced into `discount`/`total` above, computed
+  // server-side (see src/lib/discounts/index.ts's resolveDiscount) —
+  // never trusted from the client. `discountCode` snapshots the code text
+  // at the time it was applied (same "never rely on a live join for
+  // historical display" convention as OrderItem's productName/sku
+  // snapshots) so an order's summary/emails/admin view keep reading
+  // correctly even if the Discount row is later edited. Set at creation
+  // for BOTH payment methods so pricing/Razorpay-amount is always correct,
+  // but the redemption itself (DiscountRedemption row + Discount.redeemedCount)
+  // is only ever committed — via commitDiscountRedemption — immediately for
+  // an ORDER_REQUEST order or at PAID time for a RAZORPAY order; see that
+  // function's doc comment for why.
+  discountId        String?
+  appliedDiscount   Discount?     @relation(fields: [discountId], references: [id], onDelete: SetNull)
+  discountCode      String?
+  discountRedemption DiscountRedemption?
 
   @@index([status])
   @@index([customerId])
+  @@index([discountId])
 }
 
 model OrderItem {
@@ -966,4 +992,107 @@ model EmailOutbox {
 
   @@index([status, nextAttemptAt])
   @@index([kind])
+}
+
+// ---------------------------------------------------------------------------
+// release-hardening F7 — discount codes (docs/audit-2026-09-19/storefront-ux.md)
+// ---------------------------------------------------------------------------
+
+/// A redeemable coupon code. `code` is stored normalized (trimmed +
+/// uppercased — see normalizeDiscountCode in src/lib/discounts/index.ts) so
+/// the plain `@unique` below enforces case-insensitive uniqueness without a
+/// citext extension; every write path must normalize before insert/lookup.
+model Discount {
+  id                        String       @id @default(cuid())
+  code                      String       @unique
+  type                      DiscountType
+  /// Percentage points (0-100) when type=PERCENTAGE, or a flat INR amount
+  /// when type=FIXED. Never read from the client at checkout — always
+  /// looked up fresh from this row (see resolveDiscount).
+  value                     Decimal      @db.Decimal(10, 2)
+  /// Cart subtotal (pre-discount) must be >= this to use the code. Null =
+  /// no minimum.
+  minSubtotal               Decimal?     @db.Decimal(10, 2)
+  /// Total redemptions allowed across all customers. Null = unlimited.
+  maxRedemptions            Int?
+  /// Redemptions allowed per customer/email. Null = unlimited.
+  maxRedemptionsPerCustomer Int?
+  /// Authoritative counter. Only ever incremented via the conditional
+  /// `updateMany` compare-and-swap in commitDiscountRedemption — the same
+  /// pattern already used for ProductVariant.stock and the Order PAID
+  /// transition (see /api/checkout/verify) — never via a naive
+  /// read-then-write, so a capped code can't over-redeem under concurrent
+  /// checkouts.
+  redeemedCount             Int          @default(0)
+  startsAt                  DateTime?
+  endsAt                    DateTime?
+  active                    Boolean      @default(true)
+  createdById               String?
+  createdBy                 User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt                 DateTime     @default(now())
+  updatedAt                 DateTime     @updatedAt
+  orders                    Order[]
+  redemptions               DiscountRedemption[]
+
+  @@index([active])
+}
+
+/// One row per COMMITTED redemption (never per attempt) — created only by
+/// commitDiscountRedemption, at the same moment redeemedCount is
+/// incremented. `orderId` is unique so an order can never redeem twice;
+/// (discountId, email) backs the per-customer cap check.
+model DiscountRedemption {
+  id         String   @id @default(cuid())
+  discountId String
+  discount   Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  orderId    String   @unique
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  /// Normalized lowercase — matches the checkout email exactly (guest
+  /// checkout has no customerId to key off).
+  email      String
+  customerId String?
+  createdAt  DateTime @default(now())
+
+  @@index([discountId, email])
+}
+
+// ---------------------------------------------------------------------------
+// release-hardening — back-in-stock notifications (docs/audit-2026-09-19/storefront-ux.md)
+// ---------------------------------------------------------------------------
+
+/// "Notify me when available" capture for a sold-out ProductVariant.
+/// Restock detection is a periodic cron sweep (src/app/api/cron/
+/// back-in-stock/route.ts), not a hook at every stock-writing call site —
+/// see that route's doc comment for why. A pending (notifiedAt: null) row
+/// can only ever have been created while the variant's stock was <= 0
+/// (enforced server-side at signup — see subscribeToBackInStock), so
+/// "pending subscription + variant.stock now > 0" IS the 0->positive
+/// transition; no extra bookkeeping column is needed on ProductVariant.
+model BackInStockSubscription {
+  id         String         @id @default(cuid())
+  productId  String
+  product    Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variantId  String
+  variant    ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  /// Normalized lowercase — see subscribeToBackInStock.
+  email      String
+  createdAt  DateTime       @default(now())
+  /// Set the moment the restock email is handed to sendTransactionalEmail
+  /// (queued, not necessarily delivered) — that's when this subscription is
+  /// considered "consumed"; see sweepBackInStock. Null = still pending.
+  /// Also doubles as the claim marker: sweepBackInStock only ever sets it
+  /// via a conditional `updateMany` (notifiedAt: null -> now), the same
+  /// compare-and-swap idiom used everywhere else in this schema, so an
+  /// overlapping sweep run can't notify the same subscription twice.
+  notifiedAt DateTime?
+
+  // A given email can only have one PENDING subscription per variant — see
+  // the partial unique index added by raw SQL in this feature's migration
+  // (`... WHERE "notifiedAt" IS NULL`, mirroring JourneyEnrollment's own
+  // partial-unique-index precedent elsewhere in this schema; Prisma's
+  // schema DSL can't express a partial index). Once notified, the same
+  // email may sign up again for a future restock cycle. This index is only
+  // for query performance/documentation.
+  @@index([variantId, notifiedAt])
+  @@index([email])
 }

@@ -69,9 +69,26 @@ export const checkoutSchema = z.object({
   email: z.string().trim().email("Valid email is required").max(254),
   phone: indianPhoneField(),
   shippingAddress: shippingAddressSchema,
+  // Release-hardening F7: optional coupon code typed at checkout. Only ever
+  // a code string — never an amount — so the server (createOrderFromCart /
+  // src/lib/discounts/index.ts) is the only place a discount is ever
+  // computed; see that module's header comment.
+  discountCode: z.string().trim().min(1).max(40).optional(),
 });
 
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
+
+// Release-hardening F7: checkout-page "Apply" preview — re-prices the real
+// cart server-side (same repriceLines() create-order.ts uses) rather than
+// trusting a client-computed subtotal, so the previewed discount amount is
+// never inflated by a stale/tampered cart total.
+export const discountPreviewSchema = z.object({
+  items: z.array(checkoutItemSchema).min(1, "Your cart is empty").max(50),
+  code: z.string().trim().min(1).max(40),
+  email: z.string().trim().email().max(254).optional(),
+});
+
+export type DiscountPreviewInput = z.infer<typeof discountPreviewSchema>;
 
 export const checkoutVerifySchema = z.object({
   orderNumber: z.string().trim().min(1).max(40),
@@ -392,6 +409,44 @@ export const homepageSectionSchemas = {
   announcement: announcementContentSchema,
   "trust-stats": trustStatsContentSchema,
 } satisfies Record<HomepageSectionKey, z.ZodTypeAny>;
+
+// Release-hardening F7: admin discount-code CRUD
+// (POST/PATCH /api/admin/discounts). `minSubtotal`/`maxRedemptions`/
+// `maxRedemptionsPerCustomer`/`startsAt`/`endsAt` are all `.nullable()` (as
+// well as `.optional()` on the update variant) so an admin can explicitly
+// clear a previously-set cap/window, matching the distinction
+// src/lib/discounts/index.ts's updateDiscount draws between "omitted, leave
+// alone" (undefined) and "explicitly cleared" (null).
+export const discountSchema = z.object({
+  code: z
+    .string()
+    .trim()
+    .min(3, "Code must be at least 3 characters")
+    .max(40, "Code must be at most 40 characters")
+    .regex(/^[A-Za-z0-9_-]+$/, "Use letters, numbers, hyphens, and underscores only"),
+  type: z.enum(["PERCENTAGE", "FIXED"]),
+  value: z.number().positive("Value must be greater than 0").max(10_000_000),
+  minSubtotal: z.number().min(0).max(10_000_000).nullable().optional(),
+  maxRedemptions: z.number().int().positive("Must be at least 1").max(1_000_000).nullable().optional(),
+  maxRedemptionsPerCustomer: z.number().int().positive("Must be at least 1").max(1_000).nullable().optional(),
+  startsAt: z.coerce.date().nullable().optional(),
+  endsAt: z.coerce.date().nullable().optional(),
+  active: z.boolean().optional(),
+});
+
+export const discountUpdateSchema = discountSchema.partial();
+
+export type DiscountInput = z.infer<typeof discountSchema>;
+export type DiscountUpdateInput = z.infer<typeof discountUpdateSchema>;
+
+// Shopify-parity gap (storefront-ux.md): back-in-stock "Notify me" capture
+// (POST /api/back-in-stock).
+export const backInStockSubscribeSchema = z.object({
+  variantId: z.string().trim().min(1, "variantId is required"),
+  email: z.string().trim().email("Valid email is required").max(254),
+});
+
+export type BackInStockSubscribeInput = z.infer<typeof backInStockSubscribeSchema>;
 
 export const userUpdateSchema = z.object({
   name: z.string().min(2),

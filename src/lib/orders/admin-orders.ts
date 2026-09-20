@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import type { Order, OrderItem, OrderStatus, PaymentMethod } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { releaseDiscountRedemption } from "@/lib/discounts";
 import { assertValidOrderStatusTransition } from "@/lib/orders/status-transitions";
 import { buildOrdersCsv, type OrderCsvRow } from "@/lib/orders/csv";
 
@@ -96,6 +97,7 @@ export interface AdminOrderListItem {
   subtotal: number;
   shipping: number;
   discount: number;
+  discountCode: string | null;
   total: number;
   currency: string;
   status: OrderStatus;
@@ -160,6 +162,7 @@ async function fetchOrdersForAdmin(where: Prisma.OrderWhereInput): Promise<Admin
     subtotal: Number(row.subtotal),
     shipping: Number(row.shipping),
     discount: Number(row.discount),
+    discountCode: row.discountCode,
     total: Number(row.total),
     currency: row.currency,
     status: row.status,
@@ -263,6 +266,7 @@ export interface AdminOrderDetail {
   subtotal: number;
   shipping: number;
   discount: number;
+  discountCode: string | null;
   total: number;
   currency: string;
   status: OrderStatus;
@@ -292,6 +296,7 @@ export function serializeOrderDetail(row: OrderDetailRow): AdminOrderDetail {
     subtotal: Number(row.subtotal),
     shipping: Number(row.shipping),
     discount: Number(row.discount),
+    discountCode: row.discountCode,
     total: Number(row.total),
     currency: row.currency,
     status: row.status,
@@ -360,6 +365,14 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
   // no CANCELLED edge), so this is the only point its stock was ever
   // committed, and `restockItems` is only ever computed once per order.
   let restockItems: { variantId: string; quantity: number }[] | null = null;
+  // Release-hardening F7: an ORDER_REQUEST order's discount redemption (if
+  // any) is committed immediately at creation for the same reason its
+  // stock is — see src/lib/discounts/index.ts's module doc comment. If
+  // that order is cancelled before shipping, release the redemption back
+  // onto the code right alongside the stock restock above, so a
+  // usage-capped code isn't permanently short one redemption for an order
+  // that never actually shipped.
+  let shouldReleaseDiscount = false;
 
   if (input.status !== undefined && input.status !== existing.status) {
     assertValidOrderStatusTransition(existing.status, input.status);
@@ -376,6 +389,7 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
       restockItems = existing.items
         .filter((item): item is typeof item & { variantId: string } => item.variantId !== null)
         .map((item) => ({ variantId: item.variantId, quantity: item.quantity }));
+      shouldReleaseDiscount = existing.discountId !== null;
     }
   }
 
@@ -384,8 +398,8 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
   if (input.adminNotes !== undefined) data.adminNotes = input.adminNotes;
 
   let updated: Order;
-  if (restockItems && restockItems.length > 0) {
-    const itemsToRestock = restockItems;
+  if ((restockItems && restockItems.length > 0) || shouldReleaseDiscount) {
+    const itemsToRestock = restockItems ?? [];
     updated = await db.$transaction(async (tx) => {
       // Optimistic-concurrency guard, scoped to only this restocking path
       // (every other update below keeps the simple unconditional
@@ -407,6 +421,9 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
           where: { id: item.variantId },
           data: { stock: { increment: item.quantity } },
         });
+      }
+      if (shouldReleaseDiscount) {
+        await releaseDiscountRedemption(tx, id);
       }
       return tx.order.findUniqueOrThrow({ where: { id } });
     });

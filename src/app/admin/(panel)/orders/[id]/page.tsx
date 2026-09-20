@@ -81,7 +81,7 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
               </div>
               {order.discount > 0 && (
                 <div className="flex justify-between">
-                  <span className="text-muted">Discount</span>
+                  <span className="text-muted">Discount{order.discountCode ? ` (${order.discountCode})` : ""}</span>
                   <span className="text-ink">-{formatInr(order.discount)}</span>
                 </div>
               )}

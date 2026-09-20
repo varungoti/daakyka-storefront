@@ -30,6 +30,9 @@ export const EMAIL_KIND = {
   ORDER_CONFIRMATION_ADMIN: "order_confirmation_admin",
   CUSTOMER_VERIFY_EMAIL: "customer_verify_email",
   CUSTOMER_RESET_PASSWORD: "customer_reset_password",
+  // Shopify-parity gap: back-in-stock "Notify me" restock email — see
+  // src/lib/back-in-stock/index.ts's sweepBackInStock.
+  BACK_IN_STOCK: "back_in_stock",
 } as const;
 
 export type EmailKind = (typeof EMAIL_KIND)[keyof typeof EMAIL_KIND];

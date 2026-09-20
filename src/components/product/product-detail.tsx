@@ -11,7 +11,8 @@ import { WishlistButton } from "@/components/wishlist/wishlist-button";
 import { useCurrency } from "@/context/currency-provider";
 import type { SizeChartForDisplay } from "@/lib/catalog/size-charts";
 import { computePercentOff } from "@/lib/pricing/percent-off";
-import { isSizeAvailableForColor, resolveVariant } from "@/lib/products/resolve-variant";
+import { isSizeAvailableForColor, isVariantInStock, resolveVariant } from "@/lib/products/resolve-variant";
+import { NotifyWhenAvailable } from "@/components/product/notify-when-available";
 import type { DisplayReview, GetApprovedReviewsResult, ReviewSort, ReviewSummary } from "@/lib/reviews";
 import type { Product } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -84,6 +85,16 @@ export function ProductDetail({
   const isInstitutional = Boolean(product.section && INSTITUTIONAL_SECTIONS.has(product.section));
   const sizeUnavailable =
     Boolean(selectedSize) && !isSizeAvailableForColor(product.variants, selectedSize, selectedColor);
+  // Shopify-parity gap: "Notify me when available". Only for a real,
+  // DB-tracked variant (typeof stock === "number" — see
+  // isVariantInStock's own doc comment) that resolved to a specific,
+  // currently out-of-stock row; a Shopify-/legacy-seed-backed product with
+  // no native stock tracking has no ProductVariant.id to subscribe
+  // against, so it's out of scope here.
+  const notifyMeVariantId =
+    selectedVariant && typeof selectedVariant.stock === "number" && !isVariantInStock(selectedVariant)
+      ? selectedVariant.id
+      : null;
 
   return (
     <div>
@@ -230,6 +241,8 @@ export function ProductDetail({
             <WishlistButton product={product} className="border border-border p-4" />
           </div>
 
+          {notifyMeVariantId && <NotifyWhenAvailable key={notifyMeVariantId} variantId={notifyMeVariantId} />}
+
           {isInstitutional && (
             <Link
               href="/bulk-orders"
@@ -243,10 +256,22 @@ export function ProductDetail({
 
       <div className="mt-12 max-w-3xl">
         <AccordionItem title="Description" defaultOpen>
-          <p>
-            {product.description ??
-              "Premium apparel engineered for all-day comfort and durability, built for healthcare and institutional wear."}
-          </p>
+          {product.descriptionHtml ? (
+            // F-12 (docs/audit-2026-09-19/admin-ux.md): `descriptionHtml` is
+            // produced server-side by mapDbProductToUi via
+            // src/lib/catalog/description-html.ts, which sanitizes against a
+            // small allowlist (or HTML-escapes legacy plain text into
+            // paragraphs) before it ever becomes a `Product` prop — this is
+            // the one deliberate, narrowly-scoped use of
+            // dangerouslySetInnerHTML for product content, never applied to
+            // any other field.
+            <div
+              className="prose-description [&_a]:text-brand [&_a]:underline [&_li]:ml-4 [&_ol]:list-decimal [&_p+p]:mt-3 [&_ul]:list-disc"
+              dangerouslySetInnerHTML={{ __html: product.descriptionHtml }}
+            />
+          ) : (
+            <p>Premium apparel engineered for all-day comfort and durability, built for healthcare and institutional wear.</p>
+          )}
         </AccordionItem>
 
         <AccordionItem title="Fabric & Care">

@@ -8,6 +8,13 @@ import {
   OrderNumberGenerationError,
 } from "@/lib/orders/number";
 import { generateOrderAccessToken, hashOrderAccessToken } from "@/lib/orders/access-token";
+import {
+  commitDiscountRedemption,
+  DiscountAlreadyUsedError,
+  DiscountUsageLimitReachedError,
+  resolveDiscount,
+  type ResolvedDiscount,
+} from "@/lib/discounts";
 
 /**
  * Phase D3: server-side order creation from the client cart.
@@ -60,6 +67,11 @@ export interface CreateOrderFromCartInput {
   shippingAddress: ShippingAddressInput;
   customerId?: string;
   paymentMethod: OrderPaymentMethod;
+  /** Optional coupon code typed at checkout — a code string only, NEVER an
+   * amount. Re-looked-up and re-priced entirely from the DB via
+   * src/lib/discounts/index.ts; see repriceLines's own comment for why the
+   * same rule applies to every other checkout input. */
+  discountCode?: string;
 }
 
 export interface CreatedOrder {
@@ -73,6 +85,7 @@ export interface CreatedOrder {
   subtotal: number;
   shipping: number;
   discount: number;
+  discountCode: string | null;
   total: number;
   currency: string;
   status: string;
@@ -106,7 +119,7 @@ export class OutOfStockError extends Error {
   }
 }
 
-interface RepricedLine {
+export interface RepricedLine {
   variantId: string;
   productName: string;
   variantLabel: string;
@@ -116,7 +129,14 @@ interface RepricedLine {
   imageUrl: string | null;
 }
 
-async function repriceLines(items: CreateOrderItemInput[]): Promise<RepricedLine[]> {
+/**
+ * Exported so callers that need a truthful, server-computed subtotal
+ * without creating an order — currently just POST /api/checkout/discount's
+ * live coupon preview — can reuse the exact same re-pricing/stock/status
+ * checks as real checkout, instead of a second, drift-prone copy of this
+ * logic.
+ */
+export async function repriceLines(items: CreateOrderItemInput[]): Promise<RepricedLine[]> {
   // Merge duplicate variant ids defensively — the client should already
   // dedupe cart lines, but nothing here depends on that being true.
   const quantityByVariant = new Map<string, number>();
@@ -176,8 +196,30 @@ export async function createOrderFromCart(input: CreateOrderFromCartInput): Prom
     getSetting("shipping.flatRate"),
     getSetting("shipping.freeAbove"),
   ]);
+  // Release-hardening F7 design decision: the free-shipping threshold is
+  // evaluated against the pre-discount subtotal — a coupon never costs a
+  // shopper free shipping they already earned by cart size. Evaluating it
+  // post-discount would only ever be worse for the customer (a discount
+  // can only lower the subtotal, never raise it), which is a punitive,
+  // surprising interaction ("I applied a code and now shipping costs
+  // extra") and would also invite an odd feedback loop between the two
+  // settings. Keeping this line exactly as it was before discounts existed
+  // means shipping and discount are independent line items computed from
+  // the same source subtotal, in the order they're displayed in the
+  // summary — simplest to reason about, and matches how most real
+  // ecommerce free-shipping thresholds work (keyed to merchandise value,
+  // not the post-coupon total).
   const shipping = subtotal >= freeAbove ? 0 : flatRate;
-  const discount = 0;
+
+  // Fast, non-authoritative pre-check (see resolveDiscount's doc comment) —
+  // the actual cap enforcement happens inside the transaction below via
+  // commitDiscountRedemption. A code the client supplies is looked up and
+  // re-priced fresh from the DB every time; no amount the client sends is
+  // ever read.
+  const resolvedDiscount: ResolvedDiscount | null = input.discountCode
+    ? await resolveDiscount(input.discountCode, subtotal, input.email)
+    : null;
+  const discount = resolvedDiscount?.amount ?? 0;
   const total = subtotal + shipping - discount;
   const initialStatus = input.paymentMethod === "ORDER_REQUEST" ? "PROCESSING" : "PENDING_PAYMENT";
 
@@ -216,7 +258,7 @@ export async function createOrderFromCart(input: CreateOrderFromCartInput): Prom
           }
         }
 
-        return tx.order.create({
+        const created = await tx.order.create({
           data: {
             number,
             accessTokenHash,
@@ -232,6 +274,8 @@ export async function createOrderFromCart(input: CreateOrderFromCartInput): Prom
             subtotal,
             shipping,
             discount,
+            discountId: resolvedDiscount?.id,
+            discountCode: resolvedDiscount?.code,
             total,
             currency: "INR",
             status: initialStatus,
@@ -249,6 +293,30 @@ export async function createOrderFromCart(input: CreateOrderFromCartInput): Prom
             },
           },
         });
+
+        // ORDER_REQUEST has no later payment step to defer to (same reason
+        // its stock decrement above happens immediately too) — commit the
+        // redemption now, in the same transaction, so a cap violation rolls
+        // back the whole order rather than ever being created unredeemed.
+        // RAZORPAY defers this to the PAID transition (/api/checkout/verify
+        // and the webhook) — see this module's header comment.
+        if (resolvedDiscount && input.paymentMethod === "ORDER_REQUEST") {
+          const commit = await commitDiscountRedemption(tx, {
+            discountId: resolvedDiscount.id,
+            maxRedemptions: resolvedDiscount.maxRedemptions,
+            maxRedemptionsPerCustomer: resolvedDiscount.maxRedemptionsPerCustomer,
+            orderId: created.id,
+            email: input.email,
+            customerId: input.customerId ?? null,
+          });
+          if (!commit.ok) {
+            throw commit.reason === "already_used"
+              ? new DiscountAlreadyUsedError()
+              : new DiscountUsageLimitReachedError();
+          }
+        }
+
+        return created;
       });
 
       return {
@@ -258,6 +326,7 @@ export async function createOrderFromCart(input: CreateOrderFromCartInput): Prom
         subtotal,
         shipping,
         discount,
+        discountCode: resolvedDiscount?.code ?? null,
         total,
         currency: order.currency,
         status: order.status,

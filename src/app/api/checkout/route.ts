@@ -6,6 +6,15 @@ import {
   InvalidVariantError,
   OutOfStockError,
 } from "@/lib/orders/create-order";
+import {
+  DiscountAlreadyUsedError,
+  DiscountExpiredError,
+  DiscountInactiveError,
+  DiscountMinSubtotalError,
+  DiscountNotFoundError,
+  DiscountNotStartedError,
+  DiscountUsageLimitReachedError,
+} from "@/lib/discounts";
 import { notifyNewOrder } from "@/lib/orders/notify";
 import { createRazorpayOrder, getRazorpayKeyId, isRazorpayConfigured } from "@/lib/payments/razorpay";
 import { orderRequestThrottleOrResponse } from "@/lib/security/order-request-throttle";
@@ -62,7 +71,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { items, email, phone, shippingAddress } = parsed.data;
+  const { items, email, phone, shippingAddress, discountCode } = parsed.data;
   const razorpayReady = await isRazorpayConfigured();
 
   // Finding B: the ORDER_REQUEST fallback below has no payment gate, so an
@@ -84,6 +93,7 @@ export async function POST(request: Request) {
       shippingAddress,
       customerId,
       paymentMethod: razorpayReady ? "RAZORPAY" : "ORDER_REQUEST",
+      discountCode,
     });
 
     if (!razorpayReady) {
@@ -143,6 +153,17 @@ export async function POST(request: Request) {
         { error: error.message, variantId: error.variantId },
         { status: 400 },
       );
+    }
+    if (
+      error instanceof DiscountNotFoundError ||
+      error instanceof DiscountInactiveError ||
+      error instanceof DiscountNotStartedError ||
+      error instanceof DiscountExpiredError ||
+      error instanceof DiscountMinSubtotalError ||
+      error instanceof DiscountUsageLimitReachedError ||
+      error instanceof DiscountAlreadyUsedError
+    ) {
+      return NextResponse.json({ error: error.message, field: "discountCode" }, { status: 400 });
     }
     console.error("[checkout] failed to create order", error);
     return NextResponse.json({ error: "Could not process checkout" }, { status: 500 });

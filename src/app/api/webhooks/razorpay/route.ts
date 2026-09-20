@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { commitDiscountRedemption } from "@/lib/discounts";
 import { notifyNewOrder } from "@/lib/orders/notify";
 import { verifyWebhookSignature } from "@/lib/payments/razorpay";
 
@@ -41,7 +42,7 @@ async function handlePaymentCaptured(payment: { id?: string; order_id?: string }
 
   const order = await db.order.findFirst({
     where: { razorpayOrderId: payment.order_id },
-    include: { items: true },
+    include: { items: true, appliedDiscount: true },
   });
   if (!order) return;
 
@@ -54,6 +55,7 @@ async function handlePaymentCaptured(payment: { id?: string; order_id?: string }
   if (order.status === "PAID") return;
 
   let stockConflict = false;
+  let discountConflict = false;
   let wonTransition = false;
   await db.$transaction(async (tx) => {
     // Atomic gate: `status: { not: "PAID" }` makes this a compare-and-swap
@@ -78,14 +80,35 @@ async function handlePaymentCaptured(payment: { id?: string; order_id?: string }
       if (result.count === 0) stockConflict = true;
     }
 
-    if (stockConflict) {
+    // Keep this consistent with /api/checkout/verify's transaction shape —
+    // see this route's own header comment and src/lib/discounts/index.ts's
+    // module doc comment for why a RAZORPAY order's discount is committed
+    // here (at PAID time) rather than at order creation.
+    if (order.discountId && order.appliedDiscount) {
+      const commit = await commitDiscountRedemption(tx, {
+        discountId: order.discountId,
+        maxRedemptions: order.appliedDiscount.maxRedemptions,
+        maxRedemptionsPerCustomer: order.appliedDiscount.maxRedemptionsPerCustomer,
+        orderId: order.id,
+        email: order.email,
+        customerId: order.customerId,
+      });
+      if (!commit.ok) discountConflict = true;
+    }
+
+    if (stockConflict || discountConflict) {
+      const notes = [
+        order.adminNotes,
+        stockConflict
+          ? "STOCK CONFLICT: manual review needed — an item sold out between order creation and payment."
+          : null,
+        discountConflict
+          ? "DISCOUNT CONFLICT: manual review needed — the discount code's usage limit filled up between order creation and payment. The customer already paid the discounted amount."
+          : null,
+      ].filter(Boolean);
       await tx.order.update({
         where: { id: order.id },
-        data: {
-          adminNotes: [order.adminNotes, "STOCK CONFLICT: manual review needed — an item sold out between order creation and payment."]
-            .filter(Boolean)
-            .join("\n"),
-        },
+        data: { adminNotes: notes.join("\n") },
       });
     }
   });
@@ -107,6 +130,19 @@ async function handlePaymentCaptured(payment: { id?: string; order_id?: string }
           body: `Reconciled via the Razorpay webhook — payment captured but stock ran out. Manual review needed.`,
           type: "order_stock_conflict",
           metadata: JSON.stringify({ orderNumber: order.number }),
+        },
+      })
+      .catch(() => undefined);
+  }
+
+  if (discountConflict) {
+    await db.adminNotification
+      .create({
+        data: {
+          title: `Discount conflict on order ${order.number}`,
+          body: `Reconciled via the Razorpay webhook — payment captured with code ${order.discountCode ?? "(unknown)"} but its usage limit filled up first. The customer already paid the discounted amount — manual review needed.`,
+          type: "order_discount_conflict",
+          metadata: JSON.stringify({ orderNumber: order.number, discountCode: order.discountCode }),
         },
       })
       .catch(() => undefined);

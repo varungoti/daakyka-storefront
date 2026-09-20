@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { commitDiscountRedemption } from "@/lib/discounts";
 import { hashOrderAccessToken } from "@/lib/orders/access-token";
 import { notifyNewOrder } from "@/lib/orders/notify";
 import { verifyPaymentSignature } from "@/lib/payments/razorpay";
@@ -41,7 +42,10 @@ export async function POST(request: Request) {
 
   const { orderNumber, razorpayPaymentId, razorpayOrderId, razorpaySignature, orderToken } = parsed.data;
 
-  const order = await db.order.findUnique({ where: { number: orderNumber }, include: { items: true } });
+  const order = await db.order.findUnique({
+    where: { number: orderNumber },
+    include: { items: true, appliedDiscount: true },
+  });
   if (!order || order.razorpayOrderId !== razorpayOrderId) {
     return NextResponse.json({ error: "Order not found" }, { status: 404 });
   }
@@ -61,6 +65,7 @@ export async function POST(request: Request) {
   }
 
   let stockConflict = false;
+  let discountConflict = false;
   let wonTransition = false;
   await db.$transaction(async (tx) => {
     // Atomic gate: `status: { not: "PAID" }` makes this a compare-and-swap
@@ -84,14 +89,38 @@ export async function POST(request: Request) {
       if (result.count === 0) stockConflict = true;
     }
 
-    if (stockConflict) {
+    // Release-hardening F7: a RAZORPAY order's discount (if any) was priced
+    // in at creation but deliberately NOT reserved against the code's cap
+    // until now — see src/lib/discounts/index.ts's module doc comment for
+    // why. Payment is already captured at this point, so — same principle
+    // as the stock conflict above — a lost race here never fails the
+    // payment; it just flags the order for manual review and leaves the
+    // discount amount the customer already paid untouched.
+    if (order.discountId && order.appliedDiscount) {
+      const commit = await commitDiscountRedemption(tx, {
+        discountId: order.discountId,
+        maxRedemptions: order.appliedDiscount.maxRedemptions,
+        maxRedemptionsPerCustomer: order.appliedDiscount.maxRedemptionsPerCustomer,
+        orderId: order.id,
+        email: order.email,
+        customerId: order.customerId,
+      });
+      if (!commit.ok) discountConflict = true;
+    }
+
+    if (stockConflict || discountConflict) {
+      const notes = [
+        order.adminNotes,
+        stockConflict
+          ? "STOCK CONFLICT: manual review needed — an item sold out between order creation and payment."
+          : null,
+        discountConflict
+          ? "DISCOUNT CONFLICT: manual review needed — the discount code's usage limit filled up between order creation and payment. The customer already paid the discounted amount."
+          : null,
+      ].filter(Boolean);
       await tx.order.update({
         where: { id: order.id },
-        data: {
-          adminNotes: [order.adminNotes, "STOCK CONFLICT: manual review needed — an item sold out between order creation and payment."]
-            .filter(Boolean)
-            .join("\n"),
-        },
+        data: { adminNotes: notes.join("\n") },
       });
     }
   });
@@ -112,6 +141,19 @@ export async function POST(request: Request) {
           body: `Payment was captured for ${order.number} but one or more items ran out of stock before payment completed. Manual review needed.`,
           type: "order_stock_conflict",
           metadata: JSON.stringify({ orderNumber: order.number }),
+        },
+      })
+      .catch(() => undefined);
+  }
+
+  if (discountConflict) {
+    await db.adminNotification
+      .create({
+        data: {
+          title: `Discount conflict on order ${order.number}`,
+          body: `Payment was captured for ${order.number} with code ${order.discountCode ?? "(unknown)"} but its usage limit filled up before payment completed. The customer already paid the discounted amount — manual review needed.`,
+          type: "order_discount_conflict",
+          metadata: JSON.stringify({ orderNumber: order.number, discountCode: order.discountCode }),
         },
       })
       .catch(() => undefined);
