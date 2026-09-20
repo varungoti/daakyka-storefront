@@ -3,9 +3,9 @@ import { db } from "@/lib/db";
 import type { AdminNotification } from "@/generated/prisma/client";
 
 /**
- * Audit gap: "No 'mark read' (nothing ever sets read)" on
- * /admin/notifications — `AdminNotification.read` was written once at
- * creation (always `false`, the column default) and never updated.
+ * `markNotificationRead`/`markAllNotificationsRead` below set
+ * `AdminNotification.read` (it starts `false`, the column default, at
+ * creation) — mark-as-read is implemented, not a gap.
  *
  * There's no dedicated `notifications:manage` permission in
  * src/lib/auth/rbac.ts; the notifications page and its nav item already

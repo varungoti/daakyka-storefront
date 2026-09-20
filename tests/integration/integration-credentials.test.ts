@@ -59,6 +59,42 @@ describe("credential-store: getCredential/setCredential/clearCredential round tr
     assert.equal((await getCredentialMeta("RAZORPAY", "KEY_ID")).configured, false);
   });
 
+  // release-hardening item 2 (F13, docs/audit-2026-09-19/correctness.md):
+  // the pure encrypt()/decrypt() tamper case is covered in
+  // src/lib/integrations/credential-store.test.ts ("fails to decrypt a
+  // tampered ciphertext"). This proves the same failure mode end-to-end
+  // through the actual store: a row corrupted directly in the DB (e.g. a
+  // manual edit, or bit rot) must degrade getCredential() to null — same
+  // as "never set" — rather than throwing and taking down whatever
+  // checkout/email flow called it (see readCredentialFromDb's catch).
+  it("a row tampered with directly in the DB degrades to null instead of throwing", async () => {
+    const adminId = await findAnyAdminId();
+
+    await setCredential("RAZORPAY", "KEY_ID", "rzp_test_tamper_target", adminId);
+    const stored = await db.integrationCredential.findUnique({
+      where: { provider_key: { provider: "RAZORPAY", key: "KEY_ID" } },
+    });
+    assert.ok(stored, "expected the credential row to exist after setCredential");
+
+    // Flip one character in the ciphertext segment (iv.authTag.ciphertext)
+    // — same tamper shape as credential-store.test.ts's pure decrypt()
+    // case, but written straight into the DB the way an out-of-band edit
+    // (or storage corruption) would actually happen.
+    const parts = stored!.valueEncrypted.split(".");
+    const ciphertext = Buffer.from(parts[2], "base64");
+    ciphertext[0] ^= 0xff;
+    parts[2] = ciphertext.toString("base64");
+    await db.integrationCredential.update({
+      where: { provider_key: { provider: "RAZORPAY", key: "KEY_ID" } },
+      data: { valueEncrypted: parts.join(".") },
+    });
+
+    await assert.doesNotReject(async () => {
+      const value = await getCredential("RAZORPAY", "KEY_ID");
+      assert.equal(value, null, "a tampered row must read back as null, never a garbage value");
+    });
+  });
+
   it("writes audit log entries for set and clear, and never logs the value", async () => {
     const adminId = await findAnyAdminId();
 

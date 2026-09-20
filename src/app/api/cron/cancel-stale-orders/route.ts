@@ -9,6 +9,17 @@ import { authorizeCron } from "@/lib/cron/authorize";
  * online payment step to wait for, so this cron's
  * `paymentMethod: RAZORPAY` filter already excludes them without any
  * extra condition.
+ *
+ * Deliberately does NOT restock: a RAZORPAY order only reaches this
+ * query pre-payment (`razorpayPaymentId: null`), and per
+ * createOrderFromCart's design note (src/lib/orders/create-order.ts),
+ * stock for a RAZORPAY order is never decremented until payment is
+ * verified — so there is nothing to give back here. Contrast with an
+ * admin cancelling an ORDER_REQUEST order (src/lib/orders/admin-orders.ts,
+ * "Finding B"), which DOES restock, because that payment method
+ * decrements stock immediately at creation. Adding a restock step here
+ * would double-restore inventory that a Razorpay order never actually
+ * reserved.
  */
 const STALE_AFTER_MS = 30 * 60 * 1000;
 

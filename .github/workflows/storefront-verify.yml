@@ -46,6 +46,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # release-hardening item 2 (section 6, docs/AUDIT_AND_UX_PLAN_2026-09-19.md):
+      # --omit=dev means only advisories reachable from a real deploy's
+      # `npm ci --omit=dev` can fail this step; dev-only tooling (Lighthouse
+      # CI, Playwright, etc.) is excluded on purpose. Gated at "critical",
+      # not "high": today's only --omit=dev findings are 4 HIGH-severity
+      # advisories (deepmerge-ts stack exhaustion, mysql2 auth/DoS issues),
+      # all transitive deps of the `prisma` CLI's MySQL-provider config
+      # support — a code path this Postgres-only app never runs — with no
+      # non-breaking fix yet (`npm audit fix --force` downgrades prisma to
+      # 6.x). Gating at "high" would red every build for a finding that
+      # isn't actionable without a real regression; "critical" still fails
+      # the build immediately for the class of finding that matters most.
+      # Revisit the threshold once prisma ships a fix, or reconsider moving
+      # the `prisma` CLI package to devDependencies (build-time only, not
+      # used by the running server) — both out of scope for this change.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=critical
+
       - name: Setup database
         run: npm run db:setup
 

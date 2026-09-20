@@ -14,7 +14,6 @@ import { GET as getCronCampaigns } from "@/app/api/cron/campaigns/route";
 import { POST as postProductView } from "@/app/api/analytics/product-view/route";
 import { POST as postContact } from "@/app/api/contact/route";
 import { POST as postBulkOrder } from "@/app/api/bulk-orders/route";
-import { GET as getCart, POST as postCart } from "@/app/api/cart/route";
 import { POST as postShopifyWebhook } from "@/app/api/webhooks/shopify/orders/route";
 import { checkRateLimit, resetRateLimits } from "@/lib/security/rate-limit";
 
@@ -312,26 +311,6 @@ describe("API integration", () => {
       assert.deepEqual(stored?.categoryInterest, []);
 
       await db.bulkOrderLead.delete({ where: { id: body.id } });
-    });
-  });
-
-  describe("cart API", () => {
-    it("returns local mode when Shopify is not configured", async () => {
-      const getResponse = await getCart(new Request("http://localhost/api/cart"));
-      assert.equal(getResponse.status, 200);
-      const getBody = (await getResponse.json()) as { mode: string };
-      assert.equal(getBody.mode, "local");
-
-      const postResponse = await postCart(
-        new Request("http://localhost/api/cart", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "create" }),
-        }),
-      );
-      assert.equal(postResponse.status, 200);
-      const postBody = (await postResponse.json()) as { mode: string };
-      assert.equal(postBody.mode, "local");
     });
   });
 

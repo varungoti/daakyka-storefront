@@ -59,7 +59,7 @@ describe("media catalog", () => {
     for (const handle of products.map((product) => product.handle)) {
       const image = productImage(handle);
       assertHttpsUrl(image);
-      assert.match(image, /(pexels|unsplash|shopify)/);
+      assert.match(image, /(pexels|unsplash)/);
     }
   });
 

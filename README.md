@@ -68,8 +68,6 @@ AUTH_SECRET=your-long-random-secret
 ADMIN_SEED_EMAIL=admin@example.com
 ADMIN_SEED_PASSWORD=change-me
 
-NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN=your-store.myshopify.com
-NEXT_PUBLIC_SHOPIFY_STOREFRONT_ACCESS_TOKEN=your-token
 NEXT_PUBLIC_USD_TO_INR_RATE=83
 ```
 
@@ -107,7 +105,7 @@ All planned features, hardening, and **194 automated tests** are complete. Run:
 npm run verify:101
 ```
 
-Credential-blocked for production go-live: Shopify, Brevo, WATI, Postgres deploy. See `docs/COMPLETION_STATUS.md`.
+Credential-blocked for production go-live: Brevo, WATI, Postgres deploy. See `docs/COMPLETION_STATUS.md`.
 
 **Note:** AI Fit Scan is intentionally excluded from the current build.
 
@@ -134,9 +132,10 @@ HERMES_DEFAULT_MODE=SUGGEST_ONLY
 
 Health: `GET /api/hermes/runtime/health` · Admin: `/admin/hermes`
 
-### Cart Modes
-- **Demo mode** (default): localStorage cart
-- **Shopify mode**: set Shopify env vars — cart uses Storefront API and Shopify checkout
+### Cart
+localStorage-backed cart (no external cart/checkout service). Checkout is native —
+Razorpay online payment with an order-request fallback when it's unconfigured; see
+`docs/PAYMENTS_RAZORPAY.md`.
 
 ### Currency
 - Base currency: **INR (₹)** with USD toggle in header

@@ -30,7 +30,7 @@ export default async function MixMatchStudioPage() {
               Virtual Try-On Studio
             </h1>
             <p className="mt-3 max-w-2xl text-muted">
-              Production test bed for MediaPipe AR try-on. All Shopify catalog products sync here
+              Production test bed for MediaPipe AR try-on. Every catalog product is available here
               automatically.
             </p>
           </div>

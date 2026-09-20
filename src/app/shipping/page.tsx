@@ -18,7 +18,7 @@ export default function ShippingPage() {
       </p>
       <p>
         Pan India delivery is available. Shipping fees and free-shipping thresholds are shown at
-        checkout once Shopify checkout is connected.
+        checkout.
       </p>
       <p>
         For bulk or hospital orders, contact our team via the{" "}
