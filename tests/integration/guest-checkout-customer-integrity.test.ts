@@ -7,6 +7,10 @@ import { linkGuestOrdersToCustomer } from "@/lib/orders/claim-guest-orders";
 import { getOrderForAdmin, listOrdersForAdmin } from "@/lib/orders/admin-orders";
 import { getCustomerForAdmin, listCustomersForAdmin } from "@/lib/customers/admin-customers";
 import { createReview } from "@/lib/reviews/create-review";
+import { hashPassword } from "@/lib/customer-auth/password";
+import { resetRateLimits } from "@/lib/security/rate-limit";
+import { POST as postRegister } from "@/app/api/account/register/route";
+import { POST as postLogin } from "@/app/api/account/login/route";
 
 /**
  * Release-hardening F-01 / plan item 1.4: "Guest checkout auto-creates a
@@ -53,6 +57,14 @@ after(async () => {
     await db.category.deleteMany({ where: { id: { in: createdCategoryIds } } }).catch(() => {});
   }
 });
+
+function jsonRequest(url: string, method: string, body?: unknown): Request {
+  return new Request(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+}
 
 async function createActiveProductWithVariant() {
   const unique = randomUUID().slice(0, 8);
@@ -218,10 +230,9 @@ describe("F-01: claiming prior guest orders on registration", () => {
     createdOrderIds.push(guestOrder.id);
     assert.equal(guestOrder.status, "PROCESSING");
 
-    // The shopper now registers a real account with the same email — the
-    // register route (owned by a concurrent agent) would call
-    // linkGuestOrdersToCustomer right after this db.customer.create; this
-    // test exercises that same effect directly.
+    // The shopper now registers a real account with the same email. This
+    // calls the claim directly to isolate its effect; the suite below
+    // covers POST /api/account/register actually invoking it.
     const customer = await db.customer.create({ data: { email, name, passwordHash: "x" } });
     createdCustomerIds.push(customer.id);
 
@@ -284,5 +295,161 @@ describe("F-01: registered-customer checkout is unaffected (regression guard)", 
     });
     createdReviewIds.push(review.id);
     assert.equal(review.verifiedPurchase, true);
+  });
+});
+
+/**
+ * The two suites above exercise linkGuestOrdersToCustomer directly. These
+ * drive the two routes that actually call it, so the wiring itself is
+ * covered — the original bug was precisely that the function existed,
+ * worked, and was never invoked.
+ *
+ * Harness limitation (the same one documented at the top of
+ * tests/integration/customer-auth.test.ts): calling a route handler
+ * outside a real Next.js request makes `cookies()` throw, so
+ * createCustomerSession() fails and the route's own try/catch turns the
+ * success path into a 500. Both routes claim *before* that cookie write,
+ * so the claim still happens and its DB effect is what these assert,
+ * accepting either status. That ordering is deliberate rather than
+ * incidental: a claim placed after the session write would be skipped by
+ * any failure in it.
+ */
+describe("F-01: the routes that claim guest orders actually call it", () => {
+  it("POST /api/account/register claims a guest order placed before the account existed", async () => {
+    await resetRateLimits(["account-register"]);
+    const { product, variant } = await createActiveProductWithVariant();
+    const unique = randomUUID().slice(0, 8);
+    // Mixed case on purpose: the order keeps what the shopper typed, the
+    // route lowercases what it stores, and the claim still has to match.
+    const guestEmail = `Register-Claim-${unique}@Example.com`;
+    const accountEmail = guestEmail.toLowerCase();
+    const name = `Register Claim Guest ${unique}`;
+
+    const guestOrder = await createOrderFromCart({
+      items: [{ variantId: variant.id, quantity: 1 }],
+      email: guestEmail,
+      shippingAddress: { name, line1: "1 Test St", city: "Hyderabad", state: "TG", pincode: "500032", country: "IN" },
+      paymentMethod: "ORDER_REQUEST",
+    });
+    createdOrderIds.push(guestOrder.id);
+    assert.equal(
+      (await db.order.findUniqueOrThrow({ where: { id: guestOrder.id } })).customerId,
+      null,
+      "precondition: the guest order starts unclaimed",
+    );
+
+    const response = await postRegister(
+      jsonRequest("http://localhost/api/account/register", "POST", {
+        name,
+        email: guestEmail,
+        password: "password123",
+        consentGiven: true,
+      }),
+    );
+    assert.ok([201, 500].includes(response.status), `unexpected status ${response.status}`);
+
+    const customer = await db.customer.findUnique({ where: { email: accountEmail } });
+    assert.ok(customer, "the register route should have created the account");
+    createdCustomerIds.push(customer!.id);
+
+    const claimed = await db.order.findUniqueOrThrow({ where: { id: guestOrder.id } });
+    assert.equal(
+      claimed.customerId,
+      customer!.id,
+      "POST /api/account/register must claim the prior guest order, not merely be able to",
+    );
+    assert.equal(claimed.email, guestEmail, "the claim must not rewrite the order's own contact details");
+
+    // And it lands where a shopper or admin would actually look for it.
+    const detail = await getCustomerForAdmin(customer!.id);
+    assert.equal(detail.orderCount, 1);
+    assert.equal(detail.totalSpent, Number(guestOrder.total));
+
+    const review = await createReview({
+      customerId: customer!.id,
+      productId: product.id,
+      rating: 5,
+      title: "Arrived quickly and fits well",
+      body: "Ordered before making an account and it still showed up in my history.",
+    });
+    createdReviewIds.push(review.id);
+    assert.equal(review.verifiedPurchase, true);
+  });
+
+  it("POST /api/account/login claims a guest order placed after the account already existed", async () => {
+    await resetRateLimits(["account-login"]);
+    const { variant } = await createActiveProductWithVariant();
+    const unique = randomUUID().slice(0, 8);
+    const email = `login-claim-${unique}@example.com`;
+    const password = "password123";
+
+    // The account exists first, so registration's own claim has already run
+    // and found nothing. Only afterwards does the shopper check out while
+    // logged out (expired session, another device), which is what leaves a
+    // fresh order unclaimed under an email that already has an account.
+    const customer = await db.customer.create({
+      data: { email, name: `Login Claim Shopper ${unique}`, passwordHash: await hashPassword(password) },
+    });
+    createdCustomerIds.push(customer.id);
+
+    const guestOrder = await createOrderFromCart({
+      items: [{ variantId: variant.id, quantity: 1 }],
+      email,
+      shippingAddress: { name: customer.name, line1: "1 Test St", city: "Hyderabad", state: "TG", pincode: "500032", country: "IN" },
+      paymentMethod: "ORDER_REQUEST",
+    });
+    createdOrderIds.push(guestOrder.id);
+    assert.equal(
+      (await db.order.findUniqueOrThrow({ where: { id: guestOrder.id } })).customerId,
+      null,
+      "precondition: checking out logged-out leaves the order unclaimed even though the account exists",
+    );
+
+    const response = await postLogin(
+      jsonRequest("http://localhost/api/account/login", "POST", { email, password }),
+    );
+    assert.ok([200, 500].includes(response.status), `unexpected status ${response.status}`);
+
+    const claimed = await db.order.findUniqueOrThrow({ where: { id: guestOrder.id } });
+    assert.equal(
+      claimed.customerId,
+      customer.id,
+      "signing in must pick up a guest order placed since signup, which registration's claim can never cover",
+    );
+
+    const detail = await getCustomerForAdmin(customer.id);
+    assert.equal(detail.orderCount, 1);
+  });
+
+  it("a failed login claims nothing, so the claim sits behind the credential check", async () => {
+    await resetRateLimits(["account-login"]);
+    const { variant } = await createActiveProductWithVariant();
+    const unique = randomUUID().slice(0, 8);
+    const email = `login-denied-${unique}@example.com`;
+
+    const customer = await db.customer.create({
+      data: { email, name: `Login Denied Shopper ${unique}`, passwordHash: await hashPassword("password123") },
+    });
+    createdCustomerIds.push(customer.id);
+
+    const guestOrder = await createOrderFromCart({
+      items: [{ variantId: variant.id, quantity: 1 }],
+      email,
+      shippingAddress: { name: customer.name, line1: "1 Test St", city: "Hyderabad", state: "TG", pincode: "500032", country: "IN" },
+      paymentMethod: "ORDER_REQUEST",
+    });
+    createdOrderIds.push(guestOrder.id);
+
+    const response = await postLogin(
+      jsonRequest("http://localhost/api/account/login", "POST", { email, password: "not-the-password" }),
+    );
+    assert.equal(response.status, 401);
+
+    const untouched = await db.order.findUniqueOrThrow({ where: { id: guestOrder.id } });
+    assert.equal(
+      untouched.customerId,
+      null,
+      "knowing an email must never be enough to attach its orders to an account",
+    );
   });
 });

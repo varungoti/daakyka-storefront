@@ -3,6 +3,7 @@ import { verifyPassword, DUMMY_PASSWORD_HASH } from "@/lib/customer-auth/passwor
 import { createCustomerSession } from "@/lib/customer-auth/session";
 import { isLocked, recordFailedLogin, resetLoginFailures } from "@/lib/customer-auth/lockout";
 import { db } from "@/lib/db";
+import { linkGuestOrdersToCustomer } from "@/lib/orders/claim-guest-orders";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { loginSchema } from "@/lib/validation/schemas";
@@ -57,6 +58,21 @@ export async function POST(request: Request) {
     }
 
     await resetLoginFailures(customer.id);
+
+    // Claim guest orders placed under this email since the account was
+    // created: checking out logged-out (expired session, another device, a
+    // private window) leaves Order.customerId null even though the account
+    // exists, and registration's own claim only ever covers orders placed
+    // before signup. Logging in proves this account's password — stronger
+    // evidence of owning the address than registering, which only requires
+    // typing it — so this adds no trust assumption beyond the one
+    // claim-guest-orders.ts documents. Best-effort: an unclaimed order is
+    // recoverable on the next sign-in, a rejected sign-in isn't.
+    try {
+      await linkGuestOrdersToCustomer(customer.id, customer.email);
+    } catch {
+      // Intentionally swallowed — see above.
+    }
 
     await createCustomerSession({
       id: customer.id,
