@@ -16,49 +16,18 @@
  * logged, or written anywhere by this script.
  */
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readEnvFile } from "./lib/read-env-file.mjs";
 
 const APPLY = process.argv.includes("--apply");
 const TARGET = "production";
 
-/**
- * Minimal .env reader. Deliberately not `dotenv`: this script must see the
- * file's literal intent, and we want the same quote handling regardless of
- * which dotenv version happens to be installed.
- */
-function readEnvFile(path) {
-  const out = new Map();
-  let raw;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    console.error(`Could not read ${path} — run this from the storefront/ directory.`);
-    process.exit(1);
-  }
-  for (const line of raw.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    let value = trimmed.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"') && value.length > 1) ||
-      (value.startsWith("'") && value.endsWith("'") && value.length > 1)
-    ) {
-      value = value.slice(1, -1);
-    } else {
-      // Unquoted: dotenv strips an inline `#` comment. Match that, because
-      // matching it is what the running app will do.
-      const hash = value.indexOf("#");
-      if (hash !== -1) value = value.slice(0, hash).trim();
-    }
-    if (value) out.set(key, value);
-  }
-  return out;
+let env;
+try {
+  env = readEnvFile(".env");
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
 }
-
-const env = readEnvFile(".env");
 
 /** production var name -> local .env key it is sourced from */
 const MAPPING = [
