@@ -2,6 +2,7 @@ import { pathToFileURL } from "node:url";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { db as defaultDb } from "@/lib/db";
 import { deleteUnattachedMediaAsset, MediaAssetNotFoundError } from "@/lib/media/store";
+import { assertBucketIsWritable } from "@/lib/storage/r2";
 
 /**
  * Release-hardening F-04 / plan item (docs/audit-2026-09-19/admin-ux.md):
@@ -55,7 +56,7 @@ import { deleteUnattachedMediaAsset, MediaAssetNotFoundError } from "@/lib/media
 
 const DEFAULT_GRACE_PERIOD_HOURS = 48;
 
-type Database = Pick<PrismaClient, "mediaAsset">;
+type Database = Pick<PrismaClient, "mediaAsset" | "review">;
 
 export interface OrphanCandidate {
   id: string;
@@ -66,18 +67,40 @@ export interface OrphanCandidate {
   slot: string | null;
   productImageCount: number;
   categoryCount: number;
+  /** F-357: true when this id appears in the `photoIds` of a review that
+   * isn't REJECTED. `Review.photoIds` is a plain `String[]`, not a real FK
+   * (see prisma/schema.prisma), so nothing in `productImageCount`/
+   * `categoryCount` — or a Prisma relation filter — would ever catch this
+   * on its own. See `getNonRejectedReviewPhotoIds` below. */
+  referencedByReview: boolean;
 }
 
 /** The DB-level filter for candidates: no slot, no ProductImage, no
- * Category, created before the cutoff. Exported so the shape of
- * "candidate" is visible/testable independent of a live DB. */
-function candidateWhere(olderThan: Date) {
+ * Category, not a non-REJECTED review's photo (F-357), created before the
+ * cutoff. Exported so the shape of "candidate" is visible/testable
+ * independent of a live DB. */
+function candidateWhere(olderThan: Date, excludeReviewPhotoIds: string[]) {
   return {
     slot: null,
     productImages: { none: {} },
     categories: { none: {} },
     createdAt: { lt: olderThan },
+    ...(excludeReviewPhotoIds.length > 0 ? { id: { notIn: excludeReviewPhotoIds } } : {}),
   } as const;
+}
+
+/**
+ * F-357: every `MediaAsset` id currently attached to a review that isn't
+ * REJECTED — a PENDING review can still be approved, and an APPROVED
+ * review's photos are live on the PDP, so neither is "orphaned" even once
+ * nothing else references the row and the grace period has passed.
+ */
+async function getNonRejectedReviewPhotoIds(database: Database): Promise<Set<string>> {
+  const reviews = await database.review.findMany({
+    where: { status: { not: "REJECTED" } },
+    select: { photoIds: true },
+  });
+  return new Set(reviews.flatMap((review) => review.photoIds));
 }
 
 export async function findOrphanedMediaCandidates(
@@ -85,9 +108,10 @@ export async function findOrphanedMediaCandidates(
   graceriodHours: number = DEFAULT_GRACE_PERIOD_HOURS,
 ): Promise<OrphanCandidate[]> {
   const olderThan = new Date(Date.now() - graceriodHours * 60 * 60 * 1000);
+  const reviewPhotoIds = await getNonRejectedReviewPhotoIds(database);
 
   const rows = await database.mediaAsset.findMany({
-    where: candidateWhere(olderThan),
+    where: candidateWhere(olderThan, [...reviewPhotoIds]),
     select: {
       id: true,
       key: true,
@@ -109,6 +133,7 @@ export async function findOrphanedMediaCandidates(
     slot: row.slot,
     productImageCount: row._count.productImages,
     categoryCount: row._count.categories,
+    referencedByReview: reviewPhotoIds.has(row.id),
   }));
 }
 
@@ -124,6 +149,7 @@ export function isProvablyOrphaned(candidate: OrphanCandidate, gracePeriodHours:
     candidate.slot === null &&
     candidate.productImageCount === 0 &&
     candidate.categoryCount === 0 &&
+    !candidate.referencedByReview &&
     candidate.createdAt.getTime() < cutoff
   );
 }
@@ -171,6 +197,18 @@ function describeCandidate(c: OrphanCandidate): string {
 export async function runCli(argv: string[], database: Database = defaultDb): Promise<number> {
   assertNotProductionDatabase(process.env.DATABASE_URL, process.env.SUPABASE_DATABASE_URL);
   const options = parseCliArgs(argv);
+
+  // F-302: this script deletes R2 objects (via deleteUnattachedMediaAsset)
+  // based purely on what's orphaned in *this* DB — a row that's orphaned
+  // locally can still be a live object in the real production bucket if
+  // R2_BUCKET happens to point at it. deleteObject itself (src/lib/storage/r2.ts)
+  // carries the same guard, so this isn't the only thing standing between
+  // --execute and production media, but failing here, before any candidate
+  // is even scanned, gives a clear, immediate reason rather than a
+  // per-row "Failed to delete" warning from deep inside the loop below.
+  if (options.execute) {
+    assertBucketIsWritable(process.env.R2_BUCKET ?? "");
+  }
 
   const candidates = await findOrphanedMediaCandidates(database, options.graceHours);
   const safe = candidates.filter((c) => isProvablyOrphaned(c, options.graceHours));

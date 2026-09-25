@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
-import { MAX_LONG_EDGE, processImage } from "@/lib/media/process-image";
+import { InvalidImageError, MAX_LONG_EDGE, processImage } from "@/lib/media/process-image";
 
 async function makePng(width: number, height: number, withExifOrientation = false): Promise<Buffer> {
   const image = sharp({
@@ -59,5 +59,12 @@ describe("processImage", () => {
     const meta = await sharp(result.buffer).metadata();
     assert.equal(result.width, meta.width);
     assert.equal(result.height, meta.height);
+  });
+
+  // F-064: a route's catch-all used to let sharp's raw decode error
+  // through as an opaque 500 — processImage now wraps it as a typed error
+  // every upload route can map to a clear 400 instead.
+  it("throws InvalidImageError — not sharp's raw error — for bytes that aren't a readable image", async () => {
+    await assert.rejects(() => processImage(Buffer.from("this is not an image")), InvalidImageError);
   });
 });

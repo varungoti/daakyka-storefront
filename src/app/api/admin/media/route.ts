@@ -4,7 +4,8 @@ import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { logAuditEvent } from "@/lib/auth/audit";
 import { db } from "@/lib/db";
 import { buildMediaAssetWhere, InvalidMediaQueryError, parseMediaAssetQuery } from "@/lib/media/query";
-import { saveMediaAsset, StorageNotConfiguredForMediaError } from "@/lib/media/store";
+import { InvalidImageError } from "@/lib/media/process-image";
+import { getHeroSlideAssetIds, saveMediaAsset, StorageNotConfiguredForMediaError } from "@/lib/media/store";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 
 const ALLOWED_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
@@ -69,10 +70,18 @@ export async function GET(request: Request) {
     db.mediaAsset.count({ where }),
   ]);
 
+  // F-064: hero-slide reuse is a snapshotted id in the "hero-slides"
+  // HomepageSection's JSON content, not a real MediaAsset relation (see
+  // getHeroSlideAssetIds's doc comment), so it can't be part of the
+  // `_count`/`include` query above — fetched once here rather than once
+  // per row.
+  const heroSlideAssetIds = await getHeroSlideAssetIds();
+
   // F-07: "where is each asset used" — a manifest/site slot, a category
-  // tile, and/or a handful of products (a sample, not every product, so
-  // this stays cheap for a heavily-reused photo) — so an admin browsing
-  // the library can tell a fresh upload apart from one already in use.
+  // tile, a hero slide, and/or a handful of products (a sample, not every
+  // product, so this stays cheap for a heavily-reused photo) — so an admin
+  // browsing the library can tell a fresh upload apart from one already in
+  // use.
   const assets = rows.map((row) => {
     const { _count, productImages, ...asset } = row;
     return {
@@ -82,6 +91,7 @@ export async function GET(request: Request) {
         categoryCount: _count.categories,
         productCount: _count.productImages,
         sampleProductNames: productImages.map((pi) => pi.product.name),
+        isHeroSlide: heroSlideAssetIds.has(row.id),
       },
     };
   });
@@ -188,6 +198,9 @@ export async function POST(request: Request) {
   } catch (err) {
     if (err instanceof StorageNotConfiguredForMediaError) {
       return NextResponse.json({ error: err.message }, { status: 503 });
+    }
+    if (err instanceof InvalidImageError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
     }
     throw err;
   }

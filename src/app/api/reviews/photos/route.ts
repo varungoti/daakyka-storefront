@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { MediaSource, MediaUsage } from "@/generated/prisma/client";
 import { getCustomerSession } from "@/lib/customer-auth/session";
+import { InvalidImageError } from "@/lib/media/process-image";
 import { saveMediaAsset, StorageNotConfiguredForMediaError } from "@/lib/media/store";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { reviewSubmissionGate } from "@/lib/reviews/eligibility";
@@ -78,6 +79,9 @@ export async function POST(request: Request) {
   } catch (err) {
     if (err instanceof StorageNotConfiguredForMediaError) {
       return NextResponse.json({ error: err.message }, { status: 503 });
+    }
+    if (err instanceof InvalidImageError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
     }
     throw err;
   }

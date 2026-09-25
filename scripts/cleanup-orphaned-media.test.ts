@@ -2,7 +2,7 @@ import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
-import type { PrismaClient } from "@/generated/prisma/client";
+import type { MediaUsage, PrismaClient } from "@/generated/prisma/client";
 import { MediaSource } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { addProductImage, createProduct } from "@/lib/catalog/products";
@@ -29,15 +29,26 @@ import {
  * concurrently in the shared dev database.
  */
 
-type Database = Pick<PrismaClient, "mediaAsset">;
+type Database = Pick<PrismaClient, "mediaAsset" | "review">;
 
-function scopedDb(ids: string[]): Database {
+/**
+ * `reviewIds` defaults to `[]`, which scopes `review.findMany` to
+ * `id: { in: [] }` — i.e. no rows — so a test that never passes it behaves
+ * exactly as before: real review data in the shared dev DB can never leak
+ * into `getNonRejectedReviewPhotoIds` and change which rows count as
+ * orphaned.
+ */
+function scopedDb(ids: string[], reviewIds: string[] = []): Database {
   // AND-compose rather than spread-merge — see the identical comment in
   // cleanup-phantom-customers.test.ts's own scopedDb for why.
   return {
     mediaAsset: {
       findMany: ((args: Parameters<typeof db.mediaAsset.findMany>[0]) =>
         db.mediaAsset.findMany({ ...args, where: { AND: [args?.where ?? {}, { id: { in: ids } }] } })) as typeof db.mediaAsset.findMany,
+    },
+    review: {
+      findMany: ((args: Parameters<typeof db.review.findMany>[0]) =>
+        db.review.findMany({ ...args, where: { AND: [args?.where ?? {}, { id: { in: reviewIds } }] } })) as typeof db.review.findMany,
     },
   } as Database;
 }
@@ -67,8 +78,16 @@ async function findAnyAdminId(): Promise<string> {
 const createdAssetIds: string[] = [];
 const createdProductIds: string[] = [];
 const createdCategoryIds: string[] = [];
+const createdReviewIds: string[] = [];
+const createdCustomerIds: string[] = [];
 
 after(async () => {
+  if (createdReviewIds.length > 0) {
+    await db.review.deleteMany({ where: { id: { in: createdReviewIds } } }).catch(() => {});
+  }
+  if (createdCustomerIds.length > 0) {
+    await db.customer.deleteMany({ where: { id: { in: createdCustomerIds } } }).catch(() => {});
+  }
   if (createdProductIds.length > 0) {
     await db.product.deleteMany({ where: { id: { in: createdProductIds } } }).catch(() => {});
   }
@@ -83,7 +102,7 @@ after(async () => {
 /** Directly inserts a MediaAsset row with a specific `createdAt`, bypassing
  * saveMediaAsset() (which always stamps "now") — needed to simulate a row
  * that's genuinely past the grace period without waiting hours in a test. */
-async function createAssetAt(createdAt: Date, overrides: Partial<{ slot: string }> = {}): Promise<string> {
+async function createAssetAt(createdAt: Date, overrides: Partial<{ slot: string; usage: MediaUsage }> = {}): Promise<string> {
   const buffer = await tinyPngBuffer();
   const storage = makeFakeStorage();
   const asset = await saveMediaAsset({ buffer, usage: "PRODUCT", source: MediaSource.UPLOAD, ...overrides }, storage);
@@ -102,6 +121,7 @@ function fakeCandidate(overrides: Partial<OrphanCandidate> = {}): OrphanCandidat
     slot: null,
     productImageCount: 0,
     categoryCount: 0,
+    referencedByReview: false,
     ...overrides,
   };
 }
@@ -121,6 +141,10 @@ describe("isProvablyOrphaned (pure)", () => {
 
   it("is false when the row is used as a category image", () => {
     assert.equal(isProvablyOrphaned(fakeCandidate({ categoryCount: 1 })), false);
+  });
+
+  it("is false when the row is a non-rejected review's photo (F-357)", () => {
+    assert.equal(isProvablyOrphaned(fakeCandidate({ referencedByReview: true })), false);
   });
 
   it("is false when the row is newer than the grace period", () => {
@@ -205,6 +229,85 @@ describe("findOrphanedMediaCandidates + runCli (scoped to this test's own rows)"
     assert.ok(!candidateIds.includes(tooFresh), "a fresh row must never be a candidate regardless of attachment");
     assert.ok(!candidateIds.includes(slotted), "a manifest-slotted row must never be a candidate");
     assert.ok(!candidateIds.includes(attached), "a row attached to a product must never be a candidate");
+  });
+
+  it("F-357: an APPROVED review's photo is never a candidate, even past the grace period, and survives --execute", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const oldEnough = new Date(Date.now() - 72 * 60 * 60 * 1000);
+
+    const category = await db.category.create({
+      data: { name: `Review Photo Guard Category ${unique}`, slug: `review-photo-guard-category-${unique}`, section: "GENERAL" },
+    });
+    createdCategoryIds.push(category.id);
+    const product = await db.product.create({
+      data: { name: `Review Photo Guard Product ${unique}`, slug: `review-photo-guard-product-${unique}`, categoryId: category.id, price: 500, status: "ACTIVE" },
+    });
+    createdProductIds.push(product.id);
+    const customer = await db.customer.create({
+      data: { email: `review-photo-guard-${unique}@example.com`, name: "Test Reviewer", passwordHash: "x" },
+    });
+    createdCustomerIds.push(customer.id);
+
+    const reviewPhoto = await createAssetAt(oldEnough, { usage: "REVIEW" });
+    const review = await db.review.create({
+      data: {
+        productId: product.id,
+        customerId: customer.id,
+        rating: 5,
+        body: "Great fit, photos attached.",
+        status: "APPROVED",
+        photoIds: [reviewPhoto],
+      },
+    });
+    createdReviewIds.push(review.id);
+
+    const scoped = scopedDb([reviewPhoto], [review.id]);
+    const candidates = await findOrphanedMediaCandidates(scoped);
+    assert.ok(
+      !candidates.some((c) => c.id === reviewPhoto),
+      "an APPROVED review's photo must never be a candidate, no matter how old",
+    );
+
+    const code = await runCli(["--execute"], scoped);
+    assert.equal(code, 0);
+    assert.ok(
+      await db.mediaAsset.findUnique({ where: { id: reviewPhoto } }),
+      "the approved review's photo must survive --execute",
+    );
+  });
+
+  it("F-357: a REJECTED review's photo is still a candidate (nothing legitimate points at it any more)", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const oldEnough = new Date(Date.now() - 72 * 60 * 60 * 1000);
+
+    const category = await db.category.create({
+      data: { name: `Review Photo Rejected Category ${unique}`, slug: `review-photo-rejected-category-${unique}`, section: "GENERAL" },
+    });
+    createdCategoryIds.push(category.id);
+    const product = await db.product.create({
+      data: { name: `Review Photo Rejected Product ${unique}`, slug: `review-photo-rejected-product-${unique}`, categoryId: category.id, price: 500, status: "ACTIVE" },
+    });
+    createdProductIds.push(product.id);
+    const customer = await db.customer.create({
+      data: { email: `review-photo-rejected-${unique}@example.com`, name: "Test Reviewer", passwordHash: "x" },
+    });
+    createdCustomerIds.push(customer.id);
+
+    const reviewPhoto = await createAssetAt(oldEnough, { usage: "REVIEW" });
+    const review = await db.review.create({
+      data: {
+        productId: product.id,
+        customerId: customer.id,
+        rating: 1,
+        body: "Rejected review with a photo.",
+        status: "REJECTED",
+        photoIds: [reviewPhoto],
+      },
+    });
+    createdReviewIds.push(review.id);
+
+    const candidateIds = (await findOrphanedMediaCandidates(scopedDb([reviewPhoto], [review.id]))).map((c) => c.id);
+    assert.ok(candidateIds.includes(reviewPhoto), "a REJECTED review's photo should still be swept up like any other orphan");
   });
 
   it("dry run (default) reports candidates but deletes nothing", async () => {

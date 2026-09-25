@@ -49,6 +49,48 @@ export function isR2Configured(): boolean {
   return readR2Env() !== null;
 }
 
+/**
+ * F-302: local dev, the localhost audit build, and every script/test that
+ * isn't the real Vercel production deployment can end up with `R2_BUCKET`
+ * (or the `CLOUDFLARE_*` fallbacks) pointing at the actual production
+ * bucket — see docs/GO_LIVE_RUNBOOK.md/docs/HANDOVER.md, which name only
+ * one bucket, `daakyka-media`. Nothing before this stopped a local admin
+ * session's slot-replace (`deleteObject`), or the orphan-cleanup script
+ * sweeping rows that are only orphaned in the *local* DB, from deleting
+ * real production media. `R2_PRODUCTION_BUCKET` lets the bucket's name be
+ * configured rather than hard-coded, but defaults to the one bucket this
+ * deployment actually has.
+ */
+function productionBucketName(): string {
+  return process.env.R2_PRODUCTION_BUCKET ?? "daakyka-media";
+}
+
+export class ProductionBucketWriteBlockedError extends Error {
+  constructor(bucket: string) {
+    super(
+      `Refusing to write to or delete from R2 bucket "${bucket}" from a non-production environment ` +
+        `(VERCEL_ENV is not "production"). Point R2_BUCKET/CLOUDFLARE_* at a separate dev/test bucket, ` +
+        `or set R2_ALLOW_PROD_BUCKET_WRITES=1 for a deliberate one-off (e.g. an intentional prod image backfill).`,
+    );
+    this.name = "ProductionBucketWriteBlockedError";
+  }
+}
+
+/**
+ * Called by every write/delete below, never by `getObject` — a stale read
+ * against the production bucket from a dev build isn't a data-loss risk,
+ * only a write or a delete is. Keyed on `VERCEL_ENV`, deliberately not
+ * `NODE_ENV`: the local audit build runs `next start`, which sets
+ * `NODE_ENV=production` even though it's nowhere near the real deployment.
+ */
+export function assertBucketIsWritable(bucket: string): void {
+  const isRealProductionDeploy = process.env.VERCEL_ENV === "production";
+  const explicitlyAllowed = process.env.R2_ALLOW_PROD_BUCKET_WRITES === "1";
+  if (!isRealProductionDeploy && !explicitlyAllowed && bucket === productionBucketName()) {
+    throw new ProductionBucketWriteBlockedError(bucket);
+  }
+}
+
 // Cached per accountId/accessKeyId pair so a changed env (e.g. between
 // test cases using withEnv) doesn't reuse a stale client.
 let cachedClient: S3Client | null = null;
@@ -96,6 +138,7 @@ export async function uploadObject(
   contentType: string,
 ): Promise<void> {
   const env = requireEnv();
+  assertBucketIsWritable(env.bucket);
   await getClient(env).send(
     new PutObjectCommand({
       Bucket: env.bucket,
@@ -134,6 +177,7 @@ export async function getObject(key: string): Promise<StoredObject | null> {
 
 export async function deleteObject(key: string): Promise<void> {
   const env = requireEnv();
+  assertBucketIsWritable(env.bucket);
   await getClient(env).send(
     new DeleteObjectCommand({ Bucket: env.bucket, Key: key }),
   );
@@ -160,6 +204,7 @@ export async function getPresignedUploadUrl(
   expiresSeconds = 300,
 ): Promise<string> {
   const env = requireEnv();
+  assertBucketIsWritable(env.bucket);
   void maxBytes; // documented caveat above — not enforced by the presigned URL itself
   const command = new PutObjectCommand({
     Bucket: env.bucket,

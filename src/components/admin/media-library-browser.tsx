@@ -20,6 +20,10 @@ export interface MediaLibraryAsset {
     categoryCount: number;
     productCount: number;
     sampleProductNames: string[];
+    /** F-064: the asset is picked as a hero carousel slide's image — a
+     * snapshotted reference the media library couldn't previously see, so
+     * an in-use hero image showed here as "Not used anywhere yet". */
+    isHeroSlide: boolean;
   };
 }
 
@@ -50,6 +54,7 @@ const DATE_OPTIONS = [
 function usageSummary(asset: MediaLibraryAsset): string {
   const parts: string[] = [];
   if (asset.usageInfo.slot) parts.push("Site slot");
+  if (asset.usageInfo.isHeroSlide) parts.push("Hero slide");
   if (asset.usageInfo.categoryCount > 0) parts.push(`${asset.usageInfo.categoryCount} categor${asset.usageInfo.categoryCount === 1 ? "y" : "ies"}`);
   if (asset.usageInfo.productCount > 0) {
     const names = asset.usageInfo.sampleProductNames;

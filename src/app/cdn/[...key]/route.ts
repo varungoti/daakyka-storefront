@@ -6,8 +6,10 @@ import { getObject } from "@/lib/storage/r2";
  * from this app's own origin instead of requiring the R2 bucket to be
  * publicly readable — see publicUrlForKey() in src/lib/storage/r2.ts.
  * Object keys are UUID-named and never reused (a "replace" writes a new
- * key and deletes the old one — see saveMediaAsset in src/lib/media/store.ts),
- * so a successful response is safe to cache as immutable.
+ * key and leaves the old one for the orphan sweeper to reclaim once
+ * nothing references it any more — see saveMediaAsset in
+ * src/lib/media/store.ts, F-064/F-356/F-361), so a successful response is
+ * safe to cache as immutable.
  *
  * Traversal/double-decode validation lives in resolveCdnObjectKey() —
  * see that module's doc comment for the F5 fix (double-encoded segments
