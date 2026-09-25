@@ -1,5 +1,6 @@
 import { UserInviteForm } from "@/components/admin/user-invite-form";
 import { UserRoleEditor } from "@/components/admin/user-role-editor";
+import { isLocked } from "@/lib/auth/lockout";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
@@ -37,7 +38,19 @@ export default async function UsersPage() {
           </thead>
           <tbody>
             {users.map((user) => (
-              <UserRoleEditor key={user.id} user={user} currentUserId={session.id} />
+              <UserRoleEditor
+                key={user.id}
+                user={{
+                  ...user,
+                  // Only pass lockedUntil through when the lock is still in
+                  // effect (src/lib/auth/lockout.ts's isLocked) — computed
+                  // here rather than in the client component, since a
+                  // Date.now() call isn't allowed directly in a component's
+                  // render body (react-hooks/purity).
+                  lockedUntil: isLocked(user) ? user.lockedUntil!.toISOString() : null,
+                }}
+                currentUserId={session.id}
+              />
             ))}
           </tbody>
         </table>

@@ -40,6 +40,17 @@ export async function POST(request: Request) {
     }
 
     if (isLocked(user)) {
+      // F-164: an attempt against an already-locked account never reaches
+      // recordFailedLogin, so without this the lockout is invisible on
+      // /admin/audit-logs — log it here so every locked-out attempt
+      // leaves a trail an admin can review.
+      await logAuditEvent({
+        userId: user.id,
+        action: "login_locked",
+        entity: "user",
+        entityId: user.id,
+        metadata: { lockedUntil: user.lockedUntil },
+      });
       return NextResponse.json(
         { error: "Account temporarily locked. Try again later." },
         { status: LOCKED_STATUS },
@@ -48,7 +59,19 @@ export async function POST(request: Request) {
 
     const valid = await verifyPassword(parsed.data.password, user.passwordHash);
     if (!valid) {
-      const { locked } = await recordFailedLogin(user.id);
+      const { locked, lockedUntil } = await recordFailedLogin(user.id);
+      // F-164: audit-log both the plain failed attempt and the one that
+      // crosses the lockout threshold, so Audit Logs shows failed logins
+      // and lockouts instead of only successful ones. Only known, active
+      // accounts reach this branch (see the dummy-compare return above),
+      // so this can't be used to enumerate which emails have accounts.
+      await logAuditEvent({
+        userId: user.id,
+        action: locked ? "login_locked" : "login_failed",
+        entity: "user",
+        entityId: user.id,
+        metadata: locked ? { lockedUntil } : undefined,
+      });
       if (locked) {
         return NextResponse.json(
           { error: "Account temporarily locked. Try again later." },

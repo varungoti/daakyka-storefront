@@ -100,15 +100,33 @@ export async function inviteUser(input: InviteUserInput, actingUserId: string): 
 export async function resetUserPassword(
   id: string,
   actingUserId: string,
-): Promise<{ user: Pick<User, "id" | "email" | "name">; tempPassword: string }> {
+): Promise<{
+  user: Pick<User, "id" | "email" | "name">;
+  tempPassword: string;
+  role: AdminRole;
+  sessionVersion: number;
+}> {
   const tempPassword = generateTempPassword();
   const passwordHash = await hashPassword(tempPassword);
 
   try {
     const user = await db.user.update({
       where: { id },
-      data: { passwordHash, sessionVersion: { increment: 1 } },
-      select: { id: true, email: true, name: true },
+      data: {
+        passwordHash,
+        sessionVersion: { increment: 1 },
+        // F-164: an admin-triggered reset must also clear any lockout on
+        // the target account. Without this, "Reset password" — the only
+        // recovery path a locked-out admin is pointed at (see
+        // src/app/admin/login/page.tsx) — leaves them 423'd until
+        // `lockedUntil` passes on its own, even with the new password.
+        // Mirrors src/app/api/account/reset-password's handling of the
+        // customer-facing lockout.
+        failedLoginCount: 0,
+        lastFailedLoginAt: null,
+        lockedUntil: null,
+      },
+      select: { id: true, email: true, name: true, role: true, sessionVersion: true },
     });
 
     await logAuditEvent({
@@ -119,7 +137,12 @@ export async function resetUserPassword(
       metadata: { passwordReset: true },
     });
 
-    return { user, tempPassword };
+    return {
+      user: { id: user.id, email: user.email, name: user.name },
+      tempPassword,
+      role: user.role,
+      sessionVersion: user.sessionVersion,
+    };
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
       throw new UserNotFoundError(id);

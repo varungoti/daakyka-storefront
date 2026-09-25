@@ -582,6 +582,69 @@ describe("users admin CRUD (invite, reset-password, delete)", () => {
     await assert.rejects(() => resetUserPassword("does-not-exist", adminId), UserNotFoundError);
   });
 
+  it("resetUserPassword clears an existing lockout on the target user (F-164)", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const invited = await inviteUser({ name: "Locked Out", email: `locked-${unique}@example.com`, role: "VIEWER" }, adminId);
+    createdUserIds.push(invited.user.id);
+
+    // Simulate the account having tripped the lockout (src/lib/auth/lockout.ts)
+    // before an admin steps in to reset the password.
+    await db.user.update({
+      where: { id: invited.user.id },
+      data: { failedLoginCount: 10, lastFailedLoginAt: new Date(), lockedUntil: new Date(Date.now() + 15 * 60 * 1000) },
+    });
+
+    await resetUserPassword(invited.user.id, adminId);
+
+    const after = await db.user.findUnique({
+      where: { id: invited.user.id },
+      select: { failedLoginCount: true, lastFailedLoginAt: true, lockedUntil: true },
+    });
+    assert.equal(after!.failedLoginCount, 0);
+    assert.equal(after!.lastFailedLoginAt, null);
+    assert.equal(after!.lockedUntil, null);
+
+    const { isLocked } = await import("@/lib/auth/lockout");
+    assert.equal(isLocked(after!), false);
+  });
+
+  it("resetUserPassword returns the role and bumped sessionVersion needed to reissue a session, so a self-reset can keep the caller signed in (F-159)", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const invited = await inviteUser(
+      { name: "Self Reset", email: `selfreset-${unique}@example.com`, role: "VIEWER" },
+      adminId,
+    );
+    createdUserIds.push(invited.user.id);
+
+    // The reset-password route (src/app/api/admin/users/[id]/reset-password/route.ts)
+    // reissues the caller's session cookie with exactly this role/sessionVersion
+    // when id === session.id, instead of leaving the just-bumped sessionVersion
+    // to reject the caller's existing cookie on the very next request. Exercise
+    // that same signSessionToken/verifySessionToken round trip directly, since
+    // the route itself can't be driven through cookies() outside a real request
+    // (see the harness note atop tests/integration/admin-auth.test.ts).
+    const result = await resetUserPassword(invited.user.id, invited.user.id);
+    assert.equal(result.role, "VIEWER");
+
+    const { signSessionToken, verifySessionToken } = await import("@/lib/auth/session");
+    const reissuedToken = await signSessionToken(
+      { id: result.user.id, email: result.user.email, name: result.user.name, role: result.role },
+      result.sessionVersion,
+    );
+    const verified = await verifySessionToken(reissuedToken);
+    assert.ok(verified, "a token minted with the post-reset sessionVersion must verify, not log the caller out");
+    assert.equal(verified!.id, result.user.id);
+
+    // A token still carrying the pre-reset sessionVersion (what the caller's
+    // browser cookie holds until it's reissued) must be rejected — the fix
+    // must not weaken revocation for everyone else.
+    const staleToken = await signSessionToken(
+      { id: result.user.id, email: result.user.email, name: result.user.name, role: result.role },
+      result.sessionVersion - 1,
+    );
+    assert.equal(await verifySessionToken(staleToken), null);
+  });
+
   it("deleteUser removes a fresh user with no activity history", async () => {
     const unique = randomUUID().slice(0, 8);
     const invited = await inviteUser({ name: "Delete Me", email: `delete-${unique}@example.com`, role: "VIEWER" }, adminId);

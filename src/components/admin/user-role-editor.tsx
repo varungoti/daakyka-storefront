@@ -11,11 +11,19 @@ interface UserRow {
   name: string;
   role: AdminRole;
   active: boolean;
+  lockedUntil: string | null;
 }
 
 export function UserRoleEditor({ user, currentUserId }: { user: UserRow; currentUserId: string }) {
   const router = useRouter();
   const isSelf = user.id === currentUserId;
+  // F-164: surfaces the account-lockout state (src/lib/auth/lockout.ts)
+  // that was previously invisible on this screen — a locked admin could
+  // only be told apart from a merely-wrong-password one via the raw API
+  // response. The caller (users/page.tsx) already only sends lockedUntil
+  // through when it's still in the future, so no Date.now() comparison is
+  // needed here during render.
+  const isLockedOut = user.lockedUntil !== null;
 
   const [busy, setBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -37,7 +45,10 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
   };
 
   const resetPassword = async () => {
-    if (!window.confirm(`Reset ${user.name}'s password? Their current password will stop working.`)) return;
+    const confirmText = isSelf
+      ? "Reset your own password? Your current password will stop working and you'll get a new one — you'll stay signed in."
+      : `Reset ${user.name}'s password? Their current password will stop working.`;
+    if (!window.confirm(confirmText)) return;
     setBusy(true);
     setErrorMessage(null);
     try {
@@ -48,7 +59,12 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
         return;
       }
       setTempPassword(body.tempPassword);
-      router.refresh();
+      // F-159: resetting your own password reissues your session cookie
+      // server-side (see the API route) with the bumped sessionVersion,
+      // so a refresh here wouldn't log you out — but skip it anyway,
+      // since nothing else in this row's data changes on a reset and the
+      // temp password above is the only thing that needs to stay visible.
+      if (!isSelf) router.refresh();
     } finally {
       setBusy(false);
     }
@@ -110,6 +126,19 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
           />
           Active
         </label>
+        {isLockedOut && (
+          <p className="mt-1 text-xs font-semibold text-amber-700">
+            Locked until{" "}
+            {new Date(user.lockedUntil!).toLocaleString("en-IN", {
+              day: "2-digit",
+              month: "short",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+            {" — "}
+            <span className="font-normal">Reset password to unlock now.</span>
+          </p>
+        )}
       </td>
       <td className="px-4 py-4">
         <div className="flex flex-wrap gap-2">
