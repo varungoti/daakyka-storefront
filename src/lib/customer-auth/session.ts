@@ -28,6 +28,12 @@ export interface CustomerSessionUser {
   emailVerifiedAt: Date | null;
 }
 
+/** F-369: mirrors src/lib/auth/session.ts's SessionResult — see its docs. */
+export type CustomerSessionResult =
+  | { status: "ok"; user: CustomerSessionUser }
+  | { status: "unauthenticated" }
+  | { status: "db-unavailable" };
+
 function getSecret(): Uint8Array {
   const secret = process.env.AUTH_SECRET;
   if (!secret) {
@@ -69,29 +75,32 @@ export async function destroyCustomerSession(): Promise<void> {
   cookieStore.delete(CUSTOMER_SESSION_COOKIE);
 }
 
-export async function getCustomerSession(): Promise<CustomerSessionUser | null> {
-  let token: string | undefined;
-  try {
-    const cookieStore = await cookies();
-    token = cookieStore.get(CUSTOMER_SESSION_COOKIE)?.value;
-  } catch {
-    // `cookies()` throws when called outside a Next.js request scope (a
-    // route handler invoked directly from a unit/integration test, or a
-    // script). Mirrors the admin session's fix: fail closed to
-    // unauthenticated rather than throwing.
-    return null;
-  }
-  if (!token) return null;
-
+/**
+ * Verifies a raw customer session JWT string without touching `cookies()`.
+ * Split out (mirroring src/lib/auth/session.ts's verifySessionTokenResult)
+ * so the DB-outage classification below is directly testable, and so the
+ * JWT check and the DB lookup are in separate try/catch blocks: a DB
+ * outage is logged and reported as `db-unavailable` instead of being
+ * silently folded into the same "unauthenticated" bucket as a bad/expired
+ * token (F-369).
+ */
+export async function verifyCustomerSessionTokenResult(token: string): Promise<CustomerSessionResult> {
+  let customerId: string | undefined;
+  let tokenSessionVersion: number | undefined;
   try {
     const { payload } = await jwtVerify(token, getSecret(), {
       audience: CUSTOMER_JWT_AUDIENCE,
     });
-    const customerId = payload.sub;
-    const tokenSessionVersion = payload.sv;
-    if (!customerId || typeof tokenSessionVersion !== "number") return null;
+    customerId = payload.sub;
+    tokenSessionVersion = typeof payload.sv === "number" ? payload.sv : undefined;
+  } catch {
+    return { status: "unauthenticated" };
+  }
+  if (!customerId || tokenSessionVersion === undefined) return { status: "unauthenticated" };
 
-    const customer = await db.customer.findUnique({
+  let customer;
+  try {
+    customer = await db.customer.findUnique({
       where: { id: customerId },
       select: {
         id: true,
@@ -102,26 +111,55 @@ export async function getCustomerSession(): Promise<CustomerSessionUser | null> 
         emailVerifiedAt: true,
       },
     });
+  } catch (error) {
+    console.error("[customer-auth/session] DB unavailable while verifying a customer session", error);
+    return { status: "db-unavailable" };
+  }
 
-    if (!customer || !customer.active) return null;
+  if (!customer || !customer.active) return { status: "unauthenticated" };
 
-    // sessionVersion revocation: bumped on password reset (and available
-    // for any other "log out everywhere" action). A token minted before
-    // the bump carries the old version and is rejected here even though
-    // its signature and expiry are still valid — this is what makes
-    // "invalidate all sessions" actually work instead of just being a
-    // label on an unused column.
-    if (customer.sessionVersion !== tokenSessionVersion) return null;
+  // sessionVersion revocation: bumped on password reset (and available
+  // for any other "log out everywhere" action). A token minted before
+  // the bump carries the old version and is rejected here even though
+  // its signature and expiry are still valid — this is what makes
+  // "invalidate all sessions" actually work instead of just being a
+  // label on an unused column.
+  if (customer.sessionVersion !== tokenSessionVersion) return { status: "unauthenticated" };
 
-    return {
+  return {
+    status: "ok",
+    user: {
       id: customer.id,
       email: customer.email,
       name: customer.name,
       emailVerifiedAt: customer.emailVerifiedAt,
-    };
+    },
+  };
+}
+
+export async function getCustomerSessionResult(): Promise<CustomerSessionResult> {
+  let token: string | undefined;
+  try {
+    const cookieStore = await cookies();
+    token = cookieStore.get(CUSTOMER_SESSION_COOKIE)?.value;
   } catch {
-    return null;
+    // `cookies()` throws when called outside a Next.js request scope (a
+    // route handler invoked directly from a unit/integration test, or a
+    // script). Mirrors the admin session's fix: fail closed to
+    // unauthenticated rather than throwing.
+    return { status: "unauthenticated" };
   }
+  if (!token) return { status: "unauthenticated" };
+
+  return verifyCustomerSessionTokenResult(token);
+}
+
+/** Thin `CustomerSessionUser | null` wrapper over
+ * {@link getCustomerSessionResult} for the existing callers that don't
+ * need to distinguish "invalid" from "DB unavailable". */
+export async function getCustomerSession(): Promise<CustomerSessionUser | null> {
+  const result = await getCustomerSessionResult();
+  return result.status === "ok" ? result.user : null;
 }
 
 export async function requireCustomerSession(): Promise<CustomerSessionUser> {

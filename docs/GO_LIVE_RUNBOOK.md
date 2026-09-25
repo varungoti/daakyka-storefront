@@ -34,7 +34,11 @@ the same one production uses.
 2. Set it as Vercel's `DATABASE_URL` env var for the Preview/staging environment (Prisma — see
    `prisma.config.ts` — only ever reads the env var literally named `DATABASE_URL`; there is no
    other name it recognizes).
-3. Migrations run automatically on every deploy — see A2.
+3. **Migrations do *not* run automatically on Preview** (fixed post-F-229 — every Git push used to
+   build a Preview that ran `prisma migrate deploy` + the seed against whatever `DATABASE_URL`
+   Preview had, including, once, the *production* Supabase database). `scripts/vercel-build.mjs`
+   only runs those two steps when `VERCEL_ENV === "production"`. If this staging database should
+   get Preview's migrations too, set `RUN_DB_MIGRATIONS=1` on the Preview environment — see A2.
 
 ### A2. Vercel project
 
@@ -42,9 +46,11 @@ the same one production uses.
 2. Add env vars — see [Environment variables](#environment-variables-what-is-actually-required)
    below (do **not** just copy `.env.staging.example` blindly; it lists optional integrations too).
 3. Deploy the preview/staging branch. The build command (`vercel.json` → `node scripts/vercel-build.mjs`)
-   runs `prisma generate`, then `prisma migrate deploy` (retried on advisory-lock timeouts), then the
-   idempotent `prisma/seed.ts` (create-only — safe to run on every deploy, and it refuses to run at
-   all on Vercel without a real, non-default `ADMIN_SEED_PASSWORD`), then `next build`.
+   always runs `prisma generate` then `next build`. It only runs `prisma migrate deploy` (retried on
+   advisory-lock timeouts) and the idempotent `prisma/seed.ts` (create-only — safe to run on every
+   deploy, and it refuses to run at all on Vercel without a real, non-default `ADMIN_SEED_PASSWORD`)
+   when `VERCEL_ENV === "production"` **or** `RUN_DB_MIGRATIONS=1` is set on this environment — set
+   the latter on Preview if this staging database should track new migrations automatically.
 
 ```bash
 # After deploy — from storefront/
@@ -93,7 +99,9 @@ Steps:
    `npm run dev`/`npm test` (which loads `.env` and always uses `DATABASE_URL`) can never point at
    production by accident. **Never copy that value into `.env`'s own `DATABASE_URL`.**
 4. Production has already been migrated and seeded once using this connection string — a fresh
-   deploy just re-runs the same idempotent `migrate deploy` + `seed.ts` from A2, which is safe.
+   **production** deploy (`VERCEL_ENV === "production"`) just re-runs the same idempotent
+   `migrate deploy` + `seed.ts` from A2, which is safe. A Preview/branch deploy does not touch
+   this database at all — see A1.
 
 ---
 
