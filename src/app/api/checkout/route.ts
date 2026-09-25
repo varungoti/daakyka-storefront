@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { extractRequestAttribution } from "@/lib/analytics/attribution";
 import {
   createOrderFromCart,
   EmptyCartError,
@@ -86,6 +87,9 @@ export async function POST(request: Request) {
 
   try {
     const customerId = await getOptionalCustomerId();
+    // F-318: best-effort attribution (query params / Referer header) —
+    // see src/lib/analytics/attribution.ts.
+    const attribution = extractRequestAttribution(request);
     const order = await createOrderFromCart({
       items,
       email,
@@ -94,6 +98,10 @@ export async function POST(request: Request) {
       customerId,
       paymentMethod: razorpayReady ? "RAZORPAY" : "ORDER_REQUEST",
       discountCode,
+      utmSource: attribution.utmSource,
+      utmMedium: attribution.utmMedium,
+      utmCampaign: attribution.utmCampaign,
+      referrer: attribution.referrer,
     });
 
     if (!razorpayReady) {

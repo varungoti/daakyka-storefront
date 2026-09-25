@@ -17,6 +17,10 @@ const STATUS_META: Record<OrderStatus, { label: string; className: string }> = {
   DELIVERED: { label: "Delivered", className: "bg-green-100 text-green-800" },
   CANCELLED: { label: "Cancelled", className: "bg-red-100 text-red-700" },
   REFUNDED: { label: "Refunded", className: "bg-gray-200 text-gray-700" },
+  // release-hardening schema-foundation (wave 1): the enum value exists
+  // (F-199) but is unreachable today (see status-transitions.ts) — this
+  // entry only keeps STATUS_META's Record<OrderStatus, ...> exhaustive.
+  RETURNED: { label: "Returned", className: "bg-gray-200 text-gray-700" },
 };
 
 export function OrderStatusBadge({ status, paymentMethod }: { status: OrderStatus; paymentMethod: PaymentMethod }) {

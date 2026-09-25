@@ -39,6 +39,10 @@ export async function POST(request: Request) {
     },
     data: {
       status: "CANCELLED",
+      // F-334: cancelledAt — see status-transitions.ts's
+      // orderStatusTimestampField, the single source of truth every other
+      // status-writing call site also follows.
+      cancelledAt: new Date(),
       adminNotes: "Auto-cancelled: Razorpay payment not completed within 30 minutes",
     },
   });

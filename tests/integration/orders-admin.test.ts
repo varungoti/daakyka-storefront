@@ -322,6 +322,81 @@ describe("orders admin service (Phase D4)", () => {
   });
 });
 
+// F-224 fix (release-hardening schema-foundation): listOrdersForAdmin used
+// to load every matching row and sort/paginate in JS. These assert the
+// DB-side count/skip/take actually pages correctly — disjoint, stable
+// (id tie-breaker) pages whose union is every matching row, and a
+// `total`/`totalPages` that reflects the real DB count rather than
+// `items.length`.
+describe("orders admin pagination (F-224)", () => {
+  const marker = `pagination-${randomUUID().slice(0, 8)}`;
+  const pageTestOrderIds: string[] = [];
+
+  before(async () => {
+    // Five orders, all matching the same search term, with distinct
+    // `total` values so total-desc/total-asc sorting is meaningfully
+    // exercised (not just createdAt, which is close to identical for
+    // rows created back-to-back in the same test).
+    for (let i = 0; i < 5; i += 1) {
+      const order = await db.order.create({
+        data: baseOrderData({
+          number: `DK-TEST-PAGE-${marker}-${i}`,
+          email: `${marker}@example.com`,
+          total: 1000 + i * 100,
+        }),
+      });
+      pageTestOrderIds.push(order.id);
+      createdOrderIds.push(order.id);
+    }
+  });
+
+  it("total/totalPages reflect the real DB count, not the current page's length", async () => {
+    const result = await listOrdersForAdmin({ search: marker, pageSize: 2 });
+    assert.equal(result.total, 5);
+    assert.equal(result.totalPages, 3);
+    assert.equal(result.items.length, 2);
+  });
+
+  it("pages are disjoint and their union covers every matching row exactly once", async () => {
+    const pageSize = 2;
+    const seen = new Set<string>();
+    for (let page = 1; page <= 3; page += 1) {
+      const result = await listOrdersForAdmin({ search: marker, pageSize, page, sort: "total-desc" });
+      for (const item of result.items) {
+        assert.ok(!seen.has(item.id), `order ${item.id} appeared on more than one page`);
+        seen.add(item.id);
+      }
+    }
+    assert.equal(seen.size, 5);
+    for (const id of pageTestOrderIds) assert.ok(seen.has(id));
+  });
+
+  it("total-desc sorts by total across pages, not just within one page", async () => {
+    const pageOne = await listOrdersForAdmin({ search: marker, pageSize: 2, page: 1, sort: "total-desc" });
+    const pageTwo = await listOrdersForAdmin({ search: marker, pageSize: 2, page: 2, sort: "total-desc" });
+    assert.deepEqual(
+      pageOne.items.map((i) => i.total),
+      [1400, 1300],
+    );
+    assert.deepEqual(
+      pageTwo.items.map((i) => i.total),
+      [1200, 1100],
+    );
+  });
+
+  it("clamps an out-of-range page to the last page", async () => {
+    const result = await listOrdersForAdmin({ search: marker, pageSize: 2, page: 999 });
+    assert.equal(result.page, 3);
+    assert.equal(result.items.length, 1);
+  });
+
+  it("exportOrdersCsv still returns every matching row, unbounded by pageSize", async () => {
+    const csv = await exportOrdersCsv({ search: marker });
+    const dataLines = csv.trim().split("\n").slice(1); // drop the header row
+    assert.equal(dataLines.length, 5);
+  });
+});
+
 describe("orders admin routes without a session", () => {
   const idParams = Promise.resolve({ id: "any-id" });
 

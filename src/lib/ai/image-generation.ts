@@ -82,12 +82,20 @@ function utcMidnightToday(): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 }
 
+/**
+ * F-188 fix: the daily cap used to count surviving `MediaAsset` rows with
+ * `source: AI`, so regenerating the same slot (which deletes the previous
+ * asset — see saveMediaAsset in src/lib/media/store.ts) or removing a
+ * staged image (deleteUnattachedMediaAsset) silently lowered the count,
+ * letting an admin generate far more than the daily limit's worth of paid
+ * OpenAI calls. `AiImageGenerationEvent` is append-only and independent of
+ * what happens to the resulting `MediaAsset` afterwards — nothing deletes
+ * from it — so it tracks spend, not surviving rows. See generateImage
+ * below, the only writer.
+ */
 export async function countAiImagesGeneratedToday(): Promise<number> {
-  return db.mediaAsset.count({
-    where: {
-      source: MediaSource.AI,
-      createdAt: { gte: utcMidnightToday() },
-    },
+  return db.aiImageGenerationEvent.count({
+    where: { createdAt: { gte: utcMidnightToday() } },
   });
 }
 
@@ -197,6 +205,16 @@ export async function generateImage(
   if (!b64) {
     throw new GenerationFailedError("AI image generation returned no image data");
   }
+
+  // F-188 fix: record the event now, right after OpenAI has actually been
+  // called and billed — not after saveMediaAsset below, and never undone
+  // by whatever later happens to the resulting MediaAsset (a regenerate
+  // that replaces it, an admin removing a staged image). Best-effort: a
+  // DB hiccup here must never turn an already-billed generation into an
+  // error for the admin.
+  await db.aiImageGenerationEvent.create({ data: { adminUserId: input.createdById } }).catch((error) => {
+    console.error("[ai/image-generation] failed to record AiImageGenerationEvent", error);
+  });
 
   const buffer = Buffer.from(b64, "base64");
 

@@ -66,7 +66,10 @@ async function handlePaymentCaptured(payment: { id?: string; order_id?: string }
     // payment.
     const transition = await tx.order.updateMany({
       where: { id: order.id, status: { not: "PAID" } },
-      data: { status: "PAID", razorpayPaymentId: payment.id },
+      // F-334: paidAt — see the identical comment in
+      // src/app/api/checkout/verify/route.ts, whose transaction shape
+      // this deliberately mirrors.
+      data: { status: "PAID", razorpayPaymentId: payment.id, paidAt: new Date() },
     });
     wonTransition = transition.count === 1;
     if (!wonTransition) return;
@@ -166,6 +169,8 @@ async function handlePaymentFailed(payment: { order_id?: string }) {
     where: { id: order.id },
     data: {
       status: "CANCELLED",
+      // F-334: cancelledAt — see orderStatusTimestampField's doc comment.
+      cancelledAt: new Date(),
       adminNotes: [order.adminNotes, "Payment failed (Razorpay webhook)."].filter(Boolean).join("\n"),
     },
   });

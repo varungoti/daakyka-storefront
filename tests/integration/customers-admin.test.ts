@@ -116,6 +116,57 @@ describe("customers admin service (Phase D4)", () => {
   });
 });
 
+// F-224 fix (release-hardening schema-foundation): listCustomersForAdmin
+// used to load every matching customer, aggregate spend across all of
+// them, then slice one page out in JS. These assert the DB-side
+// count/skip/take pages correctly, and that the spend aggregate is still
+// correct once it's scoped to just the current page's customer ids.
+describe("customers admin pagination (F-224)", () => {
+  const marker = `pagination-${randomUUID().slice(0, 8)}`;
+  const pageTestCustomerIds: string[] = [];
+
+  before(async () => {
+    for (let i = 0; i < 5; i += 1) {
+      const customer = await db.customer.create({
+        data: {
+          email: `${marker}-${i}@example.com`,
+          name: `Pagination Test Customer ${marker}`,
+          passwordHash: "not-a-real-hash",
+          active: true,
+        },
+      });
+      pageTestCustomerIds.push(customer.id);
+      createdCustomerIds.push(customer.id);
+    }
+  });
+
+  it("total/totalPages reflect the real DB count, not the current page's length", async () => {
+    const result = await listCustomersForAdmin({ search: marker, pageSize: 2 });
+    assert.equal(result.total, 5);
+    assert.equal(result.totalPages, 3);
+    assert.equal(result.items.length, 2);
+  });
+
+  it("pages are disjoint and their union covers every matching row exactly once", async () => {
+    const seen = new Set<string>();
+    for (let page = 1; page <= 3; page += 1) {
+      const result = await listCustomersForAdmin({ search: marker, pageSize: 2, page });
+      for (const item of result.items) {
+        assert.ok(!seen.has(item.id), `customer ${item.id} appeared on more than one page`);
+        seen.add(item.id);
+      }
+    }
+    assert.equal(seen.size, 5);
+    for (const id of pageTestCustomerIds) assert.ok(seen.has(id));
+  });
+
+  it("clamps an out-of-range page to the last page", async () => {
+    const result = await listCustomersForAdmin({ search: marker, pageSize: 2, page: 999 });
+    assert.equal(result.page, 3);
+    assert.equal(result.items.length, 1);
+  });
+});
+
 describe("customers admin routes without a session", () => {
   const idParams = Promise.resolve({ id: "any-id" });
 

@@ -4,16 +4,22 @@ import { Prisma } from "@/generated/prisma/client";
 import type { Order, OrderItem, OrderStatus, PaymentMethod } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
 import { releaseDiscountRedemption } from "@/lib/discounts";
-import { assertValidOrderStatusTransition } from "@/lib/orders/status-transitions";
+import { assertValidOrderStatusTransition, orderStatusTimestampField } from "@/lib/orders/status-transitions";
 import { buildOrdersCsv, type OrderCsvRow } from "@/lib/orders/csv";
 
 /**
  * Phase D4: admin order listing, detail, status-transition and CSV-export
- * service layer, built on top of D3's `Order`/`OrderItem` models. Filtering,
- * sorting and pagination follow the same in-memory-after-a-DB-filter
- * pattern as `listProductsForAdmin` (src/lib/catalog/products.ts), for
- * consistency and because the row counts here are small enough that it
- * isn't worth a second, differently-shaped query path.
+ * service layer, built on top of D3's `Order`/`OrderItem` models.
+ *
+ * F-224 fix (release-hardening schema-foundation): listing used to load
+ * every row matching the filters and sort/paginate in JS — fine at launch
+ * volume, but it means every admin page view transfers the whole table,
+ * which doesn't scale and is worse on the owner's phone over a
+ * cross-region connection. `listOrdersForAdmin` now does the count, sort
+ * and page slice in the database (skip/take + a stable id tie-breaker —
+ * see `buildOrderOrderBy`). `exportOrdersCsv` deliberately keeps fetching
+ * every matching row — a CSV export has to, by design — but sorts in the
+ * query instead of in JS.
  */
 
 /**
@@ -142,16 +148,38 @@ function buildOrderWhere(options: {
   return where;
 }
 
-async function fetchOrdersForAdmin(where: Prisma.OrderWhereInput): Promise<AdminOrderListItem[]> {
-  const rows = await db.order.findMany({
-    where,
-    include: {
-      customer: { select: { name: true } },
-      _count: { select: { items: true } },
-    },
-  });
+/**
+ * F-224 fix: maps the public sort key to a DB `orderBy`, always with `id`
+ * as a second key. Without it, rows that tie on the primary key (two
+ * orders created in the same millisecond, or the very common case of two
+ * orders both totalling the flat-rate-shipping minimum) can repeat or be
+ * skipped across a skip/take page boundary — `id` (cuid, monotonically
+ * increasing-ish and always unique) makes every page a stable, disjoint
+ * slice.
+ */
+function buildOrderOrderBy(sort: OrderListSort): Prisma.OrderOrderByWithRelationInput[] {
+  switch (sort) {
+    case "createdAt-asc":
+      return [{ createdAt: "asc" }, { id: "asc" }];
+    case "total-desc":
+      return [{ total: "desc" }, { id: "desc" }];
+    case "total-asc":
+      return [{ total: "asc" }, { id: "asc" }];
+    case "createdAt-desc":
+    default:
+      return [{ createdAt: "desc" }, { id: "desc" }];
+  }
+}
 
-  return rows.map((row) => ({
+const ORDER_LIST_INCLUDE = {
+  customer: { select: { name: true } },
+  _count: { select: { items: true } },
+} satisfies Prisma.OrderInclude;
+
+type OrderListRow = Prisma.OrderGetPayload<{ include: typeof ORDER_LIST_INCLUDE }>;
+
+function mapOrderListRow(row: OrderListRow): AdminOrderListItem {
+  return {
     id: row.id,
     number: row.number,
     email: row.email,
@@ -171,65 +199,85 @@ async function fetchOrdersForAdmin(where: Prisma.OrderWhereInput): Promise<Admin
     courier: row.courier,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-  }));
+  };
 }
 
 export async function listOrdersForAdmin(
   options: ListOrdersForAdminOptions = {},
 ): Promise<ListOrdersForAdminResult> {
   const where = buildOrderWhere(options);
-  const items = await fetchOrdersForAdmin(where);
-
   const sort = options.sort ?? "createdAt-desc";
-  items.sort((a, b) => {
-    switch (sort) {
-      case "createdAt-asc":
-        return a.createdAt.getTime() - b.createdAt.getTime();
-      case "total-desc":
-        return b.total - a.total;
-      case "total-asc":
-        return a.total - b.total;
-      case "createdAt-desc":
-      default:
-        return b.createdAt.getTime() - a.createdAt.getTime();
-    }
-  });
+  const orderBy = buildOrderOrderBy(sort);
 
-  const total = items.length;
+  const total = await db.order.count({ where });
   const pageSize = Math.min(Math.max(options.pageSize ?? 24, 1), 100);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const page = Math.min(Math.max(options.page ?? 1, 1), totalPages);
-  const start = (page - 1) * pageSize;
-  const paged = items.slice(start, start + pageSize);
+  const skip = (page - 1) * pageSize;
 
-  return { items: paged, total, page, pageSize, totalPages };
+  const rows = await db.order.findMany({
+    where,
+    orderBy,
+    skip,
+    take: pageSize,
+    include: ORDER_LIST_INCLUDE,
+  });
+  const items = rows.map(mapOrderListRow);
+
+  return { items, total, page, pageSize, totalPages };
 }
+
+const ORDER_CSV_SELECT = {
+  number: true,
+  email: true,
+  phone: true,
+  status: true,
+  paymentMethod: true,
+  subtotal: true,
+  shipping: true,
+  discount: true,
+  total: true,
+  currency: true,
+  trackingNumber: true,
+  courier: true,
+  createdAt: true,
+  _count: { select: { items: true } },
+} satisfies Prisma.OrderSelect;
 
 export async function exportOrdersCsv(
   options: Omit<ListOrdersForAdminOptions, "sort" | "page" | "pageSize"> = {},
 ): Promise<string> {
   const where = buildOrderWhere(options);
-  const items = await fetchOrdersForAdmin(where);
-  items.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  // Deliberately unbounded (no skip/take) — a CSV export has to return
+  // every matching row by design. The DB does the sort (createdAt desc,
+  // id as a tie-breaker) instead of an in-memory sort, and the query
+  // selects only the columns the CSV actually renders — no
+  // shippingAddress/notes/adminNotes payload for rows the export never
+  // reads.
+  const rows = await db.order.findMany({
+    where,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    select: ORDER_CSV_SELECT,
+  });
 
-  const rows: OrderCsvRow[] = items.map((item) => ({
-    number: item.number,
-    email: item.email,
-    phone: item.phone,
-    status: item.status,
-    paymentMethod: item.paymentMethod,
-    itemCount: item.itemCount,
-    subtotal: item.subtotal,
-    shipping: item.shipping,
-    discount: item.discount,
-    total: item.total,
-    currency: item.currency,
-    trackingNumber: item.trackingNumber,
-    courier: item.courier,
-    createdAt: item.createdAt,
+  const csvRows: OrderCsvRow[] = rows.map((row) => ({
+    number: row.number,
+    email: row.email,
+    phone: row.phone,
+    status: row.status,
+    paymentMethod: row.paymentMethod,
+    itemCount: row._count.items,
+    subtotal: Number(row.subtotal),
+    shipping: Number(row.shipping),
+    discount: Number(row.discount),
+    total: Number(row.total),
+    currency: row.currency,
+    trackingNumber: row.trackingNumber,
+    courier: row.courier,
+    createdAt: row.createdAt,
   }));
 
-  return buildOrdersCsv(rows);
+  return buildOrdersCsv(csvRows);
 }
 
 // ---------------------------------------------------------------------------
@@ -384,6 +432,13 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
       }
     }
     data.status = input.status;
+    // F-334: record when this step was actually reached, so the
+    // customer-facing timeline (wave-4's order-status-workflow-and-
+    // timeline package) has a real date to render instead of none at all.
+    const timestampField = orderStatusTimestampField(input.status);
+    if (timestampField) {
+      data[timestampField] = new Date();
+    }
 
     if (existing.paymentMethod === "ORDER_REQUEST" && input.status === "CANCELLED") {
       restockItems = existing.items

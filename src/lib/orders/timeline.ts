@@ -197,6 +197,24 @@ export function getOrderTimeline(status: OrderStatus, paymentMethod: PaymentMeth
         },
       };
 
+    case "RETURNED":
+      // release-hardening schema-foundation (wave 1): the enum value
+      // exists (F-199) but status-transitions.ts has no transition into
+      // it yet, so this status is unreachable today — this case exists
+      // only to keep the exhaustiveness check below compiling. A minimal
+      // placeholder (reuses the "cancelled" tone/icon rather than
+      // inventing a new one) rather than a designed banner — wave-4's
+      // order-status-workflow-and-timeline package owns building this out
+      // for real once RETURNED is actually reachable.
+      return {
+        steps: [placedStep(), { id: "confirmed", label: confirmedLabel(paymentMethod), state: "complete" }],
+        terminal: {
+          tone: "cancelled",
+          label: "Order returned",
+          description: "This order was returned.",
+        },
+      };
+
     default: {
       const exhaustiveCheck: never = status;
       throw new Error(`Unhandled OrderStatus: ${String(exhaustiveCheck)}`);

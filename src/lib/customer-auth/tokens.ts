@@ -3,8 +3,11 @@ import type { CustomerTokenType } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { safeEquals } from "@/lib/security/timing-safe-equal";
 
-const VERIFY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h
-const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1h
+// Exported so the email outbox (src/lib/engagement/outbox.ts, F-044) can
+// stamp a matching per-kind EmailOutbox.expiresAt on a queued reset/verify
+// email — a queued email must never outlive the token it links to.
+export const VERIFY_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+export const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1h
 
 /** Random, unguessable, URL-safe. 32 bytes of entropy is well beyond what's
  * brute-forceable, and base64url has no characters that need escaping in a

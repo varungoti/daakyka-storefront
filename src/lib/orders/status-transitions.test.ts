@@ -5,6 +5,7 @@ import {
   assertValidOrderStatusTransition,
   InvalidOrderStatusTransitionError,
   isValidOrderStatusTransition,
+  orderStatusTimestampField,
   ORDER_STATUS_TRANSITIONS,
 } from "@/lib/orders/status-transitions";
 
@@ -16,6 +17,7 @@ const ALL_STATUSES: OrderStatus[] = [
   "DELIVERED",
   "CANCELLED",
   "REFUNDED",
+  "RETURNED",
 ];
 
 describe("order status transition matrix (Phase D4)", () => {
@@ -82,6 +84,28 @@ describe("order status transition matrix (Phase D4)", () => {
       assert.ok(err instanceof InvalidOrderStatusTransitionError);
       assert.equal(err.from, "DELIVERED");
       assert.equal(err.to, "PENDING_PAYMENT");
+    }
+  });
+});
+
+describe("orderStatusTimestampField (F-334)", () => {
+  it("maps each status that has a dedicated Order column", () => {
+    assert.equal(orderStatusTimestampField("PAID"), "paidAt");
+    assert.equal(orderStatusTimestampField("SHIPPED"), "shippedAt");
+    assert.equal(orderStatusTimestampField("DELIVERED"), "deliveredAt");
+    assert.equal(orderStatusTimestampField("CANCELLED"), "cancelledAt");
+  });
+
+  it("returns null for statuses with no dedicated column", () => {
+    assert.equal(orderStatusTimestampField("PENDING_PAYMENT"), null);
+    assert.equal(orderStatusTimestampField("PROCESSING"), null);
+    assert.equal(orderStatusTimestampField("REFUNDED"), null);
+    assert.equal(orderStatusTimestampField("RETURNED"), null);
+  });
+
+  it("covers every OrderStatus without throwing", () => {
+    for (const status of ALL_STATUSES) {
+      assert.doesNotThrow(() => orderStatusTimestampField(status));
     }
   });
 });

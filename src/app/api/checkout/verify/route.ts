@@ -75,7 +75,11 @@ export async function POST(request: Request) {
     // stock a second time for the same payment.
     const transition = await tx.order.updateMany({
       where: { id: order.id, status: { not: "PAID" } },
-      data: { status: "PAID", razorpayPaymentId },
+      // F-334: paidAt records when this order actually reached PAID, for
+      // the customer-facing order timeline (see status-transitions.ts's
+      // orderStatusTimestampField, the single source of truth this and
+      // the webhook's equivalent update both follow).
+      data: { status: "PAID", razorpayPaymentId, paidAt: new Date() },
     });
     wonTransition = transition.count === 1;
     if (!wonTransition) return;

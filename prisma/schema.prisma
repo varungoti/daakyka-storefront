@@ -101,25 +101,31 @@ enum EnrollmentStatus {
 }
 
 model User {
-  id                  String        @id @default(cuid())
-  email               String        @unique
-  name                String
-  passwordHash        String
-  role                AdminRole     @default(VIEWER)
-  active              Boolean       @default(true)
-  sessionVersion      Int           @default(0)
-  failedLoginCount    Int           @default(0)
-  lockedUntil         DateTime?
-  lastFailedLoginAt   DateTime?
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
-  auditLogs           AuditLog[]
-  productsCreated     Product[]
-  mediaAssetsCreated  MediaAsset[]
-  reviewsModerated    Review[]
-  siteSettingsUpdated SiteSetting[]
+  id                            String                  @id @default(cuid())
+  email                         String                  @unique
+  name                          String
+  passwordHash                  String
+  role                          AdminRole               @default(VIEWER)
+  active                        Boolean                 @default(true)
+  sessionVersion                Int                     @default(0)
+  failedLoginCount              Int                     @default(0)
+  lockedUntil                   DateTime?
+  lastFailedLoginAt             DateTime?
+  // release-hardening schema-foundation (wave 1): consumed by wave-4's
+  // rate-limit-ux-and-auth-hardening package (F-057) — forces a password
+  // change on next login (e.g. after an admin-issued temporary password).
+  // Added here only so the column exists; the login-flow enforcement is
+  // that later package's job.
+  mustChangePassword            Boolean                 @default(false)
+  createdAt                     DateTime                @default(now())
+  updatedAt                     DateTime                @updatedAt
+  auditLogs                     AuditLog[]
+  productsCreated               Product[]
+  mediaAssetsCreated            MediaAsset[]
+  reviewsModerated              Review[]
+  siteSettingsUpdated           SiteSetting[]
   integrationCredentialsUpdated IntegrationCredential[]
-  discountsCreated    Discount[]
+  discountsCreated              Discount[]
 }
 
 /// DB-backed rate limit buckets (v1 2.1). Replaces the old in-memory Map so
@@ -155,6 +161,12 @@ model BulkOrderLead {
   // rows and older client payloads that omit them keep working.
   organizationType String?
   categoryInterest String[]       @default([])
+  // F-318: same best-effort attribution as ContactEnquiry/Order — see
+  // src/lib/analytics/attribution.ts.
+  utmSource        String?
+  utmMedium        String?
+  utmCampaign      String?
+  referrer         String?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 }
@@ -185,43 +197,68 @@ model BlogPostRecord {
   updatedAt   DateTime   @updatedAt
 }
 
+/// F-289 fix (release-hardening schema-foundation): the actor's role,
+/// email and network context at the moment the action happened, so a
+/// password reset, a role change and a deactivation of the same user no
+/// longer render identically on /admin/audit-logs. All nullable — rows
+/// written before this migration, and any write path that can't resolve a
+/// request scope (a script, a test, a cron-invoked helper), simply have no
+/// value here rather than a fabricated one. Populated best-effort by
+/// logAuditEvent() (src/lib/auth/audit.ts); see its doc comment.
 model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  action    String
-  entity    String
-  entityId  String?
-  metadata  String?
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action     String
+  entity     String
+  entityId   String?
+  metadata   String?
+  /// Snapshot of the acting user's role at write time — a later role
+  /// change must never rewrite what an old row says the actor was.
+  actorRole  String?
+  /// Snapshot of the acting user's email at write time, same
+  /// never-rewritten-by-a-later-change rationale as actorRole — lets the
+  /// audit trail survive the User row itself being edited or removed
+  /// (userId is onDelete: SetNull).
+  actorEmail String?
+  /// Trusted client IP only (see getClientIp in src/lib/security/rate-limit.ts)
+  /// — never a client-supplied header taken on faith.
+  ipAddress  String?
+  /// Truncated to a bounded length at write time — see logAuditEvent.
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([userId])
+  @@index([entity, entityId])
 }
 
 model NewsletterSubscriber {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  source       String   @default("footer")
+  id               String    @id @default(cuid())
+  email            String    @unique
+  source           String    @default("footer")
   // engagement_compliance: was `@default(true)`, which meant a subscriber
   // got marketing consent by default with no actual checkbox interaction —
   // flagged in the compliance audit as a real bug. New rows now start
   // unconsented until the API-level zod check (newsletterSchema requires
   // consentGiven: true) and the UI checkbox both confirm it.
-  consentGiven Boolean  @default(false)
+  consentGiven     Boolean   @default(false)
   // engagement_compliance: double opt-in. Set only once the confirmation
   // link (GET /api/newsletter/confirm?token=...) is followed; nothing is
   // sent to a subscriber (and no journey is triggered) until this is set.
-  confirmedAt  DateTime?
+  confirmedAt      DateTime?
   // engagement_compliance: single-use, cleared once consumed by the confirm
   // route. Null once confirmed or if a subscriber was created before this
   // migration and hasn't re-subscribed since.
-  confirmToken String?  @unique
+  confirmToken     String?   @unique
   // engagement_compliance: set when the subscriber unsubscribes; every
   // marketing-segment query and sendMarketingEmail() must exclude these.
-  unsubscribedAt DateTime?
+  unsubscribedAt   DateTime?
   // engagement_compliance: stable, unguessable per-subscriber token used by
   // the unsubscribe link/footer on every marketing email. Never rotated so
   // an old email's unsubscribe link keeps working.
-  unsubscribeToken String @unique @default(cuid())
-  createdAt    DateTime @default(now())
+  unsubscribeToken String    @unique @default(cuid())
+  createdAt        DateTime  @default(now())
 }
 
 model CustomerSegment {
@@ -249,18 +286,18 @@ model MessageTemplate {
 }
 
 model Campaign {
-  id          String           @id @default(cuid())
+  id          String             @id @default(cuid())
   name        String
   channel     TemplateChannel
-  status      CampaignStatus   @default(DRAFT)
+  status      CampaignStatus     @default(DRAFT)
   segmentId   String?
-  segment     CustomerSegment? @relation(fields: [segmentId], references: [id], onDelete: SetNull)
+  segment     CustomerSegment?   @relation(fields: [segmentId], references: [id], onDelete: SetNull)
   templateId  String?
-  template    MessageTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  template    MessageTemplate?   @relation(fields: [templateId], references: [id], onDelete: SetNull)
   scheduledAt DateTime?
   notes       String?
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
   deliveries  CampaignDelivery[]
 }
 
@@ -292,10 +329,10 @@ model CampaignDelivery {
 /// before a WATI marketing/broadcast send; transactional WhatsApp
 /// (order updates, OTPs) is unaffected.
 model WhatsAppOptIn {
-  id          String    @id @default(cuid())
-  phone       String    @unique
-  optedInAt   DateTime  @default(now())
-  optedOutAt  DateTime?
+  id         String    @id @default(cuid())
+  phone      String    @unique
+  optedInAt  DateTime  @default(now())
+  optedOutAt DateTime?
 }
 
 /// engagement_compliance: one row per (job, runKey) cron execution. The
@@ -335,6 +372,14 @@ model ContactEnquiry {
   type         ContactEnquiryType @default(GENERAL)
   message      String
   status       String             @default("NEW")
+  // F-318: best-effort first-party attribution captured server-side from
+  // the submitting request (query params / Referer header — see
+  // src/lib/analytics/attribution.ts) — no client tracking script
+  // involved. All nullable: most submissions will have none of these.
+  utmSource    String?
+  utmMedium    String?
+  utmCampaign  String?
+  referrer     String?
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
 }
@@ -390,14 +435,14 @@ enum CredentialProvider {
 /// "this field doesn't need it". Every read site checks this table first and
 /// falls back to process.env, so an env-var-only deploy keeps working.
 model IntegrationCredential {
-  id             String              @id @default(cuid())
+  id             String             @id @default(cuid())
   provider       CredentialProvider
   key            String
   valueEncrypted String
   updatedById    String?
-  updatedBy      User?               @relation(fields: [updatedById], references: [id], onDelete: SetNull)
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
+  updatedBy      User?              @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
 
   @@unique([provider, key])
 }
@@ -415,13 +460,13 @@ model HermesTask {
 }
 
 model HermesApproval {
-  id         String               @id @default(cuid())
-  taskId     String?
-  task       HermesTask?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
-  type       String
-  title      String
-  summary    String
-  payload    String
+  id              String               @id @default(cuid())
+  taskId          String?
+  task            HermesTask?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  type            String
+  title           String
+  summary         String
+  payload         String
   status          HermesApprovalStatus @default(PENDING)
   reviewedBy      String?
   reviewedAt      DateTime?
@@ -450,6 +495,10 @@ model AdminNotification {
   read      Boolean  @default(false)
   metadata  String?
   createdAt DateTime @default(now())
+
+  // F-226: backs the unread-count query (read: false) and the
+  // newest-first feed, run on every admin page load.
+  @@index([read, createdAt])
 }
 
 model SeoPageRecord {
@@ -616,6 +665,12 @@ enum OrderStatus {
   DELIVERED
   CANCELLED
   REFUNDED
+  // release-hardening schema-foundation (wave 1): consumed by wave-4's
+  // order-status-workflow-and-timeline package (F-199). Added here only so
+  // the value exists in the DB enum; no transition into/out of it is wired
+  // up yet (see status-transitions.ts — ORDER_STATUS_TRANSITIONS
+  // deliberately does not reference it).
+  RETURNED
 }
 
 enum DiscountType {
@@ -662,37 +717,45 @@ model Category {
 }
 
 model Product {
-  id                String            @id @default(cuid())
-  slug              String            @unique
-  name              String
-  shortDescription  String?
-  description       String?
-  categoryId        String
-  category          Category          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  status            ProductStatus     @default(DRAFT)
-  featured          Boolean           @default(false)
-  isNew             Boolean           @default(false)
-  price             Decimal           @db.Decimal(10, 2)
-  compareAtPrice    Decimal?          @db.Decimal(10, 2)
-  gender            ProductGender     @default(UNISEX)
-  fabric            String?
-  care              String?
-  tags              String[]
-  sizeChartId       String?
-  sizeChart         SizeChart?        @relation(fields: [sizeChartId], references: [id], onDelete: SetNull)
-  seoTitle          String?
-  seoDescription    String?
-  shopifyProductId  String?
-  shopifySyncStatus ShopifySyncStatus @default(NOT_SYNCED)
-  shopifySyncedAt   DateTime?
-  createdById       String?
-  createdBy         User?             @relation(fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  variants          ProductVariant[]
-  images            ProductImage[]
-  reviews           Review[]
-  wishlistItems     WishlistItem[]
+  id                       String                    @id @default(cuid())
+  slug                     String                    @unique
+  name                     String
+  shortDescription         String?
+  description              String?
+  categoryId               String
+  category                 Category                  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  status                   ProductStatus             @default(DRAFT)
+  featured                 Boolean                   @default(false)
+  isNew                    Boolean                   @default(false)
+  price                    Decimal                   @db.Decimal(10, 2)
+  compareAtPrice           Decimal?                  @db.Decimal(10, 2)
+  gender                   ProductGender             @default(UNISEX)
+  fabric                   String?
+  care                     String?
+  tags                     String[]
+  sizeChartId              String?
+  sizeChart                SizeChart?                @relation(fields: [sizeChartId], references: [id], onDelete: SetNull)
+  seoTitle                 String?
+  seoDescription           String?
+  shopifyProductId         String?
+  shopifySyncStatus        ShopifySyncStatus         @default(NOT_SYNCED)
+  shopifySyncedAt          DateTime?
+  // release-hardening schema-foundation (wave 1): consumed by wave-3's
+  // pdp-content-legal-pricing-reviews package (F-311, F-195) — India
+  // legal-metrology labelling fields (country of origin, net quantity,
+  // HSN code) for the PDP/invoice. Added here only so the columns exist;
+  // that later package owns rendering them.
+  countryOfOrigin          String?
+  netQuantity              String?
+  hsnCode                  String?
+  createdById              String?
+  createdBy                User?                     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  variants                 ProductVariant[]
+  images                   ProductImage[]
+  reviews                  Review[]
+  wishlistItems            WishlistItem[]
   backInStockSubscriptions BackInStockSubscription[]
 
   @@index([status, categoryId])
@@ -700,20 +763,20 @@ model Product {
 }
 
 model ProductVariant {
-  id               String      @id @default(cuid())
-  productId        String
-  product          Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
-  sku              String      @unique
-  size             String
-  color            String
-  colorHex         String?
-  price            Decimal?    @db.Decimal(10, 2)
-  stock            Int         @default(0)
-  active           Boolean     @default(true)
-  shopifyVariantId String?
-  createdAt        DateTime    @default(now())
-  updatedAt        DateTime    @updatedAt
-  orderItems       OrderItem[]
+  id                       String                    @id @default(cuid())
+  productId                String
+  product                  Product                   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  sku                      String                    @unique
+  size                     String
+  color                    String
+  colorHex                 String?
+  price                    Decimal?                  @db.Decimal(10, 2)
+  stock                    Int                       @default(0)
+  active                   Boolean                   @default(true)
+  shopifyVariantId         String?
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  orderItems               OrderItem[]
   backInStockSubscriptions BackInStockSubscription[]
 
   @@unique([productId, size, color])
@@ -732,6 +795,23 @@ model ProductImage {
   updatedAt DateTime   @updatedAt
 
   @@index([productId, color])
+}
+
+/// F-188 fix (release-hardening schema-foundation): an append-only record
+/// of every AI image generation actually attempted against OpenAI, kept
+/// independent of the `MediaAsset` row it produced — regenerating a slot
+/// or removing a staged image deletes the `MediaAsset` row (see
+/// src/lib/media/store.ts), but must never let the daily spend cap forget
+/// that a paid generation happened. See countAiImagesGeneratedToday in
+/// src/lib/ai/image-generation.ts, the only reader of this table. No
+/// relations on purpose (kept lightweight, and so deleting a User or a
+/// MediaAsset never cascades into rewriting spend history).
+model AiImageGenerationEvent {
+  id          String   @id @default(cuid())
+  createdAt   DateTime @default(now())
+  adminUserId String?
+
+  @@index([createdAt])
 }
 
 model MediaAsset {
@@ -770,41 +850,49 @@ model SizeChart {
 }
 
 model Customer {
-  id               String            @id @default(cuid())
-  email            String            @unique
-  name             String
-  phone            String?
-  passwordHash     String
-  emailVerifiedAt  DateTime?
-  sessionVersion   Int               @default(0)
-  active           Boolean           @default(true)
-  failedLoginCount Int               @default(0)
-  lockedUntil      DateTime?
+  id                String            @id @default(cuid())
+  email             String            @unique
+  name              String
+  phone             String?
+  passwordHash      String
+  emailVerifiedAt   DateTime?
+  sessionVersion    Int               @default(0)
+  active            Boolean           @default(true)
+  failedLoginCount  Int               @default(0)
+  lockedUntil       DateTime?
   lastFailedLoginAt DateTime?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  addresses        CustomerAddress[]
-  tokens           CustomerToken[]
-  reviews          Review[]
-  orders           Order[]
-  wishlistItems    WishlistItem[]
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  addresses         CustomerAddress[]
+  tokens            CustomerToken[]
+  reviews           Review[]
+  orders            Order[]
+  wishlistItems     WishlistItem[]
+
+  // F-224: listCustomersForAdmin orders by createdAt.
+  @@index([createdAt])
 }
 
 model CustomerAddress {
-  id         String   @id @default(cuid())
-  customerId String
-  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  label      String?
-  line1      String
-  line2      String?
-  city       String
-  state      String
-  postalCode String
-  country    String   @default("IN")
-  phone      String?
-  isDefault  Boolean  @default(false)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id            String   @id @default(cuid())
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  label         String?
+  // release-hardening schema-foundation (wave 1): consumed by wave-3's
+  // checkout-cart-revalidation-and-address package (F-134) — a saved
+  // address's recipient can differ from the account holder. Nullable:
+  // existing rows and every current write path leave it unset.
+  recipientName String?
+  line1         String
+  line2         String?
+  city          String
+  state         String
+  postalCode    String
+  country       String   @default("IN")
+  phone         String?
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@index([customerId])
 }
@@ -845,36 +933,60 @@ model Review {
 }
 
 model Order {
-  id                String        @id @default(cuid())
-  number            String        @unique
+  id                 String              @id @default(cuid())
+  number             String              @unique
   // Phase G / F2 fix: hash of the high-entropy capability token that lets a
   // guest (no customer session) view their own order at /order/[number].
   // Nullable so pre-existing seeded orders without a token still load
   // (they simply can't be viewed by a guest until re-issued); NULL values
   // never collide under the unique constraint (Postgres treats each NULL
   // as distinct). See src/lib/orders/access-token.ts and get-order.ts.
-  accessTokenHash   String?       @unique
-  customerId        String?
-  customer          Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  email             String
-  phone             String?
-  shippingAddress   Json
-  subtotal          Decimal       @db.Decimal(10, 2)
-  shipping          Decimal       @db.Decimal(10, 2)
-  discount          Decimal       @default(0) @db.Decimal(10, 2)
-  total             Decimal       @db.Decimal(10, 2)
-  currency          String        @default("INR")
-  status            OrderStatus   @default(PENDING_PAYMENT)
-  paymentMethod     PaymentMethod @default(RAZORPAY)
-  razorpayOrderId   String?
-  razorpayPaymentId String?
-  trackingNumber    String?
-  courier           String?
-  notes             String?
-  adminNotes        String?
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
-  items             OrderItem[]
+  accessTokenHash    String?             @unique
+  customerId         String?
+  customer           Customer?           @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  email              String
+  phone              String?
+  shippingAddress    Json
+  subtotal           Decimal             @db.Decimal(10, 2)
+  shipping           Decimal             @db.Decimal(10, 2)
+  discount           Decimal             @default(0) @db.Decimal(10, 2)
+  total              Decimal             @db.Decimal(10, 2)
+  currency           String              @default("INR")
+  status             OrderStatus         @default(PENDING_PAYMENT)
+  paymentMethod      PaymentMethod       @default(RAZORPAY)
+  razorpayOrderId    String?
+  razorpayPaymentId  String?
+  trackingNumber     String?
+  courier            String?
+  notes              String?
+  adminNotes         String?
+  // F-334: when each lifecycle step was actually reached — nullable
+  // because pre-existing orders and any status this order skipped (e.g.
+  // an ORDER_REQUEST order that never carried a razorpay PAID transition)
+  // never get a value invented for them. Set at the same call sites that
+  // already write `status` (see status-transitions.ts's
+  // orderStatusTimestampField, admin-orders.ts's updateOrderAdmin,
+  // checkout/verify/route.ts and webhooks/razorpay/route.ts). Not
+  // rendered anywhere yet — that's wave-4's order-status-workflow-and-
+  // timeline package (F-334's customer-facing half).
+  paidAt             DateTime?
+  shippedAt          DateTime?
+  deliveredAt        DateTime?
+  cancelledAt        DateTime?
+  // F-318: best-effort first-party attribution captured server-side at
+  // checkout — see src/lib/analytics/attribution.ts and create-order.ts.
+  utmSource          String?
+  utmMedium          String?
+  utmCampaign        String?
+  referrer           String?
+  // release-hardening schema-foundation (wave 1): consumed by wave-3's
+  // pdp-content-legal-pricing-reviews package (F-195) — a GST-compliant
+  // invoice number, distinct from the customer-facing order `number`.
+  // Nullable/unique so it can be assigned lazily without colliding.
+  invoiceNumber      String?             @unique
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  items              OrderItem[]
   // Release-hardening F7 (discount codes at checkout): `discountId` is the
   // discount actually priced into `discount`/`total` above, computed
   // server-side (see src/lib/discounts/index.ts's resolveDiscount) —
@@ -888,14 +1000,20 @@ model Order {
   // is only ever committed — via commitDiscountRedemption — immediately for
   // an ORDER_REQUEST order or at PAID time for a RAZORPAY order; see that
   // function's doc comment for why.
-  discountId        String?
-  appliedDiscount   Discount?     @relation(fields: [discountId], references: [id], onDelete: SetNull)
-  discountCode      String?
+  discountId         String?
+  appliedDiscount    Discount?           @relation(fields: [discountId], references: [id], onDelete: SetNull)
+  discountCode       String?
   discountRedemption DiscountRedemption?
 
+  // F-224/F-226: admin list sort + pagination (listOrdersForAdmin) and the
+  // Razorpay webhook/verify lookups (findFirst by these two ids) were
+  // doing sequential scans without these.
   @@index([status])
   @@index([customerId])
   @@index([discountId])
+  @@index([createdAt])
+  @@index([razorpayOrderId])
+  @@index([razorpayPaymentId])
 }
 
 model OrderItem {
@@ -913,6 +1031,9 @@ model OrderItem {
   createdAt    DateTime        @default(now())
 
   @@index([orderId])
+  // F-226: OrderItem.variantId has an ON DELETE SET NULL FK with no index,
+  // so every ProductVariant delete scanned OrderItem.
+  @@index([variantId])
 }
 
 model SiteSetting {
@@ -940,6 +1061,11 @@ enum EmailOutboxStatus {
   PENDING
   SENT
   FAILED
+  /// F-044 fix: a PENDING row whose per-kind expiresAt has passed (or was
+  /// superseded by a newer reset/verify email to the same recipient)
+  /// before it was ever sent. Never sent, distinct from FAILED (which
+  /// means real attempts were made and exhausted).
+  EXPIRED
 }
 
 /// F7 fix (docs/audit-2026-09-19/correctness.md): durable transactional-email
@@ -986,6 +1112,13 @@ model EmailOutbox {
   /// JourneyEnrollment.lockedAt (see src/lib/engagement/journey-engine.ts)
   /// so two overlapping cron runs can't double-send the same row.
   lockedAt          DateTime?
+  /// F-044 fix: per-kind deadline after which a still-PENDING row must
+  /// never be sent (a reset link past its 1h TTL, a verify link past 24h)
+  /// — set by sendTransactionalEmail(), checked by drainEmailOutbox()
+  /// before it claims a row. Null for kinds with no meaningful expiry
+  /// (order confirmations, back-in-stock) — those stay eligible
+  /// indefinitely, same as before this column existed.
+  expiresAt         DateTime?
   sentAt            DateTime?
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
@@ -1003,16 +1136,16 @@ model EmailOutbox {
 /// the plain `@unique` below enforces case-insensitive uniqueness without a
 /// citext extension; every write path must normalize before insert/lookup.
 model Discount {
-  id                        String       @id @default(cuid())
-  code                      String       @unique
+  id                        String               @id @default(cuid())
+  code                      String               @unique
   type                      DiscountType
   /// Percentage points (0-100) when type=PERCENTAGE, or a flat INR amount
   /// when type=FIXED. Never read from the client at checkout — always
   /// looked up fresh from this row (see resolveDiscount).
-  value                     Decimal      @db.Decimal(10, 2)
+  value                     Decimal              @db.Decimal(10, 2)
   /// Cart subtotal (pre-discount) must be >= this to use the code. Null =
   /// no minimum.
-  minSubtotal               Decimal?     @db.Decimal(10, 2)
+  minSubtotal               Decimal?             @db.Decimal(10, 2)
   /// Total redemptions allowed across all customers. Null = unlimited.
   maxRedemptions            Int?
   /// Redemptions allowed per customer/email. Null = unlimited.
@@ -1023,14 +1156,14 @@ model Discount {
   /// transition (see /api/checkout/verify) — never via a naive
   /// read-then-write, so a capped code can't over-redeem under concurrent
   /// checkouts.
-  redeemedCount             Int          @default(0)
+  redeemedCount             Int                  @default(0)
   startsAt                  DateTime?
   endsAt                    DateTime?
-  active                    Boolean      @default(true)
+  active                    Boolean              @default(true)
   createdById               String?
-  createdBy                 User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt                 DateTime     @default(now())
-  updatedAt                 DateTime     @updatedAt
+  createdBy                 User?                @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
   orders                    Order[]
   redemptions               DiscountRedemption[]
 

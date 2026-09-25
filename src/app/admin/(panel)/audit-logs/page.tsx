@@ -28,24 +28,39 @@ export default async function AdminAuditLogsPage() {
             <tr>
               <th className="px-4 py-3">Action</th>
               <th className="px-4 py-3">Entity</th>
-              <th className="px-4 py-3">User</th>
+              <th className="px-4 py-3">Actor</th>
+              <th className="px-4 py-3">IP</th>
               <th className="px-4 py-3">When</th>
             </tr>
           </thead>
           <tbody>
-            {logs.map((log) => (
-              <tr key={log.id} className="border-b border-border/70">
-                <td className="px-4 py-3 font-semibold text-ink">{log.action}</td>
-                <td className="px-4 py-3 text-muted">
-                  {log.entity}
-                  {log.entityId ? ` · ${log.entityId}` : ""}
-                </td>
-                <td className="px-4 py-3">{log.user?.name ?? "System"}</td>
-                <td className="px-4 py-3 text-muted">
-                  {log.createdAt.toLocaleString("en-IN")}
-                </td>
-              </tr>
-            ))}
+            {logs.map((log) => {
+              // F-289 fix: prefer the live User relation's name (so a
+              // renamed account still shows its current name), but fall
+              // back to the email snapshotted at write time — the row the
+              // action was actually attributed to might have since been
+              // deleted (userId is onDelete: SetNull).
+              const actorLabel = log.user?.name ?? log.actorEmail ?? "System";
+              return (
+                <tr key={log.id} className="border-b border-border/70">
+                  <td className="px-4 py-3 font-semibold text-ink">{log.action}</td>
+                  <td className="px-4 py-3 text-muted">
+                    {log.entity}
+                    {log.entityId ? ` · ${log.entityId}` : ""}
+                  </td>
+                  <td className="px-4 py-3">
+                    {actorLabel}
+                    {log.actorRole ? <span className="text-muted"> · {log.actorRole}</span> : null}
+                  </td>
+                  <td className="px-4 py-3 text-muted" title={log.userAgent ?? undefined}>
+                    {log.ipAddress ?? "—"}
+                  </td>
+                  <td className="px-4 py-3 text-muted">
+                    {log.createdAt.toLocaleString("en-IN")}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

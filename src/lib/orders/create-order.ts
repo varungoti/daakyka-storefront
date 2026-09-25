@@ -72,6 +72,14 @@ export interface CreateOrderFromCartInput {
    * src/lib/discounts/index.ts; see repriceLines's own comment for why the
    * same rule applies to every other checkout input. */
   discountCode?: string;
+  /** F-318: best-effort first-party attribution — see
+   * src/lib/analytics/attribution.ts. The caller (POST /api/checkout) owns
+   * extracting these from the request; this function only ever persists
+   * whatever it's handed, same as every other field here. */
+  utmSource?: string | null;
+  utmMedium?: string | null;
+  utmCampaign?: string | null;
+  referrer?: string | null;
 }
 
 export interface CreatedOrder {
@@ -276,6 +284,10 @@ export async function createOrderFromCart(input: CreateOrderFromCartInput): Prom
             discount,
             discountId: resolvedDiscount?.id,
             discountCode: resolvedDiscount?.code,
+            utmSource: input.utmSource,
+            utmMedium: input.utmMedium,
+            utmCampaign: input.utmCampaign,
+            referrer: input.referrer,
             total,
             currency: "INR",
             status: initialStatus,

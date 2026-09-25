@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { extractRequestAttribution } from "@/lib/analytics/attribution";
 import { triggerJourneys } from "@/lib/engagement/journey-triggers";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
@@ -34,7 +35,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Validation failed" }, { status: 400 });
     }
 
-    const enquiry = await db.contactEnquiry.create({ data: parsed.data });
+    // F-318: best-effort attribution (query params / Referer header) — see
+    // src/lib/analytics/attribution.ts.
+    const attribution = extractRequestAttribution(request);
+    const enquiry = await db.contactEnquiry.create({
+      data: { ...parsed.data, ...attribution },
+    });
 
     if (parsed.data.type === "BULK_ORDER" || parsed.data.type === "INSTITUTIONAL") {
       await triggerJourneys("bulk_lead_created", {

@@ -69,7 +69,26 @@ export async function listCustomersForAdmin(
     ];
   }
 
-  const customers = await db.customer.findMany({ where, orderBy: { createdAt: "desc" } });
+  // F-224 fix (release-hardening schema-foundation): this used to load
+  // every matching customer, aggregate spend across all of them, then
+  // slice one page out in JS — so every admin page view transferred the
+  // whole table. `count` + `skip`/`take` (with `id` as a tie-breaker,
+  // same reasoning as admin-orders.ts's buildOrderOrderBy) now do the
+  // paging in the database; the `aggregates` groupBy below is unchanged
+  // but now naturally scopes to just this page's customer ids, since
+  // `customers` itself is only ever this page's rows.
+  const total = await db.customer.count({ where });
+  const pageSize = Math.min(Math.max(options.pageSize ?? 24, 1), 100);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(options.page ?? 1, 1), totalPages);
+  const skip = (page - 1) * pageSize;
+
+  const customers = await db.customer.findMany({
+    where,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    skip,
+    take: pageSize,
+  });
 
   const aggregates = await db.order.groupBy({
     by: ["customerId"],
@@ -94,14 +113,7 @@ export async function listCustomersForAdmin(
     };
   });
 
-  const total = items.length;
-  const pageSize = Math.min(Math.max(options.pageSize ?? 24, 1), 100);
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const page = Math.min(Math.max(options.page ?? 1, 1), totalPages);
-  const start = (page - 1) * pageSize;
-  const paged = items.slice(start, start + pageSize);
-
-  return { items: paged, total, page, pageSize, totalPages };
+  return { items, total, page, pageSize, totalPages };
 }
 
 // ---------------------------------------------------------------------------

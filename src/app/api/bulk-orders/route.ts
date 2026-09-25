@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { extractRequestAttribution } from "@/lib/analytics/attribution";
 import { triggerJourneys } from "@/lib/engagement/journey-triggers";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
@@ -27,8 +28,11 @@ export async function POST(request: Request) {
       );
     }
 
+    // F-318: best-effort attribution (query params / Referer header) — see
+    // src/lib/analytics/attribution.ts.
+    const attribution = extractRequestAttribution(request);
     const lead = await db.bulkOrderLead.create({
-      data: parsed.data,
+      data: { ...parsed.data, ...attribution },
     });
 
     await triggerJourneys("bulk_lead_created", {

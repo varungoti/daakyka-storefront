@@ -114,6 +114,12 @@ describe("getOrderTimeline", () => {
     assert.equal(timeline.terminal!.tone, "refunded");
   });
 
+  it("RETURNED renders without throwing (schema-foundation placeholder — unreachable until wave-4 wires a transition into it)", () => {
+    const timeline = getOrderTimeline("RETURNED", "RAZORPAY");
+    assert.ok(timeline.terminal);
+    assert.ok(timeline.steps.length > 0);
+  });
+
   it("never claims a step happened that the transition matrix contradicts (CANCELLED vs REFUNDED asymmetry)", () => {
     // CANCELLED is reachable *before* payment (PENDING_PAYMENT -> CANCELLED
     // per ORDER_STATUS_TRANSITIONS), so it must not claim "confirmed"

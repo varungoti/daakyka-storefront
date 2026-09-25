@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { sendEmail, type SendEmailInput, type SendEmailResult } from "@/lib/engagement/providers/email";
+import { RESET_TOKEN_TTL_MS, VERIFY_TOKEN_TTL_MS } from "@/lib/customer-auth/tokens";
 
 /**
  * F7 fix (docs/audit-2026-09-19/correctness.md): a durable outbox for
@@ -36,6 +37,29 @@ export const EMAIL_KIND = {
 } as const;
 
 export type EmailKind = (typeof EMAIL_KIND)[keyof typeof EMAIL_KIND];
+
+/** F-044 fix: kinds where an older queued-but-unsent email must never go
+ * out once a newer one for the same recipient exists — a reset or verify
+ * link is only ever valid until the next one is issued (see
+ * invalidateOutstandingTokens in src/lib/customer-auth/tokens.ts, which
+ * does the equivalent for the CustomerToken row itself). Order
+ * confirmations and back-in-stock notices are never "superseded" this
+ * way — each is its own event, not a re-issue of the last one. */
+const SUPERSEDING_KINDS: ReadonlySet<string> = new Set([
+  EMAIL_KIND.CUSTOMER_VERIFY_EMAIL,
+  EMAIL_KIND.CUSTOMER_RESET_PASSWORD,
+]);
+
+/** F-044 fix: how long a still-PENDING row of this kind stays eligible to
+ * send. `null` = no expiry (order confirmations, back-in-stock) — those
+ * keep today's behaviour of staying sendable indefinitely. Mirrors the
+ * token TTLs a reset/verify email's own link is subject to — there's no
+ * point delivering an email whose link has already died. */
+function ttlMsForKind(kind: EmailKind | string): number | null {
+  if (kind === EMAIL_KIND.CUSTOMER_RESET_PASSWORD) return RESET_TOKEN_TTL_MS;
+  if (kind === EMAIL_KIND.CUSTOMER_VERIFY_EMAIL) return VERIFY_TOKEN_TTL_MS;
+  return null;
+}
 
 /** After this many real attempts against an actually-configured provider
  * still fail, the row is terminal (FAILED) rather than retried forever —
@@ -95,6 +119,25 @@ export async function sendTransactionalEmail(
     };
   }
 
+  // F-044 fix: a fresh reset/verify email supersedes any earlier one still
+  // queued for the same recipient — mirrors invalidateOutstandingTokens'
+  // "only the newest link works" rule on the CustomerToken side. Runs
+  // whichever way this attempt itself landed (SENT or PENDING): even if
+  // Brevo is configured and this send succeeds immediately, an
+  // older PENDING row from before Brevo was configured must not go out
+  // later carrying a dead link.
+  if (SUPERSEDING_KINDS.has(kind)) {
+    await db.emailOutbox
+      .updateMany({
+        where: { to: input.to, kind, status: "PENDING" },
+        data: { status: "EXPIRED" },
+      })
+      .catch((error) => {
+        // Best-effort — never block the actual send/queue below over this.
+        console.error("[engagement/outbox] failed to expire superseded rows for", kind, error);
+      });
+  }
+
   const headersJson = input.headers ? JSON.stringify(input.headers) : null;
   const baseData = {
     to: input.to,
@@ -123,10 +166,15 @@ export async function sendTransactionalEmail(
     // any of the retry budget and gets no backoff: it's immediately
     // eligible the moment drainEmailOutbox next runs with Brevo configured.
     const isRealAttempt = result.provider === "brevo";
+    // F-044 fix: a time-sensitive row (reset/verify) must never be sent
+    // once its own link has died, however long it sits PENDING — see
+    // ttlMsForKind and drainEmailOutbox's expiry sweep below.
+    const ttlMs = ttlMsForKind(kind);
     const row = await db.emailOutbox.create({
       data: {
         ...baseData,
         status: "PENDING",
+        expiresAt: ttlMs !== null ? new Date(Date.now() + ttlMs) : null,
         attemptCount: isRealAttempt ? 1 : 0,
         lastError: result.error ?? null,
         nextAttemptAt: isRealAttempt ? new Date(Date.now() + computeBackoffMs(1)) : null,
@@ -174,6 +222,9 @@ export interface DrainEmailOutboxResult {
   sent: number;
   /** Rows that just crossed MAX_ATTEMPTS and were marked FAILED (terminal). */
   failedTerminal: number;
+  /** F-044 fix: PENDING rows whose expiresAt had already passed — never
+   * claimed or sent this run, just marked EXPIRED. */
+  expired: number;
   /** PENDING rows left in the table after this run (not necessarily all
    * due — includes ones still backing off). */
   stillPending: number;
@@ -204,11 +255,22 @@ export async function drainEmailOutbox(
   const now = options.now ?? new Date();
   const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
   const staleBefore = new Date(now.getTime() - STALE_LOCK_AFTER_MS);
+  const idFilter = options.ids ? { id: { in: options.ids } } : {};
+
+  // F-044 fix: flip any row whose per-kind TTL has already passed to
+  // EXPIRED *before* selecting candidates below, so a dead reset/verify
+  // link is never claimed and sent just because it happened to reach the
+  // front of the queue. Rows with expiresAt: null (no TTL for this kind)
+  // are untouched — same as before this column existed.
+  const expiredResult = await db.emailOutbox.updateMany({
+    where: { status: "PENDING", expiresAt: { lte: now }, ...idFilter },
+    data: { status: "EXPIRED", lockedAt: null },
+  });
 
   const candidates = await db.emailOutbox.findMany({
     where: {
       status: "PENDING",
-      ...(options.ids ? { id: { in: options.ids } } : {}),
+      ...idFilter,
       OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
     },
     orderBy: { createdAt: "asc" },
@@ -297,13 +359,14 @@ export async function drainEmailOutbox(
   // the whole (possibly concurrently-populated) table; production calls
   // (no `ids`) get the real overall queue depth.
   const stillPending = await db.emailOutbox.count({
-    where: { status: "PENDING", ...(options.ids ? { id: { in: options.ids } } : {}) },
+    where: { status: "PENDING", ...idFilter },
   });
 
   return {
     attempted,
     sent,
     failedTerminal,
+    expired: expiredResult.count,
     stillPending,
     ...(notConfigured ? { skippedReason: "provider_not_configured" as const } : {}),
   };
@@ -336,7 +399,10 @@ export interface EmailOutboxAdminRow {
   to: string;
   subject: string;
   kind: string;
-  status: "PENDING" | "SENT" | "FAILED";
+  // F-044 fix: EXPIRED added — a row the drain will now never send because
+  // its per-kind TTL passed, or it was superseded by a newer reset/verify
+  // email to the same recipient (see SUPERSEDING_KINDS above).
+  status: "PENDING" | "SENT" | "FAILED" | "EXPIRED";
   attemptCount: number;
   lastError: string | null;
   createdAt: Date;
