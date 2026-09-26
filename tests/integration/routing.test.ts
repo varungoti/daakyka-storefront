@@ -66,7 +66,11 @@ describe("sitemap.xml URL generation (Phase C3)", () => {
   let originalMixMatch: boolean;
 
   before(async () => {
-    await seedCatalog(db);
+    // F-333: `{ publish: true }` (not passed by the describe block above)
+    // so at least one seeded product is ACTIVE — the sitemap's product
+    // entries (and this file's own lastModified assertions below) need a
+    // real, visible product to check against.
+    await seedCatalog(db, { publish: true });
     adminId = await findAnyAdminId();
     originalSaleEnabled = await getSetting("sale.enabled");
     originalFabricTech = await getSetting("pages.fabricTech.enabled");
@@ -127,5 +131,39 @@ describe("sitemap.xml URL generation (Phase C3)", () => {
     await setSetting("sale.enabled", false, adminId);
     const disabledEntries = await sitemap();
     assert.ok(!disabledEntries.some((entry) => entry.url.endsWith("/sale")));
+  });
+
+  // F-333: lastModified used to be the sitemap's own build/regeneration
+  // time (`const now = new Date()`) for every route except blog posts, so
+  // a single deploy or blog edit stamped 59+ unrelated URLs as "changed
+  // today". Each entry should now carry its own real timestamp — or none
+  // at all for hardcoded routes with no real one to report.
+  it("omits lastModified for hardcoded static routes", async () => {
+    const entries = await sitemap();
+    const ourStory = entries.find((entry) => entry.url.endsWith("/our-story"));
+    assert.ok(ourStory, "expected to find the hardcoded /our-story route entry");
+    assert.equal(ourStory!.lastModified, undefined, "a hardcoded static route has no real updatedAt to report");
+  });
+
+  it("stamps a category URL with that category's own real updatedAt, not the build time", async () => {
+    const category = await db.category.findFirst({ where: { slug: "for-hospitals" } });
+    assert.ok(category, "expected the seeded for-hospitals category to exist");
+
+    const entries = await sitemap();
+    const entry = entries.find((e) => e.url.endsWith("/category/for-hospitals"));
+    assert.ok(entry, "expected a /category/for-hospitals sitemap entry");
+    assert.equal(new Date(entry!.lastModified!).toISOString(), category!.updatedAt.toISOString());
+  });
+
+  it("stamps a product URL with that product's own real updatedAt, not the build time", async () => {
+    const product = await db.product.findFirst({ where: { status: "ACTIVE" } });
+    assert.ok(product, "expected at least one seeded ACTIVE product to exist");
+
+    const entries = await sitemap();
+    // Product.slug is the DB column; it's surfaced to the storefront (and
+    // used in the sitemap URL) as `handle` — see src/lib/products/index.ts.
+    const entry = entries.find((e) => e.url.endsWith(`/products/${product!.slug}`));
+    assert.ok(entry, `expected a /products/${product!.slug} sitemap entry`);
+    assert.equal(new Date(entry!.lastModified!).toISOString(), product!.updatedAt.toISOString());
   });
 });

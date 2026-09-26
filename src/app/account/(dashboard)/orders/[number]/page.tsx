@@ -2,6 +2,7 @@ import { OrderStatusBadge } from "@/components/account/order-status-badge";
 import { OrderTimelineView } from "@/components/account/order-timeline";
 import { OrderTrackingCard } from "@/components/account/order-tracking-card";
 import { getCustomerSession } from "@/lib/customer-auth/session";
+import { formatDateIST } from "@/lib/format/datetime";
 import { getAuthorizedOrder } from "@/lib/orders/get-order";
 import { getOrderTimeline } from "@/lib/orders/timeline";
 import { getClientIp, checkRateLimit } from "@/lib/security/rate-limit";
@@ -89,10 +90,7 @@ export default async function AccountOrderDetailPage({
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="font-display text-2xl font-bold text-ink">{order.number}</h1>
-          <p className="text-sm text-muted">
-            Placed{" "}
-            {order.createdAt.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
-          </p>
+          <p className="text-sm text-muted">Placed {formatDateIST(order.createdAt)}</p>
         </div>
         <OrderStatusBadge status={order.status} paymentMethod={order.paymentMethod} />
       </div>

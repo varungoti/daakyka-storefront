@@ -3,6 +3,7 @@ import { logAuditEvent } from "@/lib/auth/audit";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { revalidateBlogCache } from "@/lib/blog";
 import { db } from "@/lib/db";
+import { parseIstDateOnly } from "@/lib/format/datetime";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { blogPostSchema } from "@/lib/validation/schemas";
 
@@ -30,7 +31,8 @@ export async function PUT(request: Request, { params }: RouteParams) {
     where: { id },
     data: {
       ...parsed.data,
-      publishedAt: new Date(parsed.data.publishedAt),
+      // F-331: see the sibling POST route's identical comment.
+      publishedAt: parseIstDateOnly(parsed.data.publishedAt) ?? new Date(parsed.data.publishedAt),
       content: JSON.stringify(parsed.data.content),
     },
   });

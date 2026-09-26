@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { getOrderForAdmin, OrderNotFoundError } from "@/lib/orders/admin-orders";
+import { formatDateIST } from "@/lib/format/datetime";
 import { ensureInvoiceNumber, isInvoiceEligible } from "@/lib/orders/invoice-number";
 import { getSetting } from "@/lib/settings";
 import { brand } from "@/data/brand";
@@ -93,7 +94,7 @@ export default async function AdminOrderInvoicePage({ params }: { params: Promis
             <h2 className="font-display text-xl font-bold">{heading}</h2>
             <p className="text-sm text-muted">Order {order.number}</p>
             {invoiceNumber && <p className="text-sm text-muted">Invoice No. {invoiceNumber}</p>}
-            <p className="text-sm text-muted">{order.createdAt.toLocaleDateString("en-IN")}</p>
+            <p className="text-sm text-muted">{formatDateIST(order.createdAt)}</p>
             <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-muted">{order.status.replace("_", " ")}</p>
             {placeOfSupply && <p className="mt-1 text-xs text-muted">Place of supply: {placeOfSupply}</p>}
           </div>

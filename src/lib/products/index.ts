@@ -60,6 +60,10 @@ export interface CategoryTreeNode {
   sortOrder: number;
   showInMenu: boolean;
   image: { url: string; alt: string | null } | null;
+  /** ISO 8601 timestamp — F-333: so src/app/sitemap.ts can use the
+   * category's real last-changed time for `lastModified` instead of the
+   * build/regeneration time. */
+  updatedAt: string;
   children: CategoryTreeNode[];
 }
 
@@ -302,6 +306,7 @@ function mapDbProductToUi(p: DbProduct): Product {
     isNew: p.isNew,
     tags: p.tags,
     createdAt: p.createdAt.toISOString(),
+    updatedAt: p.updatedAt.toISOString(),
     seoTitle: p.seoTitle ?? undefined,
     seoDescription: p.seoDescription ?? undefined,
   };
@@ -321,6 +326,7 @@ interface FlatCategory {
   sortOrder: number;
   showInMenu: boolean;
   image: { url: string; alt: string | null } | null;
+  updatedAt: Date;
 }
 
 async function fetchActiveCategoriesFlat(): Promise<FlatCategory[]> {
@@ -336,6 +342,7 @@ async function fetchActiveCategoriesFlat(): Promise<FlatCategory[]> {
       sortOrder: true,
       showInMenu: true,
       image: { select: { url: true, alt: true } },
+      updatedAt: true,
     },
     orderBy: { sortOrder: "asc" },
   });
@@ -354,6 +361,7 @@ function buildCategoryTree(flat: FlatCategory[]): CategoryTreeNode[] {
         sortOrder: c.sortOrder,
         showInMenu: c.showInMenu,
         image: c.image,
+        updatedAt: c.updatedAt.toISOString(),
         children: [],
       },
     ]),

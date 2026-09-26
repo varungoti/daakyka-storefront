@@ -20,6 +20,7 @@ function node(partial: Partial<CategoryTreeNode> & { slug: string; name: string 
     sortOrder: partial.sortOrder ?? 0,
     showInMenu: partial.showInMenu ?? true,
     image: partial.image ?? null,
+    updatedAt: partial.updatedAt ?? "2026-01-01T00:00:00.000Z",
     children: partial.children ?? [],
   };
 }

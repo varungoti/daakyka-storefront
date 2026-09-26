@@ -11,6 +11,7 @@ import { WishlistButton } from "@/components/wishlist/wishlist-button";
 import { useCart } from "@/context/cart-provider";
 import { useCurrency } from "@/context/currency-provider";
 import type { SizeChartForDisplay } from "@/lib/catalog/size-charts";
+import { formatDateIST } from "@/lib/format/datetime";
 import { computePercentOff } from "@/lib/pricing/percent-off";
 import { findExactVariant, isSizeAvailableForColor, isVariantInStock, resolveVariant, variantExists } from "@/lib/products/resolve-variant";
 import { NotifyWhenAvailable } from "@/components/product/notify-when-available";
@@ -876,12 +877,7 @@ function ReviewsSection({
                     </div>
                   )}
                   <p className="mt-2 text-xs text-muted">
-                    {review.reviewerName} ·{" "}
-                    {new Date(review.createdAt).toLocaleDateString("en-IN", {
-                      year: "numeric",
-                      month: "short",
-                      day: "numeric",
-                    })}
+                    {review.reviewerName} · {formatDateIST(review.createdAt)}
                   </p>
                 </li>
               ))}

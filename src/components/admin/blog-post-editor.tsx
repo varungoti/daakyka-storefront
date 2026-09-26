@@ -1,6 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { formatIstDateOnly } from "@/lib/format/datetime";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -29,7 +30,10 @@ export function BlogPostEditor({
       excerpt: "",
       category: "Guide",
       author: "DAAKYKA Editorial",
-      publishedAt: new Date().toISOString().slice(0, 10),
+      // F-331: `new Date().toISOString().slice(0, 10)` (the old default)
+      // reads the UTC calendar date — after IST midnight but before UTC
+      // midnight (00:00-05:29 IST) it defaulted to yesterday.
+      publishedAt: formatIstDateOnly(),
       readTime: "5 min read",
       image: "",
       content: [""],
@@ -67,22 +71,29 @@ export function BlogPostEditor({
     <div className="space-y-4 rounded-3xl border border-border bg-surface p-6">
       {(
         [
-          ["title", "Title"],
-          ["slug", "Slug"],
-          ["excerpt", "Excerpt"],
-          ["category", "Category"],
-          ["author", "Author"],
-          ["publishedAt", "Published Date"],
-          ["readTime", "Read Time"],
-          ["image", "Image URL"],
+          ["title", "Title", "text"],
+          ["slug", "Slug", "text"],
+          ["excerpt", "Excerpt", "text"],
+          ["category", "Category", "text"],
+          ["author", "Author", "text"],
+          // F-331: a plain text field let the owner type any string,
+          // including one Date couldn't parse or a format that reads as a
+          // different day once parsed (see the API routes' parseIstDateOnly
+          // fix). `type="date"` guarantees a "YYYY-MM-DD" value the same
+          // way the admin orders date filter already relies on
+          // (parseIstDateOnly's own doc comment).
+          ["publishedAt", "Published Date", "date"],
+          ["readTime", "Read Time", "text"],
+          ["image", "Image URL", "text"],
         ] as const
-      ).map(([key, label]) => (
+      ).map(([key, label, type]) => (
         <div key={key}>
           <label htmlFor={`blog-${key}`} className="mb-2 block text-sm font-semibold text-ink">
             {label}
           </label>
           <input
             id={`blog-${key}`}
+            type={type}
             value={form[key]}
             onChange={(e) => setForm({ ...form, [key]: e.target.value })}
             className="w-full rounded-xl border border-border px-4 py-3 text-sm outline-none focus:border-brand"

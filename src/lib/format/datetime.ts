@@ -37,6 +37,19 @@ export function formatDateIST(date: Date | string | number): string {
 }
 
 /**
+ * F-331: the plain "YYYY-MM-DD" calendar day a Date falls on *in IST* —
+ * e.g. for pre-filling/re-editing an `<input type="date">` with the store's
+ * own publish day, or for truncating a stored DateTime back down to a
+ * date-only value for display. `date.toISOString().slice(0, 10)` (the bug
+ * this replaces) reads the *UTC* day instead, which is the previous day for
+ * any instant between 00:00 and 05:29 IST. `en-CA` gives a plain
+ * "YYYY-MM-DD" — same pattern as startOfTodayIST above.
+ */
+export function formatIstDateOnly(date: Date | string | number = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: STORE_TZ }).format(new Date(date));
+}
+
+/**
  * Midnight at the start of "today" in IST, expressed as the equivalent
  * UTC instant — independent of the process's own timezone. Used for
  * "today" boundaries (e.g. the admin dashboard's "Orders Today" card) so

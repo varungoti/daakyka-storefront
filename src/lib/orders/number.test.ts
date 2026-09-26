@@ -51,9 +51,22 @@ describe("order number generation", () => {
     assert.ok(sawLargeSuffix, "expected at least one candidate in 2000 draws to use the full 10-digit range");
   });
 
-  it("uses the current year by default", () => {
+  it("uses the current IST year by default", () => {
     const candidate = generateOrderNumberCandidate();
-    const year = new Date().getFullYear();
+    const year = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric" }).format(new Date());
     assert.match(candidate, new RegExp(`^DK-${year}-\\d{10}$`));
+  });
+
+  it("F-330: takes the year from IST, not the server process's UTC clock", () => {
+    // 2026-12-31T20:00:00Z is 2027-01-01T01:30 IST — already the new year
+    // in IST while a UTC server process is still on 31 Dec.
+    const candidate = generateOrderNumberCandidate(new Date("2026-12-31T20:00:00Z"));
+    assert.match(candidate, /^DK-2027-\d{10}$/);
+  });
+
+  it("F-330: an order just before IST midnight stays in the outgoing IST year", () => {
+    // 2026-12-31T18:00:00Z is 2026-12-31T23:30 IST — still 31 Dec in IST.
+    const candidate = generateOrderNumberCandidate(new Date("2026-12-31T18:00:00Z"));
+    assert.match(candidate, /^DK-2026-\d{10}$/);
   });
 });

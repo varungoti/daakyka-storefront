@@ -3,6 +3,7 @@ import { logAuditEvent } from "@/lib/auth/audit";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { revalidateBlogCache } from "@/lib/blog";
 import { db } from "@/lib/db";
+import { parseIstDateOnly } from "@/lib/format/datetime";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { blogPostSchema } from "@/lib/validation/schemas";
 
@@ -35,7 +36,14 @@ export async function POST(request: Request) {
   const post = await db.blogPostRecord.create({
     data: {
       ...parsed.data,
-      publishedAt: new Date(parsed.data.publishedAt),
+      // F-331: the editor sends a plain "YYYY-MM-DD" (from an
+      // <input type="date">, always the store's own IST calendar day) —
+      // `new Date(value)` reads that as *UTC* midnight (05:30 IST), which
+      // is what let 00:00-05:29 IST posts render as the previous day.
+      // parseIstDateOnly reads it as IST midnight instead; the `new Date`
+      // fallback only matters for a malformed value that shouldn't reach
+      // here past blogPostSchema, but keeps prior behaviour for one.
+      publishedAt: parseIstDateOnly(parsed.data.publishedAt) ?? new Date(parsed.data.publishedAt),
       content: JSON.stringify(parsed.data.content),
     },
   });

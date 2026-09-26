@@ -1,5 +1,6 @@
 import { getBlogPostBySlug, getPublishedBlogPosts } from "@/lib/blog";
 import { PageContentSection } from "@/components/ui/page-shell";
+import { formatDateIST } from "@/lib/format/datetime";
 import { canonicalPath } from "@/lib/seo/canonical";
 import Image from "next/image";
 import Link from "next/link";
@@ -58,8 +59,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
             {post.title}
           </h1>
           <p className="mt-4 text-sm text-muted">
-            {post.author} · {new Date(post.publishedAt).toLocaleDateString("en-IN")} ·{" "}
-            {post.readTime}
+            {post.author} · {formatDateIST(post.publishedAt)} · {post.readTime}
           </p>
 
           <div className="relative mt-8 aspect-[16/9] overflow-hidden rounded-[2rem]">

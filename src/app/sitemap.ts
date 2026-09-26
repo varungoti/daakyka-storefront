@@ -15,13 +15,20 @@ import { isPageEnabled, isSaleEnabled } from "@/lib/settings";
 // that to at most an hour even if no such save ever happens.
 export const revalidate = 3600;
 
-function flattenCategorySlugs(nodes: Awaited<ReturnType<typeof getCategoryTreeStrict>>): string[] {
-  return nodes.flatMap((node) => [node.slug, ...flattenCategorySlugs(node.children)]);
+// F-333: used to just collect slugs and stamp every category with the
+// sitemap's own build/regeneration time — flatten {slug, updatedAt} pairs
+// instead so each category keeps its own real last-changed time below.
+function flattenCategoryNodes(
+  nodes: Awaited<ReturnType<typeof getCategoryTreeStrict>>,
+): { slug: string; updatedAt: string }[] {
+  return nodes.flatMap((node) => [
+    { slug: node.slug, updatedAt: node.updatedAt },
+    ...flattenCategoryNodes(node.children),
+  ]);
 }
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const base = siteUrlBase();
-  const now = new Date();
   const [fabricTechEnabled, mixMatchEnabled, saleEnabled, categoryTree] = await Promise.all([
     isPageEnabled("fabricTech"),
     isPageEnabled("mixMatch"),
@@ -68,44 +75,49 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     "/nurse-uniforms",
   ];
 
-  const categorySlugs = flattenCategorySlugs(categoryTree);
+  const categoryNodes = flattenCategoryNodes(categoryTree);
   const posts = await getPublishedBlogPosts();
   const products = await getProductsStrict();
 
   return [
+    // F-333: these are hardcoded routes (hero copy, static marketing
+    // pages) with no real "last changed" timestamp anywhere to read —
+    // stamping them with `now` claimed every one of them changed on every
+    // deploy, which search engines learn to distrust and then ignore.
+    // Omitting `lastModified` (optional on MetadataRoute.Sitemap) is
+    // honest about not having one, rather than inventing a value.
     ...staticRoutes.map((path) => ({
       url: `${base}${path}`,
-      lastModified: now,
       changeFrequency: "weekly" as const,
       priority: path === "" ? 1 : 0.8,
     })),
-    ...categorySlugs.map((slug) => ({
+    ...categoryNodes.map(({ slug, updatedAt }) => ({
       url: `${base}/category/${slug}`,
-      lastModified: now,
+      lastModified: updatedAt,
       changeFrequency: "weekly" as const,
       priority: 0.7,
     })),
     ...products.map((product) => ({
       url: `${base}/products/${product.handle}`,
-      lastModified: now,
+      lastModified: product.updatedAt,
       changeFrequency: "weekly" as const,
       priority: 0.85,
     })),
+    // Hardcoded landing-page/collection copy, same reasoning as
+    // staticRoutes above — no real updatedAt to report.
     ...seoLandingPages.map((page) => ({
       url: `${base}/guides/${page.slug}`,
-      lastModified: now,
       changeFrequency: "monthly" as const,
       priority: 0.7,
     })),
     ...collectionPages.map((collection) => ({
       url: `${base}/collections/${collection.handle}`,
-      lastModified: now,
       changeFrequency: "weekly" as const,
       priority: 0.75,
     })),
     ...posts.map((post) => ({
       url: `${base}/blog/${post.slug}`,
-      lastModified: new Date(post.publishedAt),
+      lastModified: post.publishedAt,
       changeFrequency: "monthly" as const,
       priority: 0.6,
     })),

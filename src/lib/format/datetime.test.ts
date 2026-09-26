@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import {
   formatDateIST,
   formatDateTimeIST,
+  formatIstDateOnly,
   parseIstDateOnly,
   parseIstDateOnlyExclusiveEnd,
   startOfTodayIST,
+  STORE_TZ,
 } from "@/lib/format/datetime";
 
 describe("startOfTodayIST (F-060)", () => {
@@ -48,6 +50,34 @@ describe("formatDateTimeIST / formatDateIST (F-060)", () => {
     const formatted = formatDateIST("2026-09-24T20:15:00Z");
     assert.match(formatted, /25/);
     assert.doesNotMatch(formatted, /\b24\b/);
+  });
+
+  // F-329: product-detail.tsx's review list is a client component whose
+  // initial reviews are server-rendered — formatDateIST must return the
+  // exact same string called twice for the same input, whatever the
+  // process's own timezone is, or SSR and CSR disagree and React throws a
+  // hydration error.
+  it("is a pure function of its input — repeat calls agree, independent of the process timezone", () => {
+    const first = formatDateIST("2026-09-24T20:15:00Z");
+    const second = formatDateIST("2026-09-24T20:15:00Z");
+    assert.equal(first, second);
+  });
+});
+
+describe("formatIstDateOnly (F-331)", () => {
+  it("reads the IST calendar day, not the UTC one, for an instant after IST midnight but before UTC midnight", () => {
+    // 2026-09-24T20:15:00Z is 2026-09-25T01:45 IST — already the 25th in
+    // IST while still the 24th in UTC. `.toISOString().slice(0, 10)` (the
+    // bug this replaces) would give "2026-09-24".
+    assert.equal(formatIstDateOnly("2026-09-24T20:15:00Z"), "2026-09-25");
+  });
+
+  it("returns a plain YYYY-MM-DD string suitable for an <input type=date>", () => {
+    assert.match(formatIstDateOnly("2026-09-24T20:15:00Z"), /^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("defaults to today (in IST) when called with no argument", () => {
+    assert.equal(formatIstDateOnly(), new Intl.DateTimeFormat("en-CA", { timeZone: STORE_TZ }).format(new Date()));
   });
 });
 

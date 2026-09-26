@@ -1,6 +1,7 @@
 import { EmptyState } from "@/components/account/account-tabs";
 import { OrderStatusBadge } from "@/components/account/order-status-badge";
 import { getCustomerSession } from "@/lib/customer-auth/session";
+import { formatDateIST } from "@/lib/format/datetime";
 import { listOrdersForCustomer } from "@/lib/orders/customer-orders";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -19,10 +20,6 @@ function formatInr(amount: number): string {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(
     amount,
   );
-}
-
-function formatOrderDate(date: Date): string {
-  return date.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 
 /**
@@ -69,7 +66,7 @@ export default async function AccountOrdersPage({
             <div>
               <p className="font-semibold text-ink">{order.number}</p>
               <p className="text-sm text-muted">
-                Placed {formatOrderDate(order.createdAt)} · {order.itemCount} item
+                Placed {formatDateIST(order.createdAt)} · {order.itemCount} item
                 {order.itemCount === 1 ? "" : "s"}
               </p>
             </div>

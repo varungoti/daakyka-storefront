@@ -94,6 +94,10 @@ export interface Product {
    * so Shopify-mapped/legacy-seed products (which predate this column)
    * still type-check without populating it. */
   createdAt?: string;
+  /** ISO 8601 timestamp — F-333: the sitemap needs each product's real
+   * last-changed time for `lastModified`, not the build/regeneration time.
+   * Optional for the same reason `createdAt` is. */
+  updatedAt?: string;
   /** Admin-entered SEO title/description overrides (release-hardening
    * F-106) — `generateMetadata` prefers these over `name`/`description`
    * when set. */

@@ -36,8 +36,22 @@ export function isValidOrderNumberFormat(value: string): boolean {
   return ORDER_NUMBER_PATTERN.test(value);
 }
 
+// F-330: `now.getFullYear()` reads the *process's* local year — correct on
+// this Asia/Calcutta dev machine, but Vercel functions run in UTC, so an
+// order placed 00:00-05:29 IST (18:30-23:59 UTC the previous day) —
+// including every order placed in the first ~5.5h of a new year — would be
+// numbered for the wrong (UTC) year. `Intl.DateTimeFormat` with an explicit
+// `timeZone` gives the store's own IST calendar year regardless of the
+// server process's timezone. See src/lib/format/datetime.ts's header
+// comment for why Asia/Kolkata needs no DST handling.
+const IST_YEAR_FORMATTER = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric" });
+
+function istYear(now: Date): number {
+  return Number(IST_YEAR_FORMATTER.format(now));
+}
+
 export function generateOrderNumberCandidate(now: Date = new Date()): string {
-  const year = now.getFullYear();
+  const year = istYear(now);
   const suffix = String(randomInt(ORDER_NUMBER_SUFFIX_SPACE)).padStart(ORDER_NUMBER_SUFFIX_DIGITS, "0");
   return `DK-${year}-${suffix}`;
 }

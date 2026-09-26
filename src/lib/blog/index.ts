@@ -1,5 +1,6 @@
 import { revalidateTag, unstable_cache } from "next/cache";
 import { db } from "@/lib/db";
+import { formatIstDateOnly } from "@/lib/format/datetime";
 import { blogPosts as seedBlogPosts } from "@/data/blog";
 import type { BlogPost } from "@/data/blog";
 
@@ -20,17 +21,27 @@ function mapRecord(record: {
     excerpt: record.excerpt,
     category: record.category,
     author: record.author,
-    publishedAt: record.publishedAt.toISOString().slice(0, 10),
+    // F-331: was `record.publishedAt.toISOString().slice(0, 10)`, which
+    // reads the UTC calendar date — a post published at 00:00-05:29 IST
+    // (18:30-23:59 UTC the previous day) rendered the previous day
+    // everywhere it's shown. Read the store's own IST calendar day instead.
+    publishedAt: formatIstDateOnly(record.publishedAt),
     readTime: record.readTime,
     image: record.image,
     content: JSON.parse(record.content) as string[],
   };
 }
 
+// F-331: filtering on `status: "PUBLISHED"` alone let the owner "publish" a
+// post with a future date and have it go live immediately — there was no
+// way to schedule one. `publishedAt: { lte: new Date() }` keeps a
+// future-dated PUBLISHED post out of both the listing and the slug lookup
+// (so it also 404s, and generateStaticParams below never prerenders it)
+// until its own scheduled instant actually arrives.
 async function readPublishedBlogPostsFromDb(): Promise<BlogPost[]> {
   try {
     const records = await db.blogPostRecord.findMany({
-      where: { status: "PUBLISHED" },
+      where: { status: "PUBLISHED", publishedAt: { lte: new Date() } },
       orderBy: { publishedAt: "desc" },
     });
     if (records.length === 0) return seedBlogPosts;
@@ -43,7 +54,7 @@ async function readPublishedBlogPostsFromDb(): Promise<BlogPost[]> {
 async function readBlogPostBySlugFromDb(slug: string): Promise<BlogPost | null> {
   try {
     const record = await db.blogPostRecord.findFirst({
-      where: { slug, status: "PUBLISHED" },
+      where: { slug, status: "PUBLISHED", publishedAt: { lte: new Date() } },
     });
     if (!record) {
       return seedBlogPosts.find((post) => post.slug === slug) ?? null;
@@ -67,16 +78,25 @@ async function readBlogPostBySlugFromDb(slug: string): Promise<BlogPost | null> 
  */
 export const BLOG_CACHE_TAG = "blog";
 
+// F-331: without a numeric `revalidate`, this cache only ever refreshes on
+// an explicit revalidateBlogCache() call from an admin create/update/
+// delete/publish — so a post scheduled for a future publishedAt would stay
+// invisible past its own scheduled instant until an admin happened to save
+// something else. A 5-minute time-based revalidate (on top of the existing
+// tag-based one) bounds how long a scheduled post can sit past its time
+// without needing a dedicated cron job.
+const BLOG_CACHE_REVALIDATE_SECONDS = 300;
+
 const cachedGetPublishedBlogPosts = unstable_cache(
   readPublishedBlogPostsFromDb,
   ["published-blog-posts"],
-  { tags: [BLOG_CACHE_TAG] },
+  { tags: [BLOG_CACHE_TAG], revalidate: BLOG_CACHE_REVALIDATE_SECONDS },
 );
 
 const cachedGetBlogPostBySlug = unstable_cache(
   readBlogPostBySlugFromDb,
   ["blog-post-by-slug"],
-  { tags: [BLOG_CACHE_TAG] },
+  { tags: [BLOG_CACHE_TAG], revalidate: BLOG_CACHE_REVALIDATE_SECONDS },
 );
 
 export async function getPublishedBlogPosts(): Promise<BlogPost[]> {

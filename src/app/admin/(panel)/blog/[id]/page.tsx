@@ -1,6 +1,7 @@
 import { BlogPostEditor } from "@/components/admin/blog-post-editor";
 import { requireAdminPage } from "@/lib/auth/require-admin-page";
 import { db } from "@/lib/db";
+import { formatIstDateOnly } from "@/lib/format/datetime";
 import { notFound } from "next/navigation";
 
 interface PageProps {
@@ -34,7 +35,10 @@ export default async function EditBlogPostPage({ params }: PageProps) {
           excerpt: post.excerpt,
           category: post.category,
           author: post.author,
-          publishedAt: post.publishedAt.toISOString().slice(0, 10),
+          // F-331: was `.toISOString().slice(0, 10)`, which reads the UTC
+          // calendar date and re-showed the previous day for any post
+          // published 00:00-05:29 IST.
+          publishedAt: formatIstDateOnly(post.publishedAt),
           readTime: post.readTime,
           image: post.image,
           content: JSON.parse(post.content) as string[],
