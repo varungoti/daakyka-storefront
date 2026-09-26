@@ -205,10 +205,17 @@ export function ProductDetail({
             )}
           </div>
 
-          <p className="leading-relaxed text-muted">
-            {product.description ??
-              "Premium apparel engineered for all-day comfort and durability, built for healthcare and institutional wear."}
-          </p>
+          {/* release-hardening audit F-111: this used to always render
+              `product.description` — the exact same text (as plain text)
+              the "Description" accordion below renders again as HTML, so
+              every product with a description showed it twice on the page,
+              and the admin's "Short description" field was never shown
+              anywhere. Now: a distinct, hand-written teaser when the admin
+              set one, and nothing here otherwise (the accordion below
+              always has its own fallback copy). */}
+          {product.shortDescription && (
+            <p className="leading-relaxed text-muted">{product.shortDescription}</p>
+          )}
 
           {product.colors.length > 1 && (
             <div>

@@ -8,6 +8,7 @@ import {
   ShopMixMatchPromo,
 } from "@/components/shop/shop-feature-cards";
 import { TrustBar } from "@/components/layout/trust-bar";
+import { matchProducts } from "@/lib/search/match-products";
 import {
   applyShopFiltersToSearchParams,
   countByCategory,
@@ -238,16 +239,28 @@ export function ShopPageContent({
     return counts;
   }, [products, categoryDescendants]);
 
+  // release-hardening audit F-092: most `fabricFilters` options have no
+  // matching product yet (fabricTech is only just starting to be populated
+  // from admin-editable tags/fabric text — see mapDbProductToUi), so ticking
+  // one of those always showed "0 Products". Hiding options no loaded
+  // product actually has keeps the facet honest without needing a
+  // per-product admin field before it can ship.
+  const availableFabricIds = useMemo(
+    () => new Set(products.flatMap((p) => p.fabricTech)),
+    [products],
+  );
+
   const filteredProducts = useMemo(() => {
     const result = filterProducts(products, filters, categoryDescendants);
-    const q = query.trim().toLowerCase();
-    if (!q) return result;
-    return result.filter(
-      (product) =>
-        product.name.toLowerCase().includes(q) ||
-        product.colorName.toLowerCase().includes(q) ||
-        product.category.toLowerCase().includes(q),
-    );
+    if (!query.trim()) return result;
+    // release-hardening audit F-082: shares matchProducts with the header's
+    // search dialog (tokenized, stemmed, prefix-matched) instead of the old
+    // whole-string `contains` test, which returned nothing for "scrub
+    // tops"/"lab coats" and the like. Used as a filter over `result`, not a
+    // re-ranker — this only narrows the set, so the shopper's chosen sort
+    // (price, rating, newest...) still applies to what's left.
+    const matchedIds = new Set(matchProducts(result, query).map((product) => product.id));
+    return result.filter((product) => matchedIds.has(product.id));
   }, [filters, products, query, categoryDescendants]);
 
   const pageTitle = heading?.title ?? "Shop All Scrubs";
@@ -300,6 +313,7 @@ export function ShopPageContent({
               categories={filterCategories}
               categoryCounts={categoryCounts}
               totalCount={products.length}
+              availableFabricIds={availableFabricIds}
             />
           </div>
           <ProductGrid
@@ -323,6 +337,7 @@ export function ShopPageContent({
         categories={filterCategories}
         categoryCounts={categoryCounts}
         totalCount={products.length}
+        availableFabricIds={availableFabricIds}
       />
 
       {showExtras && (

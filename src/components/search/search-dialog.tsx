@@ -2,6 +2,7 @@
 
 import { useCurrency } from "@/context/currency-provider";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
+import { matchProducts } from "@/lib/search/match-products";
 import type { Product } from "@/lib/types";
 import { Search, X } from "lucide-react";
 import Image from "next/image";
@@ -36,18 +37,14 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
       .finally(() => setLoading(false));
   }, [open]);
 
+  // release-hardening audit F-082: was a single whole-string `contains`
+  // test — "scrubs", "scrub tops" and "lab coats" all returned nothing —
+  // with no ranking, so a category-slug hit could outrank an actual name
+  // match. matchProducts (shared with /shop?q=, see shop-page-content.tsx)
+  // tokenizes, stems plurals and ranks name hits first.
   const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return products.slice(0, 6);
-    return products
-      .filter(
-        (product) =>
-          product.name.toLowerCase().includes(q) ||
-          product.colorName.toLowerCase().includes(q) ||
-          product.category.toLowerCase().includes(q) ||
-          product.fabricTech.some((tech) => tech.includes(q.replace(" ", "-"))),
-      )
-      .slice(0, 8);
+    if (!query.trim()) return products.slice(0, 6);
+    return matchProducts(products, query).slice(0, 8);
   }, [products, query]);
 
   return (
@@ -133,13 +130,17 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
                 </ul>
               )}
 
-              {!loading && query && results.length > 0 && (
+              {/* F-082: shown even with zero results (not just `results.length
+                  > 0`) — the dialog only shows up to 8 matches, and this is
+                  the shopper's one-click way out of "No products found"
+                  rather than a dead end. */}
+              {!loading && query.trim() && (
                 <Link
                   href={`/shop?q=${encodeURIComponent(query)}`}
                   onClick={onClose}
                   className="mt-4 block rounded-2xl bg-lilac/40 px-4 py-3 text-center text-sm font-semibold text-brand hover:bg-lilac/60"
                 >
-                  View all results for &ldquo;{query}&rdquo;
+                  Search all products for &ldquo;{query}&rdquo;
                 </Link>
               )}
             </div>

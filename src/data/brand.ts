@@ -63,7 +63,10 @@ export const brand = {
       title: "Made-to-Measure Blazers",
       description:
         "Impeccably tailored blazers for students, faculty, and corporate teams.",
-      href: "/shop/bespoke",
+      // release-hardening audit F-003: /shop/bespoke has no real catalogue
+      // behind it yet (see that page's own comment) — /category/blazers is
+      // where these made-to-measure blazers actually live.
+      href: "/category/blazers",
       icon: "blazer",
     },
   ],

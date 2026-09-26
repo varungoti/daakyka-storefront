@@ -1,10 +1,8 @@
 import { collectionPages, getCollection } from "@/data/seo-landing-pages";
-import { buttonClassNames } from "@/components/ui/button";
 import { ProductCard } from "@/components/ui/product-card";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { SectionHeading } from "@/components/ui/section-heading";
-import { getBestSellers, getProducts } from "@/lib/products";
-import { isPageEnabled } from "@/lib/settings";
+import { getBestSellers } from "@/lib/products";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -24,39 +22,23 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   return { title: collection.title, description: collection.description };
 }
 
+/**
+ * release-hardening audit F-020: `collectionPages` used to have three more
+ * entries (stretch-collection, hospital-teams, bespoke) that only ever hit
+ * a "Continue to X" interstitial branch here — zero product cards, just a
+ * link onward to where the real content actually lived. Those entries are
+ * gone (their old /collections/<handle> URLs now redirect straight there —
+ * see next.config.ts), so "best-sellers" (renamed "Featured" — it's the
+ * admin's `featured` flag, not real sales data) is the only collection
+ * left, and it always renders a real product grid. The interstitial branch
+ * this page used to have for the other three is gone with them.
+ */
 export default async function CollectionPage({ params }: PageProps) {
   const { handle } = await params;
   const collection = getCollection(handle);
   if (!collection) notFound();
 
-  if ("shopHref" in collection && collection.shopHref && handle !== "best-sellers") {
-    let shopHref = collection.shopHref;
-    if (shopHref.startsWith("/fabric-technology") && !(await isPageEnabled("fabricTech"))) {
-      shopHref = "/shop";
-    }
-    if (shopHref.startsWith("/mix-and-match") && !(await isPageEnabled("mixMatch"))) {
-      shopHref = "/shop";
-    }
-
-    return (
-      <>
-        <PageHeroBand innerClassName="max-w-3xl text-center">
-          <SectionHeading
-            title={collection.title}
-            description={collection.description}
-            align="center"
-            titleAs="h1"
-          />
-          <Link href={shopHref} className={buttonClassNames({ size: "lg", className: "mt-8" })}>
-            Continue to {collection.title}
-          </Link>
-        </PageHeroBand>
-      </>
-    );
-  }
-
-  const products =
-    handle === "best-sellers" ? await getBestSellers() : (await getProducts()).slice(0, 8);
+  const products = await getBestSellers();
 
   return (
     <>

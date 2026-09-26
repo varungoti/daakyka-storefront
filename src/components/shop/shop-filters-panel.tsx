@@ -33,6 +33,11 @@ interface ShopFiltersPanelProps {
   categoryCounts: Record<string, number>;
   totalCount: number;
   showHeading?: boolean;
+  /** release-hardening audit F-092: fabric ids at least one loaded product
+   * actually has. Omitted (server-render/no data yet) shows every option,
+   * same as before this fix — only a defined, non-empty product list can
+   * ever narrow the list, never widen a false "nothing matches" state. */
+  availableFabricIds?: ReadonlySet<string>;
 }
 
 export function ShopFiltersPanel({
@@ -42,8 +47,12 @@ export function ShopFiltersPanel({
   categoryCounts,
   totalCount,
   showHeading = true,
+  availableFabricIds,
 }: ShopFiltersPanelProps) {
   const { formatPrice } = useCurrency();
+  const visibleFabricFilters = availableFabricIds
+    ? fabricFilters.filter((fabric) => availableFabricIds.has(fabric.id))
+    : fabricFilters;
 
   const toggle = (key: "colors" | "sizes" | "fabrics", value: string) => {
     const current = filters[key];
@@ -149,24 +158,26 @@ export function ShopFiltersPanel({
         </div>
       </FilterBlock>
 
-      <FilterBlock title="Fabric Technology">
-        <div className="space-y-2">
-          {fabricFilters.map((fabric) => (
-            <label
-              key={fabric.id}
-              className="flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 hover:bg-lilac/30"
-            >
-              <input
-                type="checkbox"
-                checked={filters.fabrics.includes(fabric.id)}
-                onChange={() => toggle("fabrics", fabric.id)}
-                className="h-4 w-4 rounded border-border text-brand focus:ring-brand"
-              />
-              <span className="text-sm text-ink">{fabric.label}</span>
-            </label>
-          ))}
-        </div>
-      </FilterBlock>
+      {visibleFabricFilters.length > 0 && (
+        <FilterBlock title="Fabric Technology">
+          <div className="space-y-2">
+            {visibleFabricFilters.map((fabric) => (
+              <label
+                key={fabric.id}
+                className="flex cursor-pointer items-center gap-3 rounded-xl px-2 py-2 hover:bg-lilac/30"
+              >
+                <input
+                  type="checkbox"
+                  checked={filters.fabrics.includes(fabric.id)}
+                  onChange={() => toggle("fabrics", fabric.id)}
+                  className="h-4 w-4 rounded border-border text-brand focus:ring-brand"
+                />
+                <span className="text-sm text-ink">{fabric.label}</span>
+              </label>
+            ))}
+          </div>
+        </FilterBlock>
+      )}
 
       <FilterBlock title="Price Range">
         <input

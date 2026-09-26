@@ -1,11 +1,21 @@
 import type { MetadataRoute } from "next";
 import { collectionPages, seoLandingPages } from "@/data/seo-landing-pages";
 import { getPublishedBlogPosts } from "@/lib/blog";
-import { getCategoryTree, getProducts } from "@/lib/products/index";
+import { getCategoryTreeStrict, getProductsStrict } from "@/lib/products/index";
 import { siteUrlBase } from "@/lib/seo/json-ld";
 import { isPageEnabled, isSaleEnabled } from "@/lib/settings";
 
-function flattenCategorySlugs(nodes: Awaited<ReturnType<typeof getCategoryTree>>): string[] {
+// release-hardening audit F-046: this is a metadata route with no
+// request-time signal (headers/cookies/searchParams) to opt it into
+// dynamic rendering, so Next treats it as fully static — rebuilt only when
+// a tag it reads is revalidated (getCategoryTreeStrict/getProductsStrict
+// bypass the product/category cache tags entirely). Without a `revalidate`
+// TTL, a bad snapshot — e.g. one built while the DB was unreachable — can
+// only ever be replaced by an unrelated admin catalog save; this bounds
+// that to at most an hour even if no such save ever happens.
+export const revalidate = 3600;
+
+function flattenCategorySlugs(nodes: Awaited<ReturnType<typeof getCategoryTreeStrict>>): string[] {
   return nodes.flatMap((node) => [node.slug, ...flattenCategorySlugs(node.children)]);
 }
 
@@ -16,7 +26,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     isPageEnabled("fabricTech"),
     isPageEnabled("mixMatch"),
     isSaleEnabled(),
-    getCategoryTree(),
+    // release-hardening audit F-046: the plain (non-strict) getCategoryTree/
+    // getProducts silently degrade to `[]`/the fake legacy seed catalog on a
+    // DB error, which then gets cached as a "successful" sitemap forever
+    // (or until an unrelated admin save happens to revalidate the same
+    // tags) — that's how production ended up serving a sitemap with zero
+    // /category/ URLs and 8 seed-catalog product handles that all 404. The
+    // strict variants below read the DB directly and let an error
+    // propagate, so a bad build/regeneration fails loudly instead.
+    getCategoryTreeStrict(),
   ]);
 
   const staticRoutes = [
@@ -52,7 +70,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   const categorySlugs = flattenCategorySlugs(categoryTree);
   const posts = await getPublishedBlogPosts();
-  const products = await getProducts();
+  const products = await getProductsStrict();
 
   return [
     ...staticRoutes.map((path) => ({

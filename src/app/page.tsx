@@ -121,7 +121,10 @@ export default async function HomePage() {
       />
       <OffersStrip />
       <ShopByCategorySection categories={categoryTiles} />
-      <FeaturedProductsGrid eyebrow="Curated For You" title="Best Sellers" products={bestSellers} />
+      {/* release-hardening audit F-020: `bestSellers` is the admin
+          "Featured" flag, not real sales data — see product-card.tsx's
+          matching badge-copy fix. */}
+      <FeaturedProductsGrid eyebrow="Curated For You" title="Featured" products={bestSellers} />
       {newArrivals.length > 0 && (
         <FeaturedProductsGrid
           eyebrow="Just In"

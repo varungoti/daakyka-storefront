@@ -56,7 +56,14 @@ interface ProductCardProps {
 export function ProductCard({ product, className, loadEagerly = false }: ProductCardProps) {
   const { formatPrice } = useCurrency();
   const [lightboxOpen, setLightboxOpen] = useState(false);
-  const [displayImage, setDisplayImage] = useState(product.images?.[0]?.url ?? product.image);
+  // release-hardening audit F-016: `product.image` and `product.colorName`
+  // are now the same colour (see mapDbProductToUi's `defaultColor`) —
+  // seeding this from `product.images[0]` instead of `product.image` was
+  // the bug that showed a different colour's photo than the label/Quick
+  // Add underneath it whenever the gallery's first image wasn't that
+  // colour.
+  const [displayImage, setDisplayImage] = useState(product.image);
+  const [selectedColor, setSelectedColor] = useState(product.colorName);
 
   const galleryImages: LightboxImage[] =
     product.images && product.images.length > 0
@@ -129,8 +136,14 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
             </Badge>
           )}
           {isBestSeller && (
+            // release-hardening audit F-020: this badge (and the
+            // /collections/best-sellers page it's driven by) reflects the
+            // admin's "Featured" flag, not actual sales — "Best Seller" was
+            // a false, specific claim ("chosen by healthcare professionals")
+            // for a set that includes kids/school items with no sales data
+            // behind it at all.
             <Badge variant="bestseller" className="pointer-events-auto">
-              Best Seller
+              Featured
             </Badge>
           )}
         </div>
@@ -145,9 +158,16 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
               key={color.name}
               type="button"
               onClick={() => {
+                // F-016: keep the label and Quick Add's colour in step with
+                // whichever swatch is showing, not just the photo — a
+                // swatch click used to change only `displayImage`, so the
+                // label/Quick Add kept naming the *original* default colour
+                // even after the photo changed to a different one.
+                setSelectedColor(color.name);
                 const match = product.images?.find((img) => img.color === color.name);
                 if (match) setDisplayImage(match.url);
               }}
+              aria-pressed={selectedColor === color.name}
               aria-label={`Preview ${product.name} in ${color.name}`}
               title={color.name}
               className="h-4 w-4 rounded-full border border-border ring-1 ring-surface-elevated transition hover:scale-110"
@@ -165,7 +185,7 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
           <h3 className="font-display text-lg font-semibold leading-snug text-ink group-hover:text-brand">
             {product.name}
           </h3>
-          <p className="text-sm text-muted">{product.colorName}</p>
+          <p className="text-sm text-muted">{selectedColor}</p>
         </div>
         <div className="flex items-end justify-between gap-2">
           <div className="flex items-baseline gap-2">
@@ -188,7 +208,7 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
           them to "Notify me when available". */}
       {!soldOut && (
         <div className="px-5 pb-5">
-          <QuickAddPanel product={product} />
+          <QuickAddPanel product={product} selectedColor={selectedColor} />
         </div>
       )}
 
@@ -209,9 +229,12 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
  * Deliberately kept as a sibling of the product `<Link>` (see the a11y
  * note above) so its buttons never nest inside an anchor.
  */
-function QuickAddPanel({ product }: { product: Product }) {
+function QuickAddPanel({ product, selectedColor }: { product: Product; selectedColor: string }) {
   const { addToCart, isLoading } = useCart();
-  const defaultColor = product.colors[0]?.name ?? product.colorName;
+  // F-016: use the card's currently-shown colour (kept in sync with the
+  // swatch and the photo by the parent) rather than always `colors[0]`, so
+  // Quick Add can never add a different colour than what's on screen.
+  const defaultColor = selectedColor;
   // F-006: default to the first size that's actually in stock for
   // defaultColor, not blindly sizes[0] — otherwise a partially sold-out
   // product pre-selects an unbuyable size and one tap on Quick Add adds

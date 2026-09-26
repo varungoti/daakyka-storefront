@@ -89,6 +89,14 @@ const nextConfig: NextConfig = {
       // conflict with this one.
       { source: "/hospital-uniforms", destination: "/for-hospitals", permanent: true },
       { source: "/institutional", destination: "/for-hospitals", permanent: true },
+      // release-hardening audit F-020: these three /collections/<handle>
+      // pages used to render nothing but a "Continue to X" interstitial
+      // with zero products (see the removed entries in
+      // src/data/seo-landing-pages.ts's collectionPages) — redirect
+      // straight to their real destinations instead of a dead middle page.
+      { source: "/collections/hospital-teams", destination: "/for-hospitals", permanent: true },
+      { source: "/collections/stretch-collection", destination: "/shop", permanent: true },
+      { source: "/collections/bespoke", destination: "/shop", permanent: true },
       ...seoLandingPages
         .filter((page) => page.slug !== "hospital-uniforms")
         .map((page) => ({

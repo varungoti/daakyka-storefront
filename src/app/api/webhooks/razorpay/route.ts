@@ -3,6 +3,14 @@ import { db } from "@/lib/db";
 import { notifyNewOrder } from "@/lib/orders/notify";
 import { markRazorpayOrderPaid, releaseOrderInventory } from "@/lib/orders/payment-transitions";
 import { verifyWebhookSignature } from "@/lib/payments/razorpay";
+import { revalidateProductStockForVariants } from "@/lib/products";
+
+/** release-hardening audit F-017: shared by every stock-mutating handler
+ * below — extracts the (non-null) variant ids from an order's line items
+ * for revalidateProductStockForVariants. */
+function orderVariantIds(items: readonly { variantId: string | null }[]): string[] {
+  return items.map((item) => item.variantId).filter((id): id is string => id !== null);
+}
 
 /**
  * Phase D3: reconciles orders when the browser closed (or the network
@@ -90,6 +98,11 @@ async function handlePaymentCaptured(payment: { id?: string; order_id?: string }
     // and skip the notification so the customer isn't emailed twice.
     return;
   }
+
+  // release-hardening audit F-017: won the CAS above, so this call actually
+  // decremented stock for `order.items`. Best-effort — must never fail
+  // this handler for an already-captured payment.
+  await revalidateProductStockForVariants(orderVariantIds(order.items));
 
   if (stockConflict) {
     await db.adminNotification
@@ -200,6 +213,7 @@ async function handleRefundProcessed(
   // SHIPPED/DELIVERED, whether the goods actually come back is a real
   // question this webhook can't answer, so that case is left for manual
   // review rather than silently adding phantom stock back.
+  let restocked = false;
   await db.$transaction(
     async (tx) => {
       const preShipTransition = await tx.order.updateMany({
@@ -211,6 +225,7 @@ async function handleRefundProcessed(
         // were committed at PAID and must come back, same as an
         // admin-cancelled paid order (src/lib/orders/admin-orders.ts).
         await releaseOrderInventory(tx, order);
+        restocked = true;
         return;
       }
 
@@ -227,6 +242,14 @@ async function handleRefundProcessed(
     // F-255 fix — see the identical comment in checkout/verify/route.ts.
     { timeout: 15_000, maxWait: 5_000 },
   );
+
+  // release-hardening audit F-017: only when the transaction actually
+  // restocked (the pre-shipment branch) — a post-shipment refund never
+  // touches stock, so there's nothing to revalidate. Best-effort — must
+  // never fail this handler for an already-processed refund.
+  if (restocked) {
+    await revalidateProductStockForVariants(orderVariantIds(order.items));
+  }
 }
 
 export async function POST(request: Request) {

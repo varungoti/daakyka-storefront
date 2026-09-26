@@ -1,6 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { COLOR_PRESETS, findPresetColorHex, isCustomColor, SIZE_PRESETS, sizePresetKeys } from "@/lib/catalog/size-presets";
+import {
+  COLOR_PRESETS,
+  colorPresetIndex,
+  compareSizes,
+  findPresetColorHex,
+  isCustomColor,
+  SIZE_PRESETS,
+  sizePresetKeys,
+} from "@/lib/catalog/size-presets";
 
 describe("SIZE_PRESETS", () => {
   it("has the expected adult scrub range", () => {
@@ -47,5 +55,51 @@ describe("COLOR_PRESETS", () => {
   it("isCustomColor is false for a preset color and true otherwise", () => {
     assert.equal(isCustomColor("Navy"), false);
     assert.equal(isCustomColor("Turquoise"), true);
+  });
+
+  it("colorPresetIndex looks up case-insensitively and returns undefined for a custom color", () => {
+    assert.equal(colorPresetIndex("Navy"), 0);
+    assert.equal(colorPresetIndex("navy"), 0);
+    assert.equal(colorPresetIndex("Turquoise"), undefined);
+  });
+});
+
+// release-hardening audit F-024: sizes/colours used to come out in raw
+// database row order ("2XL L M S XL", 2XL pre-selected) — compareSizes is
+// the shared ordering every storefront read path now sorts through.
+describe("compareSizes", () => {
+  it("sorts adult scrub sizes into the merchant's XS-3XL order", () => {
+    const sizes = ["2XL", "L", "M", "S", "XL"];
+    assert.deepEqual([...sizes].sort(compareSizes), ["S", "M", "L", "XL", "2XL"]);
+  });
+
+  it("sorts kids age sizes numerically, not alphabetically", () => {
+    const sizes = ["10-11Y", "2-3Y", "4-5Y"];
+    assert.deepEqual([...sizes].sort(compareSizes), ["2-3Y", "4-5Y", "10-11Y"]);
+  });
+
+  it("sorts numeric school-chest sizes numerically", () => {
+    const sizes = ["32", "28", "24"];
+    assert.deepEqual([...sizes].sort(compareSizes), ["24", "28", "32"]);
+  });
+
+  it("sorts linen sizes Single/Double/King", () => {
+    const sizes = ["King", "Double", "Single"];
+    assert.deepEqual([...sizes].sort(compareSizes), ["Single", "Double", "King"]);
+  });
+
+  it("normalizes XXL/XXXL onto this catalogue's 2XL/3XL rank", () => {
+    assert.equal(compareSizes("XXL", "2XL") === 0, true);
+    assert.ok(compareSizes("XL", "XXL") < 0);
+  });
+
+  it("falls back to a stable, numeric-aware order for sizes outside every preset", () => {
+    const sizes = ["Free Size", "One Size"];
+    assert.deepEqual([...sizes].sort(compareSizes), ["Free Size", "One Size"]);
+  });
+
+  it("puts every known preset size ahead of an unknown size", () => {
+    const sizes = ["Free Size", "M"];
+    assert.deepEqual([...sizes].sort(compareSizes), ["M", "Free Size"]);
   });
 });

@@ -7,7 +7,7 @@ import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Collections",
-  description: "Browse DAAKYKA collections — best sellers, stretch, hospital teams, and bespoke.",
+  description: "Browse DAAKYKA collections, starting with our current featured picks.",
 };
 
 export default function CollectionsPage() {

@@ -48,6 +48,18 @@ async function getReviewEligibility(productId: string): Promise<ReviewEligibilit
   return { status: "eligible" };
 }
 
+const META_DESCRIPTION_MAX_LENGTH = 160;
+
+/** Trims to a word boundary rather than mid-word, so a long admin-entered
+ * SEO/short description never ends mid-syllable in search results. */
+function truncateAtWordBoundary(text: string, maxLength: number): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= maxLength) return trimmed;
+  const cut = trimmed.slice(0, maxLength);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
+}
+
 export async function generateMetadata({ params }: ProductPageProps) {
   const { handle } = await params;
   const product = await getProductByHandle(handle);
@@ -56,15 +68,29 @@ export async function generateMetadata({ params }: ProductPageProps) {
     return { title: "Product Not Found" };
   }
 
-  return {
-    title: product.name,
-    description:
-      product.description ??
+  // release-hardening audit F-106: the admin's SEO title/description
+  // (product-form.tsx's "SEO title"/"SEO description" fields, with a
+  // Google-style preview) were never actually read here — the page always
+  // used `name`/`description` regardless of what an admin had entered.
+  // `title: { absolute: ... }` bypasses the root layout's "%s | DAAKYKA
+  // Apparels" template so an admin-authored SEO title (which may already
+  // include the brand name) is shown exactly as typed, not doubled up.
+  const seoTitle = product.seoTitle?.trim() || undefined;
+  const description = truncateAtWordBoundary(
+    product.seoDescription?.trim() ||
+      product.shortDescription ||
+      product.description ||
       `${product.name} in ${product.colorName}. Premium medical apparel by DAAKYKA.`,
+    META_DESCRIPTION_MAX_LENGTH,
+  );
+
+  return {
+    title: seoTitle ? { absolute: seoTitle } : product.name,
+    description,
     alternates: { canonical: canonicalPath(`/products/${handle}`) },
     openGraph: {
-      title: product.name,
-      description: product.description,
+      title: seoTitle ?? product.name,
+      description,
       images: [product.image],
     },
   };

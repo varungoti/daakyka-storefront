@@ -133,6 +133,46 @@ describe("filterProducts", () => {
     });
     assert.equal(result[0].rating, 4.9);
   });
+
+  // release-hardening audit F-096: "Newest" used to sort purely on the
+  // admin-set `isNew` flag, so an older isNew=true product outranked a
+  // just-created product with the flag left unchecked.
+  it("sorts by createdAt descending, not just the isNew flag", () => {
+    const products = [
+      { ...mockProducts[0], id: "old-new", createdAt: "2026-01-01T00:00:00.000Z", isNew: true },
+      { ...mockProducts[1], id: "newest", createdAt: "2026-09-25T00:00:00.000Z", isNew: false },
+      { ...mockProducts[2], id: "middle", createdAt: "2026-06-01T00:00:00.000Z", isNew: false },
+    ];
+    const result = filterProducts(products, {
+      colors: [],
+      sizes: [],
+      fabrics: [],
+      priceMax: 10000,
+      sort: "newest",
+    });
+    assert.deepEqual(
+      result.map((p) => p.id),
+      ["newest", "middle", "old-new"],
+    );
+  });
+
+  it("newest sort falls back to isNew only to break a tie on identical createdAt", () => {
+    const products = [
+      { ...mockProducts[0], id: "a", createdAt: "2026-01-01T00:00:00.000Z", isNew: false },
+      { ...mockProducts[1], id: "b", createdAt: "2026-01-01T00:00:00.000Z", isNew: true },
+    ];
+    const result = filterProducts(products, {
+      colors: [],
+      sizes: [],
+      fabrics: [],
+      priceMax: 10000,
+      sort: "newest",
+    });
+    assert.deepEqual(
+      result.map((p) => p.id),
+      ["b", "a"],
+    );
+  });
 });
 
 describe("countByCategory", () => {

@@ -15,7 +15,12 @@ export interface SeoLandingPageConfig {
   relatedGuides?: string[];
   relatedBlogSlugs?: string[];
   relatedCollections?: string[];
-  productCategory?: "tops" | "bottoms" | "sets" | "jackets" | "accessories" | "bespoke";
+  /** release-hardening audit F-003: was a fixed union of the legacy seed
+   * catalog's categories ("tops"/"bespoke"/...), none of which are real DB
+   * category slugs — getProductsByCategory now returns `[]` for an unknown
+   * slug rather than falling back to that seed data, so this must be a
+   * real `Category.slug` (e.g. "scrub-tops", "scrub-pants", "scrub-sets"). */
+  productCategory?: string;
 }
 
 export const fabricSeoRedirects = [
@@ -108,7 +113,10 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     ],
     shopHref: "/shop?category=tops",
     shopLabel: "Shop Women's Scrubs",
-    secondaryHref: "/shop/bespoke",
+    // release-hardening audit F-003: /shop/bespoke has no real catalogue
+    // behind it yet — repointed to the enquiry flow a "bespoke" request
+    // actually needs (see that page's own comment).
+    secondaryHref: "/bulk-orders",
     secondaryLabel: "Explore Bespoke",
   },
   {
@@ -270,7 +278,7 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
         answer: "V-necks offer classic versatility; mandarin collars deliver a sharper, contemporary look favored in premium hospital settings.",
       },
     ],
-    productCategory: "tops",
+    productCategory: "scrub-tops",
     shopHref: "/shop?category=tops",
     shopLabel: "Shop Scrub Tops",
     secondaryHref: "/mix-and-match",
@@ -349,7 +357,9 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
         answer: "Doctors, department heads, and specialists often choose mandarin collars for a polished appearance that still meets clinical function requirements.",
       },
     ],
-    shopHref: "/shop/bespoke",
+    // release-hardening audit F-003: /shop/bespoke has no real catalogue
+    // behind it yet — /shop?category=tops has this guide's actual products.
+    shopHref: "/shop?category=tops",
     shopLabel: "Shop Mandarin Styles",
     secondaryHref: "/doctor-scrubs",
     secondaryLabel: "Doctor Scrubs Guide",
@@ -503,7 +513,7 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     secondaryLabel: "Read Full Article",
     relatedGuides: ["how-to-find-scrub-size", "best-scrubs-for-long-shifts", "medical-scrubs"],
     relatedBlogSlugs: ["how-to-choose-medical-scrubs"],
-    relatedCollections: ["best-sellers", "stretch-collection"],
+    relatedCollections: ["best-sellers"],
   },
   {
     slug: "how-to-wash-medical-scrubs",
@@ -542,7 +552,6 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     secondaryLabel: "Read Care Article",
     relatedGuides: ["best-scrubs-for-long-shifts", "what-is-4-way-stretch-fabric"],
     relatedBlogSlugs: ["caring-for-performance-scrubs"],
-    relatedCollections: ["stretch-collection"],
   },
   {
     slug: "scrubs-vs-lab-coat",
@@ -580,7 +589,6 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     secondaryHref: "/for-hospitals",
     secondaryLabel: "Hospital Uniforms",
     relatedGuides: ["doctor-scrubs", "nurse-uniforms", "hospital-uniforms"],
-    relatedCollections: ["hospital-teams"],
   },
   {
     slug: "best-colors-for-hospital-uniforms",
@@ -619,7 +627,6 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     secondaryLabel: "Read Full Article",
     relatedGuides: ["hospital-uniforms", "bulk-hospital-uniforms", "nurse-uniforms"],
     relatedBlogSlugs: ["best-colors-for-hospital-uniforms"],
-    relatedCollections: ["hospital-teams"],
   },
   {
     slug: "what-is-4-way-stretch-fabric",
@@ -657,34 +664,26 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     secondaryHref: "/shop?fabric=4-way-stretch",
     secondaryLabel: "Shop Stretch Scrubs",
     relatedGuides: ["best-scrubs-for-long-shifts", "jogger-scrub-pants", "how-to-wash-medical-scrubs"],
-    relatedCollections: ["stretch-collection"],
   },
 ];
 
+// release-hardening audit F-020: `stretch-collection`, `hospital-teams` and
+// `bespoke` used to live here too, each rendering nothing but a "Continue
+// to X" interstitial with zero product cards (see
+// src/app/collections/[handle]/page.tsx's `shopHref` branch) — every one
+// of those three had real content elsewhere already (their own `shopHref`
+// pointed at /fabric-technology/4-way-stretch, /for-hospitals and
+// /shop/bespoke respectively), so the dead middle page added nothing.
+// Their old /collections/<handle> URLs now redirect straight to those
+// destinations instead (see next.config.ts's `redirects()`). "Best
+// Sellers" is the only collection page left that actually needs its own
+// page here, since it renders a real product grid.
 export const collectionPages = [
   {
     handle: "best-sellers",
-    title: "Best Sellers",
-    description: "Our most-loved scrubs chosen by healthcare professionals.",
+    title: "Featured",
+    description: "A cross-section of what we're highlighting right now, across scrubs, school and kids wear.",
     shopQuery: { featured: "true" },
-  },
-  {
-    handle: "stretch-collection",
-    title: "Stretch Collection",
-    description: "4-way stretch scrubs built for movement and all-day comfort.",
-    shopHref: "/fabric-technology/4-way-stretch",
-  },
-  {
-    handle: "hospital-teams",
-    title: "Hospital Teams",
-    description: "Institutional uniforms and linens for healthcare organizations.",
-    shopHref: "/for-hospitals",
-  },
-  {
-    handle: "bespoke",
-    title: "Bespoke Collection",
-    description: "Luxury limited-edition scrubs with premium fabrics.",
-    shopHref: "/shop/bespoke",
   },
 ];
 

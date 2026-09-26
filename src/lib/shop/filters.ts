@@ -106,10 +106,17 @@ export function filterProducts(
       result.sort((a, b) => b.rating - a.rating);
       break;
     case "newest":
+      // release-hardening audit F-096: this used to sort purely on the
+      // admin-set `isNew` badge, which isn't a date at all — every "New"
+      // product tied for 1st (in whatever order they happened to be in),
+      // and a just-published product with the flag left unchecked ranked
+      // behind all of them. `createdAt` is the row's real creation date;
+      // `isNew` only breaks a tie between two products created at the
+      // exact same instant (practically: the tie almost never happens).
       result.sort((a, b) => {
-        const aNew = a.badge === "new" ? 1 : 0;
-        const bNew = b.badge === "new" ? 1 : 0;
-        return bNew - aNew;
+        const createdAtA = a.createdAt ? Date.parse(a.createdAt) : 0;
+        const createdAtB = b.createdAt ? Date.parse(b.createdAt) : 0;
+        return createdAtB - createdAtA || (b.isNew ? 1 : 0) - (a.isNew ? 1 : 0);
       });
       break;
     default:

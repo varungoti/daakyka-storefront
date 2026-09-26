@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
+import { revalidateProductStockForVariants } from "@/lib/products";
 import { getSetting } from "@/lib/settings";
 import type { ShippingAddressInput } from "@/lib/validation/schemas";
 import {
@@ -360,6 +361,18 @@ export async function createOrderFromCart(input: CreateOrderFromCartInput): Prom
         // raising, not just papering over the timeout.
         { timeout: 15_000, maxWait: 5_000 },
       );
+
+      // release-hardening audit F-017: an ORDER_REQUEST order decrements
+      // stock immediately, above — without this, the PDP/listing cache
+      // (src/lib/products/index.ts) keeps serving pre-sale stock and
+      // availability until an unrelated admin catalog edit happens to
+      // revalidate the same tags. RAZORPAY orders decrement later, at their
+      // PAID transition (see /api/checkout/verify and the webhook), so
+      // there's nothing to revalidate here for them. Best-effort — must
+      // never fail an order that already committed.
+      if (input.paymentMethod === "ORDER_REQUEST") {
+        await revalidateProductStockForVariants(lines.map((line) => line.variantId));
+      }
 
       return {
         id: order.id,

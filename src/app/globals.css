@@ -349,3 +349,58 @@ textarea::placeholder {
   background: var(--surface);
   box-shadow: 0 20px 50px var(--shadow-tint);
 }
+
+/* release-hardening audit F-111: the PDP's Description accordion renders
+   the admin rich-text editor's sanitized output (see
+   src/lib/catalog/description-html.ts's ALLOWED_DESCRIPTION_TAGS) via
+   `.prose-description`, but this class had no rules at all — an h3/h4
+   rendered as plain body text, a blockquote had no visual treatment, and
+   a paragraph run straight into a following list with no gap. Kept
+   deliberately scoped to exactly that allowlist rather than pulling in a
+   full typography plugin for one accordion. */
+.prose-description h3 {
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+  font-family: var(--font-display, inherit);
+  font-size: 1.125em;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.prose-description h4 {
+  margin-top: 1em;
+  margin-bottom: 0.4em;
+  font-family: var(--font-display, inherit);
+  font-size: 1em;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.prose-description blockquote {
+  margin: 1em 0;
+  padding: 0.25em 0 0.25em 1em;
+  border-left: 3px solid var(--border-strong);
+  font-style: italic;
+  color: var(--muted);
+}
+
+.prose-description p + h3,
+.prose-description p + h4,
+.prose-description ul + h3,
+.prose-description ol + h3 {
+  margin-top: 1.5em;
+}
+
+.prose-description p + ul,
+.prose-description p + ol,
+.prose-description h3 + ul,
+.prose-description h3 + ol,
+.prose-description h4 + ul,
+.prose-description h4 + ol {
+  margin-top: 0.75em;
+}
+
+.prose-description ul,
+.prose-description ol {
+  margin-bottom: 0.75em;
+}

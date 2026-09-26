@@ -19,6 +19,10 @@ interface MobileFilterDrawerProps {
   categories: ShopFilterCategory[];
   categoryCounts: Record<string, number>;
   totalCount: number;
+  /** release-hardening audit F-092: fabric ids at least one loaded product
+   * actually has — passed through to ShopFiltersPanel so the mobile drawer
+   * hides the same dead Fabric Technology options the desktop panel does. */
+  availableFabricIds?: ReadonlySet<string>;
 }
 
 export function MobileFilterDrawer({
@@ -29,6 +33,7 @@ export function MobileFilterDrawer({
   categories,
   categoryCounts,
   totalCount,
+  availableFabricIds,
 }: MobileFilterDrawerProps) {
   const panelRef = useFocusTrap<HTMLElement>(open, onClose, { lockScroll: true });
 
@@ -77,6 +82,7 @@ export function MobileFilterDrawer({
               categoryCounts={categoryCounts}
               totalCount={totalCount}
               showHeading={false}
+              availableFabricIds={availableFabricIds}
             />
           </motion.aside>
         </>

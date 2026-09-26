@@ -89,6 +89,20 @@ export interface Product {
   featured?: boolean;
   isNew?: boolean;
   tags?: string[];
+  /** ISO 8601 timestamp — release-hardening F-096: "Newest" sort needs the
+   * row's real creation date, not just the admin-set `isNew` flag. Optional
+   * so Shopify-mapped/legacy-seed products (which predate this column)
+   * still type-check without populating it. */
+  createdAt?: string;
+  /** Admin-entered SEO title/description overrides (release-hardening
+   * F-106) — `generateMetadata` prefers these over `name`/`description`
+   * when set. */
+  seoTitle?: string;
+  seoDescription?: string;
+  /** A short, hand-written teaser distinct from the full `description`
+   * (release-hardening F-111) — used for the PDP's summary line above the
+   * Description accordion instead of repeating the long description. */
+  shortDescription?: string;
 }
 
 export interface CartLine {

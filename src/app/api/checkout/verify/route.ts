@@ -4,6 +4,7 @@ import { hashOrderAccessToken } from "@/lib/orders/access-token";
 import { notifyNewOrder } from "@/lib/orders/notify";
 import { markRazorpayOrderPaid } from "@/lib/orders/payment-transitions";
 import { verifyPaymentSignature } from "@/lib/payments/razorpay";
+import { revalidateProductStockForVariants } from "@/lib/products";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { safeEquals } from "@/lib/security/timing-safe-equal";
@@ -93,6 +94,15 @@ export async function POST(request: Request) {
     // and skip the notification below so the customer isn't emailed twice.
     return NextResponse.json({ ok: true, orderNumber: order.number });
   }
+
+  // release-hardening audit F-017: won the CAS above, so this call actually
+  // decremented stock for `order.items` — without this, the PDP/listing
+  // cache keeps serving pre-payment stock/availability until an unrelated
+  // admin catalog edit happens to revalidate the same tags. Best-effort —
+  // must never fail a response for an already-captured payment.
+  await revalidateProductStockForVariants(
+    order.items.map((item) => item.variantId).filter((id): id is string => id !== null),
+  );
 
   if (stockConflict) {
     await db.adminNotification

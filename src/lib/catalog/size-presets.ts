@@ -72,3 +72,79 @@ export function findPresetColorHex(name: string): string | undefined {
 export function isCustomColor(name: string): boolean {
   return !colorByName.has(name.trim().toLowerCase());
 }
+
+/** `COLOR_PRESETS`' own display order, by lowercased name — used as a
+ * tie-break for colour ordering (release-hardening audit F-024) when a
+ * colour isn't otherwise ordered by its product images. */
+export function colorPresetIndex(name: string): number | undefined {
+  const index = COLOR_PRESETS.findIndex((c) => c.name.toLowerCase() === name.trim().toLowerCase());
+  return index === -1 ? undefined : index;
+}
+
+// ---------------------------------------------------------------------------
+// Size ordering (release-hardening audit F-024)
+//
+// Postgres has no defined row order for `ProductVariant`, so anything that
+// reads `sizes`/`variants` straight off the DB (previously: every storefront
+// read path) ends up in whatever order the index happens to return them —
+// alphabetical in practice, hence "2XL L M S XL" instead of "S M L XL 2XL".
+// `compareSizes` gives every size reader (the mapper in
+// src/lib/products/index.ts, the admin grid) one shared, deterministic
+// ordering instead. Pure and Prisma-free so it stays safe to import from
+// client components, same as the rest of this file.
+// ---------------------------------------------------------------------------
+
+const SIZE_ORDER_GROUPS: SizePresetKey[] = ["adultScrubs", "kidsAge", "schoolChest", "linens"];
+
+/** Case-insensitive, whitespace-trimmed, with the common "XXL"/"XXXL"
+ * spellings folded onto this catalogue's own "2XL"/"3XL". */
+function normalizeSizeToken(value: string): string {
+  const trimmed = value.trim().toUpperCase();
+  if (trimmed === "XXL") return "2XL";
+  if (trimmed === "XXXL") return "3XL";
+  return trimmed;
+}
+
+const SIZE_RANK: Map<string, number> = (() => {
+  const rank = new Map<string, number>();
+  let next = 0;
+  for (const key of SIZE_ORDER_GROUPS) {
+    for (const size of SIZE_PRESETS[key]) {
+      const normalized = normalizeSizeToken(size);
+      if (!rank.has(normalized)) rank.set(normalized, next++);
+    }
+  }
+  return rank;
+})();
+
+/** The leading number in a value like "10-11Y" or "32" (for a numeric-aware
+ * fallback outside the known presets); `null` when there isn't one. */
+function leadingNumber(value: string): number | null {
+  const match = value.match(/-?\d+(\.\d+)?/);
+  return match ? Number(match[0]) : null;
+}
+
+/**
+ * Orders two size strings the way the merchant's size charts do — known
+ * preset sizes first (XS…3XL, 2-3Y…12-14Y, the numeric school-chest range,
+ * Single/Double/King), by their position in `SIZE_PRESETS`, then a
+ * numeric-aware fallback for anything outside those presets (custom sizes,
+ * a stray "Free Size"), rather than raw database/alphabetical order.
+ * `Array.prototype.sort` is stable, so equal sizes keep their relative
+ * input order.
+ */
+export function compareSizes(a: string, b: string): number {
+  const normalizedA = normalizeSizeToken(a);
+  const normalizedB = normalizeSizeToken(b);
+  const rankA = SIZE_RANK.get(normalizedA);
+  const rankB = SIZE_RANK.get(normalizedB);
+  if (rankA !== undefined && rankB !== undefined) return rankA - rankB;
+  if (rankA !== undefined) return -1;
+  if (rankB !== undefined) return 1;
+
+  const numberA = leadingNumber(a);
+  const numberB = leadingNumber(b);
+  if (numberA !== null && numberB !== null && numberA !== numberB) return numberA - numberB;
+
+  return a.localeCompare(b, undefined, { numeric: true });
+}
