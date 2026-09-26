@@ -26,12 +26,17 @@ import { cn } from "@/lib/utils";
 export function MobileStickyAddToCart({
   product,
   variant,
+  unavailable,
   quantity,
   displayPrice,
   observeTarget,
 }: {
   product: Product;
   variant?: ProductVariant;
+  /** F-103/F-107: see AddToCartButton's own doc comment — forces the
+   * disabled "Sold out" state for the shopper's exact current selection,
+   * which passing `variant={undefined}` alone doesn't do. */
+  unavailable?: boolean;
   quantity: number;
   displayPrice: number;
   observeTarget: RefObject<HTMLElement | null>;
@@ -71,7 +76,7 @@ export function MobileStickyAddToCart({
       <div className="mx-auto flex max-w-[1320px] items-center gap-3">
         <p className="font-display text-lg font-bold text-ink">{formatPrice(displayPrice)}</p>
         <div className="ml-auto">
-          <AddToCartButton product={product} variant={variant} quantity={quantity} size="md" />
+          <AddToCartButton product={product} variant={variant} unavailable={unavailable} quantity={quantity} size="md" />
         </div>
       </div>
     </div>

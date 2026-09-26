@@ -1,9 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  findExactVariant,
   isSizeAvailableForColor,
   isVariantInStock,
   resolveVariant,
+  variantExists,
 } from "@/lib/products/resolve-variant";
 import type { ProductVariant } from "@/lib/types";
 
@@ -114,5 +116,72 @@ describe("isSizeAvailableForColor", () => {
 
   it("returns true (rather than falsely disabling) when no variant matches that size at all", () => {
     assert.equal(isSizeAvailableForColor(variants, "XL", "Navy"), true);
+  });
+
+  describe("F-103: a real gap — the size and colour both exist, just not together", () => {
+    // S/Red, M/Red, L/Red, S/Blue, L/Blue — no M/Blue row at all.
+    const sparse: ProductVariant[] = [
+      dbVariant({ id: "s-red", size: "S", color: "Red", stock: 5 }),
+      dbVariant({ id: "m-red", size: "M", color: "Red", stock: 3 }),
+      dbVariant({ id: "l-red", size: "L", color: "Red", stock: 5 }),
+      dbVariant({ id: "s-blue", size: "S", color: "Blue", stock: 2 }),
+      dbVariant({ id: "l-blue", size: "L", color: "Blue", stock: 4 }),
+    ];
+
+    it("reports the missing combo as unavailable, not merely sold out", () => {
+      assert.equal(isSizeAvailableForColor(sparse, "M", "Blue"), false);
+    });
+
+    it("still reports a combo that does exist as available", () => {
+      assert.equal(isSizeAvailableForColor(sparse, "M", "Red"), true);
+      assert.equal(isSizeAvailableForColor(sparse, "S", "Blue"), true);
+    });
+
+    it("still returns true for a size that's not a dimension of this product at all (legacy no-data shape)", () => {
+      assert.equal(isSizeAvailableForColor(sparse, "XL", "Blue"), true);
+    });
+  });
+});
+
+describe("findExactVariant (F-103)", () => {
+  const variants: ProductVariant[] = [
+    dbVariant({ id: "s-red", size: "S", color: "Red", stock: 5 }),
+    dbVariant({ id: "m-red", size: "M", color: "Red", stock: 3 }),
+    dbVariant({ id: "s-blue", size: "S", color: "Blue", stock: 2 }),
+  ];
+
+  it("returns the variant that matches both size and colour exactly", () => {
+    assert.equal(findExactVariant(variants, "M", "Red")?.id, "m-red");
+  });
+
+  it("returns undefined when only a partial match exists — no fallback", () => {
+    assert.equal(findExactVariant(variants, "M", "Blue"), undefined);
+  });
+
+  it("returns undefined for an empty/undefined variant list", () => {
+    assert.equal(findExactVariant(undefined, "M", "Red"), undefined);
+    assert.equal(findExactVariant([], "M", "Red"), undefined);
+  });
+});
+
+describe("variantExists (F-103/F-107)", () => {
+  const sparse: ProductVariant[] = [
+    dbVariant({ id: "s-red", size: "S", color: "Red", stock: 5 }),
+    dbVariant({ id: "m-red", size: "M", color: "Red", stock: 0 }),
+    dbVariant({ id: "s-blue", size: "S", color: "Blue", stock: 2 }),
+  ];
+
+  it("is true for a combo that exists, whether in stock or sold out", () => {
+    assert.equal(variantExists(sparse, "S", "Red"), true);
+    assert.equal(variantExists(sparse, "M", "Red"), true); // sold out, but a real row
+  });
+
+  it("is false for a combo that never existed, when both dimensions are known", () => {
+    assert.equal(variantExists(sparse, "M", "Blue"), false);
+  });
+
+  it("is true when the product has no variant data, or the dimension isn't tracked", () => {
+    assert.equal(variantExists(undefined, "M", "Blue"), true);
+    assert.equal(variantExists(sparse, "XL", "Blue"), true);
   });
 });

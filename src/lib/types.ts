@@ -100,6 +100,13 @@ export interface CartLine {
   quantity: number;
   price: number;
   image: string;
+  /** F-108: the stock ceiling this line was added against (DB-tracked
+   * variants only — see AddToCartButton). Local-cart quantity changes
+   * (another Add, the stepper in the cart drawer) are clamped to this so
+   * the cart can never hold more than what was in stock at add time.
+   * Undefined for a variant that doesn't track stock (Shopify/legacy
+   * seed), which stays uncapped client-side as before. */
+  maxQuantity?: number;
 }
 
 export interface Cart {

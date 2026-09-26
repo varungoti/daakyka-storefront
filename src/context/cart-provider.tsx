@@ -15,7 +15,7 @@ import {
   subscribeToCart,
 } from "@/context/cart-store";
 import type { Cart, CartLine } from "@/lib/types";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import {
   createContext,
   useCallback,
@@ -35,6 +35,9 @@ interface AddToCartInput {
   price: number;
   image: string;
   quantity?: number;
+  /** F-108: the stock ceiling to clamp this line's quantity to — see
+   * CartLine.maxQuantity's own doc comment. */
+  maxQuantity?: number;
 }
 
 interface CartContextValue {
@@ -75,6 +78,13 @@ async function shopifyCartRequest(body: Record<string, unknown>) {
   return { degraded: false as const, cart: data.cart as Cart };
 }
 
+/** F-108: clamps a line's quantity to its maxQuantity (the stock the
+ * variant had when it was last added), when one is set. `undefined` means
+ * "not stock-tracked" — never clamped. */
+function clampToMax(quantity: number, maxQuantity: number | undefined): number {
+  return typeof maxQuantity === "number" ? Math.min(quantity, Math.max(0, maxQuantity)) : quantity;
+}
+
 function applyLocalAdds(current: Cart, inputs: AddToCartInput[]): Cart {
   let lines = current.lines;
 
@@ -83,7 +93,13 @@ function applyLocalAdds(current: Cart, inputs: AddToCartInput[]): Cart {
     if (existing) {
       lines = lines.map((line) =>
         line.variantId === input.variantId
-          ? { ...line, quantity: line.quantity + (input.quantity ?? 1) }
+          ? {
+              ...line,
+              quantity: clampToMax(line.quantity + (input.quantity ?? 1), input.maxQuantity ?? line.maxQuantity),
+              // A later add's maxQuantity (fresher stock read) wins over a
+              // stale one already on the line.
+              maxQuantity: input.maxQuantity ?? line.maxQuantity,
+            }
           : line,
       );
     } else {
@@ -93,9 +109,10 @@ function applyLocalAdds(current: Cart, inputs: AddToCartInput[]): Cart {
         productHandle: input.productHandle,
         productTitle: input.productTitle,
         variantTitle: input.variantTitle,
-        quantity: input.quantity ?? 1,
+        quantity: clampToMax(input.quantity ?? 1, input.maxQuantity),
         price: input.price,
         image: input.image,
+        maxQuantity: input.maxQuantity,
       };
       lines = [...lines, newLine];
     }
@@ -115,6 +132,26 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const mode: "shopify" | "local" = isShopifyCartMode() ? "shopify" : "local";
   const router = useRouter();
+  const pathname = usePathname();
+
+  // F-033: the drawer used to stay open on top of /checkout after "Buy
+  // Now" or the drawer's own "Continue to Checkout" — checkout() only
+  // ever called router.push, never setIsOpen(false), and Buy Now opens
+  // the drawer via addToCart before it calls checkout(). On mobile the
+  // drawer is full-width, so it looked like navigation had silently done
+  // nothing; the drawer's own CTA button, now a no-op back on /checkout,
+  // was the only way most shoppers would think to try again. This is the
+  // safety net for every other way the route can change under the
+  // drawer (back/forward, a header link) — checkout() below (the common
+  // case) also closes it directly so there's no one-frame flash open.
+  // Adjusted during render (not a useEffect) per this repo's
+  // react-hooks/set-state-in-effect convention — see e.g.
+  // product-detail.tsx's GalleryColumn.
+  const [lastPathname, setLastPathname] = useState(pathname);
+  if (pathname !== lastPathname) {
+    setLastPathname(pathname);
+    if (isOpen) setIsOpen(false);
+  }
 
   // One-time reconciliation with Shopify on mount: a cart id can go
   // stale (expired, or the order already completed) without the
@@ -224,7 +261,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         }
         const next = buildLocalCart(
           getCartSnapshot().lines.map((line) =>
-            line.id === lineId ? { ...line, quantity } : line,
+            line.id === lineId ? { ...line, quantity: clampToMax(quantity, line.maxQuantity) } : line,
           ),
         );
         setCartState({ cart: next });
@@ -261,6 +298,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
   );
 
   const checkout = useCallback(() => {
+    // F-033: close first so there's no one-frame flash of the drawer
+    // still open right as /checkout renders, and so a drawer CTA tapped
+    // while already on /checkout at least closes the drawer instead of
+    // doing nothing.
+    setIsOpen(false);
     if (mode === "shopify" && cart.checkoutUrl) {
       // External Shopify domain — a full navigation, not a Next.js route.
       window.location.href = cart.checkoutUrl;

@@ -8,10 +8,11 @@ import type { LightboxImage } from "@/components/ui/image-lightbox";
 import { Modal } from "@/components/ui/modal";
 import { StarRating } from "@/components/ui/star-rating";
 import { WishlistButton } from "@/components/wishlist/wishlist-button";
+import { useCart } from "@/context/cart-provider";
 import { useCurrency } from "@/context/currency-provider";
 import type { SizeChartForDisplay } from "@/lib/catalog/size-charts";
 import { computePercentOff } from "@/lib/pricing/percent-off";
-import { isSizeAvailableForColor, isVariantInStock, resolveVariant } from "@/lib/products/resolve-variant";
+import { findExactVariant, isSizeAvailableForColor, isVariantInStock, resolveVariant, variantExists } from "@/lib/products/resolve-variant";
 import { NotifyWhenAvailable } from "@/components/product/notify-when-available";
 import type { DisplayReview, GetApprovedReviewsResult, ReviewSort, ReviewSummary } from "@/lib/reviews";
 import type { Product } from "@/lib/types";
@@ -50,6 +51,25 @@ interface ProductDetailProps {
 
 const INSTITUTIONAL_SECTIONS = new Set(["HOSPITAL", "SCHOOL"]);
 
+/** F-107: the PDP used to always default to `product.colorName` (the
+ * first colour) and `product.sizes[0]` (the first size), regardless of
+ * stock — so a product whose first size/colour combo happened to be sold
+ * out loaded with Add to Cart already disabled and no explanation, and a
+ * shopper who then picked another size could never click back to that
+ * first one to reach "Notify me when available" for it (sold-out sizes
+ * were `disabled`, not merely styled as sold out). Defaults to the first
+ * *in-stock* variant instead, same as Shopify. Falls back to the old
+ * "just pick the first of each" when nothing is in stock (or the product
+ * has no DB variant data at all), so a fully sold-out product still loads
+ * with a sensible selection and its own notify form. */
+function pickInitialSelection(product: Product): { color: string; size: string } {
+  const firstInStock = product.variants?.find((v) => isVariantInStock(v));
+  if (firstInStock) {
+    return { color: firstInStock.color ?? product.colorName, size: firstInStock.size ?? (product.sizes[0] ?? "") };
+  }
+  return { color: product.colorName, size: product.sizes[0] ?? "" };
+}
+
 /**
  * Phase C5 rewrite, extended in Phase D2 with real review submission
  * (rating/title/body/photos, gated on `reviewEligibility` computed
@@ -66,9 +86,10 @@ export function ProductDetail({
   shipping,
 }: ProductDetailProps) {
   const { formatPrice } = useCurrency();
+  const { cart } = useCart();
 
-  const [selectedColor, setSelectedColor] = useState(product.colorName);
-  const [selectedSize, setSelectedSize] = useState(product.sizes[0] ?? "");
+  const [selectedColor, setSelectedColor] = useState(() => pickInitialSelection(product).color);
+  const [selectedSize, setSelectedSize] = useState(() => pickInitialSelection(product).size);
   const [quantity, setQuantity] = useState(1);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
@@ -87,26 +108,66 @@ export function ProductDetail({
     return source.map((img) => ({ url: img.url, alt: img.alt ?? product.name }));
   }, [product.images, product.image, product.name, selectedColor]);
 
+  // `selectedVariant`: resolveVariant's fallback-if-no-exact-match
+  // behaviour — kept only for what's safe to fall back on, price/gallery
+  // display, so the page still shows *a* price while nothing's fully
+  // selected. `exactVariant`: F-103's fix — the shopper's *exact* current
+  // (size, colour) pick, with no substitution, used for everything that
+  // actually commits to a variant (Add to Cart, Buy Now, notify-me, the
+  // quantity cap). Passing resolveVariant's fallback to any of those is
+  // the bug this fixes: it let Add to Cart silently add a different
+  // colour (or size) than the one shown as selected.
   const selectedVariant = useMemo(
     () => resolveVariant(product.variants, selectedSize, selectedColor),
+    [product.variants, selectedSize, selectedColor],
+  );
+  const exactVariant = useMemo(
+    () => findExactVariant(product.variants, selectedSize, selectedColor),
     [product.variants, selectedSize, selectedColor],
   );
 
   const displayPrice = selectedVariant?.price ?? product.price;
   const percentOff = computePercentOff(displayPrice, product.compareAtPrice);
   const isInstitutional = Boolean(product.section && INSTITUTIONAL_SECTIONS.has(product.section));
+  // F-103: a size/colour combo that simply doesn't exist as a variant row
+  // (not merely sold out) — see variantExists' own doc comment for why
+  // this needs to be distinct from isSizeAvailableForColor's stock check.
+  const comboMissing = Boolean(selectedSize) && !variantExists(product.variants, selectedSize, selectedColor);
   const sizeUnavailable =
     Boolean(selectedSize) && !isSizeAvailableForColor(product.variants, selectedSize, selectedColor);
   // Shopify-parity gap: "Notify me when available". Only for a real,
   // DB-tracked variant (typeof stock === "number" — see
-  // isVariantInStock's own doc comment) that resolved to a specific,
-  // currently out-of-stock row; a Shopify-/legacy-seed-backed product with
-  // no native stock tracking has no ProductVariant.id to subscribe
-  // against, so it's out of scope here.
+  // isVariantInStock's own doc comment) that's the shopper's *exact*
+  // current selection and is currently out-of-stock; a Shopify-/legacy-
+  // seed-backed product with no native stock tracking has no
+  // ProductVariant.id to subscribe against, so it's out of scope here.
   const notifyMeVariantId =
-    selectedVariant && typeof selectedVariant.stock === "number" && !isVariantInStock(selectedVariant)
-      ? selectedVariant.id
-      : null;
+    exactVariant && typeof exactVariant.stock === "number" && !isVariantInStock(exactVariant) ? exactVariant.id : null;
+
+  // F-108: cap the quantity stepper at the variant's real stock, minus
+  // whatever's already sitting in the cart for it — the stepper used to
+  // have no ceiling at all, so a shopper could set 10 against a
+  // 3-in-stock variant and only find out at Place Order. `Infinity` for a
+  // variant that doesn't track stock (Shopify/legacy seed) or when
+  // nothing is exactly selected yet, so this never disables the stepper
+  // for those.
+  const alreadyInCartQuantity =
+    exactVariant ? (cart.lines.find((line) => line.variantId === exactVariant.id)?.quantity ?? 0) : 0;
+  const maxQuantity =
+    exactVariant && typeof exactVariant.stock === "number"
+      ? Math.max(0, exactVariant.stock - alreadyInCartQuantity)
+      : Infinity;
+  // Re-clamp when the selection changes to a variant with a lower ceiling
+  // (or none at all) — adjusted during render, not a useEffect, per this
+  // repo's react-hooks/set-state-in-effect convention (see
+  // GalleryColumn's `lastColor` below for the same pattern).
+  const selectionKey = `${selectedSize}::${selectedColor}`;
+  const [lastSelectionKey, setLastSelectionKey] = useState(selectionKey);
+  if (selectionKey !== lastSelectionKey) {
+    setLastSelectionKey(selectionKey);
+    const capped = Math.max(1, Math.min(quantity, Number.isFinite(maxQuantity) ? maxQuantity : quantity));
+    if (capped !== quantity) setQuantity(capped);
+  }
 
   return (
     <div>
@@ -188,21 +249,28 @@ export function ProductDetail({
               </div>
               <div className="flex flex-wrap gap-2">
                 {product.sizes.map((size) => {
-                  const available = isSizeAvailableForColor(product.variants, size, selectedColor);
+                  // F-107: sold out (combo exists, no stock) only gets
+                  // struck through — it stays clickable, so a shopper can
+                  // select it and reach "Notify me when available" for it.
+                  // F-103: a combo that doesn't exist as a row at all is
+                  // the only case that's truly `disabled`.
+                  const inStock = isSizeAvailableForColor(product.variants, size, selectedColor);
+                  const exists = variantExists(product.variants, size, selectedColor);
+                  const isSelected = selectedSize === size;
                   return (
                     <button
                       key={size}
                       type="button"
-                      disabled={!available}
+                      disabled={!exists}
                       onClick={() => setSelectedSize(size)}
-                      aria-pressed={selectedSize === size}
+                      aria-pressed={isSelected}
+                      aria-label={exists && !inStock ? `${size}, sold out` : undefined}
                       className={cn(
                         "rounded-lg border px-4 py-2 text-sm font-semibold transition",
-                        !available && "cursor-not-allowed border-border text-muted/50 line-through",
-                        available &&
-                          (selectedSize === size
-                            ? "border-brand bg-brand/10 text-brand"
-                            : "border-border hover:border-brand"),
+                        !exists && "cursor-not-allowed border-border text-muted/50 line-through",
+                        exists && !inStock && "line-through",
+                        exists &&
+                          (isSelected ? "border-brand bg-brand/10 text-brand" : "border-border hover:border-brand"),
                       )}
                     >
                       {size}
@@ -211,7 +279,9 @@ export function ProductDetail({
                 })}
               </div>
               {sizeUnavailable && (
-                <p className="mt-2 text-xs font-semibold text-sale">Out of stock in this size/colour</p>
+                <p className="mt-2 text-xs font-semibold text-sale">
+                  {comboMissing ? "Not available in this size/colour" : "Out of stock in this size/colour"}
+                </p>
               )}
             </div>
           )}
@@ -230,20 +300,31 @@ export function ProductDetail({
               <span className="min-w-10 text-center text-sm font-semibold">{quantity}</span>
               <button
                 type="button"
-                onClick={() => setQuantity((q) => q + 1)}
-                className="px-3 py-2 text-ink transition hover:bg-lilac/40"
+                // F-108: was uncapped — a shopper could set the quantity
+                // past a low-stock variant's real stock and only find out
+                // at Place Order.
+                onClick={() => setQuantity((q) => Math.min(Number.isFinite(maxQuantity) ? maxQuantity : q + 1, q + 1))}
+                disabled={quantity >= maxQuantity}
+                className="px-3 py-2 text-ink transition hover:bg-lilac/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
                 aria-label="Increase quantity"
               >
                 <Plus size={16} />
               </button>
             </div>
+            {Number.isFinite(maxQuantity) && maxQuantity > 0 && maxQuantity <= 5 && (
+              <p className="mt-1 text-xs text-muted">Only {maxQuantity} left</p>
+            )}
+            {maxQuantity === 0 && (
+              <p className="mt-1 text-xs font-semibold text-sale">All available units are already in your cart</p>
+            )}
           </div>
 
           <div ref={ctaRowRef} className="flex flex-wrap gap-4 pt-2">
-            <AddToCartButton product={product} variant={selectedVariant} quantity={quantity} size="lg" />
+            <AddToCartButton product={product} variant={exactVariant} unavailable={comboMissing} quantity={quantity} size="lg" />
             <AddToCartButton
               product={product}
-              variant={selectedVariant}
+              variant={exactVariant}
+              unavailable={comboMissing}
               quantity={quantity}
               size="lg"
               variantStyle="outline"
@@ -361,7 +442,8 @@ export function ProductDetail({
 
       <MobileStickyAddToCart
         product={product}
-        variant={selectedVariant}
+        variant={exactVariant}
+        unavailable={comboMissing}
         quantity={quantity}
         displayPrice={displayPrice}
         observeTarget={ctaRowRef}

@@ -15,11 +15,15 @@ import {
   ProductDeleteBlockedError,
   ProductNotDraftError,
   ProductNotFoundError,
+  ProductNotPublishableError,
   ProductSlugConflictError,
+  ProductStatusPermissionError,
   publishProduct,
   replaceVariants,
   unpublishProduct,
   updateProduct,
+  VariantOwnershipError,
+  VariantStockConflictError,
 } from "@/lib/catalog/products";
 import { DuplicateVariantKeyError } from "@/lib/catalog/product-validation";
 import { buildSkuOwnership, commitProductImport, dryRunProductImport, exportProductsCsv } from "@/lib/catalog/product-import";
@@ -115,6 +119,8 @@ describe("products admin service (Phase B1)", () => {
     const unique = randomUUID().slice(0, 8);
     const product = await createProduct({ name: `Publish Me ${unique}`, categoryId, price: 500 }, adminId);
     createdProductIds.push(product.id);
+    // F-028: publishProduct now rejects a product with no active variant.
+    await replaceVariants(product.id, [{ size: "S", color: "Navy", sku: `DK-PUB-${unique}`, stock: 5, active: true }], adminId);
 
     const published = await publishProduct(product.id, adminId);
     assert.equal(published.status, "ACTIVE");
@@ -136,9 +142,75 @@ describe("products admin service (Phase B1)", () => {
     const unique = randomUUID().slice(0, 8);
     const product = await createProduct({ name: `Not Draft ${unique}`, categoryId, price: 500 }, adminId);
     createdProductIds.push(product.id);
+    await replaceVariants(product.id, [{ size: "S", color: "Navy", sku: `DK-ND-${unique}`, stock: 5, active: true }], adminId);
     await publishProduct(product.id, adminId);
 
     await assert.rejects(() => deleteProduct(product.id, adminId), ProductNotDraftError);
+  });
+
+  describe("F-028: publishing requires at least one active variant", () => {
+    it("publishProduct rejects a product with zero variants", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `No Variants ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+
+      await assert.rejects(() => publishProduct(product.id, adminId), ProductNotPublishableError);
+      assert.equal((await db.product.findUnique({ where: { id: product.id } }))?.status, "DRAFT");
+    });
+
+    it("publishProduct rejects a product whose only variants are inactive", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `Inactive Only ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+      await replaceVariants(product.id, [{ size: "S", color: "Navy", sku: `DK-INACT-${unique}`, stock: 5, active: false }], adminId);
+
+      await assert.rejects(() => publishProduct(product.id, adminId), ProductNotPublishableError);
+    });
+
+    it("createProduct rejects status: ACTIVE outright (a brand-new product can't have variants yet)", async () => {
+      const unique = randomUUID().slice(0, 8);
+      await assert.rejects(
+        () => createProduct({ name: `Direct Active ${unique}`, categoryId, price: 500, status: "ACTIVE" }, adminId),
+        ProductNotPublishableError,
+      );
+    });
+
+    it("updateProduct rejects a status:ACTIVE transition when the product has no active variant", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `Update To Active ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+
+      await assert.rejects(() => updateProduct(product.id, { status: "ACTIVE" }, adminId), ProductNotPublishableError);
+    });
+
+    it("updateProduct allows an ordinary edit that merely re-sends the current status", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `Resend Status ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+
+      // No variants at all — must not trip the publish guard, because the
+      // status isn't actually changing.
+      const updated = await updateProduct(product.id, { status: "DRAFT", shortDescription: "hello" }, adminId);
+      assert.equal(updated.status, "DRAFT");
+      assert.equal(updated.shortDescription, "hello");
+    });
+
+    it("performBulkAction's publish skips a zero-variant product, publishes the rest, and reports the skip", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const withVariant = await createProduct({ name: `Bulk Pub Has Variant ${unique}`, categoryId, price: 500 }, adminId);
+      const without = await createProduct({ name: `Bulk Pub No Variant ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(withVariant.id, without.id);
+      await replaceVariants(withVariant.id, [{ size: "S", color: "Navy", sku: `DK-BPUB-${unique}`, stock: 5, active: true }], adminId);
+
+      const result = await performBulkAction({ action: "publish", ids: [withVariant.id, without.id] }, adminId);
+
+      assert.equal(result.affected, 1);
+      assert.equal(result.skipped?.length, 1);
+      assert.equal(result.skipped?.[0].id, without.id);
+      assert.match(result.skipped?.[0].reason ?? "", /active variant/i);
+      assert.equal((await db.product.findUnique({ where: { id: withVariant.id } }))?.status, "ACTIVE");
+      assert.equal((await db.product.findUnique({ where: { id: without.id } }))?.status, "DRAFT");
+    });
   });
 
   it("deleteProduct is blocked when the product has order items, and succeeds once there are none", async () => {
@@ -214,6 +286,263 @@ describe("products admin service (Phase B1)", () => {
     assert.equal(detail.variants.length, 2);
   });
 
+  describe("F-023/F-336: replaceVariants syncs instead of delete+recreate", () => {
+    async function makeProductWithVariant(unique: string, stock = 5) {
+      const product = await createProduct({ name: `Sync ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+      const synced = await replaceVariants(
+        product.id,
+        [{ size: "M", color: "Navy", sku: `DK-SYNC-${unique}`, stock, active: true }],
+        adminId,
+      );
+      return { product, variant: synced[0] };
+    }
+
+    it("re-saving an unchanged grid (by id) keeps the same variant id", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const { product, variant } = await makeProductWithVariant(unique);
+
+      const resynced = await replaceVariants(
+        product.id,
+        [{ id: variant.id, size: "M", color: "Navy", sku: variant.sku, stock: variant.stock, active: true }],
+        adminId,
+      );
+
+      assert.equal(resynced.length, 1);
+      assert.equal(resynced[0].id, variant.id, "the variant id must survive an unchanged re-save");
+    });
+
+    it("a variant with order history is deactivated, not deleted, when dropped from the grid — the order item's link survives", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const { product, variant } = await makeProductWithVariant(unique);
+
+      const order = await db.order.create({
+        data: {
+          number: `SYNCTEST-${unique}`,
+          email: "sync-test@example.com",
+          shippingAddress: { line1: "1 Test St" },
+          subtotal: 500,
+          shipping: 0,
+          total: 500,
+        },
+      });
+      createdOrderIds.push(order.id);
+      await db.orderItem.create({
+        data: { orderId: order.id, variantId: variant.id, productName: product.name, unitPrice: 500, quantity: 1 },
+      });
+
+      // A save whose grid drops the M/Navy row entirely (e.g. the admin
+      // replaced it with a different size) must not hard-delete a variant
+      // that an order references.
+      await replaceVariants(
+        product.id,
+        [{ size: "L", color: "Navy", sku: `DK-SYNC2-${unique}`, stock: 5, active: true }],
+        adminId,
+      );
+
+      const stillThere = await db.productVariant.findUnique({ where: { id: variant.id } });
+      assert.ok(stillThere, "a variant referenced by an OrderItem must not be hard-deleted");
+      assert.equal(stillThere?.active, false, "it should be deactivated instead");
+
+      const orderItem = await db.orderItem.findFirst({ where: { orderId: order.id } });
+      assert.equal(orderItem?.variantId, variant.id, "the order item's variant link must survive the save");
+    });
+
+    it("a variant with a pending back-in-stock subscription is deactivated, not deleted, and the subscription survives", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const { product, variant } = await makeProductWithVariant(unique, 0);
+
+      const subscription = await db.backInStockSubscription.create({
+        data: { productId: product.id, variantId: variant.id, email: `bis-${unique}@example.com` },
+      });
+
+      await replaceVariants(
+        product.id,
+        [{ size: "L", color: "Navy", sku: `DK-SYNC3-${unique}`, stock: 5, active: true }],
+        adminId,
+      );
+
+      const stillThere = await db.productVariant.findUnique({ where: { id: variant.id } });
+      assert.ok(stillThere, "a variant with a pending back-in-stock subscription must not be hard-deleted");
+      assert.equal(stillThere?.active, false);
+
+      const stillSubscribed = await db.backInStockSubscription.findUnique({ where: { id: subscription.id } });
+      assert.ok(stillSubscribed, "the back-in-stock subscription must survive the save");
+    });
+
+    it("a genuinely new, never-persisted variant is created fresh, and an unreferenced dropped row is hard-deleted", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const { product, variant } = await makeProductWithVariant(unique);
+
+      const synced = await replaceVariants(
+        product.id,
+        [{ size: "L", color: "Wine", sku: `DK-SYNC4-${unique}`, stock: 8, active: true }],
+        adminId,
+      );
+
+      assert.equal(synced.length, 1);
+      assert.notEqual(synced[0].id, variant.id);
+      assert.equal(await db.productVariant.findUnique({ where: { id: variant.id } }), null, "an unreferenced dropped row is hard-deleted, not left around");
+    });
+
+    it("stock is written unconditionally when the caller sends no expectedStock (back-compat for callers that don't opt into the CAS)", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const { product, variant } = await makeProductWithVariant(unique, 5);
+
+      const synced = await replaceVariants(
+        product.id,
+        [{ id: variant.id, size: "M", color: "Navy", sku: variant.sku, stock: 42, active: true }],
+        adminId,
+      );
+
+      assert.equal(synced[0].stock, 42);
+    });
+
+    it("a stock edit succeeds via compare-and-set when expectedStock still matches the DB", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const { product, variant } = await makeProductWithVariant(unique, 5);
+
+      const synced = await replaceVariants(
+        product.id,
+        [{ id: variant.id, size: "M", color: "Navy", sku: variant.sku, stock: 9, expectedStock: 5, active: true }],
+        adminId,
+      );
+
+      assert.equal(synced[0].stock, 9);
+    });
+
+    it("a stock edit is rejected with VariantStockConflictError when the DB's stock has moved since expectedStock was read (F-023's P0 case)", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const { product, variant } = await makeProductWithVariant(unique, 5);
+
+      // Simulate a sale that happened after the admin's edit page loaded.
+      await db.productVariant.update({ where: { id: variant.id }, data: { stock: 2 } });
+
+      await assert.rejects(
+        () =>
+          replaceVariants(
+            product.id,
+            // The admin's form still thinks stock was 5 (its page-load
+            // snapshot) and tries to write 10 over it.
+            [{ id: variant.id, size: "M", color: "Navy", sku: variant.sku, stock: 10, expectedStock: 5, active: true }],
+            adminId,
+          ),
+        VariantStockConflictError,
+      );
+
+      // The concurrent sale's stock value must survive, not be clobbered.
+      const after = await db.productVariant.findUnique({ where: { id: variant.id } });
+      assert.equal(after?.stock, 2);
+    });
+
+    it("an id that doesn't belong to this product is rejected with VariantOwnershipError", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const { variant: otherVariant } = await makeProductWithVariant(`${unique}-other`);
+      const { product } = await makeProductWithVariant(unique);
+
+      await assert.rejects(
+        () =>
+          replaceVariants(
+            product.id,
+            [{ id: otherVariant.id, size: "S", color: "Red", sku: `DK-STEAL-${unique}`, stock: 1, active: true }],
+            adminId,
+          ),
+        VariantOwnershipError,
+      );
+    });
+
+    it("a concurrent sale between page-load and save keeps the decremented stock — the admin's unrelated field save never touches it", async () => {
+      // This is F-023's headline repro: an admin editing (say) the short
+      // description of a product must never silently undo a sale that
+      // happened while the edit page was open. Here that means saving the
+      // grid with the *unchanged* stock the form loaded (no expectedStock
+      // opt-in, matching a plain field-only save where saveVariantsIfChanged
+      // would actually skip the variants call entirely — see product-form.tsx)
+      // must not fight with a concurrent decrement.
+      const unique = randomUUID().slice(0, 8);
+      const { product, variant } = await makeProductWithVariant(unique, 5);
+
+      // A shopper's order decrements stock while the admin's edit page is open.
+      await db.productVariant.update({ where: { id: variant.id }, data: { stock: 2 } });
+
+      // The admin's grid still carries the id and every other field
+      // unchanged, with expectedStock pinned to the page-load value (5) and
+      // the same stock value (5) — i.e. the admin never touched stock, so
+      // saveVariantsIfChanged's own per-row equality check would not even
+      // include this field as "changed". replaceVariants must reach the
+      // same result: stock stays at the concurrently-decremented value.
+      const synced = await replaceVariants(
+        product.id,
+        [{ id: variant.id, size: "M", color: "Navy", sku: variant.sku, stock: 5, expectedStock: 5, active: true }],
+        adminId,
+      );
+
+      assert.equal(synced[0].id, variant.id);
+      const after = await db.productVariant.findUnique({ where: { id: variant.id } });
+      assert.equal(after?.stock, 2, "the concurrent sale's stock must survive since the admin's own value equals expectedStock (no real edit)");
+    });
+  });
+
+  describe("F-063: CATALOG_MANAGER cannot set status:ACTIVE directly, bypassing products:publish", () => {
+    it("updateProduct rejects a DRAFT->ACTIVE transition when the caller lacks products:publish, even with an active variant", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `RBAC Direct Active ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+      await replaceVariants(product.id, [{ size: "S", color: "Navy", sku: `DK-RBAC1-${unique}`, stock: 5, active: true }], adminId);
+
+      await assert.rejects(
+        () => updateProduct(product.id, { status: "ACTIVE" }, adminId, { canPublish: false }),
+        ProductStatusPermissionError,
+      );
+      assert.equal((await db.product.findUnique({ where: { id: product.id } }))?.status, "DRAFT");
+    });
+
+    it("updateProduct rejects an ACTIVE->DRAFT unpublish when the caller lacks products:publish", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `RBAC Direct Unpublish ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+      await replaceVariants(product.id, [{ size: "S", color: "Navy", sku: `DK-RBAC2-${unique}`, stock: 5, active: true }], adminId);
+      await publishProduct(product.id, adminId);
+
+      await assert.rejects(
+        () => updateProduct(product.id, { status: "DRAFT" }, adminId, { canPublish: false }),
+        ProductStatusPermissionError,
+      );
+      assert.equal((await db.product.findUnique({ where: { id: product.id } }))?.status, "ACTIVE");
+    });
+
+    it("updateProduct still allows ACTIVE->ARCHIVED without products:publish, matching the publish route's own archive rule", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `RBAC Archive OK ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+      await replaceVariants(product.id, [{ size: "S", color: "Navy", sku: `DK-RBAC3-${unique}`, stock: 5, active: true }], adminId);
+      await publishProduct(product.id, adminId);
+
+      const archived = await updateProduct(product.id, { status: "ARCHIVED" }, adminId, { canPublish: false });
+      assert.equal(archived.status, "ARCHIVED");
+    });
+
+    it("updateProduct allows a normal field edit with no status change even when canPublish is false", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `RBAC Ordinary Edit ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+
+      const updated = await updateProduct(product.id, { shortDescription: "no status here" }, adminId, { canPublish: false });
+      assert.equal(updated.shortDescription, "no status here");
+      assert.equal(updated.status, "DRAFT");
+    });
+
+    it("updateProduct defaults canPublish to true for callers that don't pass the option (existing scripts/tests)", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `RBAC Default ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+      await replaceVariants(product.id, [{ size: "S", color: "Navy", sku: `DK-RBAC4-${unique}`, stock: 5, active: true }], adminId);
+
+      const updated = await updateProduct(product.id, { status: "ACTIVE" }, adminId);
+      assert.equal(updated.status, "ACTIVE");
+    });
+  });
+
   it("duplicateProduct copies variants and images with a new slug and DRAFT status", async () => {
     const unique = randomUUID().slice(0, 8);
     const product = await createProduct({ name: `Original ${unique}`, categoryId, price: 500 }, adminId);
@@ -254,6 +583,45 @@ describe("products admin service (Phase B1)", () => {
 
     const out = await listProductsForAdmin({ search: `Stock Test ${unique}`, stockFilter: "out" });
     assert.equal(out.items.length, 0);
+  });
+
+  describe("F-177: the admin category filter matches on categoryId (with descendants), not categorySlug", () => {
+    it("filtering by a category's own id returns its products", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `Cat Filter Leaf ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+
+      // This is the bug's exact repro shape: the admin table's <option>
+      // value is the category id, sent as `categoryId` — `categorySlug`
+      // (a real slug) must keep working for any other caller too.
+      const byId = await listProductsForAdmin({ categoryId, search: `Cat Filter Leaf ${unique}` });
+      assert.equal(byId.items.length, 1);
+
+      const bySlug = await listProductsForAdmin({ categorySlug, search: `Cat Filter Leaf ${unique}` });
+      assert.equal(bySlug.items.length, 1);
+    });
+
+    it("filtering by a parent category id also returns its children's products", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const parent = await db.category.create({
+        data: { name: `Cat Filter Parent ${unique}`, slug: `cat-filter-parent-${unique}`, section: "GENERAL" },
+      });
+      const child = await db.category.create({
+        data: { name: `Cat Filter Child ${unique}`, slug: `cat-filter-child-${unique}`, section: "GENERAL", parentId: parent.id },
+      });
+      createdCategoryIds.push(parent.id, child.id);
+
+      // Mirrors the real catalogue's shape (e.g. "School Uniforms"): the
+      // parent itself holds no products directly — only its child does.
+      const product = await createProduct({ name: `Cat Filter Grandchild ${unique}`, categoryId: child.id, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+
+      const byParent = await listProductsForAdmin({ categoryId: parent.id, search: `Cat Filter Grandchild ${unique}` });
+      assert.equal(byParent.items.length, 1, "a parent category filter must include its descendants' products");
+
+      const byChild = await listProductsForAdmin({ categoryId: child.id, search: `Cat Filter Grandchild ${unique}` });
+      assert.equal(byChild.items.length, 1);
+    });
   });
 
   it("performBulkAction publishes, archives, adjusts price, and sets stock across products", async () => {

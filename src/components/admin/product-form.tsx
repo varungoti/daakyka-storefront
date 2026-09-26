@@ -205,44 +205,111 @@ export function ProductForm({
     return () => clearTimeout(handle);
   }, [slug, productId]);
 
+  // F-336 ("diff-based buildPayload()"): on an edit, only include a field
+  // whose current value actually differs from what this form loaded —
+  // never re-send a field the admin didn't touch. Two admins editing the
+  // same product at once used to clobber each other even on unrelated
+  // fields, because every save PATCHed the *entire* form: A's price edit
+  // silently vanished under B's save of an unrelated field, because B's
+  // stale, page-load-time price rode along and overwrote it. `status` is
+  // never sent at all — see the F-063 note above the Publish/Unpublish
+  // buttons; those, not this payload, are the only path that changes it.
+  // A create has nothing loaded to diff against, so it always sends
+  // everything.
   function buildPayload() {
-    return {
-      name: name.trim(),
-      slug: slug.trim() ? slugify(slug) : undefined,
-      shortDescription: shortDescription.trim() || null,
-      description: description.trim() || null,
-      categoryId,
-      status,
-      featured,
-      isNew,
-      price: Number(price),
-      compareAtPrice: compareAtPrice === "" ? null : Number(compareAtPrice),
-      gender,
-      fabric: fabric.trim() || null,
-      care: care.trim() || null,
-      tags: tagsText
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean),
-      sizeChartId: sizeChartId || null,
-      seoTitle: seoTitle.trim() || null,
-      seoDescription: seoDescription.trim() || null,
+    const current = buildSnapshot();
+    const fields: [keyof ReturnType<typeof buildSnapshot>, string, unknown][] = [
+      ["name", "name", name.trim()],
+      ["slug", "slug", slug.trim() ? slugify(slug) : undefined],
+      ["shortDescription", "shortDescription", shortDescription.trim() || null],
+      ["description", "description", description.trim() || null],
+      ["categoryId", "categoryId", categoryId],
+      ["featured", "featured", featured],
+      ["isNew", "isNew", isNew],
+      ["price", "price", Number(price)],
+      ["compareAtPrice", "compareAtPrice", compareAtPrice === "" ? null : Number(compareAtPrice)],
+      ["gender", "gender", gender],
+      ["fabric", "fabric", fabric.trim() || null],
+      ["care", "care", care.trim() || null],
+      ["tagsText", "tags", tagsText.split(",").map((t) => t.trim()).filter(Boolean)],
+      ["sizeChartId", "sizeChartId", sizeChartId || null],
+      ["seoTitle", "seoTitle", seoTitle.trim() || null],
+      ["seoDescription", "seoDescription", seoDescription.trim() || null],
+    ];
+
+    const payload: Record<string, unknown> = {};
+    for (const [snapshotKey, payloadKey, value] of fields) {
+      if (!isEdit || isDirty(current[snapshotKey], initialSnapshot[snapshotKey])) {
+        payload[payloadKey] = value;
+      }
+    }
+    return payload as {
+      name?: string;
+      slug?: string;
+      shortDescription?: string | null;
+      description?: string | null;
+      categoryId?: string;
+      featured?: boolean;
+      isNew?: boolean;
+      price?: number;
+      compareAtPrice?: number | null;
+      gender?: typeof gender;
+      fabric?: string | null;
+      care?: string | null;
+      tags?: string[];
+      sizeChartId?: string | null;
+      seoTitle?: string | null;
+      seoDescription?: string | null;
     };
   }
 
-  async function saveVariantsIfChanged(id: string) {
-    if (variants.length === 0) return true;
+  // F-023/F-336 (P0 anchor): only call the variants endpoint when the
+  // variant grid actually differs from what this form loaded or last
+  // synced — comparing the grid alone, not the whole form snapshot,
+  // matters here: unrelated field edits (e.g. the short description) must
+  // never re-POST an unchanged grid. Each row carries its `id` (so the
+  // server can match it to the existing row instead of minting a new one)
+  // and `expectedStock` (the stock value this form loaded for it, so the
+  // server only ever writes a *changed* stock value, and only as a
+  // compare-and-set against that — see replaceVariants' own doc comment).
+  async function saveVariantsIfChanged(id: string): Promise<{ ok: boolean; variants: VariantRow[] }> {
+    if (!isDirty(variants, initialSnapshot.variants)) return { ok: true, variants };
+
+    const expectedStockById = new Map<string, number>();
+    for (const v of initialSnapshot.variants) {
+      if (v.id) expectedStockById.set(v.id, v.stock);
+    }
+
     const response = await fetch(`/api/admin/products/${id}/variants`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ variants: variants.map((v) => ({ size: v.size, color: v.color, colorHex: v.colorHex, sku: v.sku, price: v.price, stock: v.stock, active: v.active })) }),
+      body: JSON.stringify({
+        variants: variants.map((v) => ({
+          id: v.id,
+          size: v.size,
+          color: v.color,
+          colorHex: v.colorHex,
+          sku: v.sku,
+          price: v.price,
+          stock: v.stock,
+          expectedStock: v.id ? expectedStockById.get(v.id) : undefined,
+          active: v.active,
+        })),
+      }),
     });
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
       setErrorMessage(formatApiError(body, "Couldn't save variants.").summary);
-      return false;
+      return { ok: false, variants };
     }
-    return true;
+    // The server assigns ids to newly-created rows and is the source of
+    // truth for what actually landed — re-sync from its response so the
+    // next save's dirty-check and expectedStock compare against reality,
+    // not this tab's pre-save guess.
+    const body = await response.json().catch(() => ({}));
+    const synced: VariantRow[] = Array.isArray(body.variants) ? body.variants : variants;
+    setVariants(synced);
+    return { ok: true, variants: synced };
   }
 
   async function saveDraft() {
@@ -252,7 +319,13 @@ export function ProductForm({
     setSaved(false);
 
     const payload = buildPayload();
-    if (payload.compareAtPrice != null && payload.compareAtPrice <= payload.price) {
+    // Validated against the form's actual current price/compare-at, not
+    // whatever the diffed `payload` happens to carry — buildPayload()
+    // omits an unchanged field entirely on an edit (F-336), so `payload`
+    // alone can't be trusted to have both.
+    const nextPrice = Number(price);
+    const nextCompareAt = compareAtPrice === "" ? null : Number(compareAtPrice);
+    if (nextCompareAt != null && nextCompareAt <= nextPrice) {
       setSaveStatus("error");
       setErrorMessage("Compare-at price must be greater than the price.");
       setFieldErrors({ compareAtPrice: "Compare-at price must be greater than the price." });
@@ -332,15 +405,18 @@ export function ProductForm({
       setStagedImages([]);
     }
 
-    const variantsOk = await saveVariantsIfChanged(savedId);
-    setSaveStatus(variantsOk ? "idle" : "error");
+    const variantsResult = await saveVariantsIfChanged(savedId);
+    setSaveStatus(variantsResult.ok ? "idle" : "error");
 
-    if (variantsOk) {
+    if (variantsResult.ok) {
       // F-13: this save just persisted exactly what's in the form, so it's
       // no longer "dirty" relative to it — updating the snapshot here
       // (rather than only at mount) means immediately navigating away
       // right after a successful save doesn't trigger the guard.
-      setInitialSnapshot(buildSnapshot());
+      // `variants` comes from the server's response (fresh ids/stock —
+      // see saveVariantsIfChanged), not this closure's pre-save value,
+      // which React hasn't updated yet at this point in the same tick.
+      setInitialSnapshot({ ...buildSnapshot(), variants: variantsResult.variants });
       // F-03/F-16: match the Orders page's own "Saved." confirmation
       // pattern (src/components/admin/order-detail-actions.tsx) instead of
       // leaving a save with no visible confirmation at all.
@@ -610,9 +686,16 @@ export function ProductForm({
         </div>
       </section>
 
-      <FormErrorBanner message={errorMessage} />
-
       <div className="sticky bottom-4 z-10 flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-surface p-4 shadow-lg">
+        {/* F-176: rendered here, as the bar's own first (full-width) row,
+            instead of as a separate element right above it — a save error
+            used to be scrolled to the bottom of the viewport, exactly
+            where this always-visible sticky bar also sits, so the bar hid
+            all but a sliver of it. `scroll={false}` because the bar is
+            already on screen wherever the admin scrolls to hit Save;
+            re-scrolling here would just be a needless jump. */}
+        <FormErrorBanner message={errorMessage} scroll={false} className="basis-full" />
+
         <button type="button" onClick={saveDraft} disabled={saveStatus === "saving" || !name.trim() || !price} className="rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
           {saveStatus === "saving" ? "Saving…" : status === "DRAFT" ? "Save draft" : "Save changes"}
         </button>

@@ -13,6 +13,16 @@ interface AddToCartButtonProps {
   variantStyle?: "primary" | "outline";
   label?: string;
   redirectToCheckout?: boolean;
+  /** F-103/F-107: force the disabled, "Sold out" state regardless of
+   * `variant`/the synthetic fallback below. Passing `variant={undefined}`
+   * alone does *not* disable the button — it falls back to a synthetic
+   * variant that reads as available (see `activeVariant` below), which is
+   * exactly how F-103's missing-combo bug and F-028's zero-variant bug
+   * both let a shopper add something unbuyable. Set this whenever the
+   * caller knows the shopper's current, exact selection isn't purchasable
+   * — a combo that doesn't exist as a row, not merely a resolved
+   * fallback variant. */
+  unavailable?: boolean;
 }
 
 export function AddToCartButton({
@@ -23,6 +33,7 @@ export function AddToCartButton({
   variantStyle = "primary",
   label = "Add to Cart",
   redirectToCheckout = false,
+  unavailable = false,
 }: AddToCartButtonProps) {
   const { addToCart, checkout, isLoading } = useCart();
 
@@ -33,8 +44,10 @@ export function AddToCartButton({
     available: product.available ?? true,
     selectedOptions: [],
   };
+  const isUnavailable = unavailable || activeVariant.available === false;
 
   const handleClick = async () => {
+    if (isUnavailable) return;
     const result = await addToCart({
       variantId: activeVariant.id,
       productHandle: product.handle,
@@ -43,6 +56,11 @@ export function AddToCartButton({
       price: activeVariant.price,
       image: activeVariant.image ?? product.image,
       quantity,
+      // F-108: the cart's own ceiling on this line — never trusts the
+      // caller's `quantity` alone. Only set for DB-tracked variants
+      // (`stock` is undefined for Shopify/legacy-seed ones, which don't
+      // track it).
+      maxQuantity: typeof activeVariant.stock === "number" ? activeVariant.stock : undefined,
     });
 
     if (redirectToCheckout) {
@@ -61,10 +79,10 @@ export function AddToCartButton({
       variant={variantStyle}
       size={size}
       onClick={handleClick}
-      disabled={isLoading || activeVariant.available === false}
+      disabled={isLoading || isUnavailable}
     >
       <ShoppingBag size={18} />
-      {label}
+      {isUnavailable ? "Sold out" : label}
     </Button>
   );
 }

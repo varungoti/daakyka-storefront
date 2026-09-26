@@ -1,17 +1,26 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@/generated/prisma/client";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { DuplicateVariantKeyError, DuplicateVariantSkuError } from "@/lib/catalog/product-validation";
-import { ProductNotFoundError, ProductSlugConflictError, replaceVariants, variantsInputSchema } from "@/lib/catalog/products";
+import {
+  ProductNotFoundError,
+  ProductSlugConflictError,
+  replaceVariants,
+  VariantOwnershipError,
+  VariantStockConflictError,
+  variantsInputSchema,
+} from "@/lib/catalog/products";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-/** Replaces the full variant list for a product in one call — the admin
- * form always sends the complete grid rather than diffing individual
- * rows, which keeps the (size,color)/SKU uniqueness rules simple to
- * enforce (see assertUniqueVariants). */
+/** F-023/F-336: syncs the admin form's variant grid against the DB with a
+ * per-row diff (see replaceVariants' own doc comment) rather than
+ * replacing the whole table — each row is matched to an existing one by
+ * `id`, or by (size,color) for a new row, so variant ids/order
+ * history/back-in-stock signups survive an ordinary save. */
 export async function POST(request: Request, { params }: RouteParams) {
   const { session, error } = await requireAdminPermission("products:manage");
   if (error) return error;
@@ -26,14 +35,28 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
-    await replaceVariants(id, parsed.data.variants, session.id);
-    return NextResponse.json({ success: true });
+    const variants = await replaceVariants(id, parsed.data.variants, session.id);
+    return NextResponse.json({ success: true, variants });
   } catch (err) {
     if (err instanceof ProductNotFoundError) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
+    if (err instanceof VariantOwnershipError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
     if (err instanceof DuplicateVariantKeyError || err instanceof DuplicateVariantSkuError || err instanceof ProductSlugConflictError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof VariantStockConflictError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    // F-336: two variant saves racing each other (e.g. a SKU or
+    // size/colour swap that collides mid-transaction — see
+    // replaceVariants' doc comment) previously surfaced as an unhandled
+    // P2002 -> 500. A concurrent-write conflict is a 409, not a server
+    // error: the admin can reload and retry.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      return NextResponse.json({ error: "Another save just changed one of these variants — reload and try again" }, { status: 409 });
     }
     throw err;
   }

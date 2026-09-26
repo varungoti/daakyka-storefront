@@ -49,7 +49,14 @@ export function ProductsTable({
 
   const initialParams = useSearchParams();
   const [search, setSearch] = useState("");
-  const [categorySlug, setCategorySlug] = useState("");
+  // F-177: the filter's <option> values are category ids (categoryOptions
+  // only ever carries id/name/section — there's no slug to use instead),
+  // so this has to be sent as `categoryId`, the param
+  // GET /api/admin/products actually filters on. It used to be sent as
+  // `categorySlug`, which the API filters with `category: { slug }` — a
+  // cuid never equals a slug, so every category choice silently matched
+  // zero products.
+  const [categoryId, setCategoryId] = useState("");
   const [status, setStatus] = useState(() => initialParams.get("status") ?? "");
   const [stockFilter, setStockFilter] = useState(() => initialParams.get("stockFilter") ?? "all");
   const [sort, setSort] = useState("updated-desc");
@@ -57,12 +64,16 @@ export function ProductsTable({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // F-189: a one-off success confirmation (e.g. "12 products archived"),
+  // separate from `notice` — that's reserved for errors/skips and renders
+  // in red, which a success message must not.
+  const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     const params = new URLSearchParams({ page: String(page), sort });
     if (search.trim()) params.set("search", search.trim());
-    if (categorySlug) params.set("categorySlug", categorySlug);
+    if (categoryId) params.set("categoryId", categoryId);
     if (status) params.set("status", status);
     if (stockFilter !== "all") params.set("stockFilter", stockFilter);
 
@@ -74,7 +85,7 @@ export function ProductsTable({
       setTotalPages(body.totalPages);
     }
     setLoading(false);
-  }, [page, sort, search, categorySlug, status, stockFilter]);
+  }, [page, sort, search, categoryId, status, stockFilter]);
 
   useEffect(() => {
     // Fetch-on-filter-change effect (react.dev/reference/react/useEffect#fetching-data-with-effects):
@@ -89,7 +100,7 @@ export function ProductsTable({
     // the (now stale) page number is used to build the next request.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPage(1);
-  }, [search, categorySlug, status, stockFilter]);
+  }, [search, categoryId, status, stockFilter]);
 
   function toggleSelected(id: string) {
     setSelected((prev) => {
@@ -104,10 +115,16 @@ export function ProductsTable({
     setSelected((prev) => (prev.size === items.length ? new Set() : new Set(items.map((i) => i.id))));
   }
 
-  async function runBulk(action: string, extra: Record<string, unknown> = {}) {
+  // F-189: `onSuccess` is a per-caller success message — archive and
+  // move-category used to run instantly with zero feedback beyond the
+  // selection silently clearing, which reads the same whether the action
+  // actually worked or the request never fired. Only shown when nothing
+  // was skipped, so it never talks over the (more important) skip notice.
+  async function runBulk(action: string, extra: Record<string, unknown> = {}, onSuccess?: (affected: number) => string) {
     if (selected.size === 0) return;
     setBulkBusy(true);
     setNotice(null);
+    setSuccessNotice(null);
     const response = await fetch("/api/admin/products/bulk", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -123,11 +140,13 @@ export function ProductsTable({
     // past the product's compareAtPrice are skipped rather than silently
     // corrupted or failing the whole batch — surface that here instead of
     // dropping it (F6).
-    const body: { skipped?: { id: string; name: string; reason: string }[] } = await response.json().catch(() => ({}));
+    const body: { affected?: number; skipped?: { id: string; name: string; reason: string }[] } = await response.json().catch(() => ({}));
     if (body.skipped && body.skipped.length > 0) {
       const count = body.skipped.length;
       const names = body.skipped.map((s) => s.name).join(", ");
       setNotice(`${count} product${count === 1 ? "" : "s"} skipped (${body.skipped[0].reason}): ${names}`);
+    } else if (onSuccess) {
+      setSuccessNotice(onSuccess(body.affected ?? selected.size));
     }
     setSelected(new Set());
     load();
@@ -142,7 +161,7 @@ export function ProductsTable({
           placeholder="Search by name, slug, or tag…"
           className="w-64 rounded-xl border border-border p-2 text-sm"
         />
-        <select value={categorySlug} onChange={(e) => setCategorySlug(e.target.value)} className="rounded-xl border border-border p-2 text-sm">
+        <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="rounded-xl border border-border p-2 text-sm">
           <option value="">All categories</option>
           {categoryOptions.map((c) => (
             <option key={c.id} value={c.id}>
@@ -175,18 +194,45 @@ export function ProductsTable({
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-brand/30 bg-brand/5 p-3">
           <span className="text-xs font-semibold text-ink">{selected.size} selected</span>
           <span title={canPublish ? "" : "Requires products:publish"}>
-            <button disabled={!canPublish || bulkBusy} onClick={() => runBulk("publish")} className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40">
+            <button
+              disabled={!canPublish || bulkBusy}
+              onClick={() => runBulk("publish", {}, (n) => `${n} product${n === 1 ? "" : "s"} published.`)}
+              className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-40"
+            >
               Publish
             </button>
           </span>
-          <button disabled={bulkBusy} onClick={() => runBulk("archive")} className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold">
+          <button
+            disabled={bulkBusy}
+            onClick={() => {
+              // F-189: archiving ran instantly, with nothing beyond the
+              // selection silently clearing to say it happened.
+              if (!confirm(`Archive ${selected.size} product${selected.size === 1 ? "" : "s"}?`)) return;
+              runBulk("archive", {}, (n) => `${n} product${n === 1 ? "" : "s"} archived.`);
+            }}
+            className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold"
+          >
             Archive
           </button>
           <button
             disabled={bulkBusy}
             onClick={() => {
-              const pct = Number(prompt("Adjust price by what percent? (e.g. -10 for -10%)", "0"));
-              if (!Number.isNaN(pct) && pct !== 0) runBulk("adjust-price-pct", { percent: pct });
+              // F-174/F-189: `prompt()` returns `null` on Cancel, and
+              // Number(null) is 0 — the old `Number(prompt(...))` read
+              // straight into the request with no null/blank check, so
+              // cancelling this dialog (or clicking OK on its own
+              // pre-filled "0") sent `percent: 0`. That specific case is
+              // harmless here only because of the `pct !== 0` guard below;
+              // the sibling "Set stock" prompt had no such guard at all
+              // (see the fix there) and zeroed every selected product's
+              // stock the same way. Guard both the same way regardless.
+              const raw = prompt("Adjust price by what percent? (e.g. -10 for -10%)", "");
+              if (raw === null) return;
+              const trimmed = raw.trim();
+              if (trimmed === "") return;
+              const pct = Number(trimmed);
+              if (Number.isNaN(pct) || pct === 0) return;
+              runBulk("adjust-price-pct", { percent: pct }, (n) => `Price adjusted for ${n} product${n === 1 ? "" : "s"}.`);
             }}
             className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold"
           >
@@ -195,8 +241,29 @@ export function ProductsTable({
           <button
             disabled={bulkBusy}
             onClick={() => {
-              const stock = Number(prompt("Set stock to what value for all variants?", "0"));
-              if (!Number.isNaN(stock) && stock >= 0) runBulk("set-stock", { stock });
+              // F-174 (P1): cancelling this dialog used to zero every
+              // selected product's stock. `prompt()` returns `null` on
+              // Cancel; `Number(null)` — and Number('') for a blank
+              // answer — is `0`, and the old guard
+              // (`!Number.isNaN(stock) && stock >= 0`) let that `0`
+              // straight through to runBulk. The prompt's own pre-filled
+              // "0" meant even pressing Enter by reflex did the same.
+              const raw = prompt("Set stock to what value for all variants?", "");
+              if (raw === null) return; // Cancel
+              const trimmed = raw.trim();
+              if (trimmed === "") return; // blank answer
+              const stock = Number(trimmed);
+              if (!Number.isInteger(stock) || stock < 0) {
+                setNotice("Stock must be a whole number ≥ 0.");
+                return;
+              }
+              if (
+                !confirm(
+                  `Set stock to ${stock} for every variant of ${selected.size} product${selected.size === 1 ? "" : "s"}? This overwrites current stock.`,
+                )
+              )
+                return;
+              runBulk("set-stock", { stock }, (n) => `Stock set to ${stock} for ${n} product${n === 1 ? "" : "s"}.`);
             }}
             className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold"
           >
@@ -204,8 +271,14 @@ export function ProductsTable({
           </button>
           <select
             onChange={(e) => {
-              if (e.target.value) runBulk("move-category", { categoryId: e.target.value });
+              const targetId = e.target.value;
               e.target.value = "";
+              if (!targetId) return;
+              // F-189: moving products ran instantly with no confirmation
+              // and no success feedback either.
+              const targetName = categoryOptions.find((c) => c.id === targetId)?.name ?? "that category";
+              if (!confirm(`Move ${selected.size} product${selected.size === 1 ? "" : "s"} to "${targetName}"?`)) return;
+              runBulk("move-category", { categoryId: targetId }, (n) => `${n} product${n === 1 ? "" : "s"} moved to "${targetName}".`);
             }}
             className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold"
             defaultValue=""
@@ -223,6 +296,7 @@ export function ProductsTable({
       )}
 
       {notice ? <p className="text-xs text-red-600">{notice}</p> : null}
+      {successNotice ? <p className="text-xs font-medium text-green-700">{successNotice}</p> : null}
 
       {/* F-05 (docs/audit-2026-09-19/admin-ux.md): the desktop table below
           is unchanged and still renders at `lg` (1024px) and up — the same

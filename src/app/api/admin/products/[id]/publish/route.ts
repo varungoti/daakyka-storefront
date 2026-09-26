@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { readJsonBody } from "@/lib/security/parse-json-body";
-import { archiveProduct, ProductNotFoundError, publishProduct, serializeProductForResponse, unpublishProduct } from "@/lib/catalog/products";
+import {
+  archiveProduct,
+  ProductNotFoundError,
+  ProductNotPublishableError,
+  publishProduct,
+  serializeProductForResponse,
+  unpublishProduct,
+} from "@/lib/catalog/products";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -31,6 +38,9 @@ export async function POST(request: Request, { params }: RouteParams) {
   } catch (err) {
     if (err instanceof ProductNotFoundError) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    }
+    if (err instanceof ProductNotPublishableError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
     }
     throw err;
   }

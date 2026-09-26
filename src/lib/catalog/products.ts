@@ -21,6 +21,21 @@ export const productStatusValues = ["DRAFT", "ACTIVE", "ARCHIVED"] as const;
 
 const optionalTrimmed = (max: number) => z.string().trim().max(max).optional().nullable();
 
+/** Shared by createProduct/updateProduct's status-transition guard (F-063)
+ * and the publish-content guard (F-028) — kept here, next to the schemas
+ * they gate, rather than duplicated at each call site. */
+export interface ProductWriteOptions {
+  /** Whether the caller holds `products:publish` — required to move a
+   * product to ACTIVE, or off ACTIVE back to DRAFT (an unpublish). Moving
+   * ACTIVE -> ARCHIVED stays under `products:manage` alone, matching
+   * publishProduct/archiveProduct's own split in
+   * src/app/api/admin/products/[id]/publish/route.ts. Defaults to `true`
+   * so existing callers (tests, scripts) that don't pass this option keep
+   * working unrestricted — the two admin routes are the only callers that
+   * narrow it based on the caller's real role. */
+  canPublish?: boolean;
+}
+
 export const productInputSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(200),
   slug: z
@@ -58,6 +73,10 @@ export const productUpdateSchema = productInputSchema.partial();
 export type ProductUpdateInput = z.infer<typeof productUpdateSchema>;
 
 const variantSchema = z.object({
+  // F-023/F-336: present for a variant the admin form already loaded from
+  // the DB — matches it to the existing row instead of a fresh delete +
+  // recreate. Absent for a brand-new row (not yet persisted).
+  id: z.string().trim().min(1).optional(),
   size: z.string().trim().min(1).max(40),
   color: z.string().trim().min(1).max(60),
   colorHex: z
@@ -69,6 +88,13 @@ const variantSchema = z.object({
   sku: z.string().trim().min(1).max(80),
   price: z.number().positive().optional().nullable(),
   stock: z.number().int().min(0).max(1_000_000),
+  // F-023/F-336: the stock value the form loaded (or last synced) for this
+  // row — used as a compare-and-set precondition so `stock` is only ever
+  // written when it actually changed, and a write that would clobber a
+  // sale made since the page opened is rejected with a conflict instead of
+  // silently overwriting it. Omitted for a new row, or by a caller that
+  // hasn't opted into the check (see replaceVariants' doc comment).
+  expectedStock: z.number().int().min(0).max(1_000_000).optional(),
   active: z.boolean().optional(),
 });
 
@@ -161,6 +187,51 @@ export class InvalidCompareAtPriceError extends Error {
   }
 }
 
+/** F-028: thrown by publishProduct, performBulkAction's "publish" case (per
+ * skipped row, not thrown), and createProduct/updateProduct when the
+ * caller asks for status ACTIVE on a product with no active variant — a
+ * product like this shows as buyable on the storefront but can never
+ * actually be checked out (see src/lib/products/index.ts's `available`
+ * computation and AddToCartButton's seed-id fallback). */
+export class ProductNotPublishableError extends Error {
+  constructor(message = "Add at least one active variant before publishing") {
+    super(message);
+    this.name = "ProductNotPublishableError";
+  }
+}
+
+/** F-063: thrown by updateProduct when the caller's ProductWriteOptions
+ * says they lack `products:publish` but the requested status change would
+ * move the product to or off ACTIVE — the one control CATALOG_MANAGER is
+ * documented (src/lib/auth/rbac.ts) as not having, previously reachable
+ * anyway by sending `status` straight to this PATCH instead of going
+ * through the dedicated, correctly-gated /publish route. */
+export class ProductStatusPermissionError extends Error {
+  constructor() {
+    super("Changing publish status requires products:publish");
+    this.name = "ProductStatusPermissionError";
+  }
+}
+
+export class VariantOwnershipError extends Error {
+  constructor(id: string) {
+    super(`Variant ${id} does not belong to this product`);
+    this.name = "VariantOwnershipError";
+  }
+}
+
+/** F-023/F-336: thrown by replaceVariants when a row's `stock` differs
+ * from its `expectedStock` (the admin edited it) but the row's current DB
+ * stock no longer matches `expectedStock` either — someone else (a sale, a
+ * restock, another admin) changed it since this page loaded, so writing
+ * the admin's value would silently undo that change. */
+export class VariantStockConflictError extends Error {
+  constructor(public readonly sku: string) {
+    super(`Stock for "${sku}" changed since this page was loaded — reload to see the current value`);
+    this.name = "VariantStockConflictError";
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Cache
 // ---------------------------------------------------------------------------
@@ -202,6 +273,14 @@ async function assertSizeChartExists(id: string): Promise<void> {
   if (!chart) throw new ProductSizeChartNotFoundError(id);
 }
 
+/** F-028: whether a product has at least one *active* variant — the bar
+ * for "publishable", regardless of stock (a sold-out product must stay
+ * publishable so the sold-out/notify-me UI has something to show). */
+async function hasActiveVariant(productId: string): Promise<boolean> {
+  const count = await db.productVariant.count({ where: { productId, active: true } });
+  return count > 0;
+}
+
 /** Generates a unique slug from `base`, appending -2, -3, ... if needed. */
 export async function generateUniqueSlug(base: string, excludeId?: string): Promise<string> {
   const root = slugify(base);
@@ -227,6 +306,14 @@ export async function createProduct(input: ProductInput, userId: string): Promis
 
   if (input.compareAtPrice != null && input.compareAtPrice <= input.price) {
     throw new InvalidCompareAtPriceError();
+  }
+
+  // F-028: a product being created has no variants yet (those are added
+  // through a separate save after this one returns an id), so it can
+  // never legitimately be created already ACTIVE — publish it afterwards,
+  // once it has at least one active variant, through publishProduct.
+  if (input.status === "ACTIVE") {
+    throw new ProductNotPublishableError();
   }
 
   const slug = input.slug ? slugify(input.slug) : await generateUniqueSlug(input.name);
@@ -271,7 +358,12 @@ export async function createProduct(input: ProductInput, userId: string): Promis
   return created;
 }
 
-export async function updateProduct(id: string, input: ProductUpdateInput, userId: string): Promise<Product> {
+export async function updateProduct(
+  id: string,
+  input: ProductUpdateInput,
+  userId: string,
+  options: ProductWriteOptions = {},
+): Promise<Product> {
   const existing = await db.product.findUnique({ where: { id } });
   if (!existing) throw new ProductNotFoundError(id);
 
@@ -279,6 +371,27 @@ export async function updateProduct(id: string, input: ProductUpdateInput, userI
   const nextCompareAt = input.compareAtPrice !== undefined ? input.compareAtPrice : existing.compareAtPrice ? Number(existing.compareAtPrice) : null;
   if (nextCompareAt != null && nextCompareAt <= nextPrice) {
     throw new InvalidCompareAtPriceError();
+  }
+
+  // F-063/F-028: only look at this when the caller is actually attempting
+  // a status *change* — an ordinary field edit that happens to re-send the
+  // product's current, unchanged status (the admin form does this on
+  // every save) must never trip either guard.
+  if (input.status !== undefined && input.status !== existing.status) {
+    // Moving to ACTIVE, or off ACTIVE back to DRAFT (an unpublish), is
+    // "publishing" in the RBAC sense the dedicated /publish route already
+    // enforces — see that route's own doc comment. ACTIVE -> ARCHIVED
+    // stays under products:manage alone, matching it: `existing.status ===
+    // "ACTIVE"` alone would also catch that case (it's a change *off*
+    // ACTIVE too), so the unpublish leg is narrowed to landing on DRAFT
+    // specifically.
+    const isPublishTransition = input.status === "ACTIVE" || (existing.status === "ACTIVE" && input.status === "DRAFT");
+    if (isPublishTransition && options.canPublish === false) {
+      throw new ProductStatusPermissionError();
+    }
+    if (input.status === "ACTIVE" && !(await hasActiveVariant(id))) {
+      throw new ProductNotPublishableError();
+    }
   }
 
   let nextSlug = existing.slug;
@@ -364,6 +477,7 @@ export async function deleteProduct(id: string, userId: string): Promise<void> {
 export async function publishProduct(id: string, userId: string): Promise<Product> {
   const existing = await db.product.findUnique({ where: { id } });
   if (!existing) throw new ProductNotFoundError(id);
+  if (!(await hasActiveVariant(id))) throw new ProductNotPublishableError();
 
   const updated = await db.product.update({ where: { id }, data: { status: "ACTIVE" } });
 
@@ -461,7 +575,62 @@ export async function duplicateProduct(id: string, userId: string): Promise<Prod
 // Variants
 // ---------------------------------------------------------------------------
 
-export async function replaceVariants(productId: string, variants: VariantInput[], userId: string): Promise<void> {
+export interface SyncedVariant {
+  id: string;
+  size: string;
+  color: string;
+  colorHex: string | null;
+  sku: string;
+  price: number | null;
+  stock: number;
+  active: boolean;
+}
+
+function variantKey(size: string, color: string): string {
+  return `${size.trim().toLowerCase()}::${color.trim().toLowerCase()}`;
+}
+
+/**
+ * F-023/F-336 (release-hardening P0 anchor): syncs the admin form's
+ * variant grid against the DB with a per-row diff instead of the old
+ * `deleteMany` + `createMany`, which minted a fresh id for *every* variant
+ * on *every* save — including a save that only touched an unrelated field
+ * like the short description. That silently unlinked every past
+ * `OrderItem` (`onDelete: SetNull`), cascade-deleted every pending
+ * `BackInStockSubscription` (`onDelete: Cascade`), and broke any shopper
+ * cart already holding the old variant id, because the id it stores in
+ * localStorage stopped resolving to anything.
+ *
+ * Matching: an incoming row with an `id` (a variant the form already
+ * loaded from the DB) is matched to that exact row; a row with no `id`
+ * (new, never-persisted) falls back to matching an unclaimed existing row
+ * by (size, color) — the same pair the DB's own
+ * `@@unique([productId,size,color])` treats as the row's real identity —
+ * and otherwise becomes a new row. Existing rows the incoming grid drops
+ * are hard-deleted only when nothing references them; a variant with
+ * order history or a pending back-in-stock signup is deactivated instead,
+ * so those links and signups survive a variant being "removed" from the
+ * grid.
+ *
+ * Stock is the one field this never blindly overwrites: it's written only
+ * when the caller says it actually changed (`stock !== expectedStock`),
+ * and then only as a compare-and-set against `expectedStock` — the value
+ * the form loaded. If the row's real DB stock has since moved (a sale,
+ * another admin, a restock), the set fails closed with
+ * VariantStockConflictError instead of silently undoing that change. A
+ * caller that never sends `expectedStock` at all (existing scripts/tests,
+ * and the CSV importer's own separate upsert path) keeps the simpler
+ * "just set it" behavior — the CAS is opt-in per row, not a schema
+ * requirement.
+ *
+ * Two rows swapping SKUs (or size/color) in the same save can still hit
+ * the DB's unique constraints mid-transaction (Postgres checks them
+ * per-statement) — deletions/deactivations run first specifically to free
+ * up whatever a removed row held, but a genuine swap between two rows
+ * that both survive isn't resolved here; the route maps the resulting
+ * P2002 to a 409 rather than a 500.
+ */
+export async function replaceVariants(productId: string, variants: VariantInput[], userId: string): Promise<SyncedVariant[]> {
   const product = await db.product.findUnique({ where: { id: productId } });
   if (!product) throw new ProductNotFoundError(productId);
 
@@ -479,31 +648,114 @@ export async function replaceVariants(productId: string, variants: VariantInput[
     throw new ProductSlugConflictError(`SKU "${conflicting[0].sku}" is already used by another product`);
   }
 
-  await db.$transaction([
-    db.productVariant.deleteMany({ where: { productId } }),
-    db.productVariant.createMany({
-      data: variants.map((v) => ({
-        productId,
-        size: v.size.trim(),
-        color: v.color.trim(),
-        colorHex: v.colorHex ?? null,
-        sku: v.sku.trim(),
-        price: v.price ?? null,
-        stock: v.stock,
-        active: v.active ?? true,
-      })),
-    }),
-  ]);
+  const existing = await db.productVariant.findMany({
+    where: { productId },
+    select: {
+      id: true,
+      size: true,
+      color: true,
+      _count: { select: { orderItems: true, backInStockSubscriptions: true } },
+    },
+  });
+  const existingById = new Map(existing.map((e) => [e.id, e]));
+  const existingByKey = new Map(existing.map((e) => [variantKey(e.size, e.color), e]));
+
+  const matchedIds = new Set<string>();
+  const toCreate: VariantInput[] = [];
+  const toUpdate: { existing: (typeof existing)[number]; input: VariantInput }[] = [];
+
+  for (const v of variants) {
+    let match: (typeof existing)[number] | undefined;
+    if (v.id) {
+      match = existingById.get(v.id);
+      if (!match) throw new VariantOwnershipError(v.id);
+    } else {
+      match = existingByKey.get(variantKey(v.size, v.color));
+    }
+    if (match && !matchedIds.has(match.id)) {
+      matchedIds.add(match.id);
+      toUpdate.push({ existing: match, input: v });
+    } else {
+      toCreate.push(v);
+    }
+  }
+
+  const toRemove = existing.filter((e) => !matchedIds.has(e.id));
+
+  await db.$transaction(async (tx) => {
+    // Deletions/deactivations first, so a (size,color) or SKU a removed
+    // row held is free for an updated row to take in the same save.
+    for (const row of toRemove) {
+      if (row._count.orderItems > 0 || row._count.backInStockSubscriptions > 0) {
+        await tx.productVariant.update({ where: { id: row.id }, data: { active: false } });
+      } else {
+        await tx.productVariant.delete({ where: { id: row.id } });
+      }
+    }
+
+    for (const { existing: row, input } of toUpdate) {
+      const stockChanged = input.expectedStock !== undefined && input.expectedStock !== input.stock;
+      // No expectedStock at all means the caller isn't opting into the
+      // CAS (see the doc comment above) — write stock as given, same as
+      // the old unconditional behavior.
+      const applyStockUnconditionally = input.expectedStock === undefined;
+
+      const data: Prisma.ProductVariantUpdateManyMutationInput = {
+        size: input.size.trim(),
+        color: input.color.trim(),
+        colorHex: input.colorHex ?? null,
+        sku: input.sku.trim(),
+        price: input.price ?? null,
+        active: input.active ?? true,
+      };
+      if (applyStockUnconditionally || stockChanged) data.stock = input.stock;
+
+      const where: Prisma.ProductVariantWhereInput = { id: row.id };
+      if (stockChanged) where.stock = input.expectedStock;
+
+      const result = await tx.productVariant.updateMany({ where, data });
+      if (stockChanged && result.count === 0) {
+        throw new VariantStockConflictError(input.sku.trim());
+      }
+    }
+
+    if (toCreate.length > 0) {
+      await tx.productVariant.createMany({
+        data: toCreate.map((v) => ({
+          productId,
+          size: v.size.trim(),
+          color: v.color.trim(),
+          colorHex: v.colorHex ?? null,
+          sku: v.sku.trim(),
+          price: v.price ?? null,
+          stock: v.stock,
+          active: v.active ?? true,
+        })),
+      });
+    }
+  });
 
   await logAuditEvent({
     userId,
     action: "update",
     entity: "product_variants",
     entityId: productId,
-    metadata: { count: variants.length },
+    metadata: { count: variants.length, created: toCreate.length, updated: toUpdate.length, removed: toRemove.length },
   });
 
   revalidateProduct(product.slug);
+
+  const fresh = await db.productVariant.findMany({ where: { productId }, orderBy: [{ size: "asc" }, { color: "asc" }] });
+  return fresh.map((v) => ({
+    id: v.id,
+    size: v.size,
+    color: v.color,
+    colorHex: v.colorHex,
+    sku: v.sku,
+    price: v.price ? Number(v.price) : null,
+    stock: v.stock,
+    active: v.active,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -620,6 +872,15 @@ export interface AdminProductListItem {
 export interface ListProductsForAdminOptions {
   search?: string;
   categorySlug?: string;
+  /** F-177: the admin product-list filter's actual category id — the
+   * filter select's `<option>` values are category ids, but the table was
+   * sending them under `categorySlug`, which `categorySlug` above filters
+   * with `category: { slug }`; a cuid never equals a slug, so every
+   * category choice silently matched zero products. Prefer this over
+   * `categorySlug` when both are given. Expands to the category's own id
+   * plus every descendant's, since several real categories (e.g. "School
+   * Uniforms") hold no products directly — only their children do. */
+  categoryId?: string;
   status?: ProductStatus;
   stockFilter?: "all" | "low" | "out";
   sort?: "name-asc" | "name-desc" | "price-asc" | "price-desc" | "updated-desc" | "stock-asc";
@@ -628,6 +889,30 @@ export interface ListProductsForAdminOptions {
 }
 
 const LOW_STOCK_THRESHOLD = 10;
+
+/** F-177: `categoryId`'s own id plus every descendant category's id, so
+ * filtering by a parent category (which typically holds no products of
+ * its own — only its children do) still returns something. Walks the
+ * whole `{id, parentId}` set in memory rather than a recursive query,
+ * since the admin's category tree is small (dozens of rows). */
+async function getSelfAndDescendantCategoryIds(categoryId: string): Promise<string[]> {
+  const all = await db.category.findMany({ select: { id: true, parentId: true } });
+  const childrenByParent = new Map<string, string[]>();
+  for (const c of all) {
+    if (!c.parentId) continue;
+    const list = childrenByParent.get(c.parentId) ?? [];
+    list.push(c.id);
+    childrenByParent.set(c.parentId, list);
+  }
+  const ids: string[] = [];
+  const stack = [categoryId];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    ids.push(id);
+    stack.push(...(childrenByParent.get(id) ?? []));
+  }
+  return ids;
+}
 
 export interface ListProductsForAdminResult {
   items: AdminProductListItem[];
@@ -640,7 +925,11 @@ export interface ListProductsForAdminResult {
 export async function listProductsForAdmin(options: ListProductsForAdminOptions = {}): Promise<ListProductsForAdminResult> {
   const where: Prisma.ProductWhereInput = {};
   if (options.status) where.status = options.status;
-  if (options.categorySlug) where.category = { slug: options.categorySlug };
+  if (options.categoryId) {
+    where.categoryId = { in: await getSelfAndDescendantCategoryIds(options.categoryId) };
+  } else if (options.categorySlug) {
+    where.category = { slug: options.categorySlug };
+  }
   if (options.search && options.search.trim()) {
     const term = options.search.trim();
     where.OR = [
@@ -860,7 +1149,28 @@ export async function performBulkAction(input: BulkActionInput, userId: string):
 
   switch (input.action) {
     case "publish": {
-      await db.product.updateMany({ where: { id: { in: input.ids } }, data: { status: "ACTIVE" } });
+      // F-028: the single-product publishProduct() rejects a product with
+      // no active variant — the bulk path did the same blind updateMany
+      // as every other bulk action and skipped that check entirely, so it
+      // could put a whole batch of unbuyable products live at once. Same
+      // skip-and-report shape as adjust-price-pct below, so the batch
+      // still succeeds for every eligible product.
+      const withActiveVariant = await db.productVariant.findMany({
+        where: { productId: { in: input.ids }, active: true },
+        select: { productId: true },
+        distinct: ["productId"],
+      });
+      const publishableIds = new Set(withActiveVariant.map((v) => v.productId));
+      for (const p of products) {
+        if (!publishableIds.has(p.id)) {
+          skipped.push({ id: p.id, name: p.name, reason: "no active variants" });
+        }
+      }
+      const idsToPublish = products.filter((p) => publishableIds.has(p.id)).map((p) => p.id);
+      if (idsToPublish.length > 0) {
+        await db.product.updateMany({ where: { id: { in: idsToPublish } }, data: { status: "ACTIVE" } });
+      }
+      changed = products.filter((p) => publishableIds.has(p.id));
       break;
     }
     case "archive": {

@@ -7,7 +7,7 @@ import type { LightboxImage } from "@/components/ui/image-lightbox";
 import { StarRating } from "@/components/ui/star-rating";
 import { WishlistButton } from "@/components/wishlist/wishlist-button";
 import { computePercentOff } from "@/lib/pricing/percent-off";
-import { resolveVariant } from "@/lib/products/resolve-variant";
+import { isSizeAvailableForColor, isVariantInStock, resolveVariant } from "@/lib/products/resolve-variant";
 import type { Product } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ShoppingBag } from "lucide-react";
@@ -73,6 +73,10 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
     product.onSale ?? (product.compareAtPrice !== undefined && product.compareAtPrice > product.price);
   const isNew = product.isNew ?? product.badge === "new";
   const isBestSeller = !isNew && product.badge === "best-seller";
+  // F-006: `=== false` deliberately — a Shopify/legacy-seed product
+  // leaves `available` undefined, and treating that as sold out would
+  // wrongly hide Quick Add for products this flag was never computed for.
+  const soldOut = product.available === false;
 
   return (
     <article
@@ -109,7 +113,12 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
         </button>
 
         <div className="pointer-events-none absolute left-4 top-4 flex flex-col gap-2">
-          {isOnSale && (
+          {soldOut && (
+            <Badge variant="bestseller" className="pointer-events-auto bg-ink text-white">
+              Sold out
+            </Badge>
+          )}
+          {!soldOut && isOnSale && (
             <Badge variant="sale" className="pointer-events-auto">
               {percentOff ? `${percentOff}% Off` : "Sale"}
             </Badge>
@@ -174,9 +183,14 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
         </span>
       </Link>
 
-      <div className="px-5 pb-5">
-        <QuickAddPanel product={product} />
-      </div>
+      {/* F-006: sold-out products get the badge above, not a Quick Add
+          that can only ever fail at checkout — the PDP link still gets
+          them to "Notify me when available". */}
+      {!soldOut && (
+        <div className="px-5 pb-5">
+          <QuickAddPanel product={product} />
+        </div>
+      )}
 
       {lightboxOpen && (
         <ImageLightbox
@@ -197,17 +211,28 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
  */
 function QuickAddPanel({ product }: { product: Product }) {
   const { addToCart, isLoading } = useCart();
-  const [selectedSize, setSelectedSize] = useState<string | undefined>(product.sizes[0]);
+  const defaultColor = product.colors[0]?.name ?? product.colorName;
+  // F-006: default to the first size that's actually in stock for
+  // defaultColor, not blindly sizes[0] — otherwise a partially sold-out
+  // product pre-selects an unbuyable size and one tap on Quick Add adds
+  // it anyway.
+  const [selectedSize, setSelectedSize] = useState<string | undefined>(
+    () => product.sizes.find((size) => isSizeAvailableForColor(product.variants, size, defaultColor)) ?? product.sizes[0],
+  );
   const [justAdded, setJustAdded] = useState(false);
 
   if (product.sizes.length === 0) return null;
 
-  const defaultColor = product.colors[0]?.name ?? product.colorName;
+  const size = selectedSize ?? product.sizes[0];
+  const resolved = resolveVariant(product.variants, size, defaultColor);
+  // F-006: only a variant resolveVariant actually matched can be checked
+  // for stock — the synthetic seed-id fallback below (no DB variant
+  // exists at all) has no stock field and stays addable, same as today.
+  const soldOutSelection = Boolean(resolved) && !isVariantInStock(resolved);
 
   const handleAdd = async () => {
-    const size = selectedSize ?? product.sizes[0];
-    const variant = resolveVariant(product.variants, size, defaultColor);
-    const activeVariant = variant ?? {
+    if (soldOutSelection) return;
+    const activeVariant = resolved ?? {
       id: product.defaultVariantId ?? `seed-${product.id}`,
       title: `${size} / ${defaultColor}`,
       price: product.price,
@@ -223,6 +248,7 @@ function QuickAddPanel({ product }: { product: Product }) {
       price: activeVariant.price ?? product.price,
       image: product.image,
       quantity: 1,
+      maxQuantity: typeof activeVariant.stock === "number" ? activeVariant.stock : undefined,
     });
 
     setJustAdded(true);
@@ -239,31 +265,35 @@ function QuickAddPanel({ product }: { product: Product }) {
       )}
     >
       <div className="flex flex-wrap gap-1">
-        {product.sizes.slice(0, 6).map((size) => (
-          <button
-            key={size}
-            type="button"
-            onClick={() => setSelectedSize(size)}
-            aria-pressed={(selectedSize ?? product.sizes[0]) === size}
-            className={cn(
-              "rounded-md border px-2 py-1 text-xs font-semibold transition",
-              (selectedSize ?? product.sizes[0]) === size
-                ? "border-brand bg-brand/10 text-brand"
-                : "border-border text-muted hover:border-brand",
-            )}
-          >
-            {size}
-          </button>
-        ))}
+        {product.sizes.slice(0, 6).map((s) => {
+          const inStock = isSizeAvailableForColor(product.variants, s, defaultColor);
+          return (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setSelectedSize(s)}
+              aria-pressed={size === s}
+              className={cn(
+                "rounded-md border px-2 py-1 text-xs font-semibold transition",
+                !inStock && "text-muted/60 line-through",
+                size === s
+                  ? "border-brand bg-brand/10 text-brand"
+                  : "border-border text-muted hover:border-brand",
+              )}
+            >
+              {s}
+            </button>
+          );
+        })}
       </div>
       <button
         type="button"
         onClick={handleAdd}
-        disabled={isLoading}
-        className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-ink px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-ink/90 disabled:opacity-50"
+        disabled={isLoading || soldOutSelection}
+        className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-ink px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <ShoppingBag size={14} />
-        {justAdded ? "Added" : "Quick Add"}
+        {justAdded ? "Added" : soldOutSelection ? "Sold out" : "Quick Add"}
       </button>
     </div>
   );

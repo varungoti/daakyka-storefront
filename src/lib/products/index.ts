@@ -180,7 +180,14 @@ function mapDbProductToUi(p: DbProduct): Product {
     gender: p.gender.toLowerCase(),
     variants,
     defaultVariantId: variants[0]?.id,
-    available: variants.length === 0 || variants.some((v) => v.available),
+    // F-028: a DB-backed product with zero variants used to count as
+    // "available" (the `variants.length === 0` half of this used to be
+    // `true`), so it showed a working Add to Cart that added a fake
+    // `seed-<id>` line checkout could never actually resolve. Zero
+    // variants now means unavailable; a real product always has at least
+    // one (publishProduct/createProduct/updateProduct all reject
+    // publishing one that doesn't — see src/lib/catalog/products.ts).
+    available: variants.some((v) => v.available),
     onSale,
     fabric: p.fabric ?? undefined,
     care: p.care ?? undefined,

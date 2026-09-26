@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@/generated/prisma/client";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
+import { hasPermission } from "@/lib/auth/rbac";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import {
   deleteProduct,
@@ -10,8 +11,10 @@ import {
   ProductDeleteBlockedError,
   ProductNotDraftError,
   ProductNotFoundError,
+  ProductNotPublishableError,
   ProductSizeChartNotFoundError,
   ProductSlugConflictError,
+  ProductStatusPermissionError,
   productUpdateSchema,
   serializeProductForResponse,
   updateProduct,
@@ -55,13 +58,24 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   }
 
   try {
-    const product = await updateProduct(id, parsed.data, session.id);
+    // F-063: only a transition to/from ACTIVE is gated (see
+    // updateProduct's own doc comment) — an ordinary edit that just
+    // re-sends the product's current status never trips this, so
+    // CATALOG_MANAGER's normal Save keeps working.
+    const canPublish = hasPermission(session.role, "products:publish");
+    const product = await updateProduct(id, parsed.data, session.id, { canPublish });
     return NextResponse.json({ product: serializeProductForResponse(product) });
   } catch (err) {
     if (err instanceof ProductNotFoundError || isRecordNotFound(err)) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
     if (err instanceof ProductSlugConflictError) {
+      return NextResponse.json({ error: err.message, issues: [{ path: ["slug"], message: err.message }] }, { status: 409 });
+    }
+    if (err instanceof ProductStatusPermissionError) {
+      return NextResponse.json({ error: err.message }, { status: 403 });
+    }
+    if (err instanceof ProductNotPublishableError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
     }
     if (
