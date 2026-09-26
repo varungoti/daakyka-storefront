@@ -1,4 +1,5 @@
 import { CheckoutPageContent } from "@/components/checkout/checkout-page-content";
+import { getSetting } from "@/lib/settings";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -45,6 +46,20 @@ async function getCheckoutCustomerHint(): Promise<CheckoutCustomerHint> {
 }
 
 export default async function CheckoutPage() {
-  const customerHint = await getCheckoutCustomerHint();
-  return <CheckoutPageContent customerHint={customerHint} />;
+  // F-115: the checkout page previously said "Shipping is calculated at
+  // the next step" with no next step. These are the same two settings
+  // createOrderFromCart uses (src/lib/orders/create-order.ts), read here
+  // so the page can show a real Shipping/Total before Place Order instead
+  // of just at confirmation — same pattern as products/[handle]/page.tsx.
+  const [customerHint, flatRate, freeAbove] = await Promise.all([
+    getCheckoutCustomerHint(),
+    getSetting("shipping.flatRate"),
+    getSetting("shipping.freeAbove"),
+  ]);
+  return (
+    <CheckoutPageContent
+      customerHint={customerHint}
+      shipping={{ flatRate, freeAbove }}
+    />
+  );
 }
