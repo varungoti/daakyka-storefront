@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { extractRequestAttribution } from "@/lib/analytics/attribution";
+import { notifyNewEnquiry } from "@/lib/admin/new-enquiry-alert";
 import { triggerJourneys } from "@/lib/engagement/journey-triggers";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
@@ -40,6 +41,17 @@ export async function POST(request: Request) {
     const attribution = extractRequestAttribution(request);
     const enquiry = await db.contactEnquiry.create({
       data: { ...parsed.data, ...attribution },
+    });
+
+    // F-049: instant owner alert for every enquiry type — previously none
+    // of them raised any alert at all. Best-effort; never blocks the
+    // response to the visitor.
+    await notifyNewEnquiry({
+      kind: "contact",
+      id: enquiry.id,
+      name: enquiry.name,
+      organization: enquiry.organization,
+      messageSnippet: enquiry.message,
     });
 
     if (parsed.data.type === "BULK_ORDER" || parsed.data.type === "INSTITUTIONAL") {

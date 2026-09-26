@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@/generated/prisma/client";
+import { NOTIFICATIONS_PAGE_PERMISSIONS } from "@/lib/admin/notifications-access";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { markNotificationRead, NotificationNotFoundError } from "@/lib/notifications";
 import { readJsonBody } from "@/lib/security/parse-json-body";
@@ -13,8 +14,10 @@ function isRecordNotFound(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025";
 }
 
+// F-268: matches the page's own (now multi-permission) access rule — see
+// src/lib/admin/notifications-access.ts.
 export async function PATCH(request: Request, { params }: RouteParams) {
-  const { session, error } = await requireAdminPermission("bulk-orders:manage");
+  const { session, error } = await requireAdminPermission(NOTIFICATIONS_PAGE_PERMISSIONS);
   if (error) return error;
 
   const { id } = await params;

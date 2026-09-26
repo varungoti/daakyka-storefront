@@ -1,6 +1,14 @@
 import { BlogPostEditor } from "@/components/admin/blog-post-editor";
+import { requireAdminPage } from "@/lib/auth/require-admin-page";
 
-export default function NewBlogPostPage() {
+// F-062: this page had no permission check at all — any authenticated
+// admin role could open the editor, and a deactivated/demoted admin with
+// a tab already open could keep reaching it via a soft (RSC) navigation,
+// since the (panel) layout's DB-backed session check does not re-run on
+// those. See src/lib/auth/require-admin-page.ts.
+export default async function NewBlogPostPage() {
+  await requireAdminPage("blog:manage");
+
   return (
     <div className="space-y-6">
       <div>

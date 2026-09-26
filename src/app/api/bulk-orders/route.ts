@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { extractRequestAttribution } from "@/lib/analytics/attribution";
+import { notifyNewEnquiry } from "@/lib/admin/new-enquiry-alert";
 import { triggerJourneys } from "@/lib/engagement/journey-triggers";
 import { subscribeToNewsletter } from "@/lib/engagement/newsletter";
 import { readJsonBody } from "@/lib/security/parse-json-body";
@@ -50,6 +51,19 @@ export async function POST(request: Request) {
         // Best-effort — a failed opt-in must never fail the enquiry itself.
       }
     }
+
+    // F-049: instant owner alert. Previously the only alert for a bulk
+    // lead was the seeded journey's "Admin notification" step, which
+    // waits for the once-daily /api/cron/journeys run (up to ~24h late)
+    // — see notifyNewEnquiry's doc comment. Best-effort; never blocks the
+    // response to the visitor.
+    await notifyNewEnquiry({
+      kind: "bulk-order",
+      id: lead.id,
+      name: lead.contactPerson,
+      organization: lead.organization,
+      messageSnippet: lead.notes,
+    });
 
     await triggerJourneys("bulk_lead_created", {
       email: lead.email,

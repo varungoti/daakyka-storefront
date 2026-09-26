@@ -28,6 +28,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { SessionUser } from "@/lib/auth/session";
 import { formatRole, hasPermission, type Permission } from "@/lib/auth/rbac";
+import { NOTIFICATIONS_PAGE_PERMISSIONS } from "@/lib/admin/notifications-access";
 import { GuardedLink, useUnsavedChangesNav } from "@/components/admin/unsaved-changes";
 
 interface NavItem {
@@ -133,11 +134,23 @@ const navGroups: NavGroup[] = [
   {
     label: "Settings",
     items: [
-      { href: "/admin/site-controls", label: "Site Controls", icon: Sliders, permission: "settings:manage" },
+      {
+        href: "/admin/site-controls",
+        label: "Site Controls",
+        icon: Sliders,
+        // F-061: MARKETING_ADMIN now holds "settings:marketing" instead of
+        // the full "settings:manage" — the page itself further restricts
+        // which sections that role sees (see site-controls/page.tsx).
+        permission: ["settings:manage", "settings:marketing"],
+      },
       { href: "/admin/integrations", label: "Integrations", icon: Plug, permission: "integrations:manage" },
       { href: "/admin/users", label: "Users", icon: Users, permission: "users:manage" },
       { href: "/admin/audit-logs", label: "Audit Logs", icon: ScrollText, permission: "audit:view" },
-      { href: "/admin/notifications", label: "Notifications", icon: Bell, permission: "bulk-orders:manage" },
+      // F-268: was gated on "bulk-orders:manage" alone, which hid the
+      // nav item from MARKETING_ADMIN even though the page now shows it
+      // its own Journey Event Log section — see
+      // src/lib/admin/notifications-access.ts, which this list matches.
+      { href: "/admin/notifications", label: "Notifications", icon: Bell, permission: NOTIFICATIONS_PAGE_PERMISSIONS },
     ],
   },
 ];
@@ -146,12 +159,13 @@ function NavLinks({
   groups,
   pathname,
   onNavigate,
-  unreadNotifications = 0,
+  badges = {},
 }: {
   groups: NavGroup[];
   pathname: string;
   onNavigate?: () => void;
-  unreadNotifications?: number;
+  /** href -> badge count, e.g. { "/admin/notifications": unreadNotifications }. */
+  badges?: Record<string, number>;
 }) {
   return (
     <nav className="mt-8 space-y-6">
@@ -162,6 +176,7 @@ function NavLinks({
             {group.items.map(({ href, label, icon: Icon, activePrefixes }) => {
               const matchesPrefix = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
               const isActive = matchesPrefix(href) || (activePrefixes?.some(matchesPrefix) ?? false);
+              const badgeCount = badges[href] ?? 0;
               return (
                 <GuardedLink
                   key={href}
@@ -174,9 +189,9 @@ function NavLinks({
                 >
                   <Icon size={18} />
                   <span className="flex-1">{label}</span>
-                  {href === "/admin/notifications" && unreadNotifications > 0 && (
+                  {badgeCount > 0 && (
                     <span className="rounded-full bg-brand px-2 py-0.5 text-[11px] font-bold text-white">
-                      {unreadNotifications > 99 ? "99+" : unreadNotifications}
+                      {badgeCount > 99 ? "99+" : badgeCount}
                     </span>
                   )}
                 </GuardedLink>
@@ -223,7 +238,7 @@ function MobileNavDrawer({
   onClose,
   groups,
   pathname,
-  unreadNotifications,
+  badges,
   role,
   onLogout,
 }: {
@@ -231,7 +246,7 @@ function MobileNavDrawer({
   onClose: () => void;
   groups: NavGroup[];
   pathname: string;
-  unreadNotifications: number;
+  badges: Record<string, number>;
   role: SessionUser["role"];
   onLogout: () => void;
 }) {
@@ -298,7 +313,7 @@ function MobileNavDrawer({
             <X size={20} />
           </button>
         </div>
-        <NavLinks groups={groups} pathname={pathname} onNavigate={onClose} unreadNotifications={unreadNotifications} />
+        <NavLinks groups={groups} pathname={pathname} onNavigate={onClose} badges={badges} />
         <div className="mt-8 border-t border-border pt-4">
           <AdminAccountFooter role={role} onLogout={onLogout} />
         </div>
@@ -311,12 +326,22 @@ export function AdminShell({
   user,
   children,
   unreadNotifications = 0,
+  pendingReviews = 0,
 }: {
   user: SessionUser;
   children: React.ReactNode;
   unreadNotifications?: number;
+  /** F-297: sidebar badge for pending reviews, mirroring the notifications badge. */
+  pendingReviews?: number;
 }) {
   const pathname = usePathname();
+  // F-297: generalized from the old single hardcoded
+  // `href === "/admin/notifications"` check so Reviews can carry a badge
+  // too, without every future badge needing its own special case.
+  const badges: Record<string, number> = {
+    "/admin/notifications": unreadNotifications,
+    "/admin/reviews": pendingReviews,
+  };
   const router = useRouter();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { confirmLeave } = useUnsavedChangesNav();
@@ -355,7 +380,7 @@ export function AdminShell({
           {/* F-160: role label moved into AdminAccountFooter below, next to
               Sign Out, so it isn't duplicated once the mobile drawer shows
               the same footer. */}
-          <NavLinks groups={visibleGroups} pathname={pathname} unreadNotifications={unreadNotifications} />
+          <NavLinks groups={visibleGroups} pathname={pathname} badges={badges} />
 
           <div className="mt-8">
             <AdminAccountFooter role={user.role} onLogout={handleLogout} />
@@ -367,7 +392,7 @@ export function AdminShell({
           onClose={() => setDrawerOpen(false)}
           groups={visibleGroups}
           pathname={pathname}
-          unreadNotifications={unreadNotifications}
+          badges={badges}
           role={user.role}
           onLogout={handleLogout}
         />

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { formatDateTimeIST } from "@/lib/format/datetime";
 
 export interface NotificationRow {
   id: string;
@@ -63,7 +64,13 @@ export function NotificationList({ notifications }: { notifications: Notificatio
             <div className="min-w-0">
               <p className="font-semibold text-ink">{note.title}</p>
               <p className="mt-1 text-sm text-muted">{note.body}</p>
-              <p className="mt-2 text-xs text-muted">{new Date(note.createdAt).toLocaleString("en-IN")}</p>
+              {/* F-060: this is a client component, so it renders once
+                  during SSR (server timezone) and again at hydration
+                  (browser timezone) — `toLocaleString("en-IN")` with no
+                  `timeZone` disagreed between the two whenever they
+                  differ, throwing React hydration error #418. An
+                  explicit timeZone makes both renders identical. */}
+              <p className="mt-2 text-xs text-muted">{formatDateTimeIST(note.createdAt)}</p>
             </div>
             {!note.read && (
               <button

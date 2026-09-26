@@ -1,6 +1,7 @@
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
+import { formatDateTimeIST } from "@/lib/format/datetime";
 import { redirect } from "next/navigation";
 
 export default async function AdminAuditLogsPage() {
@@ -55,8 +56,11 @@ export default async function AdminAuditLogsPage() {
                   <td className="px-4 py-3 text-muted" title={log.userAgent ?? undefined}>
                     {log.ipAddress ?? "—"}
                   </td>
+                  {/* F-060: server-rendered in the process timezone
+                      previously — UTC on Vercel, 5.5h behind IST — now
+                      pinned to IST explicitly. */}
                   <td className="px-4 py-3 text-muted">
-                    {log.createdAt.toLocaleString("en-IN")}
+                    {formatDateTimeIST(log.createdAt)}
                   </td>
                 </tr>
               );

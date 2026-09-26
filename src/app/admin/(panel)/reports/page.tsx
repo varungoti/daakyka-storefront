@@ -4,6 +4,7 @@ import {
   buildWeeklyGrowthReport,
   formatWeeklyGrowthReportMarkdown,
 } from "@/lib/reports/weekly-growth";
+import { formatDateTimeIST } from "@/lib/format/datetime";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -12,6 +13,15 @@ export default async function AdminReportsPage() {
   if (!session || !hasPermission(session.role, "dashboard:view")) {
     redirect("/admin/dashboard");
   }
+
+  // F-161: this page is open to every role via "dashboard:view" (every
+  // role has it) — that's fine for the engagement/content/SEO sections,
+  // but it also showed the store's weekly Orders count and ₹ revenue to
+  // roles like CONTENT_EDITOR and VIEWER, who /admin/orders itself
+  // correctly turns away. Redact just the commerce figures rather than
+  // gating the whole report, so marketing/content roles that need the
+  // rest of it (engagement, SEO, top products) aren't blocked either.
+  const canSeeRevenue = hasPermission(session.role, "orders:view");
 
   const report = await buildWeeklyGrowthReport(7);
   const markdown = formatWeeklyGrowthReportMarkdown(report);
@@ -23,7 +33,7 @@ export default async function AdminReportsPage() {
           <h1 className="font-display text-3xl font-bold text-ink">Weekly Growth Report</h1>
           <p className="text-muted">
             Last {report.periodDays} days — generated{" "}
-            {new Date(report.generatedAt).toLocaleString("en-IN")}
+            {formatDateTimeIST(report.generatedAt)}
           </p>
         </div>
         <Link
@@ -35,21 +45,27 @@ export default async function AdminReportsPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Orders" value={String(report.commerce.orders)} />
-        <StatCard
-          label="Revenue"
-          value={`₹${report.commerce.revenueInr.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
-        />
+        {canSeeRevenue && (
+          <>
+            <StatCard label="Orders" value={String(report.commerce.orders)} />
+            <StatCard
+              label="Revenue"
+              value={`₹${report.commerce.revenueInr.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
+            />
+          </>
+        )}
         <StatCard label="Product Views" value={String(report.commerce.productViews)} />
         <StatCard label="Newsletter Signups" value={String(report.leads.newsletterSignups)} />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <ReportSection title="Commerce & Traffic">
-          <MetricRow label="Cart abandonments" value={report.commerce.cartAbandonments} />
-          <MetricRow label="Bulk order leads" value={report.leads.bulkOrders} />
-          <MetricRow label="Contact enquiries" value={report.leads.contactEnquiries} />
-        </ReportSection>
+        {canSeeRevenue && (
+          <ReportSection title="Commerce & Traffic">
+            <MetricRow label="Cart abandonments" value={report.commerce.cartAbandonments} />
+            <MetricRow label="Bulk order leads" value={report.leads.bulkOrders} />
+            <MetricRow label="Contact enquiries" value={report.leads.contactEnquiries} />
+          </ReportSection>
+        )}
 
         <ReportSection title="Engagement">
           <MetricRow label="Active journey enrollments" value={report.engagement.activeJourneyEnrollments} />
