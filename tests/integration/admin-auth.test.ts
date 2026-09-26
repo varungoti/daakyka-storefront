@@ -6,6 +6,7 @@ import { hashPassword } from "@/lib/auth/password";
 import { resetRateLimits } from "@/lib/security/rate-limit";
 import { signSessionToken, verifySessionToken } from "@/lib/auth/session";
 import { buildUserUpdateData } from "@/lib/auth/user-updates";
+import { AccountLockedError, recordFailedLogin, resetLoginFailures } from "@/lib/auth/lockout";
 import { POST as postLogin } from "@/app/api/auth/login/route";
 
 function jsonRequest(url: string, method: string, body?: unknown): Request {
@@ -133,6 +134,95 @@ describe("admin auth (Phase G)", () => {
         }),
       );
       assert.equal(response.status, 401);
+    });
+
+    // F-321: recordFailedLogin used to be a findUnique + update, so
+    // concurrent failures raced each other — each read the same
+    // pre-increment count, so N simultaneous failures only ever advanced
+    // the counter by ~1, and every non-locking write stomped a
+    // concurrently-set lockedUntil back to null (see
+    // src/lib/auth/lockout.ts's recordFailedLogin doc comment). Mirrors
+    // the equivalent customer-auth test in tests/integration/customer-auth.test.ts.
+    it("never leaves the account unlocked when concurrent failures cross the threshold at once (F-321)", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const email = `admin-race-lock-${unique}@example.com`;
+      const user = await db.user.create({
+        data: {
+          email,
+          name: "Admin Race Lock Test",
+          passwordHash: await hashPassword("correct-password-1"),
+          role: "VIEWER",
+          failedLoginCount: 9,
+          lastFailedLoginAt: new Date(),
+        },
+      });
+      createdUserIds.push(user.id);
+
+      await resetRateLimits(["auth-login", "admin-login"]);
+      const concurrentAttempts = 8;
+      const responses = await Promise.all(
+        Array.from({ length: concurrentAttempts }, () =>
+          postLogin(
+            jsonRequest("http://localhost/api/auth/login", "POST", {
+              email,
+              password: "wrong-password",
+            }),
+          ),
+        ),
+      );
+
+      assert.ok(
+        responses.some((response) => response.status === 423),
+        `expected at least one 423 among concurrent responses, got ${responses.map((r) => r.status)}`,
+      );
+
+      const row = await db.user.findUnique({ where: { id: user.id } });
+      assert.ok(
+        row!.lockedUntil && row!.lockedUntil.getTime() > Date.now(),
+        `account must be locked after crossing the threshold under concurrent failures, got lockedUntil=${row!.lockedUntil}`,
+      );
+      assert.ok(
+        row!.failedLoginCount >= 10,
+        `failedLoginCount must reflect every concurrent failure (>=10), got ${row!.failedLoginCount}`,
+      );
+    });
+
+    // Deterministic counterpart to the HTTP-level race test above: forces
+    // the exact ordering ("a concurrent failure already landed" before
+    // "the correct-password reset runs") instead of leaving it to bcrypt
+    // scheduling. Pins the guarantee that makes a racing correct password
+    // never return 200 — see src/lib/auth/lockout.ts's resetLoginFailures
+    // doc comment.
+    it("resetLoginFailures refuses to clear a lock that was set after the caller's isLocked() read (F-321)", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const email = `admin-race-deterministic-${unique}@example.com`;
+      const user = await db.user.create({
+        data: {
+          email,
+          name: "Admin Deterministic Race Test",
+          passwordHash: await hashPassword("correct-password-1"),
+          role: "VIEWER",
+          failedLoginCount: 9,
+          lastFailedLoginAt: new Date(),
+        },
+      });
+      createdUserIds.push(user.id);
+
+      const { locked } = await recordFailedLogin(user.id);
+      assert.equal(locked, true, "setup: the account should now be locked");
+
+      await assert.rejects(
+        () => resetLoginFailures(user.id),
+        AccountLockedError,
+        "resetLoginFailures must refuse (throw) rather than silently clearing a lock set after the stale isLocked() read",
+      );
+
+      const row = await db.user.findUnique({ where: { id: user.id } });
+      assert.ok(
+        row!.lockedUntil && row!.lockedUntil.getTime() > Date.now(),
+        "the lock must survive the failed reset attempt untouched",
+      );
+      assert.ok(row!.failedLoginCount >= 10);
     });
   });
 

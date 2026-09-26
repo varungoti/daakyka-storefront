@@ -6,6 +6,7 @@ import { resetRateLimits } from "@/lib/security/rate-limit";
 import { hashPassword, verifyPassword } from "@/lib/customer-auth/password";
 import { hashToken, invalidateOutstandingTokens, issueCustomerToken } from "@/lib/customer-auth/tokens";
 import { loadOwnAddress } from "@/lib/customer-auth/addresses";
+import { AccountLockedError, recordFailedLogin, resetLoginFailures } from "@/lib/customer-auth/lockout";
 
 import { POST as postRegister } from "@/app/api/account/register/route";
 import { POST as postLogin } from "@/app/api/account/login/route";
@@ -252,6 +253,179 @@ describe("customer accounts (Phase D1)", () => {
         }),
       );
       assert.equal(correctButLocked.status, 423);
+    });
+
+    // F-321: recordFailedLogin used to be a findUnique + update, so
+    // concurrent failures raced each other — each read the same
+    // pre-increment count, so N simultaneous failures only ever advanced
+    // the counter by ~1, and every non-locking write stomped a
+    // concurrently-set lockedUntil back to null (see
+    // src/lib/customer-auth/lockout.ts's recordFailedLogin doc comment).
+    // Reproduces evidence (2) from F-321 (t5c-lock-erasure): a
+    // near-threshold count hit with several simultaneous wrong guesses.
+    it("never leaves the account unlocked when concurrent failures cross the threshold at once (F-321)", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const email = `race-lock-${unique}@example.com`;
+      const customer = await db.customer.create({
+        data: {
+          email,
+          name: "Race Lock Test",
+          passwordHash: await hashPassword("correct-password-1"),
+          // One failure below the lock threshold, recent enough to stay
+          // inside the rolling window — the next failure(s) should lock it.
+          failedLoginCount: 9,
+          lastFailedLoginAt: new Date(),
+        },
+      });
+      createdCustomerIds.push(customer.id);
+
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
+      const concurrentAttempts = 8;
+      const responses = await Promise.all(
+        Array.from({ length: concurrentAttempts }, () =>
+          postLogin(
+            jsonRequest("http://localhost/api/account/login", "POST", {
+              email,
+              password: "wrong-password",
+            }),
+          ),
+        ),
+      );
+
+      assert.ok(
+        responses.some((response) => response.status === 423),
+        `expected at least one 423 among concurrent responses, got ${responses.map((r) => r.status)}`,
+      );
+
+      const row = await db.customer.findUnique({ where: { id: customer.id } });
+      assert.ok(
+        row!.lockedUntil && row!.lockedUntil.getTime() > Date.now(),
+        `account must be locked after crossing the threshold under concurrent failures, got lockedUntil=${row!.lockedUntil}`,
+      );
+      assert.ok(
+        row!.failedLoginCount >= 10,
+        `failedLoginCount must reflect every concurrent failure (>=10), got ${row!.failedLoginCount}`,
+      );
+
+      // A subsequent correct-password attempt must still be refused while
+      // the race-set lock is in effect.
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
+      const correctAfterRace = await postLogin(
+        jsonRequest("http://localhost/api/account/login", "POST", {
+          email,
+          password: "correct-password-1",
+        }),
+      );
+      assert.equal(correctAfterRace.status, 423);
+    });
+
+    // F-321: resetLoginFailures used to unconditionally clear lockout
+    // state after a correct password, with no check that the account
+    // hadn't been locked by a concurrent failure in the gap between the
+    // route's early isLocked() read and this call (bcrypt.compare on the
+    // correct password is slow enough to leave that gap wide open). Real
+    // wall-clock concurrency through bcrypt is inherently racy — which
+    // side wins depends on scheduling, not just on our fix — so this
+    // asserts the one implication that must hold regardless of who wins:
+    // with only `wrongAttempts` (< MAX_FAILED_ATTEMPTS) concurrent
+    // failures racing the correct password, the account can only end up
+    // locked if the atomic reset in resetLoginFailures lost the race and
+    // threw (AccountLockedError) rather than clearing the lock — so a
+    // locked-at-the-end row proves the correct-password request could not
+    // have received a 200. See the deterministic, non-racy version of this
+    // same guarantee just below, which forces the interesting ordering
+    // directly instead of hoping bcrypt's scheduling cooperates.
+    it("keeps the account locked (never issues a 200) when a correct password races concurrent lock-crossing failures (F-321)", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const email = `race-success-${unique}@example.com`;
+      const customer = await db.customer.create({
+        data: {
+          email,
+          name: "Race Success Test",
+          passwordHash: await hashPassword("correct-password-1"),
+          // One failure below the lock threshold — a single concurrent
+          // wrong-password attempt will cross it.
+          failedLoginCount: 9,
+          lastFailedLoginAt: new Date(),
+        },
+      });
+      createdCustomerIds.push(customer.id);
+
+      const wrongAttempts = 20;
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
+      const [correctResponse, ...wrongResponses] = await Promise.all([
+        postLogin(
+          jsonRequest("http://localhost/api/account/login", "POST", {
+            email,
+            password: "correct-password-1",
+          }),
+        ),
+        ...Array.from({ length: wrongAttempts }, () =>
+          postLogin(
+            jsonRequest("http://localhost/api/account/login", "POST", {
+              email,
+              password: "wrong-password",
+            }),
+          ),
+        ),
+      ]);
+
+      assert.ok(
+        wrongResponses.every((response) => response.status !== 200),
+        "no wrong-password attempt should ever succeed",
+      );
+
+      const row = await db.customer.findUnique({ where: { id: customer.id } });
+      const endedLocked = Boolean(row!.lockedUntil && row!.lockedUntil.getTime() > Date.now());
+      if (endedLocked) {
+        assert.notEqual(
+          correctResponse.status,
+          200,
+          "the account ended up locked, so the racing correct-password request must not have been granted a session",
+        );
+      }
+    });
+
+    // Same guarantee as above, but with the interesting ordering forced
+    // instead of left to bcrypt scheduling: lock the account first (an
+    // awaited recordFailedLogin, standing in for "a concurrent failure
+    // already landed"), then attempt the reset a correct password would
+    // trigger next. This is what actually makes the HTTP-level test above
+    // safe rather than merely lucky — it pins the exact behavior the fix
+    // guarantees, deterministically, every run.
+    it("resetLoginFailures refuses to clear a lock that was set after the caller's isLocked() read (F-321)", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const email = `race-deterministic-${unique}@example.com`;
+      const customer = await db.customer.create({
+        data: {
+          email,
+          name: "Deterministic Race Test",
+          passwordHash: await hashPassword("correct-password-1"),
+          failedLoginCount: 9,
+          lastFailedLoginAt: new Date(),
+        },
+      });
+      createdCustomerIds.push(customer.id);
+
+      // Simulates the route's early isLocked() read seeing an unlocked
+      // account (true at this point), then bcrypt.compare taking long
+      // enough for a concurrent wrong-password request to land and lock
+      // it before this request reaches resetLoginFailures.
+      const { locked } = await recordFailedLogin(customer.id);
+      assert.equal(locked, true, "setup: the account should now be locked");
+
+      await assert.rejects(
+        () => resetLoginFailures(customer.id),
+        AccountLockedError,
+        "resetLoginFailures must refuse (throw) rather than silently clearing a lock set after the stale isLocked() read",
+      );
+
+      const row = await db.customer.findUnique({ where: { id: customer.id } });
+      assert.ok(
+        row!.lockedUntil && row!.lockedUntil.getTime() > Date.now(),
+        "the lock must survive the failed reset attempt untouched",
+      );
+      assert.ok(row!.failedLoginCount >= 10);
     });
   });
 
