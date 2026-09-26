@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { commitDiscountRedemption } from "@/lib/discounts";
 import { hashOrderAccessToken } from "@/lib/orders/access-token";
 import { notifyNewOrder } from "@/lib/orders/notify";
+import { markRazorpayOrderPaid } from "@/lib/orders/payment-transitions";
 import { verifyPaymentSignature } from "@/lib/payments/razorpay";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
@@ -22,11 +22,20 @@ import { checkoutVerifySchema } from "@/lib/validation/schemas";
  * F3 fix: this route and the Razorpay webhook (src/app/api/webhooks/razorpay/route.ts)
  * can both be triggered for the same payment (browser callback racing a
  * webhook delivery/redelivery). The PAID transition itself is the atomic
- * gate — a conditional `updateMany({ where: { status: { not: "PAID" } } })`
- * inside the transaction — and stock is only ever decremented by whichever
- * caller's `updateMany` actually affects a row. The loser no-ops (no stock
- * touched, no duplicate notification) and still reports success. Keep this
- * file's transaction shape consistent with the webhook's.
+ * gate — a conditional `updateMany` inside the transaction — and stock is
+ * only ever decremented by whichever caller's `updateMany` actually
+ * affects a row. The loser no-ops (no stock touched, no duplicate
+ * notification) and still reports success.
+ *
+ * F-035 fix: that gate used to be `status: { not: "PAID" }`, which also
+ * matched PROCESSING/SHIPPED/DELIVERED/REFUNDED — so a replayed /verify
+ * call (the shopper holds a permanently-valid signed payload) or a
+ * redelivered webhook could regress an already-shipped-or-refunded order
+ * back to PAID and decrement stock a second time. The gate, the fast-path
+ * early return, and the stock/discount side effects now all live in
+ * markRazorpayOrderPaid (src/lib/orders/payment-transitions.ts), shared
+ * with the webhook's payment.captured handler, so the two can't drift
+ * apart again. See that module's header comment for the exact rule.
  */
 export async function POST(request: Request) {
   const limited = await rateLimitOrResponse(request, "checkout-verify", 20, 60_000);
@@ -50,13 +59,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Order not found" }, { status: 404 });
   }
 
-  if (order.status === "PAID") {
+  if (order.razorpayPaymentId !== null || !["PENDING_PAYMENT", "CANCELLED"].includes(order.status)) {
     // Fast path only — NOT the correctness guarantee. This read happens
-    // outside any lock, so it can be stale the instant this webhook and a
-    // concurrent /verify call (or a webhook redelivery) both observe
-    // non-PAID before either commits. The real gate is the conditional
-    // `updateMany` inside the transaction below (F3): only whichever
-    // caller actually flips the row to PAID may decrement stock.
+    // outside any lock, so it can be stale the instant this route and a
+    // concurrent webhook delivery both observe an eligible order before
+    // either commits. The real gate is markRazorpayOrderPaid's conditional
+    // `updateMany` below (F-035/F3): only whichever caller actually flips
+    // the row to PAID may decrement stock, and every status this order
+    // could only have reached *after* a first successful payment
+    // (PROCESSING, SHIPPED, DELIVERED, REFUNDED, or a paid-then-cancelled
+    // order that already carries a razorpayPaymentId) short-circuits here
+    // rather than being re-processed as if it were a fresh payment.
     return NextResponse.json({ ok: true, orderNumber: order.number });
   }
 
@@ -64,70 +77,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Payment signature verification failed" }, { status: 400 });
   }
 
-  let stockConflict = false;
-  let discountConflict = false;
-  let wonTransition = false;
-  await db.$transaction(async (tx) => {
-    // Atomic gate: `status: { not: "PAID" }` makes this a compare-and-swap
-    // on the row itself. If a concurrent webhook delivery (or a duplicate
-    // /verify call) already flipped it to PAID, this affects 0 rows and
-    // we skip stock decrement entirely below — the loser must never touch
-    // stock a second time for the same payment.
-    const transition = await tx.order.updateMany({
-      where: { id: order.id, status: { not: "PAID" } },
-      // F-334: paidAt records when this order actually reached PAID, for
-      // the customer-facing order timeline (see status-transitions.ts's
-      // orderStatusTimestampField, the single source of truth this and
-      // the webhook's equivalent update both follow).
-      data: { status: "PAID", razorpayPaymentId, paidAt: new Date() },
-    });
-    wonTransition = transition.count === 1;
-    if (!wonTransition) return;
-
-    for (const item of order.items) {
-      if (!item.variantId) continue;
-      const result = await tx.productVariant.updateMany({
-        where: { id: item.variantId, stock: { gte: item.quantity } },
-        data: { stock: { decrement: item.quantity } },
-      });
-      if (result.count === 0) stockConflict = true;
-    }
-
-    // Release-hardening F7: a RAZORPAY order's discount (if any) was priced
-    // in at creation but deliberately NOT reserved against the code's cap
-    // until now — see src/lib/discounts/index.ts's module doc comment for
-    // why. Payment is already captured at this point, so — same principle
-    // as the stock conflict above — a lost race here never fails the
-    // payment; it just flags the order for manual review and leaves the
-    // discount amount the customer already paid untouched.
-    if (order.discountId && order.appliedDiscount) {
-      const commit = await commitDiscountRedemption(tx, {
-        discountId: order.discountId,
-        maxRedemptions: order.appliedDiscount.maxRedemptions,
-        maxRedemptionsPerCustomer: order.appliedDiscount.maxRedemptionsPerCustomer,
-        orderId: order.id,
-        email: order.email,
-        customerId: order.customerId,
-      });
-      if (!commit.ok) discountConflict = true;
-    }
-
-    if (stockConflict || discountConflict) {
-      const notes = [
-        order.adminNotes,
-        stockConflict
-          ? "STOCK CONFLICT: manual review needed — an item sold out between order creation and payment."
-          : null,
-        discountConflict
-          ? "DISCOUNT CONFLICT: manual review needed — the discount code's usage limit filled up between order creation and payment. The customer already paid the discounted amount."
-          : null,
-      ].filter(Boolean);
-      await tx.order.update({
-        where: { id: order.id },
-        data: { adminNotes: notes.join("\n") },
-      });
-    }
-  });
+  const { won: wonTransition, stockConflict, discountConflict } = await db.$transaction(
+    (tx) => markRazorpayOrderPaid(tx, order, razorpayPaymentId),
+    // F-255 fix: explicit budget, matching create-order.ts/admin-orders.ts
+    // — markRazorpayOrderPaid's stock decrement is one bulk statement (see
+    // its own doc comment), so this is a safety net, not a fix for a known
+    // slow path here.
+    { timeout: 15_000, maxWait: 5_000 },
+  );
 
   if (!wonTransition) {
     // Lost the race to the webhook (or an earlier /verify call): the order
@@ -180,7 +137,17 @@ export async function POST(request: Request) {
     currency: order.currency,
     fallback: false,
     orderToken: confirmedOrderToken,
+    // F-283 fix: a stock conflict here means the payment was captured for
+    // an item that's no longer available — notifyNewOrder must not promise
+    // "we'll let you know as soon as it ships" in that case (see its own
+    // doc comment). stockConflict is deliberately omitted (undefined, not
+    // false) on the normal path rather than always passed, so this stays a
+    // no-op for every other caller of notifyNewOrder.
+    stockConflict: stockConflict || undefined,
   }).catch(() => undefined);
 
-  return NextResponse.json({ ok: true, orderNumber: order.number });
+  // stockConflict is surfaced here (additive — existing callers that don't
+  // read it are unaffected) so a future confirmation-page/email update can
+  // tell the shopper honestly, rather than only ever reaching adminNotes.
+  return NextResponse.json({ ok: true, orderNumber: order.number, stockConflict });
 }

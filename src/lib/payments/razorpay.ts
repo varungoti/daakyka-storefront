@@ -59,11 +59,23 @@ export interface RazorpayOrderResult {
   receipt?: string | null;
 }
 
+export interface RazorpayPaymentSummary {
+  id: string;
+  /** "created" | "authorized" | "captured" | "refunded" | "failed", per
+   * Razorpay's payment entity — typed loosely here since this file only
+   * ever compares it against "captured". */
+  status: string;
+}
+
 /**
  * The minimal shape `createRazorpayOrder` needs from a Razorpay client —
  * small enough that tests can inject an in-memory fake that never touches
  * the network, mirroring the `OpenAIImageClient` pattern in
  * src/lib/ai/image-generation.ts.
+ *
+ * `fetchPayments` is optional (not every test fake needs it) — see
+ * `fetchCapturedPaymentId`'s doc comment (F-225 fix) for the one caller
+ * that uses it.
  */
 export interface RazorpayOrderClient {
   orders: {
@@ -73,6 +85,7 @@ export interface RazorpayOrderClient {
       receipt: string;
       payment_capture?: boolean;
     }): Promise<RazorpayOrderResult>;
+    fetchPayments?(orderId: string): Promise<{ items: RazorpayPaymentSummary[] }>;
   };
 }
 
@@ -129,6 +142,36 @@ export async function createRazorpayOrder(
     receipt,
     payment_capture: true,
   });
+}
+
+/**
+ * F-225 fix (release-hardening order-lifecycle-payment-integrity): lets
+ * the stale-order cron (src/app/api/cron/cancel-stale-orders/route.ts)
+ * check with Razorpay itself before auto-cancelling a PENDING_PAYMENT
+ * order — payments are auto-captured (`payment_capture: true` above), so
+ * a lost browser callback (the tab closes mid-UPI-app-switch) with the
+ * webhook unreachable/unconfigured used to leave a genuinely *paid* order
+ * looking exactly like an abandoned one, and the cron cancelled it with no
+ * way back. Returns the id of a "captured" payment on this Razorpay order,
+ * if any — `null` means either "nothing configured to check against" or
+ * "checked, genuinely nothing captured" (both safe to cancel). A Razorpay
+ * API error is deliberately left to propagate rather than swallowed to
+ * `null` here: an error must never look the same as "checked and
+ * confirmed unpaid", so the caller (the stale-order cron) is expected to
+ * catch it itself and treat "the check failed" as "skip this order, try
+ * again next run" — see that route's doc comment.
+ */
+export async function fetchCapturedPaymentId(
+  razorpayOrderId: string,
+  deps: CreateRazorpayOrderDeps = {},
+): Promise<string | null> {
+  if (!(await isRazorpayConfigured())) return null;
+  const client = deps.client ?? (await getDefaultClient());
+  if (!client.orders.fetchPayments) return null;
+
+  const { items } = await client.orders.fetchPayments(razorpayOrderId);
+  const captured = items.find((payment) => payment.status === "captured");
+  return captured?.id ?? null;
 }
 
 /**

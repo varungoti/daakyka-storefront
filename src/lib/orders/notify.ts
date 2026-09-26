@@ -43,6 +43,19 @@ export interface NotifyNewOrderInput {
    * direct link, same as before this field existed.
    */
   orderToken?: string;
+  /**
+   * F-283 fix (release-hardening order-lifecycle-payment-integrity): true
+   * when this payment was captured but one or more lines lost the stock
+   * race in between (see /api/checkout/verify and the Razorpay webhook's
+   * `stockConflict` — an AdminNotification is already raised separately
+   * for that). RAZORPAY orders don't reserve stock at creation, so this is
+   * the shopper's only honest signal that "payment received" does not
+   * necessarily mean "the item is still coming" — the customer email must
+   * say so instead of promising shipment. Omitted/false for the normal
+   * path and for every ORDER_REQUEST order (fallback:true), which never
+   * hits this conflict in the first place.
+   */
+  stockConflict?: boolean;
 }
 
 function formatAmount(total: number, currency: string): string {
@@ -61,7 +74,7 @@ function buildOrderConfirmationUrl(orderNumber: string, orderToken: string): str
 }
 
 export async function notifyNewOrder(input: NotifyNewOrderInput): Promise<void> {
-  const { orderNumber, email, total, currency, fallback, orderToken } = input;
+  const { orderNumber, email, total, currency, fallback, orderToken, stockConflict } = input;
   const amount = formatAmount(total, currency);
   const orderLink = orderToken ? buildOrderConfirmationUrl(orderNumber, orderToken) : null;
   const orderLinkHtml = orderLink ? `<p><a href="${orderLink}">View your order</a></p>` : "";
@@ -70,10 +83,19 @@ export async function notifyNewOrder(input: NotifyNewOrderInput): Promise<void> 
     const result = await sendTransactionalEmail(
       {
         to: email,
-        subject: fallback ? `We received your order ${orderNumber}` : `Payment received — order ${orderNumber}`,
-        html: fallback
-          ? `<p>Thanks for your order <strong>${orderNumber}</strong> (${amount}). Our team will contact you shortly to confirm payment and delivery.</p>${orderLinkHtml}`
-          : `<p>Your payment for order <strong>${orderNumber}</strong> (${amount}) was received. We'll let you know as soon as it ships.</p>${orderLinkHtml}`,
+        subject: stockConflict
+          ? `Payment received — order ${orderNumber} (stock issue)`
+          : fallback
+            ? `We received your order ${orderNumber}`
+            : `Payment received — order ${orderNumber}`,
+        html: stockConflict
+          ? // F-283 fix: never claim "we'll let you know as soon as it
+            // ships" when a line actually lost the stock race — that's a
+            // real risk of promising something we can't fulfil.
+            `<p>Your payment for order <strong>${orderNumber}</strong> (${amount}) was received, but one or more items in this order sold out just before your payment completed. Our team will contact you shortly about a refund for the affected item(s) or a replacement.</p>${orderLinkHtml}`
+          : fallback
+            ? `<p>Thanks for your order <strong>${orderNumber}</strong> (${amount}). Our team will contact you shortly to confirm payment and delivery.</p>${orderLinkHtml}`
+            : `<p>Your payment for order <strong>${orderNumber}</strong> (${amount}) was received. We'll let you know as soon as it ships.</p>${orderLinkHtml}`,
       },
       EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER,
     );

@@ -9,6 +9,7 @@ import {
   MissingTrackingInfoError,
   OrderNotFoundError,
   OrderUpdateConflictError,
+  RefundAcknowledgementRequiredError,
   updateOrderAdmin,
 } from "@/lib/orders/admin-orders";
 import { createOrderFromCart } from "@/lib/orders/create-order";
@@ -280,8 +281,16 @@ describe("orders admin service (Phase D4)", () => {
     assert.equal(afterSecondCancel?.stock, 5, "a repeated cancel must not restock the same units twice");
   });
 
-  it("does not restock a RAZORPAY order on cancel (unchanged, pre-existing behaviour)", async () => {
-    const adminId = await findAnyAdminId();
+  // F-036/F-282 fix (release-hardening order-lifecycle-payment-integrity):
+  // a paid RAZORPAY order used to keep its stock (and discount
+  // redemption) permanently deducted on cancel/refund — "nothing to give
+  // back" was only ever true *before* payment — and setting one to
+  // CANCELLED/REFUNDED moved no money with no warning. It now requires an
+  // explicit acknowledgement of that (RefundAcknowledgementRequiredError)
+  // and, once acknowledged, restocks and releases the redemption exactly
+  // like an ORDER_REQUEST cancel already did.
+
+  async function createPaidRazorpayOrder(stock: number, quantity: number) {
     const unique = randomUUID().slice(0, 8);
     const category = await db.category.create({
       data: { name: `Orders Admin Razorpay Category ${unique}`, slug: `orders-admin-razorpay-category-${unique}`, section: "GENERAL" },
@@ -292,33 +301,159 @@ describe("orders admin service (Phase D4)", () => {
     });
     createdProductIds.push(product.id);
     const variant = await db.productVariant.create({
-      data: { productId: product.id, sku: `DK-OA-RZP-${unique}`, size: "M", color: "Navy", stock: 3, active: true },
+      data: { productId: product.id, sku: `DK-OA-RZP-${unique}`, size: "M", color: "Navy", stock, active: true },
     });
 
-    // Simulate a paid Razorpay order: stock already decremented (as the
-    // verify/webhook flow would have done at payment time), order at PAID.
+    // Simulate a paid Razorpay order: stock already decremented and
+    // razorpayPaymentId set (as the verify/webhook flow would have done
+    // at payment time), order at PAID.
     const order = await db.order.create({
       data: baseOrderData({
         email: `orders-admin-razorpay-${unique}@example.com`,
         status: "PAID",
         paymentMethod: "RAZORPAY",
-        items: { create: [{ variantId: variant.id, productName: "Test Scrub Set", unitPrice: 500, quantity: 2 }] },
+        razorpayPaymentId: `pay_${unique}`,
+        items: { create: [{ variantId: variant.id, productName: "Test Scrub Set", unitPrice: 500, quantity }] },
       }),
     });
     createdOrderIds.push(order.id);
-    await db.productVariant.update({ where: { id: variant.id }, data: { stock: { decrement: 2 } } });
+    await db.productVariant.update({ where: { id: variant.id }, data: { stock: { decrement: quantity } } });
 
-    const updated = await updateOrderAdmin(order.id, { status: "CANCELLED" }, adminId);
+    return { order, variant };
+  }
+
+  it("rejects cancelling a paid RAZORPAY order without acknowledging that no refund is issued", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createPaidRazorpayOrder(3, 2);
+
+    await assert.rejects(
+      () => updateOrderAdmin(order.id, { status: "CANCELLED" }, adminId),
+      RefundAcknowledgementRequiredError,
+    );
+
+    const unchanged = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    assert.equal(unchanged.status, "PAID", "the status must not change when the acknowledgement is missing");
+    const untouchedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(untouchedVariant?.stock, 1, "stock must be untouched when the update is rejected");
+  });
+
+  it("restocks a paid RAZORPAY order on cancel once acknowledged", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createPaidRazorpayOrder(3, 2);
+
+    const updated = await updateOrderAdmin(
+      order.id,
+      { status: "CANCELLED", acknowledgeExternalRefund: true },
+      adminId,
+    );
     assert.equal(updated.status, "CANCELLED");
 
     const afterCancel = await db.productVariant.findUnique({ where: { id: variant.id } });
-    assert.equal(afterCancel?.stock, 1, "a RAZORPAY order's stock must be untouched by this Finding B change");
+    assert.equal(afterCancel?.stock, 3, "cancelling an acknowledged paid RAZORPAY order must restore its stock");
+  });
+
+  it("does not require acknowledgement (or move stock) for a never-paid RAZORPAY order", async () => {
+    const adminId = await findAnyAdminId();
+    const unique = randomUUID().slice(0, 8);
+    const order = await db.order.create({
+      data: baseOrderData({
+        email: `orders-admin-razorpay-unpaid-${unique}@example.com`,
+        status: "PENDING_PAYMENT",
+        paymentMethod: "RAZORPAY",
+      }),
+    });
+    createdOrderIds.push(order.id);
+
+    const updated = await updateOrderAdmin(order.id, { status: "CANCELLED" }, adminId);
+    assert.equal(updated.status, "CANCELLED", "a never-paid order has nothing to acknowledge — no money was ever taken");
   });
 
   it("OrderUpdateConflictError is exported and constructs a useful message", () => {
     const err = new OrderUpdateConflictError("some-id");
     assert.match(err.message, /some-id/);
     assert.equal(err.name, "OrderUpdateConflictError");
+  });
+
+  // F-335 fix: every status transition now goes through the same
+  // optimistic-concurrency-guarded transaction the restock path already
+  // used, instead of only the restock branch being guarded. This
+  // reproduces the exact finding: two admins racing SHIP vs CANCEL on the
+  // same order must never both "succeed" (the ship winning while the
+  // cancel's restock/discount-release also applied, or vice versa) —
+  // exactly one wins, the other gets OrderUpdateConflictError.
+  it("F-335: a concurrent ship and cancel on the same order — exactly one wins, the loser gets a conflict, and stock reflects only the winner", async () => {
+    const adminId = await findAnyAdminId();
+    // createOrderRequestOrder creates the order straight into PROCESSING
+    // (ORDER_REQUEST's initial status — see create-order.ts), which is
+    // exactly the pre-race state the F-335 finding needs: PROCESSING can
+    // go to either SHIPPED or CANCELLED.
+    const { order, variant } = await createOrderRequestOrder(5, 2);
+
+    const results = await Promise.allSettled([
+      updateOrderAdmin(order.id, { status: "SHIPPED", trackingNumber: "TRK-RACE", courier: "Bluedart" }, adminId),
+      updateOrderAdmin(order.id, { status: "CANCELLED" }, adminId),
+    ]);
+
+    const fulfilled = results.filter((r) => r.status === "fulfilled");
+    const rejected = results.filter((r) => r.status === "rejected");
+    assert.equal(fulfilled.length, 1, "exactly one of the two concurrent updates must succeed");
+    assert.equal(rejected.length, 1, "the other must be rejected as a conflict");
+    assert.ok(
+      (rejected[0] as PromiseRejectedResult).reason instanceof OrderUpdateConflictError,
+      "the loser must fail with OrderUpdateConflictError, not silently apply",
+    );
+
+    const finalOrder = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    const finalVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
+    if (finalOrder.status === "SHIPPED") {
+      // Ship won: stock stays at what checkout decremented (2 units).
+      assert.equal(finalVariant?.stock, 3);
+    } else {
+      // Cancel won: restocked back to the original 5.
+      assert.equal(finalOrder.status, "CANCELLED");
+      assert.equal(finalVariant?.stock, 5);
+    }
+  });
+
+  // F-339 fix: adminNotes is no longer silently overwritten by a
+  // concurrent status-only update from a stale page — enforced here via
+  // the `updatedAt` precondition (the client-side "don't resend unchanged
+  // notes" half of the fix lives in order-detail-actions.tsx).
+  it("F-339: rejects a save whose updatedAt precondition no longer matches (a colleague's note landed first)", async () => {
+    const adminId = await findAnyAdminId();
+    const order = await db.order.create({ data: baseOrderData({ email: "conflict-notes@example.com" }) });
+    createdOrderIds.push(order.id);
+
+    // Admin B saves a note first.
+    const afterB = await updateOrderAdmin(order.id, { adminNotes: "Customer called: deliver after 6pm." }, adminId);
+
+    // Admin A's tab loaded the order *before* B's save (stale updatedAt).
+    await assert.rejects(
+      () =>
+        updateOrderAdmin(
+          order.id,
+          { status: "PROCESSING", adminNotes: "", updatedAt: order.updatedAt },
+          adminId,
+        ),
+      OrderUpdateConflictError,
+    );
+
+    const unchanged = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    assert.equal(unchanged.adminNotes, afterB.adminNotes, "B's note must survive A's stale, rejected save");
+    assert.equal(unchanged.status, "PENDING_PAYMENT", "the status change from the rejected save must not apply either");
+  });
+
+  it("F-339: a save with a matching (fresh) updatedAt still succeeds", async () => {
+    const adminId = await findAnyAdminId();
+    const order = await db.order.create({ data: baseOrderData({ email: "fresh-updatedat@example.com" }) });
+    createdOrderIds.push(order.id);
+
+    const updated = await updateOrderAdmin(
+      order.id,
+      { adminNotes: "Fresh save.", updatedAt: order.updatedAt },
+      adminId,
+    );
+    assert.equal(updated.adminNotes, "Fresh save.");
   });
 });
 

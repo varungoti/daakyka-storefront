@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ORDER_STATUS_TRANSITIONS } from "@/lib/orders/status-transitions";
-import type { OrderStatus } from "@/generated/prisma/client";
+import type { OrderStatus, PaymentMethod } from "@/generated/prisma/client";
 
 interface Props {
   orderId: string;
@@ -12,6 +12,16 @@ interface Props {
   courier: string | null;
   adminNotes: string | null;
   canManage: boolean;
+  /** F-282 fix: needed to decide whether cancelling/refunding this order
+   * needs the "this doesn't refund the customer" acknowledgement below. */
+  paymentMethod: PaymentMethod;
+  hasCapturedPayment: boolean;
+  razorpayPaymentUrl: string | null;
+  /** F-339 fix: the order's `updatedAt` as loaded onto this page — sent
+   * back with every save so a stale tab (a colleague saved a change since
+   * this page was loaded) gets a conflict instead of silently overwriting
+   * whatever it touched. */
+  updatedAt: string;
 }
 
 /**
@@ -21,28 +31,57 @@ interface Props {
  * same matrix regardless, but this keeps the admin from picking an option
  * that's only going to bounce back as a 400.
  */
-export function OrderDetailActions({ orderId, currentStatus, trackingNumber, courier, adminNotes, canManage }: Props) {
+export function OrderDetailActions({
+  orderId,
+  currentStatus,
+  trackingNumber,
+  courier,
+  adminNotes,
+  canManage,
+  paymentMethod,
+  hasCapturedPayment,
+  razorpayPaymentUrl,
+  updatedAt,
+}: Props) {
   const router = useRouter();
   const [status, setStatus] = useState<OrderStatus>(currentStatus);
   const [tracking, setTracking] = useState(trackingNumber ?? "");
   const [courierName, setCourierName] = useState(courier ?? "");
   const [notes, setNotes] = useState(adminNotes ?? "");
+  const [acknowledgeExternalRefund, setAcknowledgeExternalRefund] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
   const nextStatuses = ORDER_STATUS_TRANSITIONS[currentStatus] ?? [];
   const willShip = status === "SHIPPED" && status !== currentStatus;
+  // F-282 fix: a paid Razorpay order's status has never moved any money —
+  // nothing in this codebase calls Razorpay's refund API. Cancelling or
+  // refunding one needs an explicit "I understand" before Save is even
+  // enabled, so an admin used to Shopify (where this action *does* refund)
+  // never assumes it happened here too.
+  const needsRefundAcknowledgement =
+    paymentMethod === "RAZORPAY" &&
+    hasCapturedPayment &&
+    status !== currentStatus &&
+    (status === "CANCELLED" || status === "REFUNDED");
+  const notesChanged = notes !== (adminNotes ?? "");
 
   async function save() {
     setBusy(true);
     setError(null);
     setSaved(false);
 
-    const body: Record<string, unknown> = { adminNotes: notes };
+    const body: Record<string, unknown> = { updatedAt };
+    // F-339 fix: only send adminNotes when this admin actually changed it
+    // — previously this always re-sent whatever the textarea loaded with,
+    // so saving a status change from a tab opened before a colleague's
+    // note edit silently wiped that note.
+    if (notesChanged) body.adminNotes = notes;
     if (status !== currentStatus) body.status = status;
     if (tracking.trim()) body.trackingNumber = tracking.trim();
     if (courierName.trim()) body.courier = courierName.trim();
+    if (needsRefundAcknowledgement) body.acknowledgeExternalRefund = acknowledgeExternalRefund;
 
     const response = await fetch(`/api/admin/orders/${orderId}`, {
       method: "PATCH",
@@ -53,7 +92,11 @@ export function OrderDetailActions({ orderId, currentStatus, trackingNumber, cou
     setBusy(false);
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      setError(payload?.error ?? "Couldn't save changes.");
+      if (response.status === 409) {
+        setError("This order changed since the page loaded — reload and try again.");
+      } else {
+        setError(payload?.error ?? "Couldn't save changes.");
+      }
       return;
     }
     setSaved(true);
@@ -81,6 +124,34 @@ export function OrderDetailActions({ orderId, currentStatus, trackingNumber, cou
         </select>
         {nextStatuses.length === 0 && <p className="mt-1 text-xs text-muted">This is a final status — no further transitions.</p>}
       </div>
+
+      {needsRefundAcknowledgement && (
+        <div className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+          <p className="font-semibold">
+            This only changes the order status — it does NOT refund the customer.
+          </p>
+          <p>
+            Nothing here calls Razorpay.{" "}
+            {razorpayPaymentUrl ? (
+              <a href={razorpayPaymentUrl} target="_blank" rel="noreferrer" className="font-semibold underline">
+                Refund this payment in the Razorpay dashboard
+              </a>
+            ) : (
+              "Refund this payment in the Razorpay dashboard"
+            )}{" "}
+            first if the customer should get their money back.
+          </p>
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              checked={acknowledgeExternalRefund}
+              onChange={(e) => setAcknowledgeExternalRefund(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>I understand this does not refund the customer.</span>
+          </label>
+        </div>
+      )}
 
       {(willShip || currentStatus === "SHIPPED") && (
         <div className="grid gap-3 sm:grid-cols-2">
@@ -125,7 +196,7 @@ export function OrderDetailActions({ orderId, currentStatus, trackingNumber, cou
       {canManage && (
         <button
           onClick={save}
-          disabled={busy}
+          disabled={busy || (needsRefundAcknowledgement && !acknowledgeExternalRefund)}
           className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
         >
           {busy ? "Saving…" : "Save changes"}

@@ -72,7 +72,9 @@ export default async function AccountOrderDetailPage({
   if (!order) notFound();
 
   const address = order.shippingAddress as unknown as ShippingAddressInput;
-  const timeline = getOrderTimeline(order.status, order.paymentMethod);
+  // F-141 fix: see getOrderTimeline's doc comment — only matters for a
+  // RAZORPAY order that never captured a payment.
+  const timeline = getOrderTimeline(order.status, order.paymentMethod, order.razorpayPaymentId !== null);
 
   return (
     <div className="mx-auto max-w-3xl">

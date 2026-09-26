@@ -9,12 +9,15 @@ import {
   InvalidVariantError,
   OutOfStockError,
 } from "@/lib/orders/create-order";
+import { updateOrderAdmin } from "@/lib/orders/admin-orders";
+import { setRazorpayClientForTesting } from "@/lib/payments/razorpay";
 import { checkRateLimit, resetRateLimits } from "@/lib/security/rate-limit";
 import { POST as checkoutRoute } from "@/app/api/checkout/route";
 import { POST as verifyRoute } from "@/app/api/checkout/verify/route";
 import { POST as webhookRoute } from "@/app/api/webhooks/razorpay/route";
 import { GET as cronGet, POST as cronPost } from "@/app/api/cron/cancel-stale-orders/route";
 import { withEnv } from "../helpers/env";
+import { findAnyAdminId } from "../helpers/admin-user";
 
 /**
  * Phase D3: checkout, Razorpay verify/webhook, and the stale-order cron.
@@ -262,6 +265,87 @@ describe("createOrderFromCart (Phase D3)", () => {
 
     const updatedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
     assert.equal(updatedVariant?.stock, 2);
+  });
+
+  // F-255 fix (release-hardening order-lifecycle-payment-integrity): the
+  // ORDER_REQUEST stock decrement used to be one `updateMany` round trip
+  // per cart line; it's now a single bulk `UPDATE ... FROM unnest(...)`.
+  // These two tests pin down the two things that rewrite could have gotten
+  // wrong: every distinct line still gets decremented correctly, and an
+  // out-of-stock line still rolls back every other line's decrement (the
+  // bulk statement is one round trip, but must stay all-or-nothing).
+  it("decrements every distinct line correctly in one bulk statement for a multi-line ORDER_REQUEST cart", async () => {
+    const { variant: variantA } = await createActiveProductWithVariant({ stock: 10 });
+    const { variant: variantB } = await createActiveProductWithVariant({ stock: 5 });
+    const { variant: variantC } = await createActiveProductWithVariant({ stock: 20 });
+
+    const order = await createOrderFromCart({
+      items: [
+        { variantId: variantA.id, quantity: 3 },
+        { variantId: variantB.id, quantity: 5 },
+        { variantId: variantC.id, quantity: 7 },
+      ],
+      email: "bulk-buyer@example.com",
+      shippingAddress: {
+        name: "Buyer",
+        line1: "1 Test Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        pincode: "500032",
+        country: "IN",
+      },
+      paymentMethod: "ORDER_REQUEST",
+    });
+    createdOrderIds.push(order.id);
+
+    const [afterA, afterB, afterC] = await Promise.all([
+      db.productVariant.findUnique({ where: { id: variantA.id } }),
+      db.productVariant.findUnique({ where: { id: variantB.id } }),
+      db.productVariant.findUnique({ where: { id: variantC.id } }),
+    ]);
+    assert.equal(afterA?.stock, 7, "variant A must be decremented by exactly its own line's quantity");
+    assert.equal(afterB?.stock, 0, "variant B must be decremented by exactly its own line's quantity");
+    assert.equal(afterC?.stock, 13, "variant C must be decremented by exactly its own line's quantity");
+
+    const items = await db.orderItem.findMany({ where: { orderId: order.id } });
+    assert.equal(items.length, 3, "every line must still get its own OrderItem row");
+  });
+
+  it("rolls back every line's decrement when one line in a multi-line ORDER_REQUEST cart is out of stock", async () => {
+    const { variant: variantA } = await createActiveProductWithVariant({ stock: 10 });
+    const { variant: variantB } = await createActiveProductWithVariant({ stock: 2 });
+
+    const error = await createOrderFromCart({
+      items: [
+        { variantId: variantA.id, quantity: 3 },
+        // Insufficient — must fail the whole checkout, not just this line.
+        { variantId: variantB.id, quantity: 5 },
+      ],
+      email: "bulk-buyer-conflict@example.com",
+      shippingAddress: {
+        name: "Buyer",
+        line1: "1 Test Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        pincode: "500032",
+        country: "IN",
+      },
+      paymentMethod: "ORDER_REQUEST",
+    }).catch((e) => e);
+
+    assert.ok(error instanceof OutOfStockError);
+    assert.equal((error as OutOfStockError).variantId, variantB.id);
+    assert.equal((error as OutOfStockError).available, 2);
+
+    const [afterA, afterB] = await Promise.all([
+      db.productVariant.findUnique({ where: { id: variantA.id } }),
+      db.productVariant.findUnique({ where: { id: variantB.id } }),
+    ]);
+    assert.equal(afterA?.stock, 10, "the in-stock line's decrement must be rolled back too — no order was created");
+    assert.equal(afterB?.stock, 2, "the out-of-stock line must be untouched");
+
+    const orderCount = await db.order.count({ where: { email: "bulk-buyer-conflict@example.com" } });
+    assert.equal(orderCount, 0, "no order should have been created");
   });
 });
 
@@ -679,6 +763,364 @@ describe("verify + webhook concurrency (F3 fix)", () => {
   });
 });
 
+// F-035 fix (release-hardening order-lifecycle-payment-integrity): before
+// this fix, both /verify and the webhook only ever checked
+// `status !== "PAID"`, which also matched every status *after* PAID
+// (PROCESSING/SHIPPED/CANCELLED/REFUNDED). A shopper who still holds their
+// own signed verify payload (or a redelivered payment.captured) could
+// replay it once the admin moved the order on, regress it back to PAID,
+// and decrement stock a second time — the exact scenario these tests
+// pin down, which the old "replay while still PAID" test (above) never
+// covered.
+describe("F-035: replaying /verify or the webhook after the order has moved past PAID", () => {
+  it("a /verify replay after the admin ships the order is a clean no-op — status, stock and the outbox are unchanged", async () => {
+    const { order, variant, razorpayOrderId } = await createPendingRazorpayOrder(5);
+    const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+    const validSignature = createHmac("sha256", TEST_KEY_SECRET).update(`${razorpayOrderId}|${paymentId}`).digest("hex");
+
+    await withEnv({ RAZORPAY_KEY_SECRET: TEST_KEY_SECRET }, async () => {
+      const first = await verifyRoute(
+        jsonRequest("http://localhost/api/checkout/verify", {
+          orderNumber: order.number,
+          razorpayPaymentId: paymentId,
+          razorpayOrderId,
+          razorpaySignature: validSignature,
+        }),
+      );
+      assert.equal(first.status, 200);
+    });
+
+    const adminId = await findAnyAdminId();
+    await updateOrderAdmin(order.id, { status: "PROCESSING" }, adminId);
+    await updateOrderAdmin(order.id, { status: "SHIPPED", trackingNumber: "TRK1", courier: "Bluedart" }, adminId);
+
+    const outboxCountBefore = await db.emailOutbox.count({ where: { to: order.email } });
+
+    await withEnv({ RAZORPAY_KEY_SECRET: TEST_KEY_SECRET }, async () => {
+      // The shopper's browser still holds this exact, permanently-valid
+      // signed payload and re-POSTs it after the order has shipped.
+      const replay = await verifyRoute(
+        jsonRequest("http://localhost/api/checkout/verify", {
+          orderNumber: order.number,
+          razorpayPaymentId: paymentId,
+          razorpayOrderId,
+          razorpaySignature: validSignature,
+        }),
+      );
+      // Must still report success to the browser — nothing failed.
+      assert.equal(replay.status, 200);
+      const data = (await replay.json()) as { ok: boolean };
+      assert.equal(data.ok, true);
+    });
+
+    const dbOrder = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    assert.equal(dbOrder.status, "SHIPPED", "the replay must never regress SHIPPED back to PAID");
+
+    const updatedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(updatedVariant?.stock, 4, "stock must be decremented exactly once, not again by the replay");
+
+    const outboxCountAfter = await db.emailOutbox.count({ where: { to: order.email } });
+    assert.equal(outboxCountAfter, outboxCountBefore, "the replay must not queue a second confirmation email");
+  });
+
+  it("a redelivered payment.captured webhook after the admin cancels (and acknowledges) a paid order does not revive it or re-decrement stock", async () => {
+    const { order, variant, razorpayOrderId } = await createPendingRazorpayOrder(5);
+    const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+    const webhookBody = JSON.stringify({
+      event: "payment.captured",
+      payload: { payment: { entity: { id: paymentId, order_id: razorpayOrderId, status: "captured" } } },
+    });
+
+    await withEnv({ RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {
+      const signature = createHmac("sha256", TEST_WEBHOOK_SECRET).update(webhookBody, "utf8").digest("hex");
+      const first = await webhookRoute(
+        rawRequest("http://localhost/api/webhooks/razorpay", webhookBody, { "x-razorpay-signature": signature }),
+      );
+      assert.equal(first.status, 200);
+    });
+
+    const adminId = await findAnyAdminId();
+    // Admin cancels the now-paid order (acknowledging no money moves —
+    // see F-282) — this restocks it (F-036), which is exactly the state a
+    // redelivered payment.captured must never re-decrement.
+    await updateOrderAdmin(order.id, { status: "CANCELLED", acknowledgeExternalRefund: true }, adminId);
+    const afterCancel = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(afterCancel?.stock, 5, "cancelling the paid order must restock it (F-036)");
+
+    await withEnv({ RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {
+      const signature = createHmac("sha256", TEST_WEBHOOK_SECRET).update(webhookBody, "utf8").digest("hex");
+      // Razorpay redelivers the same event (its payment id already
+      // carries this order's razorpayPaymentId, set by the first
+      // delivery) — this order was paid, then cancelled, so it must never
+      // come back to life.
+      const redelivered = await webhookRoute(
+        rawRequest("http://localhost/api/webhooks/razorpay", webhookBody, { "x-razorpay-signature": signature }),
+      );
+      assert.equal(redelivered.status, 200);
+    });
+
+    const dbOrder = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    assert.equal(dbOrder.status, "CANCELLED", "a redelivery must never revive a paid-then-cancelled order");
+
+    const finalVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(finalVariant?.stock, 5, "the redelivery must not decrement the restocked stock a second time");
+  });
+
+  it("a late payment.captured for an order the stale-order cron already auto-cancelled still recovers it (F-035's one legitimate CANCELLED -> PAID path)", async () => {
+    const { order, variant, razorpayOrderId } = await createPendingRazorpayOrder(3);
+    // Simulate the stale-order cron's auto-cancel — CANCELLED with no
+    // razorpayPaymentId ever set, i.e. genuinely never paid yet.
+    await db.order.update({
+      where: { id: order.id },
+      data: { status: "CANCELLED", adminNotes: "Auto-cancelled: Razorpay payment not completed within 30 minutes" },
+    });
+
+    const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+    const validSignature = createHmac("sha256", TEST_KEY_SECRET).update(`${razorpayOrderId}|${paymentId}`).digest("hex");
+
+    await withEnv({ RAZORPAY_KEY_SECRET: TEST_KEY_SECRET }, async () => {
+      const late = await verifyRoute(
+        jsonRequest("http://localhost/api/checkout/verify", {
+          orderNumber: order.number,
+          razorpayPaymentId: paymentId,
+          razorpayOrderId,
+          razorpaySignature: validSignature,
+        }),
+      );
+      assert.equal(late.status, 200);
+    });
+
+    const dbOrder = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    assert.equal(dbOrder.status, "PAID", "a genuinely late capture on a never-paid, auto-cancelled order must still be honoured");
+    assert.match(dbOrder.adminNotes ?? "", /Paid via Razorpay .* \(was CANCELLED\)/, "F-285: the stale cancellation note must be superseded, not left standing");
+
+    const updatedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(updatedVariant?.stock, 2, "the late capture must still decrement stock exactly once");
+  });
+});
+
+// F-039 fix: payment.failed and refund.processed used to check only
+// `status === "PAID"` before writing, so a late failed-attempt event
+// could cancel an already-PROCESSING/SHIPPED order, and any refund
+// (including a partial one) marked the whole order REFUNDED.
+describe("F-039: payment.failed and refund.processed no longer overwrite status unconditionally", () => {
+  it("a late payment.failed for an earlier attempt does not cancel an order that has since moved to PROCESSING", async () => {
+    const { order, razorpayOrderId } = await createPendingRazorpayOrder(5);
+    const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+    const validSignature = createHmac("sha256", TEST_KEY_SECRET).update(`${razorpayOrderId}|${paymentId}`).digest("hex");
+
+    await withEnv({ RAZORPAY_KEY_SECRET: TEST_KEY_SECRET }, async () => {
+      const verify = await verifyRoute(
+        jsonRequest("http://localhost/api/checkout/verify", {
+          orderNumber: order.number,
+          razorpayPaymentId: paymentId,
+          razorpayOrderId,
+          razorpaySignature: validSignature,
+        }),
+      );
+      assert.equal(verify.status, 200);
+    });
+
+    const adminId = await findAnyAdminId();
+    await updateOrderAdmin(order.id, { status: "PROCESSING" }, adminId);
+
+    const failedBody = JSON.stringify({
+      event: "payment.failed",
+      payload: { payment: { entity: { order_id: razorpayOrderId } } },
+    });
+    await withEnv({ RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {
+      const signature = createHmac("sha256", TEST_WEBHOOK_SECRET).update(failedBody, "utf8").digest("hex");
+      const response = await webhookRoute(
+        rawRequest("http://localhost/api/webhooks/razorpay", failedBody, { "x-razorpay-signature": signature }),
+      );
+      assert.equal(response.status, 200);
+    });
+
+    const dbOrder = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    assert.equal(dbOrder.status, "PROCESSING", "a stray payment.failed for an earlier attempt must not cancel the now-PROCESSING order");
+  });
+
+  it("cancels a genuinely still-unpaid (PENDING_PAYMENT) order on payment.failed", async () => {
+    const { order, razorpayOrderId } = await createPendingRazorpayOrder(5);
+
+    const failedBody = JSON.stringify({
+      event: "payment.failed",
+      payload: { payment: { entity: { order_id: razorpayOrderId } } },
+    });
+    await withEnv({ RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {
+      const signature = createHmac("sha256", TEST_WEBHOOK_SECRET).update(failedBody, "utf8").digest("hex");
+      const response = await webhookRoute(
+        rawRequest("http://localhost/api/webhooks/razorpay", failedBody, { "x-razorpay-signature": signature }),
+      );
+      assert.equal(response.status, 200);
+    });
+
+    const dbOrder = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    assert.equal(dbOrder.status, "CANCELLED", "payment.failed must still cancel a genuinely unpaid order");
+  });
+
+  it("a partial refund does not mark the order REFUNDED — it stays PAID with a note", async () => {
+    const { order, variant, razorpayOrderId } = await createPendingRazorpayOrder(5);
+    const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+    const validSignature = createHmac("sha256", TEST_KEY_SECRET).update(`${razorpayOrderId}|${paymentId}`).digest("hex");
+
+    await withEnv({ RAZORPAY_KEY_SECRET: TEST_KEY_SECRET }, async () => {
+      const verify = await verifyRoute(
+        jsonRequest("http://localhost/api/checkout/verify", {
+          orderNumber: order.number,
+          razorpayPaymentId: paymentId,
+          razorpayOrderId,
+          razorpaySignature: validSignature,
+        }),
+      );
+      assert.equal(verify.status, 200);
+    });
+    const orderTotalPaise = Math.round(Number((await db.order.findUniqueOrThrow({ where: { id: order.id } })).total) * 100);
+
+    const refundBody = JSON.stringify({
+      event: "refund.processed",
+      payload: {
+        payment: { entity: { id: paymentId, amount: orderTotalPaise, amount_refunded: Math.round(orderTotalPaise / 4) } },
+        refund: { entity: { id: `rfnd_${randomUUID().slice(0, 8)}`, payment_id: paymentId, amount: Math.round(orderTotalPaise / 4) } },
+      },
+    });
+    await withEnv({ RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {
+      const signature = createHmac("sha256", TEST_WEBHOOK_SECRET).update(refundBody, "utf8").digest("hex");
+      const response = await webhookRoute(
+        rawRequest("http://localhost/api/webhooks/razorpay", refundBody, { "x-razorpay-signature": signature }),
+      );
+      assert.equal(response.status, 200);
+    });
+
+    const dbOrder = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    assert.equal(dbOrder.status, "PAID", "a partial refund must never mark the whole order REFUNDED");
+    assert.match(dbOrder.adminNotes ?? "", /Partial refund/);
+
+    const updatedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(updatedVariant?.stock, 4, "a partial refund must not restock — the order hasn't been cancelled");
+  });
+
+  it("a full refund marks the order REFUNDED and restocks it", async () => {
+    const { order, variant, razorpayOrderId } = await createPendingRazorpayOrder(5);
+    const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+    const validSignature = createHmac("sha256", TEST_KEY_SECRET).update(`${razorpayOrderId}|${paymentId}`).digest("hex");
+
+    await withEnv({ RAZORPAY_KEY_SECRET: TEST_KEY_SECRET }, async () => {
+      const verify = await verifyRoute(
+        jsonRequest("http://localhost/api/checkout/verify", {
+          orderNumber: order.number,
+          razorpayPaymentId: paymentId,
+          razorpayOrderId,
+          razorpaySignature: validSignature,
+        }),
+      );
+      assert.equal(verify.status, 200);
+    });
+    const orderTotalPaise = Math.round(Number((await db.order.findUniqueOrThrow({ where: { id: order.id } })).total) * 100);
+
+    const refundBody = JSON.stringify({
+      event: "refund.processed",
+      payload: {
+        payment: { entity: { id: paymentId, amount: orderTotalPaise, amount_refunded: orderTotalPaise } },
+        refund: { entity: { id: `rfnd_${randomUUID().slice(0, 8)}`, payment_id: paymentId, amount: orderTotalPaise } },
+      },
+    });
+    await withEnv({ RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {
+      const signature = createHmac("sha256", TEST_WEBHOOK_SECRET).update(refundBody, "utf8").digest("hex");
+      const response = await webhookRoute(
+        rawRequest("http://localhost/api/webhooks/razorpay", refundBody, { "x-razorpay-signature": signature }),
+      );
+      assert.equal(response.status, 200);
+    });
+
+    const dbOrder = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    assert.equal(dbOrder.status, "REFUNDED");
+
+    const updatedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(updatedVariant?.stock, 5, "a full refund must restock the order (F-036)");
+  });
+});
+
+// F-283 fix (release-hardening order-lifecycle-payment-integrity): a
+// RAZORPAY order doesn't reserve stock at checkout time (see
+// create-order.ts's design note) — two shoppers can both reach the
+// Razorpay modal and both pay for the literal last unit before either's
+// /verify runs. Rather than rearchitect stock reservation (the owner-
+// decision alternative the audit itself offered), the loser of the stock
+// race is still marked PAID — the money was genuinely captured — but is
+// now honestly flagged instead of silently promised a shipment that can't
+// happen: an AdminNotification, an adminNotes marker, and a different
+// customer email (see notify.ts) and /verify response field.
+describe("F-283: two Razorpay payments racing for the last unit", () => {
+  it("the payment that loses the stock race is still PAID (money was captured) but flagged as a conflict, not silently oversold", async () => {
+    const { variant } = await createActiveProductWithVariant({ stock: 1 });
+
+    async function createPendingOrderFor(email: string) {
+      const order = await createOrderFromCart({
+        items: [{ variantId: variant.id, quantity: 1 }],
+        email,
+        shippingAddress: {
+          name: "Buyer",
+          line1: "1 Test Street",
+          city: "Hyderabad",
+          state: "Telangana",
+          pincode: "500032",
+          country: "IN",
+        },
+        paymentMethod: "RAZORPAY",
+      });
+      createdOrderIds.push(order.id);
+      const razorpayOrderId = `order_${randomUUID().slice(0, 12)}`;
+      await db.order.update({ where: { id: order.id }, data: { razorpayOrderId } });
+      return { order, razorpayOrderId };
+    }
+
+    // Both shoppers reach checkout and both are handed a Razorpay order
+    // for the same variant — createOrderFromCart never reserves RAZORPAY
+    // stock, so nothing here has claimed the one unit yet.
+    const buyerA = await createPendingOrderFor("race-buyer-a@example.com");
+    const buyerB = await createPendingOrderFor("race-buyer-b@example.com");
+
+    async function verify(order: { number: string }, razorpayOrderId: string) {
+      const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+      const signature = createHmac("sha256", TEST_KEY_SECRET).update(`${razorpayOrderId}|${paymentId}`).digest("hex");
+      return withEnv({ RAZORPAY_KEY_SECRET: TEST_KEY_SECRET }, () =>
+        verifyRoute(
+          jsonRequest("http://localhost/api/checkout/verify", {
+            orderNumber: order.number,
+            razorpayPaymentId: paymentId,
+            razorpayOrderId,
+            razorpaySignature: signature,
+          }),
+        ),
+      );
+    }
+
+    // Both shoppers pay; A's /verify happens to land first.
+    const responseA = await verify(buyerA.order, buyerA.razorpayOrderId);
+    assert.equal(responseA.status, 200);
+    const dataA = (await responseA.json()) as { ok: boolean; stockConflict: boolean };
+    assert.equal(dataA.stockConflict, false, "the winner must not be flagged");
+
+    const responseB = await verify(buyerB.order, buyerB.razorpayOrderId);
+    assert.equal(responseB.status, 200, "the loser's payment was still genuinely captured — /verify must not fail it");
+    const dataB = (await responseB.json()) as { ok: boolean; stockConflict: boolean };
+    assert.equal(dataB.stockConflict, true, "the loser must be flagged so the customer isn't promised a shipment");
+
+    const dbOrderB = await db.order.findUniqueOrThrow({ where: { id: buyerB.order.id } });
+    assert.equal(dbOrderB.status, "PAID", "the loser was charged for real — the order must still show PAID, not silently fail");
+    assert.match(dbOrderB.adminNotes ?? "", /STOCK CONFLICT/);
+
+    const conflictNotification = await db.adminNotification.findFirst({
+      where: { type: "order_stock_conflict", metadata: { contains: dbOrderB.number } },
+    });
+    assert.ok(conflictNotification, "an admin notification must be raised so a human resolves the conflict");
+
+    const finalVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(finalVariant?.stock, 0, "stock must be decremented exactly once and never go negative");
+  });
+});
+
 describe("POST /api/cron/cancel-stale-orders (Phase D3)", () => {
   it("401s without the bearer secret", async () => {
     await withEnv({ CRON_SECRET: "cron-test-secret" }, async () => {
@@ -758,5 +1200,90 @@ describe("POST /api/cron/cancel-stale-orders (Phase D3)", () => {
     assert.equal((await db.order.findUnique({ where: { id: staleOrder.id } }))?.status, "CANCELLED");
     assert.equal((await db.order.findUnique({ where: { id: freshOrder.id } }))?.status, "PENDING_PAYMENT");
     assert.equal((await db.order.findUnique({ where: { id: orderRequestOrder.id } }))?.status, "PROCESSING");
+  });
+
+  // F-225 fix: a stale PENDING_PAYMENT order whose payment Razorpay
+  // reports as actually "captured" (the browser callback was lost, e.g.
+  // the tab closed mid-UPI-app-switch) must be recovered, not cancelled.
+  it("recovers (marks PAID, decrements stock) a stale order Razorpay reports as captured, instead of cancelling it", async () => {
+    const { order, variant, razorpayOrderId } = await createPendingRazorpayOrder(5);
+    const fortyMinutesAgo = new Date(Date.now() - 40 * 60 * 1000);
+    await db.order.update({ where: { id: order.id }, data: { createdAt: fortyMinutesAgo } });
+
+    const capturedPaymentId = `pay_${randomUUID().slice(0, 12)}`;
+    setRazorpayClientForTesting({
+      orders: {
+        create: async () => {
+          throw new Error("not exercised by this test");
+        },
+        fetchPayments: async (fetchedOrderId) => {
+          assert.equal(fetchedOrderId, razorpayOrderId);
+          return { items: [{ id: capturedPaymentId, status: "captured" }] };
+        },
+      },
+    });
+
+    try {
+      await withEnv(
+        { CRON_SECRET: "cron-test-secret", RAZORPAY_KEY_ID: "rzp_test_cron", RAZORPAY_KEY_SECRET: "cron-test-secret-key" },
+        async () => {
+          const response = await cronPost(
+            new Request("http://localhost/api/cron/cancel-stale-orders", {
+              headers: { authorization: "Bearer cron-test-secret" },
+            }),
+          );
+          assert.equal(response.status, 200);
+          const data = (await response.json()) as { ok: boolean; cancelled: number; recovered: number };
+          assert.equal(data.ok, true);
+          assert.ok(data.recovered >= 1, `expected at least 1 recovered order, got ${data.recovered}`);
+        },
+      );
+    } finally {
+      setRazorpayClientForTesting(null);
+    }
+
+    const dbOrder = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    assert.equal(dbOrder.status, "PAID", "a captured-but-unreported payment must recover the order, not cancel it");
+    assert.equal(dbOrder.razorpayPaymentId, capturedPaymentId);
+
+    const updatedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(updatedVariant?.stock, 4, "recovering the order must decrement stock exactly once");
+  });
+
+  it("skips (does not cancel) an order whose Razorpay check fails, leaving it for the next run", async () => {
+    const { order, razorpayOrderId } = await createPendingRazorpayOrder(5);
+    const fortyMinutesAgo = new Date(Date.now() - 40 * 60 * 1000);
+    await db.order.update({ where: { id: order.id }, data: { createdAt: fortyMinutesAgo } });
+
+    setRazorpayClientForTesting({
+      orders: {
+        create: async () => {
+          throw new Error("not exercised by this test");
+        },
+        fetchPayments: async (fetchedOrderId) => {
+          assert.equal(fetchedOrderId, razorpayOrderId);
+          throw new Error("Razorpay API unreachable");
+        },
+      },
+    });
+
+    try {
+      await withEnv(
+        { CRON_SECRET: "cron-test-secret", RAZORPAY_KEY_ID: "rzp_test_cron", RAZORPAY_KEY_SECRET: "cron-test-secret-key" },
+        async () => {
+          const response = await cronPost(
+            new Request("http://localhost/api/cron/cancel-stale-orders", {
+              headers: { authorization: "Bearer cron-test-secret" },
+            }),
+          );
+          assert.equal(response.status, 200);
+        },
+      );
+    } finally {
+      setRazorpayClientForTesting(null);
+    }
+
+    const dbOrder = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    assert.equal(dbOrder.status, "PENDING_PAYMENT", "an inconclusive Razorpay check must never be treated as 'safe to cancel'");
   });
 });

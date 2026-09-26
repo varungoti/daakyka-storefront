@@ -59,7 +59,21 @@ function confirmedLabel(paymentMethod: PaymentMethod): string {
   return paymentMethod === "ORDER_REQUEST" ? "Order confirmed" : "Payment confirmed";
 }
 
-export function getOrderTimeline(status: OrderStatus, paymentMethod: PaymentMethod): OrderTimeline {
+export function getOrderTimeline(
+  status: OrderStatus,
+  paymentMethod: PaymentMethod,
+  /**
+   * F-141 fix (release-hardening order-lifecycle-payment-integrity):
+   * whether this order ever actually captured a Razorpay payment
+   * (`razorpayPaymentId !== null`) — irrelevant for ORDER_REQUEST, so it
+   * only changes the CANCELLED case below, and only for RAZORPAY. Default
+   * `true` (unchanged behaviour) so every existing caller/test that
+   * doesn't pass it keeps reading exactly as before; the account order
+   * page (the only place a shopper actually sees this) passes the real
+   * value.
+   */
+  hasCapturedPayment = true,
+): OrderTimeline {
   switch (status) {
     case "PENDING_PAYMENT": {
       const isOrderRequest = paymentMethod === "ORDER_REQUEST";
@@ -165,7 +179,7 @@ export function getOrderTimeline(status: OrderStatus, paymentMethod: PaymentMeth
         ],
       };
 
-    case "CANCELLED":
+    case "CANCELLED": {
       // Only "Placed" is asserted as fact. CANCELLED is reachable from
       // PENDING_PAYMENT, PAID, *or* PROCESSING (ORDER_STATUS_TRANSITIONS
       // in status-transitions.ts), and this app has no status-history
@@ -173,15 +187,25 @@ export function getOrderTimeline(status: OrderStatus, paymentMethod: PaymentMeth
       // cancellation isn't knowable here, and claiming one would
       // sometimes be false. Same "don't invent what isn't verifiable"
       // rule as the courier-link decision (courier-tracking.ts).
+      //
+      // F-141 fix: a RAZORPAY order that reached CANCELLED without ever
+      // capturing a payment (an abandoned/failed checkout attempt, per
+      // create-order.ts and the stale-order cron) is the one case this
+      // *does* know for certain — and "any eligible refund will be
+      // issued" is actively alarming/wrong copy for a shopper who was
+      // never actually charged.
+      const neverPaid = paymentMethod === "RAZORPAY" && !hasCapturedPayment;
       return {
         steps: [placedStep()],
         terminal: {
           tone: "cancelled",
-          label: "Order cancelled",
-          description:
-            "This order was cancelled. If you were charged, any eligible refund will be issued to your original payment method.",
+          label: neverPaid ? "Payment not completed" : "Order cancelled",
+          description: neverPaid
+            ? "Payment was not completed for this order, so no charge was made. You can place a new order any time."
+            : "This order was cancelled. If you were charged, any eligible refund will be issued to your original payment method.",
         },
       };
+    }
 
     case "REFUNDED":
       // Unlike CANCELLED, REFUNDED is reachable only from PAID (see

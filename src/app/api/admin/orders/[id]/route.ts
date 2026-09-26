@@ -8,6 +8,7 @@ import {
   OrderNotFoundError,
   OrderUpdateConflictError,
   orderUpdateSchema,
+  RefundAcknowledgementRequiredError,
   updateOrderAdmin,
 } from "@/lib/orders/admin-orders";
 import { InvalidOrderStatusTransitionError } from "@/lib/orders/status-transitions";
@@ -61,7 +62,11 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     if (err instanceof OrderNotFoundError || isRecordNotFound(err)) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
-    if (err instanceof InvalidOrderStatusTransitionError || err instanceof MissingTrackingInfoError) {
+    if (
+      err instanceof InvalidOrderStatusTransitionError ||
+      err instanceof MissingTrackingInfoError ||
+      err instanceof RefundAcknowledgementRequiredError
+    ) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
     if (err instanceof OrderUpdateConflictError) {

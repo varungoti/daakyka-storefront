@@ -3,9 +3,9 @@ import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import type { Order, OrderItem, OrderStatus, PaymentMethod } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
-import { releaseDiscountRedemption } from "@/lib/discounts";
 import { assertValidOrderStatusTransition, orderStatusTimestampField } from "@/lib/orders/status-transitions";
 import { buildOrdersCsv, type OrderCsvRow } from "@/lib/orders/csv";
+import { applyPaidSideEffects, releaseOrderInventory } from "@/lib/orders/payment-transitions";
 
 /**
  * Phase D4: admin order listing, detail, status-transition and CSV-export
@@ -71,6 +71,28 @@ export class OrderUpdateConflictError extends Error {
   constructor(id: string) {
     super(`Order ${id} was updated concurrently — please refresh and try again`);
     this.name = "OrderUpdateConflictError";
+  }
+}
+
+/**
+ * F-282 fix (release-hardening order-lifecycle-payment-integrity): a paid
+ * Razorpay order's status has never had anything to do with the money —
+ * nothing in this codebase calls Razorpay's refund API — so setting one to
+ * CANCELLED or REFUNDED used to silently move zero rupees while the
+ * customer-facing timeline (src/lib/orders/timeline.ts) told the shopper
+ * "This order was refunded." Rather than either fully blocking the
+ * transition (which would leave an admin with no way to close an order
+ * whose refund.processed webhook was never wired up in the Razorpay
+ * dashboard) or silently allowing it, updateOrderAdmin now requires the
+ * caller to explicitly acknowledge that no money moves automatically —
+ * see orderUpdateSchema's `acknowledgeExternalRefund`.
+ */
+export class RefundAcknowledgementRequiredError extends Error {
+  constructor() {
+    super(
+      "This only changes the order status — it does NOT refund the customer. Refund the payment in Razorpay first, then confirm.",
+    );
+    this.name = "RefundAcknowledgementRequiredError";
   }
 }
 
@@ -389,6 +411,18 @@ export const orderUpdateSchema = z
     trackingNumber: z.string().trim().min(1).max(100).optional(),
     courier: z.string().trim().min(1).max(100).optional(),
     adminNotes: z.string().trim().max(5000).nullable().optional(),
+    // F-282 fix: required (true) whenever this update moves a paid
+    // RAZORPAY order to CANCELLED/REFUNDED — see
+    // RefundAcknowledgementRequiredError's doc comment.
+    acknowledgeExternalRefund: z.boolean().optional(),
+    // F-339 fix: the `updatedAt` the caller's page/form was loaded with.
+    // When present, updateOrderAdmin rejects the whole update with
+    // OrderUpdateConflictError if the order has changed since — e.g. a
+    // colleague saved a note a moment ago from another tab — instead of
+    // silently overwriting whatever that concurrent edit touched.
+    // Optional so callers that don't track it (or don't care) are
+    // unaffected.
+    updatedAt: z.coerce.date().optional(),
   })
   .refine((data) => data.status !== undefined || data.trackingNumber !== undefined || data.courier !== undefined || data.adminNotes !== undefined, {
     message: "At least one field (status, trackingNumber, courier, adminNotes) is required",
@@ -397,30 +431,45 @@ export const orderUpdateSchema = z
 export type OrderUpdateInput = z.infer<typeof orderUpdateSchema>;
 
 export async function updateOrderAdmin(id: string, input: OrderUpdateInput, userId: string): Promise<Order> {
-  const existing = await db.order.findUnique({ where: { id }, include: { items: true } });
+  const existing = await db.order.findUnique({
+    where: { id },
+    include: { items: true, appliedDiscount: true },
+  });
   if (!existing) throw new OrderNotFoundError(id);
 
+  // F-339 fix: a caller that tracked the `updatedAt` its page/form was
+  // loaded with is telling us "reject this if the order has changed since
+  // I last read it" — checked up front, before any validation below, so a
+  // stale save never even gets to overwrite adminNotes/tracking/etc. with
+  // whatever this caller last saw.
+  if (input.updatedAt !== undefined && input.updatedAt.getTime() !== existing.updatedAt.getTime()) {
+    throw new OrderUpdateConflictError(id);
+  }
+
   const data: Prisma.OrderUpdateInput = {};
-  // Finding B (release-hardening): an ORDER_REQUEST order decrements stock
-  // immediately at creation (see createOrderFromCart's docstring) because
-  // it has no payment step to gate on — unlike a RAZORPAY order, which
-  // never decrements until payment is verified, so cancelling one
-  // pre-payment has nothing to give back (see the cancel-stale-orders
-  // cron). If an ORDER_REQUEST order is cancelled before it ships, that
-  // stock was never actually sold, so it's released back to inventory
-  // here. PROCESSING -> CANCELLED is the only path to CANCELLED an
-  // ORDER_REQUEST order can take (see status-transitions.ts — SHIPPED has
-  // no CANCELLED edge), so this is the only point its stock was ever
-  // committed, and `restockItems` is only ever computed once per order.
-  let restockItems: { variantId: string; quantity: number }[] | null = null;
-  // Release-hardening F7: an ORDER_REQUEST order's discount redemption (if
-  // any) is committed immediately at creation for the same reason its
-  // stock is — see src/lib/discounts/index.ts's module doc comment. If
-  // that order is cancelled before shipping, release the redemption back
-  // onto the code right alongside the stock restock above, so a
+  // Finding B (release-hardening) / F-036 fix: an ORDER_REQUEST order
+  // decrements stock immediately at creation (see createOrderFromCart's
+  // docstring) because it has no payment step to gate on; a RAZORPAY
+  // order decrements it once at its PAID transition (verify/webhook, or
+  // the manual PENDING_PAYMENT -> PAID case below) and keeps it committed
+  // through PROCESSING. Either way, once stock has actually been taken
+  // from inventory, cancelling or refunding the order before it ships
+  // must give it back — `stockCommitted` below is true for exactly the
+  // states that implies for each payment method.
+  // Release-hardening F7 / F-036 fix: same reasoning as stock — an
+  // ORDER_REQUEST order's discount redemption is committed at creation, a
+  // RAZORPAY order's at PAID — `releaseOrderInventory` (below) releases it
+  // alongside the stock restock, whenever `restockItems` is non-null, so a
   // usage-capped code isn't permanently short one redemption for an order
-  // that never actually shipped.
-  let shouldReleaseDiscount = false;
+  // that never actually shipped. (It's a no-op when there's no redemption
+  // to release, e.g. no discount was ever applied.)
+  let restockItems: { variantId: string; quantity: number }[] | null = null;
+  // F-036 fix: an admin marking a RAZORPAY order PENDING_PAYMENT -> PAID
+  // by hand (e.g. reconciling a payment the webhook never delivered) used
+  // to skip stock/discount entirely — the order could then ship with
+  // nothing ever decremented. Routed through the same
+  // applyPaidSideEffects used by /api/checkout/verify and the webhook.
+  let isManualPaidTransition = false;
 
   if (input.status !== undefined && input.status !== existing.status) {
     assertValidOrderStatusTransition(existing.status, input.status);
@@ -431,6 +480,19 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
         throw new MissingTrackingInfoError();
       }
     }
+
+    // F-282 fix: a paid Razorpay order's status has no effect on the
+    // customer's money — see RefundAcknowledgementRequiredError's doc
+    // comment. Gate this before anything else runs.
+    if (
+      existing.paymentMethod === "RAZORPAY" &&
+      existing.razorpayPaymentId !== null &&
+      (input.status === "CANCELLED" || input.status === "REFUNDED") &&
+      !input.acknowledgeExternalRefund
+    ) {
+      throw new RefundAcknowledgementRequiredError();
+    }
+
     data.status = input.status;
     // F-334: record when this step was actually reached, so the
     // customer-facing timeline (wave-4's order-status-workflow-and-
@@ -440,11 +502,21 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
       data[timestampField] = new Date();
     }
 
-    if (existing.paymentMethod === "ORDER_REQUEST" && input.status === "CANCELLED") {
+    const stockCommitted =
+      existing.paymentMethod === "ORDER_REQUEST" ||
+      (existing.paymentMethod === "RAZORPAY" && (existing.status === "PAID" || existing.status === "PROCESSING"));
+    if ((input.status === "CANCELLED" || input.status === "REFUNDED") && stockCommitted) {
       restockItems = existing.items
         .filter((item): item is typeof item & { variantId: string } => item.variantId !== null)
         .map((item) => ({ variantId: item.variantId, quantity: item.quantity }));
-      shouldReleaseDiscount = existing.discountId !== null;
+    }
+
+    if (
+      existing.paymentMethod === "RAZORPAY" &&
+      existing.status === "PENDING_PAYMENT" &&
+      input.status === "PAID"
+    ) {
+      isManualPaidTransition = true;
     }
   }
 
@@ -452,39 +524,45 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
   if (input.courier !== undefined) data.courier = input.courier;
   if (input.adminNotes !== undefined) data.adminNotes = input.adminNotes;
 
-  let updated: Order;
-  if ((restockItems && restockItems.length > 0) || shouldReleaseDiscount) {
-    const itemsToRestock = restockItems ?? [];
-    updated = await db.$transaction(async (tx) => {
-      // Optimistic-concurrency guard, scoped to only this restocking path
-      // (every other update below keeps the simple unconditional
-      // `db.order.update` — adding this guard there too would make an
-      // unrelated concurrent notes/tracking edit spuriously fail). The
-      // `status: existing.status` condition means only one of two
-      // concurrent cancel requests for the same order can ever win this
-      // update; the loser's `count` comes back 0 and it throws instead of
-      // also restocking — that's what prevents a double-restore.
+  // F-335 fix: this used to be two code paths — an unconditional
+  // `db.order.update` for most edits, and only the restock branch wrapped
+  // in a compare-and-swap transaction. That let two concurrent updates
+  // (e.g. one admin shipping an order the instant another admin cancels
+  // it) both "succeed": both read the same pre-update status, so both
+  // passed transition validation, and the unconditional `update` let
+  // whichever one committed last silently win with no 409 — see the F-335
+  // finding for the exact repro (SHIPPED with tracking info, but stock and
+  // the discount redemption already restored by the "losing" cancel).
+  // Every update now goes through the same guarded transaction, whether or
+  // not it restocks/releases anything.
+  //
+  // F-255 fix: an explicit timeout/maxWait, same as create-order.ts's
+  // checkout transaction — this one is normally a single-order update, but
+  // the restock branch used to be a per-line loop (now `releaseOrderInventory`'s
+  // single bulk statement — see its doc comment), so this is a cheap safety
+  // net rather than something this transaction is expected to need.
+  let restockedUnits = 0;
+  const updated: Order = await db.$transaction(
+    async (tx) => {
       const result = await tx.order.updateMany({
-        where: { id, status: existing.status },
+        where: { id, status: existing.status, updatedAt: existing.updatedAt },
         data,
       });
       if (result.count === 0) {
         throw new OrderUpdateConflictError(id);
       }
-      for (const item of itemsToRestock) {
-        await tx.productVariant.update({
-          where: { id: item.variantId },
-          data: { stock: { increment: item.quantity } },
-        });
+
+      if (isManualPaidTransition) {
+        await applyPaidSideEffects(tx, existing);
       }
-      if (shouldReleaseDiscount) {
-        await releaseDiscountRedemption(tx, id);
+      if (restockItems) {
+        const release = await releaseOrderInventory(tx, { id, discountId: existing.discountId, items: restockItems });
+        restockedUnits = release.restockedUnits;
       }
       return tx.order.findUniqueOrThrow({ where: { id } });
-    });
-  } else {
-    updated = await db.order.update({ where: { id }, data });
-  }
+    },
+    { timeout: 15_000, maxWait: 5_000 },
+  );
 
   await logAuditEvent({
     userId,
@@ -496,9 +574,8 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
       ...(input.trackingNumber !== undefined ? { trackingNumber: input.trackingNumber } : {}),
       ...(input.courier !== undefined ? { courier: input.courier } : {}),
       ...(input.adminNotes !== undefined ? { adminNotesUpdated: true } : {}),
-      ...(restockItems && restockItems.length > 0
-        ? { restockedUnits: restockItems.reduce((sum, item) => sum + item.quantity, 0) }
-        : {}),
+      ...(isManualPaidTransition ? { manualPaidTransition: true } : {}),
+      ...(restockedUnits > 0 ? { restockedUnits } : {}),
     },
   });
 

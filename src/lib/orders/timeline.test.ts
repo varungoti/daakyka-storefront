@@ -130,6 +130,36 @@ describe("getOrderTimeline", () => {
     assert.ok(refunded.steps.some((s) => s.id === "confirmed"));
   });
 
+  // F-141 fix (release-hardening order-lifecycle-payment-integrity): a
+  // RAZORPAY order that never actually captured a payment (an abandoned
+  // checkout the stale-order cron later auto-cancels) must not be told
+  // "any eligible refund will be issued" — nothing was ever charged.
+  it("F-141: a never-paid RAZORPAY order (hasCapturedPayment=false) gets neutral 'payment not completed' copy, not refund wording", () => {
+    const neverPaid = getOrderTimeline("CANCELLED", "RAZORPAY", false);
+    assert.equal(neverPaid.terminal!.tone, "cancelled");
+    assert.equal(neverPaid.terminal!.label, "Payment not completed");
+    assert.doesNotMatch(neverPaid.terminal!.description, /refund/i);
+  });
+
+  it("F-141: every other CANCELLED case keeps the original refund-eligible wording", () => {
+    // Default (omitted) stays exactly as before this fix existed —
+    // existing callers that don't pass the new argument are unaffected.
+    const defaulted = getOrderTimeline("CANCELLED", "RAZORPAY");
+    assert.equal(defaulted.terminal!.label, "Order cancelled");
+    assert.match(defaulted.terminal!.description, /refund/i);
+
+    // A RAZORPAY order that *did* capture a payment before being cancelled.
+    const paidThenCancelled = getOrderTimeline("CANCELLED", "RAZORPAY", true);
+    assert.equal(paidThenCancelled.terminal!.label, "Order cancelled");
+    assert.match(paidThenCancelled.terminal!.description, /refund/i);
+
+    // hasCapturedPayment is irrelevant for ORDER_REQUEST — it has no
+    // online payment step to have skipped.
+    const orderRequestCancelled = getOrderTimeline("CANCELLED", "ORDER_REQUEST", false);
+    assert.equal(orderRequestCancelled.terminal!.label, "Order cancelled");
+    assert.match(orderRequestCancelled.terminal!.description, /refund/i);
+  });
+
   it("exhaustively covers the real prisma OrderStatus enum (fails loudly if the schema adds a new value)", () => {
     const covered = new Set<OrderStatus>([
       "PENDING_PAYMENT",

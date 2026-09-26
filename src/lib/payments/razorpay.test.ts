@@ -1,8 +1,10 @@
 import { createHmac } from "node:crypto";
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import {
+  fetchCapturedPaymentId,
   isRazorpayConfigured,
+  setRazorpayClientForTesting,
   verifyPaymentSignature,
   verifyWebhookSignature,
 } from "@/lib/payments/razorpay";
@@ -103,6 +105,84 @@ describe("verifyWebhookSignature", () => {
   it("returns false when RAZORPAY_WEBHOOK_SECRET is unset", async () => {
     await withEnv({ RAZORPAY_WEBHOOK_SECRET: undefined }, async () => {
       assert.equal(await verifyWebhookSignature("{}", "somesignature"), false);
+    });
+  });
+});
+
+// F-225 fix (release-hardening order-lifecycle-payment-integrity): the
+// stale-order cron's reconciliation check.
+describe("fetchCapturedPaymentId", () => {
+  after(() => setRazorpayClientForTesting(null));
+
+  it("returns null (not configured) without ever calling the client", async () => {
+    await withEnv({ RAZORPAY_KEY_ID: undefined, RAZORPAY_KEY_SECRET: undefined }, async () => {
+      let called = false;
+      setRazorpayClientForTesting({
+        orders: {
+          create: async () => {
+            called = true;
+            throw new Error("should never be called");
+          },
+          fetchPayments: async () => {
+            called = true;
+            return { items: [] };
+          },
+        },
+      });
+      assert.equal(await fetchCapturedPaymentId("order_x"), null);
+      assert.equal(called, false);
+    });
+  });
+
+  it("returns the captured payment's id when one exists", async () => {
+    await withEnv({ RAZORPAY_KEY_ID: "rzp_test_x", RAZORPAY_KEY_SECRET: "secret" }, async () => {
+      setRazorpayClientForTesting({
+        orders: {
+          create: async () => {
+            throw new Error("not exercised by this test");
+          },
+          fetchPayments: async (orderId) => {
+            assert.equal(orderId, "order_x");
+            return {
+              items: [
+                { id: "pay_failed_1", status: "failed" },
+                { id: "pay_captured_1", status: "captured" },
+              ],
+            };
+          },
+        },
+      });
+      assert.equal(await fetchCapturedPaymentId("order_x"), "pay_captured_1");
+    });
+  });
+
+  it("returns null when nothing on the order was captured", async () => {
+    await withEnv({ RAZORPAY_KEY_ID: "rzp_test_x", RAZORPAY_KEY_SECRET: "secret" }, async () => {
+      setRazorpayClientForTesting({
+        orders: {
+          create: async () => {
+            throw new Error("not exercised by this test");
+          },
+          fetchPayments: async () => ({ items: [{ id: "pay_failed_1", status: "failed" }] }),
+        },
+      });
+      assert.equal(await fetchCapturedPaymentId("order_x"), null);
+    });
+  });
+
+  it("propagates a Razorpay API failure rather than reporting 'nothing captured'", async () => {
+    await withEnv({ RAZORPAY_KEY_ID: "rzp_test_x", RAZORPAY_KEY_SECRET: "secret" }, async () => {
+      setRazorpayClientForTesting({
+        orders: {
+          create: async () => {
+            throw new Error("not exercised by this test");
+          },
+          fetchPayments: async () => {
+            throw new Error("Razorpay API unreachable");
+          },
+        },
+      });
+      await assert.rejects(() => fetchCapturedPaymentId("order_x"), /unreachable/);
     });
   });
 });

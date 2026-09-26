@@ -172,6 +172,13 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
                     : "This is an unpaid order request: stock was decremented at checkout (no online payment step). Cancelling it will restore that stock to inventory."}
               </p>
             )}
+            {order.paymentMethod === "RAZORPAY" && order.razorpayPaymentId && (
+              <p className="mt-3 rounded-xl bg-lavender/30 p-3 text-xs text-muted">
+                {order.status === "CANCELLED" || order.status === "REFUNDED"
+                  ? "Stock (and any discount code use) taken when this order was paid has been restored to inventory. Cancelling or refunding never moves money — see the Razorpay dashboard link above."
+                  : "Stock for this order was decremented, and any discount code use committed, when payment was verified — not at checkout. Cancelling or refunding it here never moves money; refund the payment in Razorpay first."}
+              </p>
+            )}
           </section>
 
           <OrderDetailActions
@@ -181,6 +188,10 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
             courier={order.courier}
             adminNotes={order.adminNotes}
             canManage={canManage}
+            paymentMethod={order.paymentMethod}
+            hasCapturedPayment={order.razorpayPaymentId !== null}
+            razorpayPaymentUrl={order.razorpayPaymentUrl}
+            updatedAt={order.updatedAt.toISOString()}
           />
         </div>
       </div>

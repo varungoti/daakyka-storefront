@@ -242,94 +242,124 @@ export async function createOrderFromCart(input: CreateOrderFromCartInput): Prom
     const accessTokenHash = hashOrderAccessToken(accessToken);
 
     try {
-      const order = await db.$transaction(async (tx) => {
-        // Re-validate and decrement stock for ORDER_REQUEST orders inside
-        // the same transaction as the create, closing the race between the
-        // read above and this write (two concurrent order-requests for the
-        // last unit can't both succeed). Razorpay orders decrement later,
-        // once payment is actually verified.
-        if (input.paymentMethod === "ORDER_REQUEST") {
-          for (const line of lines) {
-            const result = await tx.productVariant.updateMany({
-              where: { id: line.variantId, stock: { gte: line.quantity } },
-              data: { stock: { decrement: line.quantity } },
-            });
-            if (result.count === 0) {
-              const current = await tx.productVariant.findUnique({ where: { id: line.variantId } });
+      const order = await db.$transaction(
+        async (tx) => {
+          // Re-validate and decrement stock for ORDER_REQUEST orders inside
+          // the same transaction as the create, closing the race between
+          // the read above and this write (two concurrent order-requests
+          // for the last unit can't both succeed). Razorpay orders
+          // decrement later, once payment is actually verified.
+          //
+          // F-255 fix (release-hardening order-lifecycle-payment-integrity):
+          // this used to be one `updateMany` round trip per cart line — for
+          // an institutional cart of ~28+ distinct lines (a realistic size
+          // for this business's hospital/school buyers; checkoutSchema
+          // allows up to 50), that many sequential round trips inside one
+          // interactive transaction risked exceeding Prisma's transaction
+          // timeout, throwing P2028 and failing the checkout outright. One
+          // bulk `UPDATE ... FROM unnest(...)` does the same conditional
+          // (`stock >= qty`) decrement for every line in a single round
+          // trip. Relies on `lines` never containing the same `variantId`
+          // twice — true because `repriceLines` above already merges
+          // duplicate variant ids into one line — since `UPDATE ... FROM`
+          // only applies one matching row per target, not a sum, if that
+          // ever changed.
+          if (input.paymentMethod === "ORDER_REQUEST") {
+            const variantIds = lines.map((line) => line.variantId);
+            const quantities = lines.map((line) => line.quantity);
+            const decremented = await tx.$queryRaw<{ id: string }[]>`
+              UPDATE "ProductVariant" AS v
+              SET stock = v.stock - x.qty, "updatedAt" = now()
+              FROM unnest(${variantIds}::text[], ${quantities}::int[]) AS x(id, qty)
+              WHERE v.id = x.id AND v.stock >= x.qty
+              RETURNING v.id
+            `;
+            if (decremented.length < lines.length) {
+              const decrementedIds = new Set(decremented.map((row) => row.id));
+              const shortLine = lines.find((line) => !decrementedIds.has(line.variantId));
+              // decremented.length < lines.length guarantees at least one
+              // line is missing from the returned set.
+              const current = await tx.productVariant.findUnique({ where: { id: shortLine!.variantId } });
               throw new OutOfStockError(
-                line.variantId,
-                line.productName,
-                line.quantity,
+                shortLine!.variantId,
+                shortLine!.productName,
+                shortLine!.quantity,
                 current?.stock ?? 0,
               );
             }
           }
-        }
 
-        const created = await tx.order.create({
-          data: {
-            number,
-            accessTokenHash,
-            // F-01: never a fabricated/looked-up value — undefined for a
-            // guest (Order.customerId simply stays null), or the real
-            // session id for a logged-in shopper. email/phone below are
-            // always exactly what was typed and validated by
-            // checkoutSchema, never substituted.
-            customerId: input.customerId,
-            email: input.email,
-            phone: input.phone,
-            shippingAddress: input.shippingAddress as unknown as Prisma.InputJsonValue,
-            subtotal,
-            shipping,
-            discount,
-            discountId: resolvedDiscount?.id,
-            discountCode: resolvedDiscount?.code,
-            utmSource: input.utmSource,
-            utmMedium: input.utmMedium,
-            utmCampaign: input.utmCampaign,
-            referrer: input.referrer,
-            total,
-            currency: "INR",
-            status: initialStatus,
-            paymentMethod: input.paymentMethod,
-            items: {
-              create: lines.map((line) => ({
-                variantId: line.variantId,
-                productName: line.productName,
-                variantLabel: line.variantLabel,
-                sku: line.sku,
-                unitPrice: line.unitPrice,
-                quantity: line.quantity,
-                imageUrl: line.imageUrl,
-              })),
+          const created = await tx.order.create({
+            data: {
+              number,
+              accessTokenHash,
+              // F-01: never a fabricated/looked-up value — undefined for a
+              // guest (Order.customerId simply stays null), or the real
+              // session id for a logged-in shopper. email/phone below are
+              // always exactly what was typed and validated by
+              // checkoutSchema, never substituted.
+              customerId: input.customerId,
+              email: input.email,
+              phone: input.phone,
+              shippingAddress: input.shippingAddress as unknown as Prisma.InputJsonValue,
+              subtotal,
+              shipping,
+              discount,
+              discountId: resolvedDiscount?.id,
+              discountCode: resolvedDiscount?.code,
+              utmSource: input.utmSource,
+              utmMedium: input.utmMedium,
+              utmCampaign: input.utmCampaign,
+              referrer: input.referrer,
+              total,
+              currency: "INR",
+              status: initialStatus,
+              paymentMethod: input.paymentMethod,
+              items: {
+                create: lines.map((line) => ({
+                  variantId: line.variantId,
+                  productName: line.productName,
+                  variantLabel: line.variantLabel,
+                  sku: line.sku,
+                  unitPrice: line.unitPrice,
+                  quantity: line.quantity,
+                  imageUrl: line.imageUrl,
+                })),
+              },
             },
-          },
-        });
-
-        // ORDER_REQUEST has no later payment step to defer to (same reason
-        // its stock decrement above happens immediately too) — commit the
-        // redemption now, in the same transaction, so a cap violation rolls
-        // back the whole order rather than ever being created unredeemed.
-        // RAZORPAY defers this to the PAID transition (/api/checkout/verify
-        // and the webhook) — see this module's header comment.
-        if (resolvedDiscount && input.paymentMethod === "ORDER_REQUEST") {
-          const commit = await commitDiscountRedemption(tx, {
-            discountId: resolvedDiscount.id,
-            maxRedemptions: resolvedDiscount.maxRedemptions,
-            maxRedemptionsPerCustomer: resolvedDiscount.maxRedemptionsPerCustomer,
-            orderId: created.id,
-            email: input.email,
-            customerId: input.customerId ?? null,
           });
-          if (!commit.ok) {
-            throw commit.reason === "already_used"
-              ? new DiscountAlreadyUsedError()
-              : new DiscountUsageLimitReachedError();
-          }
-        }
 
-        return created;
-      });
+          // ORDER_REQUEST has no later payment step to defer to (same
+          // reason its stock decrement above happens immediately too) —
+          // commit the redemption now, in the same transaction, so a cap
+          // violation rolls back the whole order rather than ever being
+          // created unredeemed. RAZORPAY defers this to the PAID transition
+          // (/api/checkout/verify and the webhook) — see this module's
+          // header comment.
+          if (resolvedDiscount && input.paymentMethod === "ORDER_REQUEST") {
+            const commit = await commitDiscountRedemption(tx, {
+              discountId: resolvedDiscount.id,
+              maxRedemptions: resolvedDiscount.maxRedemptions,
+              maxRedemptionsPerCustomer: resolvedDiscount.maxRedemptionsPerCustomer,
+              orderId: created.id,
+              email: input.email,
+              customerId: input.customerId ?? null,
+            });
+            if (!commit.ok) {
+              throw commit.reason === "already_used"
+                ? new DiscountAlreadyUsedError()
+                : new DiscountUsageLimitReachedError();
+            }
+          }
+
+          return created;
+        },
+        // F-255 fix: an explicit budget for this transaction rather than
+        // relying on Prisma's 5s/2s defaults — see the bulk-decrement
+        // comment above for why a big cart is the reason this needed
+        // raising, not just papering over the timeout.
+        { timeout: 15_000, maxWait: 5_000 },
+      );
 
       return {
         id: order.id,

@@ -192,3 +192,76 @@ describe("listOrdersForCustomer (release-hardening item 2)", () => {
     assert.equal(result.items.length, 1);
   });
 });
+
+// F-141 fix (release-hardening order-lifecycle-payment-integrity): a
+// RAZORPAY order row exists (PENDING_PAYMENT) before the shopper actually
+// pays — see create-order.ts. A dismissed Checkout.js popup or an
+// abandoned tab used to show up here forever as "Awaiting Payment", then
+// as an alarming "Order cancelled" once the stale-order cron auto-cancels
+// it. `razorpayPaymentId: null` is what tells a never-paid attempt apart
+// from a real order that happened to end CANCELLED/REFUNDED after payment
+// (which must still show).
+describe("listOrdersForCustomer excludes unpaid Razorpay attempts (F-141)", () => {
+  async function createRazorpayOrderForCustomer(customerId: string) {
+    const variant = await createActiveProductWithVariant(5);
+    const order = await createOrderFromCart({
+      items: [{ variantId: variant.id, quantity: 1 }],
+      email: `razorpay-buyer-${randomUUID().slice(0, 8)}@example.com`,
+      shippingAddress: SHIPPING_ADDRESS,
+      customerId,
+      paymentMethod: "RAZORPAY",
+    });
+    createdOrderIds.push(order.id);
+    return order;
+  }
+
+  it("hides a never-paid RAZORPAY order stuck at PENDING_PAYMENT", async () => {
+    const customer = await createCustomer();
+    await createRazorpayOrderForCustomer(customer.id);
+
+    const result = await listOrdersForCustomer(customer.id);
+    assert.equal(result.total, 0, "an unpaid Razorpay attempt must not appear as an order");
+    assert.deepEqual(result.items, []);
+  });
+
+  it("hides a never-paid RAZORPAY order the stale-order cron auto-cancelled", async () => {
+    const customer = await createCustomer();
+    const order = await createRazorpayOrderForCustomer(customer.id);
+    await db.order.update({
+      where: { id: order.id },
+      data: { status: "CANCELLED", adminNotes: "Auto-cancelled: Razorpay payment not completed within 30 minutes" },
+    });
+
+    const result = await listOrdersForCustomer(customer.id);
+    assert.equal(result.total, 0, "a cancelled-while-never-paid attempt must not appear either");
+  });
+
+  it("still shows a RAZORPAY order that was actually paid, even after it's later cancelled or refunded", async () => {
+    const customer = await createCustomer();
+    const paidThenCancelled = await createRazorpayOrderForCustomer(customer.id);
+    await db.order.update({
+      where: { id: paidThenCancelled.id },
+      data: { status: "CANCELLED", razorpayPaymentId: `pay_${randomUUID().slice(0, 12)}` },
+    });
+    const paidAndShipped = await createRazorpayOrderForCustomer(customer.id);
+    await db.order.update({
+      where: { id: paidAndShipped.id },
+      data: { status: "PAID", razorpayPaymentId: `pay_${randomUUID().slice(0, 12)}` },
+    });
+
+    const result = await listOrdersForCustomer(customer.id);
+    assert.equal(result.total, 2, "orders that genuinely captured a payment must always show, whatever their status");
+    const ids = result.items.map((item) => item.id);
+    assert.ok(ids.includes(paidThenCancelled.id));
+    assert.ok(ids.includes(paidAndShipped.id));
+  });
+
+  it("does not affect ORDER_REQUEST orders, which have no payment step to gate on", async () => {
+    const customer = await createCustomer();
+    const orderRequest = await createOrderForCustomer(customer.id);
+
+    const result = await listOrdersForCustomer(customer.id);
+    assert.equal(result.total, 1);
+    assert.equal(result.items[0].id, orderRequest.id);
+  });
+});
