@@ -1,12 +1,15 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { GripVertical } from "lucide-react";
 import { moveArrayItem, swapStepsForMove } from "@/lib/admin/reorder";
-import { summarizeFailuresByMessage, uploadFilesSequentially } from "@/lib/admin/retryable-upload";
+import { summarizeFailuresByMessage, uploadErrorMessage, uploadFilesSequentially } from "@/lib/admin/retryable-upload";
+import { prepareImageForUpload } from "@/lib/media/prepare-upload";
 import { MediaLibraryBrowser } from "@/components/admin/media-library-browser";
 import { cn } from "@/lib/utils";
+
+const MAX_ALT_LENGTH = 300;
 
 export interface ProductImageRow {
   id: string; // ProductImage id
@@ -21,6 +24,49 @@ interface GeneratedCandidate {
   id: string;
   url: string;
   selected: boolean;
+}
+
+export interface AttachImagePick {
+  id: string;
+  alt: string;
+}
+
+/**
+ * F-358 fix: threads a local `current` accumulator through `picks` instead
+ * of every attach reading the `images` prop fresh — the bug this replaces
+ * had `attachAsset` (called once per picked image, e.g. from the old
+ * per-candidate loop in `addSelectedCandidates`) do `onChange([...images,
+ * row])` on every call, each one rebuilding from the exact same stale,
+ * pre-loop `images` prop (a component's props/closures don't change mid-
+ * function just because `await` yielded — see staged-product-image-gallery
+ * .tsx's `onUploadFiles` for the same fix already applied to its own
+ * upload loop). The parent's setState then just overwrote the previous
+ * image with the next one, so only the *last* of several picked images
+ * actually stuck. Now every attach flow (upload, "Add selected to
+ * gallery", multi-pick from the library) folds its whole batch through
+ * this single accumulator and calls `onChange` once with the final list.
+ *
+ * Exported and parameterized on `postAttach` (rather than closing over
+ * `fetch`) so the accumulator logic itself is unit-testable without a
+ * DOM/network — same pattern as `uploadFilesSequentially` in
+ * src/lib/admin/retryable-upload.ts.
+ */
+export async function attachPicksSequentially(
+  picks: AttachImagePick[],
+  current: ProductImageRow[],
+  postAttach: (pick: AttachImagePick) => Promise<ProductImageRow | null>,
+): Promise<{ current: ProductImageRow[]; failureCount: number }> {
+  let next = current;
+  let failureCount = 0;
+  for (const pick of picks) {
+    const row = await postAttach(pick);
+    if (row === null) {
+      failureCount++;
+      continue;
+    }
+    next = [...next, row];
+  }
+  return { current: next, failureCount };
 }
 
 /**
@@ -57,47 +103,47 @@ export function ProductImageGallery({
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // F-366: the last known-*saved* alt text per image id, captured on focus
+  // — see saveAlt's doc comment for why a failed save can't just revert to
+  // `images` (it already holds the in-progress, unsaved keystrokes by the
+  // time a PATCH fails). A ref, not state: writing it must never itself
+  // trigger a render.
+  const altBackupRef = useRef<Map<string, string | null>>(new Map());
 
   async function attachAsset(assetId: string, altGuess: string) {
     await attachAssets([{ id: assetId, alt: altGuess }]);
   }
 
+  async function postAttachPick(pick: AttachImagePick): Promise<ProductImageRow | null> {
+    const response = await fetch(`/api/admin/products/${productId}/images`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mediaAssetId: pick.id, alt: pick.alt }),
+    });
+    if (!response.ok) return null;
+    const body = await response.json();
+    return {
+      id: body.image.id,
+      mediaId: body.image.mediaId,
+      url: body.image.media.url,
+      alt: body.image.alt,
+      color: body.image.color,
+      sortOrder: body.image.sortOrder,
+    };
+  }
+
   /** F-192: attaches several picked library images in one call — used by
-   * the media picker's "Add N images" multi-select. Each POST still
-   * happens one at a time (the API attaches one image per call), but
-   * every new row is folded into a *single* onChange([...images, ...new])
-   * at the end, rather than one onChange per image. That's deliberate:
-   * `images` is a prop closed over when this function was created, so a
-   * loop that called onChange after every await (as attachAsset used to,
-   * one call per selected image) would have each call rebuild
-   * `[...images, row]` from that same stale, pre-loop `images` — the
-   * parent's setState would then just overwrite the previous image with
-   * the next one, so only the *last* of several picked images would
-   * actually stick. */
-  async function attachAssets(picks: { id: string; alt: string }[]) {
-    const newRows: ProductImageRow[] = [];
-    for (const pick of picks) {
-      const response = await fetch(`/api/admin/products/${productId}/images`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mediaAssetId: pick.id, alt: pick.alt }),
-      });
-      if (!response.ok) {
-        setNotice(picks.length > 1 ? "Couldn't attach one or more images to the product." : "Couldn't attach image to the product.");
-        continue;
-      }
-      const body = await response.json();
-      newRows.push({
-        id: body.image.id,
-        mediaId: body.image.mediaId,
-        url: body.image.media.url,
-        alt: body.image.alt,
-        color: body.image.color,
-        sortOrder: body.image.sortOrder,
-      });
+   * the media picker's "Add N images" multi-select and by "Add selected to
+   * gallery" below. See attachPicksSequentially's doc comment (F-358) for
+   * why this always folds the whole batch through one accumulator and
+   * calls onChange once, rather than once per picked image. */
+  async function attachAssets(picks: AttachImagePick[]) {
+    const { current, failureCount } = await attachPicksSequentially(picks, images, postAttachPick);
+    if (failureCount > 0) {
+      setNotice(picks.length > 1 ? "Couldn't attach one or more images to the product." : "Couldn't attach image to the product.");
     }
-    if (newRows.length > 0) {
-      onChange([...images, ...newRows]);
+    if (failureCount < picks.length) {
+      onChange(current);
     }
   }
 
@@ -109,50 +155,68 @@ export function ProductImageGallery({
    * retries a 429'd file once, honouring its Retry-After, before giving
    * up; every distinct failure reason is then reported with the file
    * names it affected instead of a blanket message.
+   *
+   * F-178: `prepareImageForUpload` downscales/re-encodes each file in the
+   * browser before it's posted, so an ordinary 12-50MP phone photo (often
+   * 4.5-12MB as a JPEG) fits under Vercel's hard 4.5MB request-body limit
+   * for a Function instead of failing in production with a platform-level
+   * 413 the app never even sees — see src/lib/media/prepare-upload.ts.
+   *
+   * F-365: a failure's `message` now comes from the server's own JSON body
+   * (via uploadErrorMessage) instead of a fixed "Upload failed" string, so
+   * an admin sees *why* (bad file type, too large, ...), same as the
+   * customer review form already does.
    */
   async function onUploadFiles(files: FileList) {
     setUploading(true);
     setNotice(null);
 
-    const outcomes = await uploadFilesSequentially(Array.from(files), (file) => {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("usage", "PRODUCT");
-      return fetch("/api/admin/media", { method: "POST", body: form });
-    });
+    try {
+      const outcomes = await uploadFilesSequentially(Array.from(files), async (file) => {
+        const prepared = await prepareImageForUpload(file);
+        const form = new FormData();
+        form.append("file", prepared);
+        form.append("usage", "PRODUCT");
+        return fetch("/api/admin/media", { method: "POST", body: form });
+      });
 
-    const attached: { id: string; alt: string }[] = [];
-    const failures: { file: File; message: string }[] = [];
+      const attached: AttachImagePick[] = [];
+      const failures: { file: File; message: string }[] = [];
 
-    for (const { file, response, retriedAfterRateLimit } of outcomes) {
-      if (response.status === 503) {
-        failures.push({ file, message: "Image storage isn't configured yet — ask an admin to set up Cloudflare R2." });
-        continue;
+      for (const { file, response, retriedAfterRateLimit } of outcomes) {
+        if (response.status === 503) {
+          failures.push({ file, message: "Image storage isn't configured yet — ask an admin to set up Cloudflare R2." });
+          continue;
+        }
+        if (!response.ok) {
+          failures.push({
+            file,
+            message:
+              response.status === 429 && retriedAfterRateLimit
+                ? "Still being rate limited after waiting — try again shortly"
+                : await uploadErrorMessage(response),
+          });
+          continue;
+        }
+        const body = await response.json();
+        attached.push({ id: body.asset.id, alt: aiFields.name ?? "" });
       }
-      if (!response.ok) {
-        failures.push({
-          file,
-          message:
-            response.status === 429 && retriedAfterRateLimit
-              ? "Still being rate limited after waiting — try again shortly"
-              : "Upload failed",
-        });
-        continue;
-      }
-      const body = await response.json();
-      attached.push({ id: body.asset.id, alt: aiFields.name ?? "" });
-    }
 
-    if (attached.length > 0) {
-      // Note: this may itself set a notice (e.g. "Couldn't attach one or
-      // more images") — only overwrite it below when the upload stage
-      // itself also has something to report, so an attach-stage failure
-      // isn't silently cleared by an unconditional setNotice(null).
-      await attachAssets(attached);
+      if (attached.length > 0) {
+        // Note: this may itself set a notice (e.g. "Couldn't attach one or
+        // more images") — only overwrite it below when the upload stage
+        // itself also has something to report, so an attach-stage failure
+        // isn't silently cleared by an unconditional setNotice(null).
+        await attachAssets(attached);
+      }
+      const uploadNotice = summarizeFailuresByMessage(failures);
+      if (uploadNotice) setNotice(uploadNotice);
+    } finally {
+      // F-178: previously not in a finally, so a thrown error (a network
+      // failure `fetch` itself rejects on, a malformed response body) left
+      // "Uploading…" stuck forever with no way to retry.
+      setUploading(false);
     }
-    const uploadNotice = summarizeFailuresByMessage(failures);
-    if (uploadNotice) setNotice(uploadNotice);
-    setUploading(false);
   }
 
   async function onGenerate() {
@@ -191,11 +255,17 @@ export function ProductImageGallery({
     setGenerating(false);
   }
 
+  /**
+   * F-358 fix: used to loop `attachAsset` once per selected candidate,
+   * which is exactly the stale-closure bug attachPicksSequentially's doc
+   * comment describes — each call's `onChange([...images, row])` read the
+   * same pre-loop `images`, so only the last selected candidate actually
+   * stuck. Now the whole selection is one `attachAssets` call, which folds
+   * every pick through a single accumulator and calls onChange once.
+   */
   async function addSelectedCandidates() {
     const selected = candidates.filter((c) => c.selected);
-    for (const candidate of selected) {
-      await attachAsset(candidate.id, aiFields.name ?? "");
-    }
+    await attachAssets(selected.map((c) => ({ id: c.id, alt: aiFields.name ?? "" })));
     setCandidates([]);
   }
 
@@ -203,29 +273,56 @@ export function ProductImageGallery({
     onChange(images.map((img) => (img.id === id ? { ...img, ...patch } : img)));
   }
 
+  /** F-366 fix: used to fire-and-forget the PATCH and always keep the
+   * optimistic local update, even on failure — a rejected colour tag (or a
+   * network error) looked saved but silently reverted on the next reload.
+   * Reverts the optimistic update and surfaces a notice when the request
+   * doesn't succeed. */
   async function setColor(id: string, color: string) {
+    const previous = images.find((img) => img.id === id)?.color ?? null;
     updateImage(id, { color: color || null });
-    await fetch(`/api/admin/products/${productId}/images/${id}`, {
+    const response = await fetch(`/api/admin/products/${productId}/images/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ color: color || null }),
     });
+    if (!response.ok) {
+      updateImage(id, { color: previous });
+      setNotice("Couldn't update the colour tag — try again.");
+    }
   }
 
   async function setAlt(id: string, alt: string) {
     updateImage(id, { alt });
   }
 
+  /** F-366 fix: same as setColor above — a failed PATCH (e.g. the >300
+   * character server-side cap) used to be silently ignored, leaving the
+   * field looking saved until the next reload quietly reverted it.
+   * `altBackupRef` (set on focus, below) holds the last known-*saved*
+   * value to revert to, since by blur time `images` already reflects
+   * whatever the admin just typed, not the last successful save. */
   async function saveAlt(id: string, alt: string) {
-    await fetch(`/api/admin/products/${productId}/images/${id}`, {
+    const response = await fetch(`/api/admin/products/${productId}/images/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ alt: alt || null }),
     });
+    if (!response.ok) {
+      updateImage(id, { alt: altBackupRef.current.get(id) ?? null });
+      setNotice("Couldn't save the alt text — try again.");
+    }
   }
 
+  /** F-366 fix: used to update the UI unconditionally, even when the
+   * DELETE failed — the image looked removed until the next reload brought
+   * it back. */
   async function remove(id: string) {
-    await fetch(`/api/admin/products/${productId}/images/${id}`, { method: "DELETE" });
+    const response = await fetch(`/api/admin/products/${productId}/images/${id}`, { method: "DELETE" });
+    if (!response.ok) {
+      setNotice("Couldn't remove that image — try again.");
+      return;
+    }
     onChange(images.filter((img) => img.id !== id));
   }
 
@@ -432,9 +529,11 @@ export function ProductImageGallery({
               </select>
               <input
                 value={img.alt ?? ""}
+                onFocus={() => altBackupRef.current.set(img.id, img.alt)}
                 onChange={(e) => setAlt(img.id, e.target.value)}
                 onBlur={(e) => saveAlt(img.id, e.target.value)}
                 placeholder="Alt text"
+                maxLength={MAX_ALT_LENGTH}
                 className="w-full rounded border border-border p-1 text-xs"
               />
               <div className="flex items-center justify-between text-[11px]">

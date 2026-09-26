@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { summarizeFailuresByMessage, uploadFilesSequentially } from "@/lib/admin/retryable-upload";
+import { summarizeFailuresByMessage, uploadErrorMessage, uploadFilesSequentially } from "@/lib/admin/retryable-upload";
 
 function file(name: string): File {
   return new File(["x"], name, { type: "image/png" });
@@ -81,6 +81,30 @@ describe("uploadFilesSequentially (F-324)", () => {
     assert.equal(outcomes[0].response.ok, true);
     assert.equal(outcomes[1].response.ok, false);
     assert.equal(outcomes[2].response.ok, true);
+  });
+});
+
+describe("uploadErrorMessage (F-365)", () => {
+  it("returns the server's own JSON error message", async () => {
+    const response = new Response(JSON.stringify({ error: "Unsupported file type — use JPEG, PNG, WebP, or AVIF" }), {
+      status: 400,
+    });
+    assert.equal(await uploadErrorMessage(response), "Unsupported file type — use JPEG, PNG, WebP, or AVIF");
+  });
+
+  it("falls back to a size-specific message for a non-JSON 413 (Vercel's own platform response)", async () => {
+    const response = new Response("Request Entity Too Large\n\nFUNCTION_PAYLOAD_TOO_LARGE", { status: 413 });
+    assert.equal(await uploadErrorMessage(response), "Image is too large to upload");
+  });
+
+  it("falls back to a generic message for a non-JSON, non-413 failure", async () => {
+    const response = new Response("Internal Server Error", { status: 500 });
+    assert.equal(await uploadErrorMessage(response), "Upload failed");
+  });
+
+  it("falls back to a generic message when the JSON body has no error field", async () => {
+    const response = new Response(JSON.stringify({ ok: false }), { status: 500 });
+    assert.equal(await uploadErrorMessage(response), "Upload failed");
   });
 });
 

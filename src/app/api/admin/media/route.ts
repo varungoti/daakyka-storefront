@@ -9,7 +9,16 @@ import { getHeroSlideAssetIds, saveMediaAsset, StorageNotConfiguredForMediaError
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 
 const ALLOWED_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+// F-178: was 10MB, which a request body can never actually reach on
+// production — Vercel's own hard limit for a Function's request body is
+// 4.5MB (vercel.com/docs/functions/limitations), so anything between
+// 4.5MB and 10MB used to pass this route's own check and then get
+// rejected by the platform itself, before this code ever ran, with a
+// non-JSON 413 the admin UI couldn't explain. 4MB leaves headroom under
+// that platform ceiling for multipart/form-data overhead. The client-side
+// downscale in src/lib/media/prepare-upload.ts targets well under this so
+// a real phone photo rarely even reaches this check.
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 const MEDIA_USAGE_VALUES = new Set<string>(Object.values(MediaUsage));
 
 /**
@@ -138,7 +147,7 @@ export async function POST(request: Request) {
 
   const contentLength = request.headers.get("content-length");
   if (contentLength && Number(contentLength) > MAX_UPLOAD_BYTES) {
-    return NextResponse.json({ error: "File too large (max 10MB)" }, { status: 413 });
+    return NextResponse.json({ error: "File too large (max 4MB)" }, { status: 413 });
   }
 
   let form: FormData;
@@ -161,7 +170,7 @@ export async function POST(request: Request) {
   }
 
   if (file.size > MAX_UPLOAD_BYTES) {
-    return NextResponse.json({ error: "File too large (max 10MB)" }, { status: 413 });
+    return NextResponse.json({ error: "File too large (max 4MB)" }, { status: 413 });
   }
 
   const usageRaw = form.get("usage");

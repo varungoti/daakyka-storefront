@@ -2,6 +2,12 @@ import { revalidateTag } from "next/cache";
 import type { ReviewStatus } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
 import { db } from "@/lib/db";
+import {
+  deleteUnattachedMediaAsset,
+  MediaAssetAttachedError,
+  MediaAssetInUseError,
+  MediaAssetNotFoundError,
+} from "@/lib/media/store";
 import { PRODUCTS_CACHE_TAG, productCacheTag } from "@/lib/products";
 
 /**
@@ -83,10 +89,41 @@ function revalidateProductReviews(slug: string): void {
 async function loadReviewWithProductSlug(reviewId: string) {
   const review = await db.review.findUnique({
     where: { id: reviewId },
-    select: { id: true, status: true, product: { select: { slug: true } } },
+    select: { id: true, status: true, photoIds: true, product: { select: { slug: true } } },
   });
   if (!review) throw new ReviewNotFoundError();
   return review;
+}
+
+/**
+ * F-362 fix: a rejected review's photos used to just sit in R2/Postgres,
+ * publicly downloadable forever — nothing ever removed them.
+ * `deleteUnattachedMediaAsset` (src/lib/media/store.ts) already treats a
+ * REJECTED review's own photos as unattached (see its
+ * `isReferencedByNonRejectedReview` guard, F-357) specifically so they can
+ * be reclaimed the moment a review is actually rejected — this is that
+ * caller, using the exact same guarded path rather than reimplementing any
+ * of its checks. Best-effort per photo: an id that's somehow still
+ * referenced elsewhere, or already gone, must never fail the moderation
+ * action itself (the review's status change is the thing that matters
+ * here; a photo that couldn't be reclaimed just waits for
+ * scripts/cleanup-orphaned-media.ts, same as any other orphan).
+ */
+async function deleteRejectedReviewPhotos(photoIds: readonly string[]): Promise<void> {
+  for (const photoId of photoIds) {
+    try {
+      await deleteUnattachedMediaAsset(photoId);
+    } catch (error) {
+      if (
+        error instanceof MediaAssetNotFoundError ||
+        error instanceof MediaAssetInUseError ||
+        error instanceof MediaAssetAttachedError
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
 }
 
 /**
@@ -180,6 +217,11 @@ export async function rejectReview(
   // unconditionally costs little either way and keeps this function's
   // cache behavior simple rather than branching on the previous status.
   revalidateProductReviews(existing.product.slug);
+
+  // F-362: only after the status write above has actually committed
+  // REJECTED — deleteUnattachedMediaAsset's guard keys off the row's
+  // *current* status, so doing this any earlier would race the write.
+  await deleteRejectedReviewPhotos(existing.photoIds);
 
   return review;
 }

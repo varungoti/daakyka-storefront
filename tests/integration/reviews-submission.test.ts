@@ -294,6 +294,99 @@ describe("review submission + moderation (Phase D2)", () => {
     assert.ok(audit, "expected a reject audit log entry");
   });
 
+  // F-362: a rejected review's photos used to stay in Postgres/R2,
+  // publicly downloadable forever, since nothing ever removed them.
+  // rejectReview now reclaims them through deleteUnattachedMediaAsset
+  // (src/lib/media/store.ts) — its own guard (isReferencedByNonRejectedReview,
+  // F-357) is what makes this safe to call unconditionally: it only ever
+  // deletes a photo whose *only* review reference is now REJECTED.
+  it("rejectReview deletes the review's own (now-unreferenced) photos", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const customer = await db.customer.create({
+      data: { email: `d2-reject-photo-${unique}@example.com`, name: "Reject Photo Customer", passwordHash: "x" },
+    });
+    const reviewAsset = await db.mediaAsset.create({
+      data: {
+        key: `test/reject-photo-${unique}.webp`,
+        url: "https://example.test/reject-photo.webp",
+        usage: "REVIEW",
+        source: "UPLOAD",
+      },
+    });
+
+    let reviewId: string | undefined;
+    try {
+      const review = await createReview({
+        customerId: customer.id,
+        productId,
+        rating: 2,
+        title: "Review with a photo that gets rejected",
+        body: "This review attaches a photo and then gets rejected by moderation.",
+        photoAssetIds: [reviewAsset.id],
+      });
+      reviewId = review.id;
+
+      const stillThere = await db.mediaAsset.findUnique({ where: { id: reviewAsset.id } });
+      assert.ok(stillThere, "photo should exist before rejection");
+
+      await rejectReview(reviewId, adminId, "Not relevant");
+
+      const afterReject = await db.mediaAsset.findUnique({ where: { id: reviewAsset.id } });
+      assert.equal(afterReject, null, "photo should be deleted once its review is rejected");
+    } finally {
+      if (reviewId) await db.review.delete({ where: { id: reviewId } }).catch(() => {});
+      await db.mediaAsset.delete({ where: { id: reviewAsset.id } }).catch(() => {});
+      await db.customer.delete({ where: { id: customer.id } }).catch(() => {});
+    }
+  });
+
+  // F-362: rejecting a review whose photo is (unusually) also still
+  // referenced elsewhere — a hero slide is the simplest case to construct
+  // here — must not fail the moderation action itself; the photo is left
+  // for scripts/cleanup-orphaned-media.ts, same as any other MediaAssetInUseError.
+  it("rejectReview still succeeds even if one of its photos can't be deleted", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const customer = await db.customer.create({
+      data: { email: `d2-reject-inuse-photo-${unique}@example.com`, name: "Reject In-Use Photo Customer", passwordHash: "x" },
+    });
+    const reviewAsset = await db.mediaAsset.create({
+      data: {
+        key: `test/reject-inuse-photo-${unique}.webp`,
+        url: "https://example.test/reject-inuse-photo.webp",
+        usage: "REVIEW",
+        source: "UPLOAD",
+      },
+    });
+    // A category's `imageId` is a real MediaAsset relation (unlike the
+    // hero-slide snapshot) — the simplest way to make
+    // deleteUnattachedMediaAsset's MediaAssetInUseError guard trip.
+    await db.category.update({ where: { id: categoryId }, data: { imageId: reviewAsset.id } });
+
+    let reviewId: string | undefined;
+    try {
+      const review = await createReview({
+        customerId: customer.id,
+        productId,
+        rating: 3,
+        title: "Review whose photo is also a category image",
+        body: "This review's photo is deliberately also referenced elsewhere.",
+        photoAssetIds: [reviewAsset.id],
+      });
+      reviewId = review.id;
+
+      const result = await rejectReview(reviewId, adminId, "Not relevant");
+      assert.equal(result.status, "REJECTED");
+
+      const stillThere = await db.mediaAsset.findUnique({ where: { id: reviewAsset.id } });
+      assert.ok(stillThere, "an in-use photo must not be deleted, and must not block the reject");
+    } finally {
+      if (reviewId) await db.review.delete({ where: { id: reviewId } }).catch(() => {});
+      await db.category.update({ where: { id: categoryId }, data: { imageId: null } }).catch(() => {});
+      await db.mediaAsset.delete({ where: { id: reviewAsset.id } }).catch(() => {});
+      await db.customer.delete({ where: { id: customer.id } }).catch(() => {});
+    }
+  });
+
   // F-296: a REJECTED review no longer permanently locks the customer out
   // of the product with no way to fix it — resubmitting replaces the same
   // row (same id, reset to PENDING) rather than throwing AlreadyReviewedError,

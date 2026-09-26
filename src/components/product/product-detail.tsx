@@ -116,11 +116,19 @@ export function ProductDetail({
   // when the primary CTA row has scrolled out of the viewport.
   const ctaRowRef = useRef<HTMLDivElement>(null);
 
+  // F-363 fix: used to filter to img.color === selectedColor alone and
+  // fall back to *every* image once none matched — so a colour with its
+  // own tagged photos hid every untagged (shared) shot, and a colour with
+  // no photos of its own showed some other colour's photo as the main
+  // image instead. Untagged photos now always show for every colour,
+  // after that colour's own; only when a colour has neither its own nor
+  // any untagged photos does this fall back to showing everything.
   const gallery = useMemo<LightboxImage[]>(() => {
     const colorImages = product.images?.filter((img) => img.color === selectedColor) ?? [];
+    const untaggedImages = product.images?.filter((img) => !img.color) ?? [];
     const source =
-      colorImages.length > 0
-        ? colorImages
+      colorImages.length > 0 || untaggedImages.length > 0
+        ? [...colorImages, ...untaggedImages]
         : product.images && product.images.length > 0
           ? product.images
           : [{ url: product.image, alt: product.name }];

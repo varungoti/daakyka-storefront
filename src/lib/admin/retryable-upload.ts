@@ -70,6 +70,25 @@ export async function uploadFilesSequentially(
 }
 
 /**
+ * F-365 fix: reads a failed upload response's actual reason instead of a
+ * caller hardcoding a fixed "Upload failed" for every non-OK status — the
+ * server already returns a clear `{ error }` body (e.g. "Unsupported file
+ * type — use JPEG, PNG, WebP, or AVIF"), so this mirrors the pattern the
+ * customer review form already uses (product-detail.tsx's
+ * handlePhotoUpload) instead of dropping it. Vercel's own 413 response for
+ * a request body over its platform limit (F-178) isn't JSON, so a body
+ * that fails to parse falls back to a size-specific message for a 413 and
+ * a generic one otherwise.
+ */
+export async function uploadErrorMessage(response: Response): Promise<string> {
+  const body: unknown = await response.json().catch(() => null);
+  const error = body && typeof body === "object" && "error" in body ? (body as { error: unknown }).error : undefined;
+  if (typeof error === "string" && error) return error;
+  if (response.status === 413) return "Image is too large to upload";
+  return "Upload failed";
+}
+
+/**
  * Groups failed outcomes by a caller-chosen message, so several files
  * that failed for the same reason ("Image storage isn't configured yet",
  * "Still rate limited after waiting") are reported together as one line
