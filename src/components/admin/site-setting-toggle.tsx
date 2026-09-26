@@ -8,14 +8,22 @@ export function SiteSettingToggle({
   settingKey,
   enabled,
   label,
+  updatedAt = null,
 }: {
   settingKey: SettingKey;
   enabled: boolean;
   label: string;
+  /** F-343: the row's `updatedAt` as loaded by the server component that
+   * rendered this toggle (see getSettingUpdatedAt() in src/lib/settings) —
+   * sent back on save so a second admin's concurrent toggle of the same
+   * setting gets a 409 instead of silently winning or losing. Optional so
+   * any test that mounts this toggle directly keeps working unchanged. */
+  updatedAt?: Date | null;
 }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [isEnabled, setIsEnabled] = useState(enabled);
+  const [savedAt, setSavedAt] = useState(updatedAt);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const toggle = async () => {
@@ -25,11 +33,19 @@ export function SiteSettingToggle({
     const response = await fetch(`/api/admin/settings/${settingKey}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: next }),
+      body: JSON.stringify({ value: next, updatedAt: savedAt ? savedAt.toISOString() : undefined }),
     });
+    const body = await response.json().catch(() => ({}));
     if (response.ok) {
       setIsEnabled(next);
+      setSavedAt(body.updatedAt ? new Date(body.updatedAt) : null);
       router.refresh();
+    } else if (response.status === 409) {
+      // F-343: someone else already flipped this toggle — reflect the
+      // conflict instead of assuming this click won.
+      setErrorMessage(
+        typeof body.error === "string" ? body.error : "Changed by someone else — reload the page and try again.",
+      );
     } else {
       setErrorMessage("Couldn't save — try again.");
     }

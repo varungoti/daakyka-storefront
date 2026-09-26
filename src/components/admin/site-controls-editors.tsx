@@ -12,21 +12,49 @@ interface SaveSettingResult {
    * formatApiError() (see src/lib/validation/format-api-error.ts), not the
    * API's raw `{error: "Invalid value"}` boilerplate. */
   error?: string;
+  /** F-343: true specifically for a 409 "someone else already saved this"
+   * conflict — distinct from every other failure, which is either a
+   * validation error or a genuine outage. */
+  stale?: boolean;
+  /** F-343: the row's fresh `updatedAt` after this call — on success, so
+   * the *next* save from this same editor isn't instantly "stale" against
+   * its own last write; on a 409, so the editor could reload against the
+   * value that won (this route doesn't echo the winning content itself,
+   * only its timestamp, since only the caller knows this key's shape). */
+  updatedAt?: string | null;
 }
 
-async function saveSetting(key: SettingKey, value: unknown): Promise<SaveSettingResult> {
+async function saveSetting(key: SettingKey, value: unknown, updatedAt?: Date | null): Promise<SaveSettingResult> {
   const response = await fetch(`/api/admin/settings/${key}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ value }),
+    // F-343: send back the `updatedAt` this editor last loaded/saved so a
+    // save that's gone stale in the meantime (someone else saved this same
+    // key first) is rejected with 409 instead of silently winning.
+    body: JSON.stringify({ value, updatedAt: updatedAt ? updatedAt.toISOString() : undefined }),
   });
-  if (response.ok) return { ok: true };
+  const body = await response.json().catch(() => ({}));
+  if (response.ok) return { ok: true, updatedAt: body.updatedAt ?? null };
+  if (response.status === 409) {
+    return {
+      ok: false,
+      stale: true,
+      error: formatApiError(body, "Changed by someone else — reload and try again.").summary,
+    };
+  }
   // F-02: these editors used to discard the response body entirely and
   // show a static, guessed message regardless of what the server actually
   // rejected — now the real per-field reason (e.g. a too-long announcement
   // line) reaches the admin.
-  const body = await response.json().catch(() => ({}));
   return { ok: false, error: formatApiError(body, "Couldn't save.").summary };
+}
+
+/** F-343: after a save call, advance a field's tracked `updatedAt` to the
+ * server's fresh value on success, or leave it untouched on failure (a
+ * failed write never changed the row, so the token that was already stale
+ * — or already correct — stays exactly as good a guess as before). */
+function nextUpdatedAt(prev: Date | null, result: SaveSettingResult): Date | null {
+  return result.ok ? (result.updatedAt ? new Date(result.updatedAt) : null) : prev;
 }
 
 function SaveButton({ saving, saved }: { saving: boolean; saved: boolean }) {
@@ -41,9 +69,20 @@ function SaveButton({ saving, saved }: { saving: boolean; saved: boolean }) {
   );
 }
 
-export function AnnouncementEditor({ initialMessages }: { initialMessages: string[] }) {
+export function AnnouncementEditor({
+  initialMessages,
+  updatedAt = null,
+}: {
+  initialMessages: string[];
+  /** F-343: the "announcement.messages" row's `updatedAt` as loaded by the
+   * server component that rendered this editor — see
+   * getSettingUpdatedAt() in src/lib/settings. Optional so any test that
+   * mounts this editor directly keeps working unchanged. */
+  updatedAt?: Date | null;
+}) {
   const router = useRouter();
   const [messages, setMessages] = useState(initialMessages.join("\n"));
+  const [savedAt, setSavedAt] = useState(updatedAt);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -56,11 +95,19 @@ export function AnnouncementEditor({ initialMessages }: { initialMessages: strin
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
-    const result = await saveSetting("announcement.messages", value);
+    const result = await saveSetting("announcement.messages", value, savedAt);
     setSaving(false);
     if (result.ok) {
       setSaved(true);
+      setSavedAt(result.updatedAt ? new Date(result.updatedAt) : null);
       router.refresh();
+    } else if (result.stale) {
+      // F-343: someone else saved this key first — don't let this save
+      // silently discard it. router.refresh() re-fetches the page's
+      // server-rendered updatedAt/value for the *next* mount of this
+      // editor; this instance's own draft text is left alone so nothing
+      // the admin just typed is lost.
+      setErrorMessage(result.error ?? "Changed by someone else — reload the page and try again.");
     } else {
       setErrorMessage(result.error ?? "Couldn't save — check each line isn't empty or too long.");
     }
@@ -89,13 +136,23 @@ export function AnnouncementEditor({ initialMessages }: { initialMessages: strin
   );
 }
 
+type ContactSettingUpdatedAt = { phone: Date | null; whatsapp: Date | null; email: Date | null; address: Date | null };
+
 export function ContactEditor({
   initial,
+  updatedAt,
 }: {
   initial: { phone: string; whatsapp: string; email: string; address: string };
+  /** F-343: this form writes 4 independent SiteSetting rows — each needs
+   * its own optimistic-concurrency token, since another admin could have
+   * changed just one of them (e.g. only the phone number). */
+  updatedAt?: ContactSettingUpdatedAt;
 }) {
   const router = useRouter();
   const [values, setValues] = useState(initial);
+  const [savedAt, setSavedAt] = useState<ContactSettingUpdatedAt>(
+    updatedAt ?? { phone: null, whatsapp: null, email: null, address: null },
+  );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -104,17 +161,34 @@ export function ContactEditor({
     event.preventDefault();
     setSaving(true);
     setErrorMessage(null);
-    const results = await Promise.all([
-      saveSetting("contact.phone", values.phone),
-      saveSetting("contact.whatsapp", values.whatsapp),
-      saveSetting("contact.email", values.email),
-      saveSetting("contact.address", values.address),
+    const [phone, whatsapp, email, address] = await Promise.all([
+      saveSetting("contact.phone", values.phone, savedAt.phone),
+      saveSetting("contact.whatsapp", values.whatsapp, savedAt.whatsapp),
+      saveSetting("contact.email", values.email, savedAt.email),
+      saveSetting("contact.address", values.address, savedAt.address),
     ]);
+    const results = { phone, whatsapp, email, address };
     setSaving(false);
-    const failed = results.find((r) => !r.ok);
+    setSavedAt((prev) => ({
+      phone: results.phone.ok ? (results.phone.updatedAt ? new Date(results.phone.updatedAt) : null) : prev.phone,
+      whatsapp: results.whatsapp.ok
+        ? results.whatsapp.updatedAt
+          ? new Date(results.whatsapp.updatedAt)
+          : null
+        : prev.whatsapp,
+      email: results.email.ok ? (results.email.updatedAt ? new Date(results.email.updatedAt) : null) : prev.email,
+      address: results.address.ok
+        ? results.address.updatedAt
+          ? new Date(results.address.updatedAt)
+          : null
+        : prev.address,
+    }));
+    const failed = [phone, whatsapp, email, address].find((r) => !r.ok);
     if (!failed) {
       setSaved(true);
       router.refresh();
+    } else if (failed.stale) {
+      setErrorMessage(failed.error ?? "Changed by someone else — reload the page and try again.");
     } else {
       setErrorMessage(failed.error ?? "Couldn't save one or more fields — check the values.");
     }
@@ -167,8 +241,19 @@ export function ContactEditor({
   );
 }
 
+type LegalSettingUpdatedAt = {
+  grievanceName: Date | null;
+  grievanceDesignation: Date | null;
+  grievancePhone: Date | null;
+  grievanceEmail: Date | null;
+  gstin: Date | null;
+  stateCode: Date | null;
+  returnsWindowDays: Date | null;
+};
+
 export function LegalComplianceEditor({
   initial,
+  updatedAt,
 }: {
   initial: {
     grievanceName: string;
@@ -179,9 +264,22 @@ export function LegalComplianceEditor({
     stateCode: string;
     returnsWindowDays: number;
   };
+  /** F-343: 7 independent SiteSetting rows, each with its own token. */
+  updatedAt?: LegalSettingUpdatedAt;
 }) {
   const router = useRouter();
   const [values, setValues] = useState(initial);
+  const [savedAt, setSavedAt] = useState<LegalSettingUpdatedAt>(
+    updatedAt ?? {
+      grievanceName: null,
+      grievanceDesignation: null,
+      grievancePhone: null,
+      grievanceEmail: null,
+      gstin: null,
+      stateCode: null,
+      returnsWindowDays: null,
+    },
+  );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -190,20 +288,33 @@ export function LegalComplianceEditor({
     event.preventDefault();
     setSaving(true);
     setErrorMessage(null);
-    const results = await Promise.all([
-      saveSetting("grievance.name", values.grievanceName),
-      saveSetting("grievance.designation", values.grievanceDesignation),
-      saveSetting("grievance.phone", values.grievancePhone),
-      saveSetting("grievance.email", values.grievanceEmail),
-      saveSetting("legal.gstin", values.gstin),
-      saveSetting("legal.stateCode", values.stateCode),
-      saveSetting("returns.windowDays", values.returnsWindowDays),
-    ]);
+    const [grievanceName, grievanceDesignation, grievancePhone, grievanceEmail, gstin, stateCode, returnsWindowDays] =
+      await Promise.all([
+        saveSetting("grievance.name", values.grievanceName, savedAt.grievanceName),
+        saveSetting("grievance.designation", values.grievanceDesignation, savedAt.grievanceDesignation),
+        saveSetting("grievance.phone", values.grievancePhone, savedAt.grievancePhone),
+        saveSetting("grievance.email", values.grievanceEmail, savedAt.grievanceEmail),
+        saveSetting("legal.gstin", values.gstin, savedAt.gstin),
+        saveSetting("legal.stateCode", values.stateCode, savedAt.stateCode),
+        saveSetting("returns.windowDays", values.returnsWindowDays, savedAt.returnsWindowDays),
+      ]);
+    const results = { grievanceName, grievanceDesignation, grievancePhone, grievanceEmail, gstin, stateCode, returnsWindowDays };
     setSaving(false);
-    const failed = results.find((r) => !r.ok);
+    setSavedAt((prev) => ({
+      grievanceName: nextUpdatedAt(prev.grievanceName, results.grievanceName),
+      grievanceDesignation: nextUpdatedAt(prev.grievanceDesignation, results.grievanceDesignation),
+      grievancePhone: nextUpdatedAt(prev.grievancePhone, results.grievancePhone),
+      grievanceEmail: nextUpdatedAt(prev.grievanceEmail, results.grievanceEmail),
+      gstin: nextUpdatedAt(prev.gstin, results.gstin),
+      stateCode: nextUpdatedAt(prev.stateCode, results.stateCode),
+      returnsWindowDays: nextUpdatedAt(prev.returnsWindowDays, results.returnsWindowDays),
+    }));
+    const failed = Object.values(results).find((r) => !r.ok);
     if (!failed) {
       setSaved(true);
       router.refresh();
+    } else if (failed.stale) {
+      setErrorMessage(failed.error ?? "Changed by someone else — reload the page and try again.");
     } else {
       setErrorMessage(failed.error ?? "Couldn't save one or more fields — check the values.");
     }
@@ -287,13 +398,20 @@ export function LegalComplianceEditor({
   );
 }
 
+type ShippingSettingUpdatedAt = { flatRate: Date | null; freeAbove: Date | null };
+
 export function ShippingEditor({
   initial,
+  updatedAt,
 }: {
   initial: { flatRate: number; freeAbove: number };
+  updatedAt?: ShippingSettingUpdatedAt;
 }) {
   const router = useRouter();
   const [values, setValues] = useState(initial);
+  const [savedAt, setSavedAt] = useState<ShippingSettingUpdatedAt>(
+    updatedAt ?? { flatRate: null, freeAbove: null },
+  );
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -302,15 +420,22 @@ export function ShippingEditor({
     event.preventDefault();
     setSaving(true);
     setErrorMessage(null);
-    const results = await Promise.all([
-      saveSetting("shipping.flatRate", values.flatRate),
-      saveSetting("shipping.freeAbove", values.freeAbove),
+    const [flatRate, freeAbove] = await Promise.all([
+      saveSetting("shipping.flatRate", values.flatRate, savedAt.flatRate),
+      saveSetting("shipping.freeAbove", values.freeAbove, savedAt.freeAbove),
     ]);
+    const results = { flatRate, freeAbove };
     setSaving(false);
-    const failed = results.find((r) => !r.ok);
+    setSavedAt((prev) => ({
+      flatRate: nextUpdatedAt(prev.flatRate, results.flatRate),
+      freeAbove: nextUpdatedAt(prev.freeAbove, results.freeAbove),
+    }));
+    const failed = [flatRate, freeAbove].find((r) => !r.ok);
     if (!failed) {
       setSaved(true);
       router.refresh();
+    } else if (failed.stale) {
+      setErrorMessage(failed.error ?? "Changed by someone else — reload the page and try again.");
     } else {
       setErrorMessage(failed.error ?? "Couldn't save — values must be positive numbers.");
     }

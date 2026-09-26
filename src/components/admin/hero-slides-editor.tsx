@@ -320,9 +320,22 @@ function SlideCard({
   );
 }
 
-export function HeroSlidesEditor({ initialContent }: { initialContent: HeroSlidesContent }) {
+export function HeroSlidesEditor({
+  initialContent,
+  updatedAt = null,
+}: {
+  initialContent: HeroSlidesContent;
+  /** F-343: the "hero-slides" HomepageSection row's `updatedAt`, as loaded
+   * by the server component that rendered this editor (see
+   * getAllHomepageSections() in src/lib/homepage) — sent back as a query
+   * param on save so a concurrent edit gets a 409 instead of silently
+   * losing. Optional so any test that mounts this editor directly keeps
+   * working unchanged. */
+  updatedAt?: Date | null;
+}) {
   const [content, setContent] = useState(initialContent);
-  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [savedAt, setSavedAt] = useState(updatedAt);
+  const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error" | "stale">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -365,14 +378,24 @@ export function HeroSlidesEditor({ initialContent }: { initialContent: HeroSlide
     setStatus("saving");
     setErrorMessage(null);
     setFieldErrors({});
-    const response = await fetch("/api/admin/homepage/hero-slides", {
+    const query = savedAt ? `?updatedAt=${encodeURIComponent(savedAt.toISOString())}` : "";
+    const response = await fetch(`/api/admin/homepage/hero-slides${query}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(content),
     });
+    const body = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
+      if (response.status === 409) {
+        // F-343: someone else saved the hero slides section first — don't
+        // let this save silently discard it.
+        setStatus("stale");
+        setErrorMessage(
+          typeof body.error === "string" ? body.error : "Changed by someone else — reload the page and try again.",
+        );
+        return;
+      }
       const { summary, fieldErrors: fe } = formatApiError(body, "Save failed.");
       setStatus("error");
       setErrorMessage(summary);
@@ -380,6 +403,10 @@ export function HeroSlidesEditor({ initialContent }: { initialContent: HeroSlide
       return;
     }
 
+    // The PUT response is the fresh HomepageSection row — its `updatedAt`
+    // always advances (schema.prisma's `@updatedAt`), so this editor's own
+    // last write must not make its very next save look stale.
+    setSavedAt(typeof body.updatedAt === "string" ? new Date(body.updatedAt) : null);
     setInitialSnapshot(content);
     setStatus("saved");
     setTimeout(() => setStatus("idle"), 2000);

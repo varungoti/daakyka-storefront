@@ -219,6 +219,21 @@ export async function setSetting<K extends SettingKey>(
   return parsed;
 }
 
+/**
+ * F-343 follow-up: paired with setSetting's optional `expectedUpdatedAt` —
+ * an admin editor loads this alongside a setting's value (see
+ * src/app/admin/(panel)/site-controls/page.tsx) so it can send the same
+ * `updatedAt` back on save and get a 409 instead of silently overwriting a
+ * concurrent edit. Deliberately uncached (unlike getSetting) — an editor
+ * needs the true current row, not a value that might already be up to a
+ * year stale under SETTINGS_CACHE_TAG. Returns null when the row doesn't
+ * exist yet, since a value that's never been saved can't be stale.
+ */
+export async function getSettingUpdatedAt(key: SettingKey): Promise<Date | null> {
+  const row = await db.siteSetting.findUnique({ where: { key }, select: { updatedAt: true } });
+  return row?.updatedAt ?? null;
+}
+
 export async function isPageEnabled(page: "fabricTech" | "mixMatch"): Promise<boolean> {
   const key: SettingKey = page === "fabricTech" ? "pages.fabricTech.enabled" : "pages.mixMatch.enabled";
   return getSetting(key);

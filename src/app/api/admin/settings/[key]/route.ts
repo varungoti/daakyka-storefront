@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdminSession } from "@/lib/auth/admin-api";
 import { hasPermission } from "@/lib/auth/rbac";
 import { readJsonBody } from "@/lib/security/parse-json-body";
-import { isSettingKey, setSetting, settingSchemas, StaleSettingError } from "@/lib/settings";
+import { getSettingUpdatedAt, isSettingKey, setSetting, settingSchemas, StaleSettingError } from "@/lib/settings";
 import { settingPermissions } from "@/lib/settings/permissions";
 
 interface RouteParams {
@@ -51,7 +51,13 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 
   try {
     const value = await setSetting(key, parsedValue.data, session.id, expectedUpdatedAt);
-    return NextResponse.json({ key, value });
+    // F-343 follow-up: the row's `updatedAt` always advances on a write
+    // (schema.prisma's `@updatedAt`), so the editor that just saved needs
+    // the fresh value back — otherwise its *own* last write would make its
+    // very next save look stale. A best-effort re-read; a null here just
+    // means the next save goes unconditional again, same as today.
+    const updatedAt = await getSettingUpdatedAt(key).catch(() => null);
+    return NextResponse.json({ key, value, updatedAt: updatedAt ? updatedAt.toISOString() : null });
   } catch (err) {
     if (err instanceof StaleSettingError) {
       return NextResponse.json({ error: err.message }, { status: 409 });

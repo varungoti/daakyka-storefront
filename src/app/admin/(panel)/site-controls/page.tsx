@@ -8,7 +8,16 @@ import {
 } from "@/components/admin/site-controls-editors";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
-import { getSetting } from "@/lib/settings";
+import { getSetting, getSettingUpdatedAt, type SettingKey } from "@/lib/settings";
+
+/** F-343: loads every setting key's `updatedAt` alongside its value in one
+ * pass, so each editor/toggle below can send it back on save and get a 409
+ * instead of silently overwriting a concurrent edit — see
+ * getSettingUpdatedAt()'s doc comment in src/lib/settings. */
+async function getUpdatedAtMap<K extends SettingKey>(keys: K[]): Promise<Record<K, Date | null>> {
+  const values = await Promise.all(keys.map((key) => getSettingUpdatedAt(key)));
+  return Object.fromEntries(keys.map((key, index) => [key, values[index]])) as Record<K, Date | null>;
+}
 
 export default async function SiteControlsPage() {
   const session = await getSession();
@@ -24,10 +33,11 @@ export default async function SiteControlsPage() {
     redirect("/admin/dashboard");
   }
 
-  const [saleEnabled, bulkCtaEnabled, announcementMessages] = await Promise.all([
+  const [saleEnabled, bulkCtaEnabled, announcementMessages, sharedUpdatedAt] = await Promise.all([
     getSetting("sale.enabled"),
     getSetting("header.bulkCta.enabled"),
     getSetting("announcement.messages"),
+    getUpdatedAtMap(["sale.enabled", "header.bulkCta.enabled", "announcement.messages"] as const),
   ]);
 
   const storeOnlySettings = canStore
@@ -48,6 +58,25 @@ export default async function SiteControlsPage() {
         getSetting("legal.stateCode"),
         getSetting("returns.windowDays"),
       ])
+    : null;
+  const storeOnlyUpdatedAt = canStore
+    ? await getUpdatedAtMap([
+        "pages.fabricTech.enabled",
+        "pages.mixMatch.enabled",
+        "shipping.flatRate",
+        "shipping.freeAbove",
+        "contact.phone",
+        "contact.whatsapp",
+        "contact.email",
+        "contact.address",
+        "grievance.name",
+        "grievance.designation",
+        "grievance.phone",
+        "grievance.email",
+        "legal.gstin",
+        "legal.stateCode",
+        "returns.windowDays",
+      ] as const)
     : null;
   const [
     fabricTechEnabled,
@@ -81,25 +110,33 @@ export default async function SiteControlsPage() {
       <section className="space-y-3">
         <h2 className="font-display text-lg font-bold text-ink">Pages &amp; sections</h2>
         <div className="grid gap-3 md:grid-cols-2">
-          {canStore ? (
+          {canStore && storeOnlyUpdatedAt ? (
             <>
               <SiteSettingToggle
                 settingKey="pages.fabricTech.enabled"
                 enabled={fabricTechEnabled}
                 label="Fabric Technology page"
+                updatedAt={storeOnlyUpdatedAt["pages.fabricTech.enabled"]}
               />
               <SiteSettingToggle
                 settingKey="pages.mixMatch.enabled"
                 enabled={mixMatchEnabled}
                 label="Mix & Match page"
+                updatedAt={storeOnlyUpdatedAt["pages.mixMatch.enabled"]}
               />
             </>
           ) : null}
-          <SiteSettingToggle settingKey="sale.enabled" enabled={saleEnabled} label="Sale section" />
+          <SiteSettingToggle
+            settingKey="sale.enabled"
+            enabled={saleEnabled}
+            label="Sale section"
+            updatedAt={sharedUpdatedAt["sale.enabled"]}
+          />
           <SiteSettingToggle
             settingKey="header.bulkCta.enabled"
             enabled={bulkCtaEnabled}
             label="Header Bulk Order CTA"
+            updatedAt={sharedUpdatedAt["header.bulkCta.enabled"]}
           />
         </div>
       </section>
@@ -107,11 +144,28 @@ export default async function SiteControlsPage() {
       <section className="space-y-3">
         <h2 className="font-display text-lg font-bold text-ink">Content</h2>
         <div className="grid gap-4">
-          <AnnouncementEditor initialMessages={announcementMessages} />
-          {canStore ? (
+          <AnnouncementEditor
+            initialMessages={announcementMessages}
+            updatedAt={sharedUpdatedAt["announcement.messages"]}
+          />
+          {canStore && storeOnlyUpdatedAt ? (
             <>
-              <ContactEditor initial={{ phone, whatsapp, email, address }} />
-              <ShippingEditor initial={{ flatRate, freeAbove }} />
+              <ContactEditor
+                initial={{ phone, whatsapp, email, address }}
+                updatedAt={{
+                  phone: storeOnlyUpdatedAt["contact.phone"],
+                  whatsapp: storeOnlyUpdatedAt["contact.whatsapp"],
+                  email: storeOnlyUpdatedAt["contact.email"],
+                  address: storeOnlyUpdatedAt["contact.address"],
+                }}
+              />
+              <ShippingEditor
+                initial={{ flatRate, freeAbove }}
+                updatedAt={{
+                  flatRate: storeOnlyUpdatedAt["shipping.flatRate"],
+                  freeAbove: storeOnlyUpdatedAt["shipping.freeAbove"],
+                }}
+              />
               <LegalComplianceEditor
                 initial={{
                   grievanceName,
@@ -121,6 +175,15 @@ export default async function SiteControlsPage() {
                   gstin,
                   stateCode,
                   returnsWindowDays,
+                }}
+                updatedAt={{
+                  grievanceName: storeOnlyUpdatedAt["grievance.name"],
+                  grievanceDesignation: storeOnlyUpdatedAt["grievance.designation"],
+                  grievancePhone: storeOnlyUpdatedAt["grievance.phone"],
+                  grievanceEmail: storeOnlyUpdatedAt["grievance.email"],
+                  gstin: storeOnlyUpdatedAt["legal.gstin"],
+                  stateCode: storeOnlyUpdatedAt["legal.stateCode"],
+                  returnsWindowDays: storeOnlyUpdatedAt["returns.windowDays"],
                 }}
               />
             </>
