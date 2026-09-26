@@ -58,6 +58,13 @@ async function dispatchInlineHermesTask(request: HermesTaskRequest): Promise<Her
       output: JSON.stringify(output),
       local: true,
       runtime: "inline",
+      // F-276: router.ts's own "Fireworks API key not configured" fallback
+      // already marks its JSON payload `stub: true` — surface that on the
+      // response envelope too, the same way every other "not configured"
+      // branch in this file already does, so callers (the cron routes)
+      // can tell a real Hermes result from a canned placeholder without
+      // reparsing `output` themselves.
+      ...(output.stub === true ? { stub: true } : {}),
     };
   } catch (error) {
     return {

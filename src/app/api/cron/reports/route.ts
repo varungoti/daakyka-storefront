@@ -51,18 +51,23 @@ export async function POST(request: Request) {
     },
   });
 
-  if (hermes.ok) {
-    await db.hermesApproval.create({
-      data: {
-        taskId: task.id,
-        type: "weekly_growth_report",
-        title: "Weekly Growth Report",
-        summary: "Review metrics and recommended actions before acting on campaigns or SEO changes.",
-        payload: JSON.stringify({ markdown, report }),
-        status: "PENDING",
-      },
-    });
-  }
+  // F-276: this approval's payload is the report/markdown this route just
+  // built locally, not Hermes's own output — that's real content either
+  // way, so it shouldn't depend on whether the Hermes call succeeded. It
+  // used to gate on `hermes.ok`, which is also true for every "Hermes not
+  // configured" stub response, so this was never actually skipped in
+  // practice — but gating on it made a genuine Hermes failure (ok:false)
+  // silently drop a report the owner should still see.
+  await db.hermesApproval.create({
+    data: {
+      taskId: task.id,
+      type: "weekly_growth_report",
+      title: "Weekly Growth Report",
+      summary: "Review metrics and recommended actions before acting on campaigns or SEO changes.",
+      payload: JSON.stringify({ markdown, report }),
+      status: "PENDING",
+    },
+  });
 
   return NextResponse.json({ ok: true, report });
 }

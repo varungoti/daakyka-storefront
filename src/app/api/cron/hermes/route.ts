@@ -6,6 +6,15 @@ import { dispatchHermesTask } from "@/lib/hermes/client";
 
 const scheduledTasks = ["daily_seo_health_scan", "weekly_competitor_scan"] as const;
 
+/** F-276: weekly_competitor_scan only needs to run once a week — Monday
+ * (UTC) matches this cron's Monday-anchored sibling (reports, schedule
+ * "0 7 * * 1") and keeps the check trivial to reason about. Exported (and
+ * taking `now` as a parameter) so a test can assert the Monday/non-Monday
+ * behavior without depending on the day the test suite happens to run. */
+export function isWeeklyScanDue(now: Date = new Date()): boolean {
+  return now.getUTCDay() === 1;
+}
+
 export async function POST(request: Request) {
   if (!authorizeCron(request)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -19,6 +28,13 @@ export async function POST(request: Request) {
 
   const results = [];
   for (const type of scheduledTasks) {
+    // F-276: this route runs daily, but weekly_competitor_scan is meant to
+    // run weekly — skip it outright on every day but Monday rather than
+    // creating a task/approval for it 7x too often.
+    if (type === "weekly_competitor_scan" && !isWeeklyScanDue()) {
+      continue;
+    }
+
     const task = await db.hermesTask.create({ data: { type, status: "RUNNING" } });
     const result = await dispatchHermesTask({ type });
     await db.hermesTask.update({
@@ -29,7 +45,14 @@ export async function POST(request: Request) {
         completedAt: new Date(),
       },
     });
-    if (result.ok && result.output) {
+    // F-276: every "Hermes not configured" branch in dispatchHermesTask
+    // returns ok:true with a canned placeholder payload (stub:true) so the
+    // task itself still records something to look at. Only a non-stub
+    // result is an actual recommendation worth putting in front of an
+    // admin — creating a PENDING approval for the placeholder too meant
+    // this queue filled up with generic "Scheduled: …" rows every single
+    // day, pushing real approvals off the (unpaginated) 20-item list.
+    if (result.ok && result.output && !result.stub) {
       await db.hermesApproval.create({
         data: {
           taskId: task.id,
@@ -41,7 +64,7 @@ export async function POST(request: Request) {
         },
       });
     }
-    results.push({ type, ok: result.ok });
+    results.push({ type, ok: result.ok, stub: result.stub === true });
   }
 
   return NextResponse.json({ ok: true, results });
