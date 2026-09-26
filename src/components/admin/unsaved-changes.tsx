@@ -24,9 +24,17 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
  * the sidebar (src/components/admin/admin-shell.tsx, whose nav links use
  * <GuardedLink>) and the page content, so a form nested deep in `children`
  * can block a `<Link>` click in the sidebar two levels up.
+ *
+ * F-184: `beforeunload` does NOT cover the browser/phone Back button (or
+ * Forward) while staying inside the app. In the App Router, Back/Forward is
+ * a `popstate` *soft* navigation — the tab never actually unloads, so
+ * `beforeunload` never fires — and nothing else in this file listened for
+ * `popstate` at all, so a dirty form's Back button silently discarded the
+ * edit. `installBackGuard` below fixes that with the standard
+ * push-a-sentinel-history-entry technique (see its own doc comment).
  */
 
-const CONFIRM_MESSAGE = "You have unsaved changes. Leave without saving?";
+export const CONFIRM_MESSAGE = "You have unsaved changes. Leave without saving?";
 
 interface UnsavedChangesContextValue {
   dirty: boolean;
@@ -97,6 +105,85 @@ export function useUnsavedChangesGuard(dirty: boolean): void {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [dirty]);
+
+  // F-184: see installBackGuard's doc comment for how this actually works.
+  useEffect(() => {
+    if (!dirty) return;
+    if (typeof window === "undefined") return;
+    return installBackGuard(window);
+  }, [dirty]);
+}
+
+/** The minimal `window` surface `installBackGuard` needs — narrowed so a
+ * unit test can pass a plain mock object instead of needing a real DOM
+ * (this repo's unit tests run under Node's test runner with no jsdom — see
+ * product-view-tracker.test.ts for the same pattern). */
+export interface BackGuardWindow {
+  history: {
+    state: unknown;
+    pushState: (data: unknown, unused: string, url?: string | null) => void;
+    back: () => void;
+  };
+  location: { href: string };
+  confirm: (message: string) => boolean;
+  addEventListener: (type: "popstate", listener: () => void) => void;
+  removeEventListener: (type: "popstate", listener: () => void) => void;
+}
+
+/**
+ * F-184: catches the browser/phone Back (and Forward) button on a dirty
+ * form, which `beforeunload` cannot see (App Router Back/Forward is a
+ * `popstate` soft navigation — the page never unloads).
+ *
+ * How it works: pushes one extra history entry ("the sentinel") at the
+ * *same* URL right on top of the current one. Because the sentinel and the
+ * real entry beneath it share a URL, a single Back press pops the sentinel
+ * without changing the visible page at all — Next.js's own popstate
+ * handler (app-router.js) just re-affirms the same route tree. That gives
+ * us a synchronous `popstate` event to react to *before* anything the user
+ * can see has changed:
+ *   - Cancelled: push a fresh sentinel, so the very next Back press is
+ *     caught the same way.
+ *   - Confirmed: call `history.back()` again ourselves, which now pops the
+ *     *real* entry underneath and genuinely navigates away — a single Back
+ *     press (from the user's perspective) still only takes one confirm.
+ *
+ * `window.history.pushState`/`replaceState` are patched by Next's
+ * `AppRouter` (see node_modules/next/dist/client/components/app-router.js,
+ * `copyNextJsInternalHistoryState`) to always copy its own `__NA` /
+ * `__PRIVATE_NEXTJS_INTERNALS_TREE` keys from the *current* entry onto
+ * whatever we push, so the sentinel is automatically a history entry Next's
+ * router recognizes as its own (no full reload) — we don't need to set
+ * those keys ourselves, only avoid clobbering them, hence spreading
+ * `history.state` first.
+ *
+ * Returns a cleanup that removes the popstate listener. It does not try to
+ * pop the sentinel itself: React's own effect cleanup already runs
+ * whenever `dirty` goes back to false (e.g. after Save), and leaving one
+ * harmless same-URL sentinel entry behind costs the user nothing worse
+ * than one extra no-op Back press if they never actually leave this page.
+ */
+export function installBackGuard(win: BackGuardWindow): () => void {
+  let leaving = false;
+
+  const pushSentinel = () => {
+    win.history.pushState({ ...(win.history.state as object | null), __unsavedGuard: true }, "", win.location.href);
+  };
+
+  pushSentinel();
+
+  function onPopState() {
+    if (leaving) return; // this pop is the real, confirmed departure — let it through untouched.
+    if (win.confirm(CONFIRM_MESSAGE)) {
+      leaving = true;
+      win.history.back();
+    } else {
+      pushSentinel();
+    }
+  }
+
+  win.addEventListener("popstate", onPopState);
+  return () => win.removeEventListener("popstate", onPopState);
 }
 
 /** For code that triggers navigation imperatively (a "Back to list"

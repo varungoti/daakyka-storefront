@@ -585,6 +585,26 @@ describe("products admin service (Phase B1)", () => {
     assert.equal(out.items.length, 0);
   });
 
+  // F-192
+  it("listProductsForAdmin's search also matches a variant SKU, case-insensitively", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const product = await createProduct({ name: `Sku Search ${unique}`, categoryId, price: 500 }, adminId);
+    createdProductIds.push(product.id);
+    const sku = `DK-SKUSEARCH-${unique}-M-NAVY`;
+    await replaceVariants(product.id, [{ size: "M", color: "Navy", sku, stock: 5, active: true }], adminId);
+
+    const bySku = await listProductsForAdmin({ search: sku });
+    assert.equal(bySku.items.length, 1);
+    assert.equal(bySku.items[0].id, product.id);
+
+    const lowercase = await listProductsForAdmin({ search: sku.toLowerCase() });
+    assert.equal(lowercase.items.length, 1);
+    assert.equal(lowercase.items[0].id, product.id);
+
+    const noMatch = await listProductsForAdmin({ search: `does-not-exist-${unique}` });
+    assert.equal(noMatch.items.length, 0);
+  });
+
   describe("F-177: the admin category filter matches on categoryId (with descendants), not categorySlug", () => {
     it("filtering by a category's own id returns its products", async () => {
       const unique = randomUUID().slice(0, 8);
@@ -678,6 +698,86 @@ describe("products admin service (Phase B1)", () => {
     const guardedAfter = await db.product.findUnique({ where: { id: guarded.id } });
     assert.equal(Number(guardedAfter?.price), 100);
     assert.equal(Number(guardedAfter?.compareAtPrice), 120);
+  });
+
+  // F-182
+  it("performBulkAction's adjust-price-pct rounds to whole rupees, not paise", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const product = await createProduct({ name: `Bulk Rupee ${unique}`, categoryId, price: 899 }, adminId);
+    createdProductIds.push(product.id);
+
+    await performBulkAction({ action: "adjust-price-pct", ids: [product.id], percent: 10 }, adminId);
+
+    const updated = await db.product.findUnique({ where: { id: product.id } });
+    // 899 * 1.10 = 988.9 -> rounds to the nearest whole rupee (989), never
+    // stored as 988.90.
+    assert.equal(Number(updated?.price), 989);
+  });
+
+  it("performBulkAction's adjust-price-pct also adjusts variant price overrides, and leaves non-overridden variants alone", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const product = await createProduct({ name: `Bulk Override ${unique}`, categoryId, price: 899 }, adminId);
+    createdProductIds.push(product.id);
+    await replaceVariants(
+      product.id,
+      [
+        { size: "M", color: "Navy", sku: `DK-OVR-${unique}-M`, stock: 5, active: true, price: 950 },
+        { size: "L", color: "Navy", sku: `DK-OVR-${unique}-L`, stock: 5, active: true },
+      ],
+      adminId,
+    );
+
+    await performBulkAction({ action: "adjust-price-pct", ids: [product.id], percent: 10 }, adminId);
+
+    const overridden = await db.productVariant.findFirst({ where: { productId: product.id, size: "M" } });
+    const plain = await db.productVariant.findFirst({ where: { productId: product.id, size: "L" } });
+    assert.equal(Number(overridden?.price), 1045); // 950 * 1.10 = 1045
+    assert.equal(plain?.price, null); // no override to begin with — stays null, inherits the new base price
+  });
+
+  it("performBulkAction's adjust-price-pct skips the whole product (base price included) when only a variant override would violate the compare-at invariant", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const product = await createProduct(
+      { name: `Bulk Override Guard ${unique}`, categoryId, price: 100, compareAtPrice: 1100 },
+      adminId,
+    );
+    createdProductIds.push(product.id);
+    // The base price (100 -> 110 at +10%) is nowhere near compareAtPrice
+    // (1100), but the override (1000 -> 1100) would land right at it.
+    await replaceVariants(
+      product.id,
+      [{ size: "M", color: "Navy", sku: `DK-OVRGUARD-${unique}`, stock: 5, active: true, price: 1000 }],
+      adminId,
+    );
+
+    const result = await performBulkAction({ action: "adjust-price-pct", ids: [product.id], percent: 10 }, adminId);
+
+    assert.equal(result.affected, 0);
+    assert.equal(result.skipped?.length, 1);
+    assert.equal(result.skipped?.[0].id, product.id);
+
+    const productAfter = await db.product.findUnique({ where: { id: product.id } });
+    const variantAfter = await db.productVariant.findFirst({ where: { productId: product.id } });
+    assert.equal(Number(productAfter?.price), 100, "base price must be left untouched too, not just the override");
+    assert.equal(Number(variantAfter?.price), 1000);
+  });
+
+  // F-340
+  it("performBulkAction's adjust-price-pct compounds correctly under two overlapping runs on the same product, instead of one clobbering the other", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const product = await createProduct({ name: `Bulk Concurrent ${unique}`, categoryId, price: 1000 }, adminId);
+    createdProductIds.push(product.id);
+
+    await Promise.all([
+      performBulkAction({ action: "adjust-price-pct", ids: [product.id], percent: 10 }, adminId),
+      performBulkAction({ action: "adjust-price-pct", ids: [product.id], percent: 10 }, adminId),
+    ]);
+
+    const after = await db.product.findUnique({ where: { id: product.id } });
+    // Both +10% runs must compound (1000 -> 1100 -> 1210) under the
+    // database's own row-level locking — a JS read-then-write race used to
+    // let the second run's write clobber the first's, leaving 1100.
+    assert.equal(Number(after?.price), 1210);
   });
 
   it("import dry-run then commit creates products and variants, and re-running commit updates instead of duplicating", async () => {

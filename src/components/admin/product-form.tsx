@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { cloneElement, useEffect, useId, useMemo, useState, type ReactElement } from "react";
 import { useRouter } from "next/navigation";
-import { ProductVariantEditor, type VariantRow } from "@/components/admin/product-variant-editor";
+import { ProductVariantEditor, getVariantGridError, type VariantRow } from "@/components/admin/product-variant-editor";
 import { ProductImageGallery, type ProductImageRow } from "@/components/admin/product-image-gallery";
 import { StagedProductImageGallery } from "@/components/admin/staged-product-image-gallery";
 import { RichTextEditor } from "@/components/admin/rich-text-editor";
@@ -132,8 +132,15 @@ export function ProductForm({
   const flatCategories = useMemo(() => flattenCategories(categoryOptions), [categoryOptions]);
   const selectedCategory = categoryOptions.find((c) => c.id === categoryId);
   const productColors = useMemo(() => Array.from(new Set(variants.map((v) => v.color))), [variants]);
+  // F-179: same check ProductVariantEditor already renders inline below the
+  // grid — reused here (not duplicated) to also disable Save, so a
+  // duplicate/invalid grid can't reach the server at all.
+  const variantGridError = useMemo(() => (variants.length > 0 ? getVariantGridError(variants) : null), [variants]);
   const orderCount = initial?.orderCount ?? 0;
-  const canDelete = isEdit && status === "DRAFT" && orderCount === 0;
+  // F-185: an ARCHIVED product with no orders is deletable too, matching
+  // deleteProduct's own rule — previously only DRAFT was, so the only UI
+  // path to delete an archived product was Publish -> Unpublish -> Delete.
+  const canDelete = isEdit && (status === "DRAFT" || status === "ARCHIVED") && orderCount === 0;
 
   // F-13: unsaved-changes protection. `images` is deliberately excluded —
   // ProductImageGallery persists every add/reorder/delete immediately via
@@ -327,7 +334,14 @@ export function ProductForm({
     return { ok: true, variants: synced };
   }
 
-  async function saveDraft() {
+  /**
+   * Returns whether the save actually succeeded (every field, and the
+   * variant grid) — publish()/unpublish()/archive()/unarchive() (F-183)
+   * call this first when the form is dirty, and bail out without changing
+   * status if it returns false, instead of flipping the status live while
+   * silently leaving pending field edits unsaved.
+   */
+  async function saveDraft(): Promise<boolean> {
     setSaveStatus("saving");
     setErrorMessage(null);
     setFieldErrors({});
@@ -344,11 +358,33 @@ export function ProductForm({
       setSaveStatus("error");
       setErrorMessage("MRP must be greater than the price.");
       setFieldErrors({ compareAtPrice: "MRP must be greater than the price." });
-      return;
+      return false;
     }
 
-    const response = await fetch(isEdit ? `/api/admin/products/${productId}` : "/api/admin/products", {
-      method: isEdit ? "PATCH" : "POST",
+    // F-179: validate the variant grid *before* creating or updating
+    // anything. A duplicate (size, color)/SKU or an out-of-range
+    // stock/price value used to reach the server as a *second*, separate
+    // request — the product create/update would already have succeeded,
+    // then the variants POST would 400, and (for a new product) the page
+    // navigated to the edit URL regardless, discarding the whole grid with
+    // no error visible anywhere.
+    const variantError = variants.length > 0 ? getVariantGridError(variants) : null;
+    if (variantError) {
+      setSaveStatus("error");
+      setErrorMessage(variantError);
+      return false;
+    }
+
+    // F-179: choose the request by whether this form has ever actually
+    // saved (`productId` is set), not by `isEdit` — `isEdit` is fixed at
+    // mount from the `initial` prop and never changes on the /new route.
+    // Without this, retrying Save after a first save's *variant* POST
+    // failed (see below: the form stays on /new so the grid isn't lost)
+    // would `POST` a second product instead of `PATCH`ing the one already
+    // created.
+    const isFirstSave = !productId;
+    const response = await fetch(productId ? `/api/admin/products/${productId}` : "/api/admin/products", {
+      method: productId ? "PATCH" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
@@ -365,7 +401,7 @@ export function ProductForm({
       setSaveStatus("error");
       setErrorMessage(summary);
       setFieldErrors(fe);
-      return;
+      return false;
     }
 
     const body = await response.json();
@@ -381,7 +417,7 @@ export function ProductForm({
     // into a single pass instead of the old save → reload → scroll to
     // Images → upload two-round-trip flow.
     //
-    // Only ever non-empty when `!isEdit`: an edit form starts with
+    // Only ever non-empty on the very first save: an edit form starts with
     // `productId` already set, so StagedProductImageGallery never renders
     // and stagedImages never gets populated. Individual attach failures are
     // tolerated (attachStagedImages never throws) rather than blocking the
@@ -393,10 +429,11 @@ export function ProductForm({
     // the admin can re-add, or that scripts/cleanup-orphaned-media.ts will
     // eventually sweep) — see that script's file comment for the full
     // orphan-lifecycle story. There's no in-UI warning for this specific
-    // rare case: the very next thing that happens on success is a
-    // navigation to the real edit page (see `router.push` below), which
-    // unmounts this form before any message set here could ever be seen.
-    if (!isEdit && stagedImages.length > 0) {
+    // rare case: on success this is normally followed by a navigation to
+    // the real edit page (see below), which unmounts this form before any
+    // message set here could ever be seen — F-179: *normally*, because
+    // that navigation is now conditional on the variant save below too.
+    if (isFirstSave && stagedImages.length > 0) {
       const { attached } = await attachStagedImages(savedId, stagedImages, {
         attach: async (id, staged) => {
           const attachResponse = await fetch(`/api/admin/products/${id}/images`, {
@@ -423,26 +460,37 @@ export function ProductForm({
     const variantsResult = await saveVariantsIfChanged(savedId);
     setSaveStatus(variantsResult.ok ? "idle" : "error");
 
+    // F-13/F-179: fold in whatever actually saved. The product fields above
+    // always saved successfully by this point (the response was `ok`), so
+    // they're never "dirty" against the form's current values any more —
+    // but `variants` only updates when the variant save also succeeded;
+    // otherwise the *old*, still-actually-saved grid stays the pristine
+    // baseline, so the guard correctly keeps treating the edited-but-lost
+    // grid as dirty rather than pretending it saved too.
+    const fieldsSnapshot = buildSnapshot();
+    setInitialSnapshot((prev) => ({ ...fieldsSnapshot, variants: variantsResult.ok ? variantsResult.variants : prev.variants }));
+
     if (variantsResult.ok) {
-      // F-13: this save just persisted exactly what's in the form, so it's
-      // no longer "dirty" relative to it — updating the snapshot here
-      // (rather than only at mount) means immediately navigating away
-      // right after a successful save doesn't trigger the guard.
-      // `variants` comes from the server's response (fresh ids/stock —
-      // see saveVariantsIfChanged), not this closure's pre-save value,
-      // which React hasn't updated yet at this point in the same tick.
-      setInitialSnapshot({ ...buildSnapshot(), variants: variantsResult.variants });
       // F-03/F-16: match the Orders page's own "Saved." confirmation
       // pattern (src/components/admin/order-detail-actions.tsx) instead of
       // leaving a save with no visible confirmation at all.
       setSaved(true);
     }
 
-    if (!isEdit) {
-      router.push(`/admin/products/${savedId}`);
+    if (isFirstSave) {
+      // F-179: only leave /new once everything actually saved. Previously
+      // this always navigated to the edit page, even when the variants
+      // POST just 400'd — the admin landed on an edit page with an empty
+      // variant grid and no visible reason why. Staying put leaves the
+      // grid and the error banner (set inside saveVariantsIfChanged) on
+      // screen so the admin can fix the grid and save again.
+      if (variantsResult.ok) {
+        router.push(`/admin/products/${savedId}`);
+      }
     } else {
       router.refresh();
     }
+    return variantsResult.ok;
   }
 
   async function runAction(action: string, run: () => Promise<Response>) {
@@ -462,49 +510,58 @@ export function ProductForm({
     return true;
   }
 
-  async function publish() {
+  /**
+   * F-183: publish/unpublish/archive/unarchive all funnel through here.
+   * Previously each one only PATCHed the status flip and then showed
+   * "Saved." unconditionally — an admin who edited, say, Price and clicked
+   * Publish without clicking Save first saw "Saved." while the product
+   * went live (or was archived, etc.) with the *old* field values still in
+   * the database. Saving any pending edits first — the same saveDraft()
+   * "Save changes" already runs — makes these behave like Shopify's
+   * "Save and publish": either everything the admin sees on screen is now
+   * live, or nothing is (saveDraft's own error banner explains why and the
+   * status is left alone).
+   */
+  async function runStatusAction(action: "publish" | "unpublish" | "archive" | "unarchive", nextStatus: "ACTIVE" | "DRAFT" | "ARCHIVED") {
     if (!productId) return;
-    const ok = await runAction("publish", () =>
-      fetch(`/api/admin/products/${productId}/publish`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "publish" }) }),
+    if (dirty) {
+      const saveOk = await saveDraft();
+      if (!saveOk) return; // saveDraft already set errorMessage/fieldErrors
+    }
+    const ok = await runAction(action, () =>
+      fetch(`/api/admin/products/${productId}/publish`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }) }),
     );
     if (ok) {
-      setStatus("ACTIVE");
-      // Only fold `status` into the pristine snapshot — publish only
-      // persists the status flip, not any other pending, unsaved field
-      // edit, so this must not mark the rest of the form as "saved" too
-      // (that would silently defeat the F-13 guard for those fields).
-      setInitialSnapshot((prev) => ({ ...prev, status: "ACTIVE" }));
+      setStatus(nextStatus);
+      // Only fold `status` into the pristine snapshot — this action only
+      // ever persists the status flip itself; any *other* field either was
+      // already folded in by the saveDraft() above, or wasn't dirty to
+      // begin with.
+      setInitialSnapshot((prev) => ({ ...prev, status: nextStatus }));
       setSaved(true);
       router.refresh();
     }
+  }
+
+  async function publish() {
+    await runStatusAction("publish", "ACTIVE");
   }
 
   async function unpublish() {
-    if (!productId) return;
-    const ok = await runAction("unpublish", () =>
-      fetch(`/api/admin/products/${productId}/publish`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "unpublish" }) }),
-    );
-    if (ok) {
-      setStatus("DRAFT");
-      // See the comment in publish() above — only `status` was persisted.
-      setInitialSnapshot((prev) => ({ ...prev, status: "DRAFT" }));
-      setSaved(true);
-      router.refresh();
-    }
+    await runStatusAction("unpublish", "DRAFT");
   }
 
   async function archive() {
-    if (!productId) return;
-    const ok = await runAction("archive", () =>
-      fetch(`/api/admin/products/${productId}/publish`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "archive" }) }),
-    );
-    if (ok) {
-      setStatus("ARCHIVED");
-      // See the comment in publish() above — only `status` was persisted.
-      setInitialSnapshot((prev) => ({ ...prev, status: "ARCHIVED" }));
-      setSaved(true);
-      router.refresh();
-    }
+    await runStatusAction("archive", "ARCHIVED");
+  }
+
+  /** F-185: the counterpart to archive() — was previously unreachable from
+   * the UI (only Publish showed for an ARCHIVED product, and Delete was
+   * disabled for anything but DRAFT), so the only way to get an archived
+   * product back to draft, or delete it, was to publish it live again
+   * first. */
+  async function unarchive() {
+    await runStatusAction("unarchive", "DRAFT");
   }
 
   async function duplicate() {
@@ -524,7 +581,7 @@ export function ProductForm({
 
   async function remove() {
     if (!productId || !canDelete) return;
-    if (!confirm("Delete this draft product permanently?")) return;
+    if (!confirm("Delete this product permanently?")) return;
     setBusyAction("delete");
     const response = await fetch(`/api/admin/products/${productId}`, { method: "DELETE" });
     setBusyAction(null);
@@ -563,7 +620,7 @@ export function ProductForm({
         <Field label="Short description" error={fieldErrors.shortDescription}>
           <input value={shortDescription} onChange={(e) => setShortDescription(e.target.value)} className={inputClass} />
         </Field>
-        <Field label="Description" error={fieldErrors.description}>
+        <Field as="div" label="Description" error={fieldErrors.description}>
           <RichTextEditor editorKey={initial?.id ?? "new"} value={description} onChange={setDescription} />
         </Field>
       </section>
@@ -753,28 +810,64 @@ export function ProductForm({
             re-scrolling here would just be a needless jump. */}
         <FormErrorBanner message={errorMessage} scroll={false} className="basis-full" />
 
-        <button type="button" onClick={saveDraft} disabled={saveStatus === "saving" || !name.trim() || !price} className="rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+        <button
+          type="button"
+          onClick={saveDraft}
+          disabled={saveStatus === "saving" || !name.trim() || !price || Boolean(variantGridError)}
+          title={variantGridError ?? ""}
+          className="rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+        >
           {saveStatus === "saving" ? "Saving…" : status === "DRAFT" ? "Save draft" : "Save changes"}
         </button>
 
-        {saved && !errorMessage ? <span className="text-xs font-medium text-green-700">Saved.</span> : null}
+        {/* F-183: was `saved && !errorMessage` — publish()/unpublish()/
+            archive() used to flip the status alone and still show "Saved."
+            even when other fields were edited but never persisted (or the
+            pre-save this now runs first failed). Requiring `!dirty` too is
+            the safety net under that fix: it stays accurate even if a
+            future caller sets `saved` without going through saveDraft(). */}
+        {saved && !dirty && !errorMessage ? <span className="text-xs font-medium text-green-700">Saved.</span> : null}
 
-        <span title={canPublish ? "" : "Requires products:publish"}>
-          {status === "ACTIVE" ? (
-            <button type="button" onClick={unpublish} disabled={!canPublish || !productId || busyAction === "unpublish"} className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-muted disabled:cursor-not-allowed disabled:opacity-50">
-              Unpublish
-            </button>
-          ) : (
-            <button type="button" onClick={publish} disabled={!canPublish || !productId || busyAction === "publish"} className="rounded-full bg-brand px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
-              Publish
-            </button>
-          )}
-        </span>
+        {status === "ARCHIVED" ? (
+          // F-185: previously this branch fell through to the plain
+          // "Publish" button below (status !== "ACTIVE"), so the only way
+          // to get an archived product back to DRAFT — or to delete it —
+          // was to publish it live again first, then unpublish, then
+          // delete. Unarchive needs `products:manage`, not
+          // `products:publish` (see the /publish route's own comment), so
+          // it's never gated on `canPublish`.
+          <button type="button" onClick={unarchive} disabled={!productId || busyAction === "unarchive"} className="rounded-full bg-brand px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+            Unarchive
+          </button>
+        ) : (
+          <span title={canPublish ? "" : "Requires products:publish"}>
+            {status === "ACTIVE" ? (
+              <button type="button" onClick={unpublish} disabled={!canPublish || !productId || busyAction === "unpublish"} className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-muted disabled:cursor-not-allowed disabled:opacity-50">
+                Unpublish
+              </button>
+            ) : (
+              <button type="button" onClick={publish} disabled={!canPublish || !productId || busyAction === "publish"} className="rounded-full bg-brand px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+                Publish
+              </button>
+            )}
+          </span>
+        )}
 
         {isEdit && (
-          <button type="button" onClick={duplicate} disabled={busyAction === "duplicate"} className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-muted hover:bg-lilac/40">
-            Duplicate
-          </button>
+          // F-184: duplicate() copies the last *saved* DB row — with no
+          // guard, a dirty form's edits were silently dropped (the copy
+          // never reflected them) with no warning, unlike every other
+          // navigation away from a dirty form.
+          <span title={dirty ? "Save your changes before duplicating" : ""}>
+            <button
+              type="button"
+              onClick={duplicate}
+              disabled={dirty || busyAction === "duplicate"}
+              className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-muted hover:bg-lilac/40 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Duplicate
+            </button>
+          </span>
         )}
 
         {isEdit && status !== "ARCHIVED" && (
@@ -784,7 +877,7 @@ export function ProductForm({
         )}
 
         {isEdit && (
-          <span title={canDelete ? "" : "Only draft products with no orders can be deleted"}>
+          <span title={canDelete ? "" : "Only draft or archived products with no orders can be deleted"}>
             <button type="button" onClick={remove} disabled={!canDelete || busyAction === "delete"} className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-red-600 disabled:cursor-not-allowed disabled:opacity-40">
               Delete
             </button>
@@ -820,15 +913,44 @@ const inputClass = "w-full rounded-xl border border-border p-2.5 text-sm text-in
  * Visual design is unchanged; only these two ARIA attributes are added to
  * whatever single element `children` already is.
  */
-function Field({ label, hint, error, children }: { label: string; hint?: string; error?: string; children: ReactElement }) {
+function Field({
+  label,
+  hint,
+  error,
+  children,
+  as = "label",
+}: {
+  label: string;
+  hint?: string;
+  error?: string;
+  children: ReactElement;
+  /**
+   * F-186: a plain `<input>`/`<select>`/`<textarea>` is a single labelable
+   * element, so wrapping it in a `<label>` (the default) both shows and
+   * programmatically associates the caption for free. `RichTextEditor` is a
+   * composite widget with its own toolbar buttons *inside* `children` —
+   * wrapped in a `<label>`, a click anywhere in the control (including the
+   * caption text) activates the label's first labelable descendant, which
+   * is the toolbar's Bold button, silently toggling bold on every click.
+   * Pass `as="div"` for a composite control: the caption gets an id and is
+   * wired to the control via `aria-labelledby` instead, so the accessible
+   * name is preserved without label-activation semantics.
+   */
+  as?: "label" | "div";
+}) {
   const errorId = useId();
+  const labelId = useId();
   const control = cloneElement(children as ReactElement<Record<string, unknown>>, {
     "aria-invalid": Boolean(error),
     "aria-describedby": error ? errorId : undefined,
+    ...(as === "div" ? { "aria-labelledby": labelId } : {}),
   });
+  const Wrapper = as;
   return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-semibold text-muted">{label}</span>
+    <Wrapper className="block">
+      <span id={as === "div" ? labelId : undefined} className="mb-1 block text-xs font-semibold text-muted">
+        {label}
+      </span>
       {control}
       {error ? (
         <span id={errorId} className="mt-1 block text-[11px] font-medium text-red-600">
@@ -837,6 +959,6 @@ function Field({ label, hint, error, children }: { label: string; hint?: string;
       ) : hint ? (
         <span className="mt-1 block text-[11px] text-muted">{hint}</span>
       ) : null}
-    </label>
+    </Wrapper>
   );
 }

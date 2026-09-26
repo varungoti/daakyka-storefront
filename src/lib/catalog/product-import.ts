@@ -164,7 +164,7 @@ export async function commitProductImport(
   }
 
   const categoriesBySlug = new Map(
-    (await db.category.findMany({ select: { id: true, slug: true, sizeChartId: true } })).map((c) => [c.slug, c]),
+    (await db.category.findMany({ select: { id: true, slug: true } })).map((c) => [c.slug, c]),
   );
 
   let productsCreated = 0;
@@ -199,23 +199,40 @@ export async function commitProductImport(
         tags,
         seoTitle: first.seoTitle,
         seoDescription: first.seoDescription,
-        sizeChartId: category.sizeChartId,
       };
 
       let productId: string;
       if (existing) {
+        // F-180/F-191: this used to also write `sizeChartId:
+        // category.sizeChartId` on every update, which pinned the
+        // *category's current* chart onto the product every time it was
+        // re-imported — silently discarding a custom per-product chart set
+        // through the admin form (there's no size_chart column in the CSV
+        // to preserve it through). There's nothing to update here: leaving
+        // sizeChartId out of `data` entirely leaves whatever the product
+        // already had (an override, or NULL/inherit) untouched.
         await tx.product.update({ where: { id: existing.id }, data: productData });
         productId = existing.id;
         productsUpdated += 1;
       } else {
         const created = await tx.product.create({
-          data: { ...productData, slug: group.productSlug, status: "DRAFT", createdById: userId },
+          // F-180: NULL (inherit the category's chart, live) for a brand
+          // new product — matching createProduct's own default (see
+          // products.ts) — never the category's chart id pinned at import
+          // time.
+          data: { ...productData, sizeChartId: null, slug: group.productSlug, status: "DRAFT", createdById: userId },
         });
         productId = created.id;
         productsCreated += 1;
       }
 
       for (const row of group.rows) {
+        // F-191: a product-only placeholder row (exportProductsCsv's row
+        // for a product with no variants — see its own comment) carries no
+        // size/color/sku to write. Skipping it here is what makes such a
+        // row safe to re-import at all, rather than upserting a variant
+        // with an empty SKU.
+        if (!row.hasVariant) continue;
         const sku = row.sku.trim();
         await tx.productVariant.upsert({
           where: { sku },
@@ -328,21 +345,39 @@ export async function exportProductsCsv(filter: { categorySlug?: string; status?
   const rows: (string | number)[][] = [[...IMPORT_COLUMNS]];
 
   for (const product of products) {
+    const productCells = [
+      product.slug,
+      product.name,
+      product.category.slug,
+      product.shortDescription ?? "",
+      product.description ?? "",
+      Number(product.price),
+      product.compareAtPrice ? Number(product.compareAtPrice) : "",
+      product.fabric ?? "",
+      product.care ?? "",
+      product.gender,
+      product.tags.join("|"),
+      product.seoTitle ?? "",
+      product.seoDescription ?? "",
+    ];
+
+    if (product.variants.length === 0) {
+      // F-191: was skipped entirely (the old loop only ever ran for
+      // `product.variants`), so a product with no variants yet — a draft
+      // still being set up — silently dropped out of "Export all
+      // products". A row with size/color/sku all blank is recognized by
+      // validateImportRows (csv.ts) as a product-only placeholder: the
+      // required-field check is waived for just those three columns, and
+      // commitProductImport writes the product's own fields but skips
+      // writing a variant for it (ParsedImportRow.hasVariant), rather than
+      // upserting one with an empty SKU.
+      rows.push([...productCells, "", "", "", "", "", "", ""]);
+      continue;
+    }
+
     for (const variant of product.variants) {
       rows.push([
-        product.slug,
-        product.name,
-        product.category.slug,
-        product.shortDescription ?? "",
-        product.description ?? "",
-        Number(product.price),
-        product.compareAtPrice ? Number(product.compareAtPrice) : "",
-        product.fabric ?? "",
-        product.care ?? "",
-        product.gender,
-        product.tags.join("|"),
-        product.seoTitle ?? "",
-        product.seoDescription ?? "",
+        ...productCells,
         variant.size,
         variant.color,
         variant.colorHex ?? "",

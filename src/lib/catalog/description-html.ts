@@ -77,6 +77,14 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
   // hold even if that changes later.
   transformTags: {
     a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer nofollow", target: "_blank" }, true),
+    // Chrome's contentEditable inserts a `<div>` per line on Enter (no
+    // `defaultParagraphSeparator` set — see rich-text-editor.tsx). `div` is
+    // deliberately *not* in ALLOWED_DESCRIPTION_TAGS (kept a strict,
+    // hand-picked allowlist), so without this transform sanitize-html would
+    // just discard every div and run the lines together (F-175). Mapping it
+    // to `p` here, before the allowedTags filter runs, keeps each line as
+    // its own paragraph instead.
+    div: "p",
   },
   disallowedTagsMode: "discard",
   // Belt-and-suspenders: strip these entirely (tag *and* content) even
@@ -86,14 +94,19 @@ const SANITIZE_OPTIONS: sanitizeHtml.IOptions = {
   nonTextTags: ["script", "style", "textarea", "option", "noscript", "iframe", "object", "embed"],
 };
 
-const HTML_TAG_PATTERN = new RegExp(`</?(${ALLOWED_DESCRIPTION_TAGS.join("|")})(?:[\\s/>]|$)`, "i");
+// Detects a tag from our own allowlist, plus `div` — never added to
+// ALLOWED_DESCRIPTION_TAGS itself (transformTags above rewrites it to `<p>`
+// before the allowlist filter runs), only to *detection*, so a description
+// whose only markup is Chrome's Enter-inserted `<div>`s (F-175) is treated
+// as HTML to sanitize rather than escaped as legacy plain text.
+const HTML_TAG_PATTERN = new RegExp(`</?(${[...ALLOWED_DESCRIPTION_TAGS, "div"].join("|")})(?:[\\s/>]|$)`, "i");
 
 /**
  * Cheap, deliberately narrow "is this our sanitized HTML, or legacy/plain
- * text" detector: true only when a tag from our own allowlist appears, so
- * plain text that merely contains a literal "<" (e.g. "Sizes < XL run
- * small") is never mistaken for markup and doesn't get HTML-escaped into
- * "Sizes &lt; XL" on the storefront.
+ * text" detector: true only when a tag from our own allowlist (or `div`,
+ * see HTML_TAG_PATTERN) appears, so plain text that merely contains a
+ * literal "<" (e.g. "Sizes < XL run small") is never mistaken for markup
+ * and doesn't get HTML-escaped into "Sizes &lt; XL" on the storefront.
  */
 export function looksLikeSanitizedHtml(value: string): boolean {
   return HTML_TAG_PATTERN.test(value);
@@ -168,7 +181,7 @@ export function descriptionToPlainText(value: string | null | undefined): string
   // Insert a space at block/line boundaries *before* stripping tags, so
   // "<p>One</p><p>Two</p>" reads as "One Two" rather than "OneTwo" once
   // the tags themselves are gone.
-  const withBoundaries = value.replace(/<\/(p|li|h3|h4|blockquote)>|<br\s*\/?>/gi, " ");
+  const withBoundaries = value.replace(/<\/(p|div|li|h3|h4|blockquote)>|<br\s*\/?>/gi, " ");
   return sanitizeHtml(withBoundaries, { allowedTags: [], allowedAttributes: {} })
     .replace(/\s+/g, " ")
     .trim();

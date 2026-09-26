@@ -11,6 +11,7 @@ import {
   CategorySectionMismatchError,
   CategorySlugConflictError,
   deleteCategory,
+  reorderCategory,
   SizeChartRefNotFoundError,
   updateCategory,
 } from "@/lib/catalog/categories";
@@ -134,6 +135,67 @@ describe("categories admin service (Phase B2)", () => {
         ),
       SizeChartRefNotFoundError,
     );
+  });
+
+  // F-193
+  it("createCategory appends a new sub-category after its siblings instead of defaulting sortOrder to 0", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const parent = await createCategory({ name: `Sort Parent ${unique}`, section: "GENERAL" }, adminId);
+    createdCategoryIds.push(parent.id);
+
+    const first = await createCategory({ name: `Sort Child A ${unique}`, section: "GENERAL", parentId: parent.id }, adminId);
+    createdCategoryIds.push(first.id);
+    assert.equal(first.sortOrder, 10);
+
+    const second = await createCategory({ name: `Sort Child B ${unique}`, section: "GENERAL", parentId: parent.id }, adminId);
+    createdCategoryIds.push(second.id);
+    assert.equal(second.sortOrder, 20);
+  });
+
+  it("createCategory still honors an explicit sortOrder", async () => {
+    const category = await createCategory(
+      { name: `Explicit Sort ${randomUUID().slice(0, 8)}`, section: "GENERAL", sortOrder: 5 },
+      adminId,
+    );
+    createdCategoryIds.push(category.id);
+    assert.equal(category.sortOrder, 5);
+  });
+
+  it("reorderCategory moves a category even when it and its sibling already share the same sortOrder (F-193 tie bug)", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const parent = await createCategory({ name: `Reorder Tie Parent ${unique}`, section: "GENERAL" }, adminId);
+    createdCategoryIds.push(parent.id);
+
+    // Simulates two categories created before the nextSiblingSortOrder fix
+    // (both defaulting to the same value) by setting it explicitly.
+    const a = await createCategory({ name: `Reorder Tie A ${unique}`, section: "GENERAL", parentId: parent.id, sortOrder: 0 }, adminId);
+    createdCategoryIds.push(a.id);
+    const b = await createCategory({ name: `Reorder Tie B ${unique}`, section: "GENERAL", parentId: parent.id, sortOrder: 0 }, adminId);
+    createdCategoryIds.push(b.id);
+
+    const initial = await db.category.findMany({ where: { parentId: parent.id }, orderBy: [{ sortOrder: "asc" }, { id: "asc" }] });
+    assert.equal(initial.length, 2);
+    const [firstId, secondId] = [initial[0].id, initial[1].id];
+
+    const moved = await reorderCategory(secondId, "up", adminId);
+    assert.equal(moved, true);
+
+    const after = await db.category.findMany({ where: { parentId: parent.id }, orderBy: { sortOrder: "asc" } });
+    assert.equal(after.length, 2);
+    assert.equal(after[0].id, secondId);
+    assert.equal(after[1].id, firstId);
+    assert.notEqual(after[0].sortOrder, after[1].sortOrder);
+  });
+
+  it("reorderCategory returns false (no-op) at either end of the sibling list", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const parent = await createCategory({ name: `Reorder Bound Parent ${unique}`, section: "GENERAL" }, adminId);
+    createdCategoryIds.push(parent.id);
+    const only = await createCategory({ name: `Only Child ${unique}`, section: "GENERAL", parentId: parent.id }, adminId);
+    createdCategoryIds.push(only.id);
+
+    assert.equal(await reorderCategory(only.id, "up", adminId), false);
+    assert.equal(await reorderCategory(only.id, "down", adminId), false);
   });
 
   it("updateCategory prevents a cycle when moving a category under its own descendant", async () => {

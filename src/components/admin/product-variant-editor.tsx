@@ -3,10 +3,39 @@
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { COLOR_PRESETS, SIZE_PRESET_LABELS, SIZE_PRESETS, sizePresetKeys, type SizePresetKey } from "@/lib/catalog/size-presets";
-import { generateSku, generateVariantMatrix, type VariantDraft } from "@/lib/catalog/product-validation";
+import { assertUniqueVariants, generateSku, generateVariantMatrix, type VariantDraft } from "@/lib/catalog/product-validation";
 
 export interface VariantRow extends VariantDraft {
   id?: string; // present once persisted
+}
+
+/**
+ * F-179: the single source of truth for "is this variant grid safe to
+ * save" — used both for the inline warning below the grid and by
+ * ProductForm to block Save *before* it ever POSTs the product, so a
+ * duplicate (size, color) or an out-of-range stock/price value can no
+ * longer create a product first and then silently fail (and lose) the
+ * variant save. Mirrors the server's own checks: `assertUniqueVariants`
+ * (also used by replaceVariants in src/lib/catalog/products.ts, so the
+ * rule can't drift) for duplicate size/colour or SKU, plus the same
+ * stock/price bounds as `variantSchema` there (int stock >= 0, price
+ * override either absent or > 0).
+ */
+export function getVariantGridError(variants: VariantRow[]): string | null {
+  for (const row of variants) {
+    if (!Number.isInteger(row.stock) || row.stock < 0) {
+      return `Stock for ${row.size} / ${row.color} must be a whole number that isn't negative.`;
+    }
+    if (row.price != null && !(row.price > 0)) {
+      return `Price override for ${row.size} / ${row.color} must be greater than 0.`;
+    }
+  }
+  try {
+    assertUniqueVariants(variants);
+  } catch (error) {
+    return error instanceof Error ? error.message : "Invalid variant grid.";
+  }
+  return null;
 }
 
 /**
@@ -93,15 +122,7 @@ export function ProductVariantEditor({
     onChange(variants.map((v) => ({ ...v, stock: Number(applyStock) })));
   };
 
-  const duplicateKeyWarning = useMemo(() => {
-    const seen = new Set<string>();
-    for (const v of variants) {
-      const key = `${v.size.toLowerCase()}::${v.color.toLowerCase()}`;
-      if (seen.has(key)) return `Duplicate variant: ${v.size} / ${v.color}`;
-      seen.add(key);
-    }
-    return null;
-  }, [variants]);
+  const gridError = useMemo(() => getVariantGridError(variants), [variants]);
 
   return (
     <div className="space-y-5">
@@ -187,7 +208,7 @@ export function ProductVariantEditor({
         Generate variants ({selectedSizes.length * selectedColors.length || 0})
       </button>
 
-      {duplicateKeyWarning ? <p className="text-xs text-red-600">{duplicateKeyWarning}</p> : null}
+      {gridError ? <p className="text-xs text-red-600">{gridError}</p> : null}
 
       {variants.length > 0 && (
         <div className="space-y-2">
@@ -230,7 +251,20 @@ export function ProductVariantEditor({
                     </td>
                     <td className="p-2">
                       <div className="flex items-center gap-1">
-                        <span className="font-mono text-[11px]">{row.sku}</span>
+                        {/* F-192: was a read-only <span> with only a "regen"
+                            link, so an existing barcode/SKU (e.g. one
+                            already printed on stock, or copied from an
+                            order) could never be typed in — only CSV import
+                            could set it. Uniqueness is still enforced the
+                            same way a regenerated SKU always was: the grid
+                            warning above (getVariantGridError) and the
+                            server's own unique constraint on save. */}
+                        <input
+                          value={row.sku}
+                          onChange={(e) => updateRow(index, { sku: e.target.value })}
+                          aria-label={`SKU for ${row.size} / ${row.color}`}
+                          className="w-32 rounded border border-border p-1 font-mono text-[11px] uppercase"
+                        />
                         <button type="button" onClick={() => regenerateSku(index)} className="text-[10px] text-brand underline">
                           regen
                         </button>

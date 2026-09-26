@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@/generated/prisma/client";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { commitProductImport, dryRunProductImport, ImportSkuConflictError, ImportValidationError } from "@/lib/catalog/product-import";
@@ -69,6 +70,23 @@ export async function POST(request: Request) {
     if (err instanceof ImportSkuConflictError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
     }
-    throw err;
+    // F-181: a row combination the dry run's own checks don't (or can't —
+    // e.g. two admins committing overlapping files at once) catch used to
+    // reach Postgres's unique constraints (variant SKU, or
+    // @@unique([productId, size, color])) and come back as a bare 500 with
+    // an empty body — the UI's only fallback was the generic "Commit
+    // failed." with no indication of what to fix. The dry-run validation
+    // above (validateImportRows: slug/hex/length/duplicate checks) should
+    // catch this ahead of time now, but this stays as the last line of
+    // defense for whatever it doesn't.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && (err.code === "P2002" || err.code === "P2003")) {
+      const target = Array.isArray(err.meta?.target) ? err.meta.target.join(", ") : typeof err.meta?.target === "string" ? err.meta.target : "a field";
+      return NextResponse.json(
+        { error: `Import failed: a value conflicts with an existing record (${target}). Check for duplicate SKUs or size/colour combinations.` },
+        { status: 409 },
+      );
+    }
+    console.error("[admin.products.import] commit failed unexpectedly", err);
+    return NextResponse.json({ error: "Import failed unexpectedly" }, { status: 500 });
   }
 }

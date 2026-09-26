@@ -176,8 +176,21 @@ export class ProductDeleteBlockedError extends Error {
 
 export class ProductNotDraftError extends Error {
   constructor() {
-    super("Only draft products with no orders can be deleted");
+    // F-185: was "Only draft products..." — an ARCHIVED product with no
+    // orders is now deletable too (see deleteProduct below), so the
+    // message needs to say so, or the 409 an admin sees after archiving is
+    // misleading about what it would actually take to delete it.
+    super("Only draft or archived products with no orders can be deleted");
     this.name = "ProductNotDraftError";
+  }
+}
+
+/** F-185: thrown by unarchiveProduct when the product isn't currently
+ * ARCHIVED — mirrors ProductNotDraftError's role for delete. */
+export class ProductNotArchivedError extends Error {
+  constructor() {
+    super("Only archived products can be unarchived");
+    this.name = "ProductNotArchivedError";
   }
 }
 
@@ -350,7 +363,17 @@ export async function createProduct(input: ProductInput, userId: string): Promis
       netQuantity: input.netQuantity ?? null,
       hsnCode: input.hsnCode ?? null,
       tags: input.tags ?? [],
-      sizeChartId: input.sizeChartId ?? category.sizeChartId ?? null,
+      // F-180: was `input.sizeChartId ?? category.sizeChartId ?? null` —
+      // choosing "None" in the form (input.sizeChartId undefined/null) used
+      // to permanently pin the category's *current* chart onto the
+      // product, rather than actually inheriting it. size-charts.ts's own
+      // resolver already falls back to `product.category.sizeChart` when
+      // `product.sizeChartId` is NULL (see resolveSizeChartForProduct), so
+      // (see fetchSizeChartForProduct's `product.sizeChart ??
+      // product.category.sizeChart`). NULL here *is* "inherit, and keep
+      // inheriting as the category's chart changes" — pinning at create
+      // time was never needed for that to work, and broke it.
+      sizeChartId: input.sizeChartId ?? null,
       seoTitle: input.seoTitle ?? null,
       seoDescription: input.seoDescription ?? null,
       createdById: userId,
@@ -466,7 +489,12 @@ export async function deleteProduct(id: string, userId: string): Promise<void> {
   const existing = await db.product.findUnique({ where: { id } });
   if (!existing) throw new ProductNotFoundError(id);
 
-  if (existing.status !== "DRAFT") {
+  // F-185: an ARCHIVED product with no orders used to be undeletable from
+  // the UI without first Publish -> Unpublish -> Delete (putting it back
+  // live on the storefront along the way, just to take it down again) —
+  // deleting it directly, the same as a DRAFT, is safe for the same
+  // reason a draft is: nothing on the storefront links to it.
+  if (existing.status !== "DRAFT" && existing.status !== "ARCHIVED") {
     throw new ProductNotDraftError();
   }
 
@@ -518,6 +546,26 @@ export async function archiveProduct(id: string, userId: string): Promise<Produc
   const updated = await db.product.update({ where: { id }, data: { status: "ARCHIVED" } });
 
   await logAuditEvent({ userId, action: "archive", entity: "product", entityId: id, metadata: { slug: updated.slug } });
+  revalidateProduct(updated.slug);
+  return updated;
+}
+
+/** F-185: returns an ARCHIVED product to DRAFT. Deliberately a separate
+ * action from unpublishProduct (both land on DRAFT, but unpublishProduct
+ * requires `products:publish` — taking a *live* product down is a publish
+ * decision). Unarchiving a product that was never live is ordinary catalog
+ * upkeep, so the /publish route gates this the same as archive itself:
+ * `products:manage`. Only valid from ARCHIVED, so a stale double-click (or
+ * a race with another admin's action) gets a clear 409 instead of quietly
+ * flipping a DRAFT or ACTIVE product to DRAFT. */
+export async function unarchiveProduct(id: string, userId: string): Promise<Product> {
+  const existing = await db.product.findUnique({ where: { id } });
+  if (!existing) throw new ProductNotFoundError(id);
+  if (existing.status !== "ARCHIVED") throw new ProductNotArchivedError();
+
+  const updated = await db.product.update({ where: { id }, data: { status: "DRAFT" } });
+
+  await logAuditEvent({ userId, action: "unarchive", entity: "product", entityId: id, metadata: { slug: updated.slug } });
   revalidateProduct(updated.slug);
   return updated;
 }
@@ -950,6 +998,10 @@ export async function listProductsForAdmin(options: ListProductsForAdminOptions 
       { name: { contains: term, mode: "insensitive" } },
       { slug: { contains: term, mode: "insensitive" } },
       { tags: { has: term } },
+      // F-192: an admin who has a SKU in hand (from an order, a pick list,
+      // a barcode) had no way to find the product it belongs to — search
+      // only ever matched name/slug/an exact tag.
+      { variants: { some: { sku: { contains: term, mode: "insensitive" } } } },
     ];
   }
 
@@ -1203,28 +1255,86 @@ export async function performBulkAction(input: BulkActionInput, userId: string):
       break;
     }
     case "adjust-price-pct": {
-      const updatable: { id: string; nextPrice: number }[] = [];
-      for (const p of products) {
-        const next = Math.max(0.01, Number(p.price) * (1 + input.percent / 100));
-        const nextPrice = Math.round(next * 100) / 100;
-        const compareAtPrice = p.compareAtPrice != null ? Number(p.compareAtPrice) : null;
-        // Same invariant createProduct/updateProduct enforce as
-        // InvalidCompareAtPriceError (compareAtPrice must stay strictly
-        // greater than price) — a bulk "+20%" run must not be allowed to
-        // silently break it and corrupt the storefront's `onSale` flag
-        // (F6). Skip the offending row and report it instead of failing
-        // — or worse, partially applying — the whole batch.
-        if (compareAtPrice != null && compareAtPrice <= nextPrice) {
-          skipped.push({ id: p.id, name: p.name, reason: "price would exceed compare-at price" });
-          continue;
+      // F-340: this used to read every product's price in JS (the
+      // `products` findMany above), compute `nextPrice` in JS, then write
+      // it back with plain `db.product.update` calls — a classic
+      // read-modify-write race. Two overlapping bulk "+10%" runs on the
+      // same product both read the *same* starting price before either
+      // wrote back, so only one +10% ever actually landed (both calls
+      // still reported success), and an overlapping "+10%"/"-10%" pair
+      // left only whichever one wrote last. Mirrors the single atomic
+      // `UPDATE ... RETURNING` pattern in src/lib/auth/lockout.ts's
+      // recordFailedLogin (see that file's comment): the whole
+      // read-modify-write happens inside the `UPDATE` itself, computed
+      // from the row's own *current* `price` column, so Postgres
+      // serializes concurrent updates to the same row under its normal
+      // row-level locking instead of letting them interleave — the second
+      // run's `UPDATE` blocks on the row lock until the first commits,
+      // then computes its own percentage against the first run's
+      // *already-adjusted* price, so two overlapping +10% runs correctly
+      // compound to +21%.
+      //
+      // F-182: also adjusts every variant price *override*
+      // (`ProductVariant.price`) by the same factor — previously only
+      // `Product.price` was touched, so checkout (which prefers
+      // `variant.price` over the product's own — see
+      // src/lib/orders/create-order.ts) silently charged an overridden
+      // variant's untouched old price through a "sale", or left it below
+      // a raised base price. Both the base price and every override round
+      // to whole rupees (`GREATEST(1, ROUND(...))`, no decimal places) —
+      // this business prices everything in whole INR, not paise.
+      //
+      // The compare-at invariant createProduct/updateProduct enforce as
+      // InvalidCompareAtPriceError (compareAtPrice must stay strictly
+      // greater than every price a shopper can actually be charged) is
+      // checked, in the same statement, against both the new base price
+      // and every new override price: a product is skipped — base price
+      // *and* every override left untouched — if either would violate it,
+      // rather than the base price going on sale while one variant's
+      // override doesn't (or ends up priced *below* the sale).
+      const percent = input.percent;
+      const updatedIds = await db.$transaction(async (tx) => {
+        const updatedProducts = await tx.$queryRaw<{ id: string }[]>`
+          UPDATE "Product" AS p
+          SET price = GREATEST(1, ROUND(p.price * (1 + ${percent}::numeric / 100))),
+              "updatedAt" = now()
+          WHERE p.id = ANY(${input.ids}::text[])
+            AND (
+              p."compareAtPrice" IS NULL
+              OR p."compareAtPrice" > GREATEST(1, ROUND(p.price * (1 + ${percent}::numeric / 100)))
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM "ProductVariant" AS v
+              WHERE v."productId" = p.id
+                AND v.price IS NOT NULL
+                AND p."compareAtPrice" IS NOT NULL
+                AND p."compareAtPrice" <= GREATEST(1, ROUND(v.price * (1 + ${percent}::numeric / 100)))
+            )
+          RETURNING p.id
+        `;
+        const ids = updatedProducts.map((p) => p.id);
+        if (ids.length > 0) {
+          // Scoped to exactly the products whose base price just passed
+          // the invariant above — a skipped product's overrides must stay
+          // untouched too.
+          await tx.$queryRaw`
+            UPDATE "ProductVariant" AS v
+            SET price = GREATEST(1, ROUND(v.price * (1 + ${percent}::numeric / 100))),
+                "updatedAt" = now()
+            WHERE v."productId" = ANY(${ids}::text[])
+              AND v.price IS NOT NULL
+          `;
         }
-        updatable.push({ id: p.id, nextPrice });
+        return ids;
+      });
+
+      const updatedIdSet = new Set(updatedIds);
+      for (const p of products) {
+        if (!updatedIdSet.has(p.id)) {
+          skipped.push({ id: p.id, name: p.name, reason: "price would exceed compare-at price" });
+        }
       }
-      if (updatable.length > 0) {
-        await db.$transaction(updatable.map((p) => db.product.update({ where: { id: p.id }, data: { price: p.nextPrice } })));
-      }
-      const skippedIds = new Set(skipped.map((s) => s.id));
-      changed = products.filter((p) => !skippedIds.has(p.id));
+      changed = products.filter((p) => updatedIdSet.has(p.id));
       break;
     }
     case "set-stock": {

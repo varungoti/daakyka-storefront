@@ -94,6 +94,112 @@ describe("validateImportRows", () => {
     assert.equal(results[0].status, "warning");
     assert.equal(results[0].errors.length, 0);
   });
+
+  // F-181: dry run must catch what commit would reject.
+  it("flags an invalid product_slug the way the product form's own regex would", () => {
+    const results = validateImportRows([HEADER, row({ product_slug: "Bad Slug/Ü" })], context);
+    assert.equal(results[0].status, "error");
+    assert.ok(results[0].errors.some((e) => e.includes("product_slug must use")));
+  });
+
+  it("flags an invalid color_hex", () => {
+    const results = validateImportRows([HEADER, row({ color_hex: "not-a-hex" })], context);
+    assert.equal(results[0].status, "error");
+    assert.ok(results[0].errors.some((e) => e.includes("color_hex must look like")));
+  });
+
+  it("accepts an empty color_hex (optional column)", () => {
+    const results = validateImportRows([HEADER, row({ color_hex: "" })], context);
+    assert.equal(results[0].status, "ok");
+  });
+
+  it("flags a name longer than the product form's own limit", () => {
+    const results = validateImportRows([HEADER, row({ product_name: "x".repeat(201) })], context);
+    assert.equal(results[0].status, "error");
+    assert.ok(results[0].errors.some((e) => e.includes('"product_name" must be 200 characters or fewer')));
+  });
+
+  it("flags more than 30 tags, and a single tag over 50 characters", () => {
+    const tooMany = validateImportRows([HEADER, row({ tags: Array.from({ length: 31 }, (_, i) => `tag${i}`).join("|") })], context);
+    assert.equal(tooMany[0].status, "error");
+    assert.ok(tooMany[0].errors.some((e) => e.includes("at most 30 tags")));
+
+    const tooLong = validateImportRows([HEADER, row({ tags: "x".repeat(51) })], context);
+    assert.equal(tooLong[0].status, "error");
+    assert.ok(tooLong[0].errors.some((e) => e.includes("longer than 50 characters")));
+  });
+
+  it("flags two rows for the same product with the same size+color but different SKUs — the case that used to only 500 at commit", () => {
+    const results = validateImportRows(
+      [HEADER, row({ sku: "DK-A" }), row({ sku: "DK-B" })],
+      context,
+    );
+    assert.equal(results[0].status, "ok");
+    assert.equal(results[1].status, "error");
+    assert.ok(results[1].errors.some((e) => e.includes('Duplicate size "M" + color "Ceil Blue"')));
+  });
+
+  it("does not flag the same size+color pair across two different products", () => {
+    const results = validateImportRows(
+      [HEADER, row({ sku: "DK-A" }), row({ product_slug: "other-product", sku: "DK-B" })],
+      context,
+    );
+    assert.equal(results[0].status, "ok");
+    assert.equal(results[1].status, "ok");
+  });
+
+  // F-191: re-importing an unchanged export must not flag every row.
+  it("does not warn when an existing SKU belongs to this same product", () => {
+    const ctx = {
+      knownCategorySlugs: context.knownCategorySlugs,
+      existingSkus: new Set(["DK-SCRSET-SAMPLE-M-CEILBLUE"]),
+      skuOwner: new Map([["DK-SCRSET-SAMPLE-M-CEILBLUE", "sample-scrub-set"]]),
+    };
+    const results = validateImportRows([HEADER, row()], ctx);
+    assert.equal(results[0].status, "ok");
+  });
+
+  it("still warns when an existing SKU belongs to a different product", () => {
+    const ctx = {
+      knownCategorySlugs: context.knownCategorySlugs,
+      existingSkus: new Set(["DK-SCRSET-SAMPLE-M-CEILBLUE"]),
+      skuOwner: new Map([["DK-SCRSET-SAMPLE-M-CEILBLUE", "some-other-product"]]),
+    };
+    const results = validateImportRows([HEADER, row()], ctx);
+    assert.equal(results[0].status, "warning");
+    assert.ok(results[0].errors.length === 0);
+  });
+
+  // F-191: exportProductsCsv writes one such row for a zero-variant
+  // product instead of dropping it from the export entirely.
+  it("treats a row with no size/color/sku as a product-only placeholder, not a validation error", () => {
+    const placeholder = row({ size: "", color: "", color_hex: "", sku: "", stock: "" });
+    const results = validateImportRows([HEADER, placeholder], context);
+    assert.equal(results[0].status, "ok");
+    assert.equal(results[0].errors.length, 0);
+    assert.equal(results[0].data?.hasVariant, false);
+  });
+
+  it("still requires size/color/sku together — filling in only one of them is a real error", () => {
+    const results = validateImportRows([HEADER, row({ color: "", sku: "" })], context);
+    assert.equal(results[0].status, "error");
+    assert.ok(results[0].errors.some((e) => e.includes('"color"')));
+    assert.ok(results[0].errors.some((e) => e.includes('"sku"')));
+  });
+
+  it("marks a normal variant row's data as hasVariant: true", () => {
+    const results = validateImportRows([HEADER, row()], context);
+    assert.equal(results[0].data?.hasVariant, true);
+  });
+
+  it("never throws when the CSV omits an optional boolean column entirely", () => {
+    const minimalHeader = ["product_slug", "product_name", "category_slug", "price", "size", "color", "sku"];
+    const minimalRow = ["sample-scrub-set", "Sample Scrub Set", "hospital-scrubs", "899", "M", "Ceil Blue", "DK-MIN-1"];
+    const results = validateImportRows([minimalHeader, minimalRow], context);
+    assert.equal(results[0].status, "ok");
+    assert.equal(results[0].data?.variantActive, true);
+    assert.equal(results[0].data?.generateImages, false);
+  });
 });
 
 describe("groupRowsByProduct", () => {

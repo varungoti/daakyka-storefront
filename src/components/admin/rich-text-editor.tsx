@@ -42,6 +42,7 @@ export function RichTextEditor({
   placeholder = "Describe the product — fabric, fit, care, what makes it worth buying…",
   "aria-invalid": ariaInvalid,
   "aria-describedby": ariaDescribedby,
+  "aria-labelledby": ariaLabelledby,
 }: {
   value: string;
   onChange: (html: string) => void;
@@ -53,6 +54,11 @@ export function RichTextEditor({
   placeholder?: string;
   "aria-invalid"?: boolean;
   "aria-describedby"?: string;
+  /** F-186: id of the visible caption, when this editor is rendered by a
+   * `Field as="div"` wrapper instead of a `<label>` (see product-form.tsx)
+   * — gives screen readers the same accessible name a `<label>` would have,
+   * without the label-activation behavior that toggled Bold on every click. */
+  "aria-labelledby"?: string;
 }) {
   const editorRef = useRef<HTMLDivElement>(null);
   const loadedKeyRef = useRef<string | undefined>(undefined);
@@ -72,6 +78,29 @@ export function RichTextEditor({
     // prop update from our own typing — see the comment above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editorKey]);
+
+  // F-175: without this, Chrome/Edge/Safari insert a bare `<div>` per line
+  // on Enter instead of a `<p>` (Firefox already defaults to `<p>`). `<div>`
+  // isn't in the server's tag allowlist, so unformatted multi-line
+  // descriptions were stored raw and then HTML-escaped on the storefront
+  // (literal "<div>" text), or — once any formatting tag was present —
+  // silently discarded, merging every line into one. `defaultParagraphSeparator`
+  // is a document-global execCommand setting, not scoped to this element, so
+  // it's re-asserted on every focus (another admin field, or a previous
+  // unmount, could have left the document on a different setting) as well
+  // as on mount.
+  function setParagraphSeparator() {
+    try {
+      document.execCommand("defaultParagraphSeparator", false, "p");
+    } catch {
+      // Unsupported in some environments (e.g. jsdom in unit tests) — Enter
+      // then falls back to the browser default, which is cosmetic only.
+    }
+  }
+
+  useEffect(() => {
+    setParagraphSeparator();
+  }, []);
 
   function emitChange() {
     const html = editorRef.current?.innerHTML ?? "";
@@ -161,12 +190,14 @@ export function RichTextEditor({
           aria-multiline="true"
           aria-invalid={ariaInvalid}
           aria-describedby={ariaDescribedby}
+          aria-labelledby={ariaLabelledby}
           className="min-h-[8rem] w-full p-2.5 text-sm text-ink outline-none [&_a]:text-brand [&_a]:underline [&_li]:ml-4 [&_ol]:list-decimal [&_ul]:list-disc"
           onInput={emitChange}
           onPaste={onPaste}
           onKeyUp={updateActiveMarks}
           onMouseUp={updateActiveMarks}
           onBlur={updateActiveMarks}
+          onFocus={setParagraphSeparator}
         />
       </div>
     </div>

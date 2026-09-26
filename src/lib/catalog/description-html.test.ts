@@ -21,6 +21,50 @@ describe("looksLikeSanitizedHtml", () => {
   });
 });
 
+describe("looksLikeSanitizedHtml — F-175 <div> detection", () => {
+  it("is true for a value whose only markup is a Chrome Enter-inserted <div>", () => {
+    assert.equal(looksLikeSanitizedHtml("Plain line one<div>Plain line two</div>"), true);
+  });
+});
+
+describe("sanitizeDescriptionHtml — F-175 <div> to <p> transform", () => {
+  it("converts a bare <div> line break into its own paragraph instead of dropping it", () => {
+    const out = sanitizeDescriptionHtml("Plain line one<div>Plain line two</div>");
+    assert.equal(out, "Plain line one<p>Plain line two</p>");
+  });
+
+  it("keeps formatting inside a converted div and does not merge sibling lines", () => {
+    const out = sanitizeDescriptionHtml("<b>Plain line one</b><div><b>Plain line two</b></div>");
+    assert.equal(out, "<b>Plain line one</b><p><b>Plain line two</b></p>");
+  });
+
+  it("keeps an empty div line as an empty paragraph rather than discarding it", () => {
+    const out = sanitizeDescriptionHtml("<div>One</div><div><br></div><div>Two</div>");
+    assert.equal(out, "<p>One</p><p><br /></p><p>Two</p>");
+  });
+});
+
+describe("prepareDescriptionForStorage — F-175 <div>", () => {
+  it("sanitizes a value whose only markup is <div>, rather than storing it raw", () => {
+    const out = prepareDescriptionForStorage("Plain line one<div>Plain line two</div>");
+    assert.equal(out, "Plain line one<p>Plain line two</p>");
+  });
+});
+
+describe("descriptionToSafeHtml — F-175 <div>", () => {
+  it("renders a <div>-only value as separate paragraphs instead of escaping the tags", () => {
+    const out = descriptionToSafeHtml("Plain line one<div>Plain line two</div>");
+    assert.equal(out, "Plain line one<p>Plain line two</p>");
+    assert.equal(out.includes("&lt;div&gt;"), false);
+  });
+});
+
+describe("descriptionToPlainText — F-175 <div>", () => {
+  it("inserts a word boundary at a </div>, matching </p>", () => {
+    assert.equal(descriptionToPlainText("<p>One</p><div>Two</div>"), "One Two");
+  });
+});
+
 describe("sanitizeDescriptionHtml — hostile input", () => {
   it("strips <script> tags and their content entirely", () => {
     const out = sanitizeDescriptionHtml("<p>Hello</p><script>alert(document.cookie)</script>");

@@ -164,6 +164,29 @@ async function assertValidParent(
   }
 }
 
+/** F-193: where a brand-new category lands in its menu when the caller
+ * doesn't specify a `sortOrder` (the admin category form never does — see
+ * category-form.tsx). Previously this defaulted to a flat `0`, which sorts
+ * *before* every existing, deliberately-ordered sibling (seeded siblings
+ * use spaced-out values like 10-71), so a new sub-category always jumped
+ * to the top of its menu. Appending after the current highest sibling
+ * (scoped the same way reorderCategory's own sibling query is: same
+ * `parentId`, and for a top-level category — `parentId: null` — also the
+ * same `section`, since top-level categories from different sections would
+ * otherwise be compared against each other) matches how every other
+ * "add to a list" control in this admin behaves. `+10` leaves the same
+ * kind of gap the seed data uses, for a manual DB edit to slot something
+ * in between later; reorderCategory's own up/down controls don't need
+ * evenly-spaced values to work (see its renumbering, below). */
+async function nextSiblingSortOrder(parentId: string | null, section: CategorySection): Promise<number> {
+  const siblings = await db.category.findMany({
+    where: parentId ? { parentId } : { parentId: null, section },
+    select: { sortOrder: true },
+  });
+  if (siblings.length === 0) return 10;
+  return Math.max(...siblings.map((s) => s.sortOrder)) + 10;
+}
+
 export async function createCategory(input: CategoryInput, userId: string): Promise<Category> {
   const name = input.name.trim();
   const slug = slugify(input.slug ?? name);
@@ -175,6 +198,8 @@ export async function createCategory(input: CategoryInput, userId: string): Prom
   if (input.sizeChartId) {
     await assertSizeChartExists(input.sizeChartId);
   }
+
+  const sortOrder = input.sortOrder ?? (await nextSiblingSortOrder(input.parentId ?? null, input.section));
 
   const created = await db.category.create({
     data: {
@@ -189,7 +214,7 @@ export async function createCategory(input: CategoryInput, userId: string): Prom
       seoDescription: input.seoDescription ?? null,
       active: input.active ?? true,
       showInMenu: input.showInMenu ?? true,
-      sortOrder: input.sortOrder ?? 0,
+      sortOrder,
     },
   });
 
@@ -295,14 +320,28 @@ export async function deleteCategory(id: string, userId: string): Promise<void> 
 
 /** Swaps sortOrder with the previous/next sibling (same parentId), so the
  * admin tree's up/down controls can reorder without a full drag-and-drop
- * implementation. No-op (returns false) at either end of the list. */
+ * implementation. No-op (returns false) at either end of the list.
+ *
+ * F-193: also renumbers every sibling to evenly-spaced values (10, 20,
+ * 30, …) in the same transaction, rather than swapping the two rows'
+ * existing sortOrder values as-is. Two siblings created before the
+ * nextSiblingSortOrder fix above (or any other way two rows end up
+ * sharing a sortOrder) used to swap that *same* value with each other —
+ * this function returned `true`, but the stored order didn't actually
+ * change, so the up/down arrows appeared to do nothing. Renumbering first
+ * also fixes that permanently (the tie can't recur), not just for this one
+ * move. */
 export async function reorderCategory(id: string, direction: "up" | "down", userId: string): Promise<boolean> {
   const existing = await db.category.findUnique({ where: { id } });
   if (!existing) throw new CategoryNotFoundError(id);
 
+  // `id` is a deterministic tiebreaker for siblings that currently share a
+  // sortOrder — without it, which of the tied rows findMany returns first
+  // (and so which one `index`/`swapIndex` below actually point at) isn't
+  // guaranteed to stay consistent from one call to the next.
   const siblings = await db.category.findMany({
     where: { parentId: existing.parentId },
-    orderBy: { sortOrder: "asc" },
+    orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
     select: { id: true, sortOrder: true },
   });
 
@@ -310,13 +349,15 @@ export async function reorderCategory(id: string, direction: "up" | "down", user
   const swapIndex = direction === "up" ? index - 1 : index + 1;
   if (index === -1 || swapIndex < 0 || swapIndex >= siblings.length) return false;
 
-  const other = siblings[swapIndex];
-  const self = siblings[index];
-
-  await db.$transaction([
-    db.category.update({ where: { id: self.id }, data: { sortOrder: other.sortOrder } }),
-    db.category.update({ where: { id: other.id }, data: { sortOrder: self.sortOrder } }),
-  ]);
+  const renumbered = siblings.map((_, i) => (i + 1) * 10);
+  await db.$transaction(
+    siblings.map((sibling, i) => {
+      // Every sibling gets its new, evenly-spaced position — except the
+      // two being swapped, which trade positions with each other.
+      const newSortOrder = i === index ? renumbered[swapIndex] : i === swapIndex ? renumbered[index] : renumbered[i];
+      return db.category.update({ where: { id: sibling.id }, data: { sortOrder: newSortOrder } });
+    }),
+  );
 
   await logAuditEvent({
     userId,
