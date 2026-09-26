@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { normalizeIndianPhone, normalizeIndianPincode } from "@/lib/validation/india";
+import { INDIAN_STATES, normalizeIndianPhone, normalizeIndianPincode } from "@/lib/validation/india";
 
 /**
  * Release-hardening Finding A: an order was placed live with phone "12345"
@@ -80,5 +80,21 @@ describe("normalizeIndianPincode", () => {
     assert.equal(normalizeIndianPincode("12345"), null);
     assert.equal(normalizeIndianPincode("1234567"), null);
     assert.equal(normalizeIndianPincode(""), null);
+  });
+});
+
+// Audit F-040: checkout's "State" field was free text, so a typo or an
+// inconsistent spelling (e.g. "Orissa" for Odisha) was silently accepted.
+describe("INDIAN_STATES", () => {
+  it("lists all 28 states and 8 union territories, once each", () => {
+    assert.equal(INDIAN_STATES.length, 36);
+    assert.equal(new Set(INDIAN_STATES).size, 36, "no duplicates");
+  });
+
+  it("includes DAAKYKA's home state and a couple of other well-known ones", () => {
+    assert.ok(INDIAN_STATES.includes("Telangana"));
+    assert.ok(INDIAN_STATES.includes("Delhi"));
+    assert.ok(INDIAN_STATES.includes("Maharashtra"));
+    assert.ok(INDIAN_STATES.includes("Tamil Nadu"));
   });
 });
