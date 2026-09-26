@@ -13,22 +13,65 @@ function run(command, extraEnv) {
   });
 }
 
+/**
+ * Like `run()`, but captures stdout/stderr instead of streaming them live,
+ * so the caller can inspect what Prisma actually printed. Printed as one
+ * block once the command finishes either way, so nothing is lost — this
+ * only delays it by however long a single `prisma migrate deploy` takes,
+ * not the whole retry loop below.
+ */
+function runCapture(command, extraEnv) {
+  // Both streams explicitly piped (not the execSync default, which
+  // inherits stderr live) so nothing prints twice: this fully captures
+  // the output first, then writes it out exactly once below, whichever
+  // branch runs.
+  const options = {
+    encoding: "utf8",
+    shell: true,
+    stdio: ["inherit", "pipe", "pipe"],
+    env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
+  };
+  try {
+    const stdout = execSync(command, options);
+    process.stdout.write(stdout);
+    return { ok: true, output: stdout };
+  } catch (error) {
+    const output = `${error.stdout ?? ""}${error.stderr ?? ""}`;
+    process.stdout.write(output);
+    return { ok: false, output };
+  }
+}
+
+// F-353: only retry a genuine advisory-lock contention — Prisma error
+// P1002 ("Timed out trying to acquire a lock"), the exact scenario this
+// retry loop exists for (several build workers racing to migrate the same
+// database concurrently). This used to retry EVERY failure up to
+// `maxAttempts` times, including a migration that will never succeed no
+// matter how many times it's retried (a broken migration's P3009/P3018,
+// a SQL syntax error, ...) — burning ~2 minutes of build time relabeling
+// it "Migrate lock timeout" before finally reporting the real error.
+export function isLockTimeout(output) {
+  return /P1002\b/.test(output) || /Timed out trying to acquire a lock/i.test(output);
+}
+
 async function migrateWithRetry(maxAttempts = 5) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      run("npx prisma migrate deploy");
-      return;
-    } catch {
-      if (attempt === maxAttempts) {
-        console.error(`prisma migrate deploy failed after ${maxAttempts} attempts`);
-        process.exit(1);
-      }
-      const waitMs = attempt * 8000;
-      console.warn(
-        `Migrate lock timeout (attempt ${attempt}/${maxAttempts}). Retrying in ${waitMs / 1000}s…`,
-      );
-      await sleep(waitMs);
+    const result = runCapture("npx prisma migrate deploy");
+    if (result.ok) return;
+
+    if (!isLockTimeout(result.output)) {
+      console.error("prisma migrate deploy failed (not a lock timeout — not retrying; see output above)");
+      process.exit(1);
     }
+    if (attempt === maxAttempts) {
+      console.error(`prisma migrate deploy failed after ${maxAttempts} lock-timeout attempts`);
+      process.exit(1);
+    }
+    const waitMs = attempt * 8000;
+    console.warn(
+      `Migrate lock timeout (attempt ${attempt}/${maxAttempts}). Retrying in ${waitMs / 1000}s…`,
+    );
+    await sleep(waitMs);
   }
 }
 

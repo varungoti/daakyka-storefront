@@ -65,6 +65,70 @@ export function isLikelyProtectedVercelAlias(urlString) {
   return hostname.endsWith("-projects.vercel.app");
 }
 
+/**
+ * F-354: go-live.mjs used to pick the deployment URL to smoke-test by
+ * regexing the `vercel --prod` CLI's own stdout+stderr for the last
+ * `https://*.vercel.app` substring it could find — no preference between
+ * the project's public alias, its SSO-protected team-scoped alias, or a
+ * custom domain, and nothing that ever picked a custom domain at all.
+ * This instead picks a hostname out of a parsed `vercel inspect
+ * --format=json <deployment>` object: prefer a custom domain over any
+ * `*.vercel.app` alias, and the public `<project>-<hash>.vercel.app`
+ * alias over the SSO-protected `-projects.vercel.app` one (F-007).
+ *
+ * Deliberately schema-tolerant — it scans for any hostname-shaped string
+ * anywhere in the object rather than reading one specific field — because
+ * `vercel inspect`'s JSON shape isn't a documented, versioned contract.
+ */
+export function pickProductionHostname(inspectJson) {
+  const hostnames = new Set();
+  const visit = (value) => {
+    if (typeof value === "string") {
+      const match = value.match(
+        /^(?:https?:\/\/)?([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+)\/?$/i,
+      );
+      if (match) hostnames.add(match[1].toLowerCase());
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (value && typeof value === "object") {
+      Object.values(value).forEach(visit);
+    }
+  };
+  visit(inspectJson);
+
+  const isVercelApp = (host) => host.endsWith(".vercel.app");
+  const isProtectedAlias = (host) => host.endsWith("-projects.vercel.app");
+
+  const custom = [...hostnames].find((host) => !isVercelApp(host));
+  if (custom) return custom;
+  const publicAlias = [...hostnames].find((host) => isVercelApp(host) && !isProtectedAlias(host));
+  if (publicAlias) return publicAlias;
+  return [...hostnames][0] ?? null;
+}
+
+/** True for any HTTP redirect status (3xx). */
+export function isRedirectStatus(status) {
+  return status >= 300 && status < 400;
+}
+
+/**
+ * True when a redirect `Location` header points at Vercel's own SSO wall
+ * (`vercel.com/sso-api`) rather than anywhere on the app's own domain —
+ * what Deployment Protection sends every unauthenticated request to.
+ */
+export function isSsoRedirectLocation(location) {
+  if (!location) return false;
+  try {
+    return new URL(location, "https://placeholder.invalid").hostname === "vercel.com";
+  } catch {
+    return false;
+  }
+}
+
 function globToRegExp(pattern) {
   const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
   return new RegExp(`^${escaped}$`);

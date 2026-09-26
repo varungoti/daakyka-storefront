@@ -4,6 +4,9 @@ import {
   extractCanonicalHref,
   homepageHasNoindexMeta,
   isLikelyProtectedVercelAlias,
+  isRedirectStatus,
+  isSsoRedirectLocation,
+  pickProductionHostname,
   robotsTxtBlocksAll,
   robotsTxtHasSitemap,
   vercelIgnoreCoversEnvSecrets,
@@ -114,5 +117,66 @@ describe("vercelIgnoreCoversEnvSecrets (F-228)", () => {
   it("accepts the negation ordered after the broad rule", () => {
     const content = [".env*", "!.env*.example"].join("\n");
     assert.equal(vercelIgnoreCoversEnvSecrets(content), true);
+  });
+});
+
+describe("pickProductionHostname (F-354)", () => {
+  it("prefers a custom domain over any *.vercel.app alias", () => {
+    const inspect = {
+      url: "storefront-kgagbak0s-varubs-projects.vercel.app",
+      alias: ["storefront-nu-woad.vercel.app", "daakyka.com"],
+    };
+    assert.equal(pickProductionHostname(inspect), "daakyka.com");
+  });
+
+  it("prefers the public vercel.app alias over the SSO-protected -projects.vercel.app one", () => {
+    const inspect = {
+      url: "storefront-kgagbak0s-varubs-projects.vercel.app",
+      alias: ["storefront-varubs-projects.vercel.app", "storefront-nu-woad.vercel.app"],
+    };
+    assert.equal(pickProductionHostname(inspect), "storefront-nu-woad.vercel.app");
+  });
+
+  it("falls back to whatever hostname it finds when there is no alias array", () => {
+    assert.equal(
+      pickProductionHostname({ url: "https://storefront-nu-woad.vercel.app" }),
+      "storefront-nu-woad.vercel.app",
+    );
+  });
+
+  it("returns null when nothing hostname-shaped is found", () => {
+    assert.equal(pickProductionHostname({ id: "dpl_abc123", readyState: "READY" }), null);
+  });
+
+  it("does not throw on null/undefined input", () => {
+    assert.equal(pickProductionHostname(null), null);
+    assert.equal(pickProductionHostname(undefined), null);
+  });
+});
+
+describe("isRedirectStatus", () => {
+  it("is true for 301/302/307/308", () => {
+    for (const status of [301, 302, 307, 308]) assert.equal(isRedirectStatus(status), true);
+  });
+
+  it("is false for 200 and 404", () => {
+    assert.equal(isRedirectStatus(200), false);
+    assert.equal(isRedirectStatus(404), false);
+  });
+});
+
+describe("isSsoRedirectLocation (F-354)", () => {
+  it("flags a redirect to vercel.com/sso-api", () => {
+    assert.equal(isSsoRedirectLocation("https://vercel.com/sso-api?url=%2F"), true);
+  });
+
+  it("does not flag a redirect within the app's own domain", () => {
+    assert.equal(isSsoRedirectLocation("https://daakyka.com/shop"), false);
+    assert.equal(isSsoRedirectLocation("/shop"), false);
+  });
+
+  it("does not throw on a missing header", () => {
+    assert.equal(isSsoRedirectLocation(null), false);
+    assert.equal(isSsoRedirectLocation(undefined), false);
   });
 });

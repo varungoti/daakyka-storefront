@@ -123,8 +123,8 @@ Shopify credentials are **not** on this list — see "How the system actually wo
 npm run verify:101              # Local: db:setup, lint+typecheck+test+build, smoke, E2E,
                                  # dogfood E2E, then a Lighthouse audit against a real prod server
 npm run verify:staging:full     # Live staging probe + remote tests
-npm run go-live:check           # Partial env checklist before promote — see the caveat in
-                                 # GO_LIVE_RUNBOOK.md (it doesn't check CREDENTIAL_ENCRYPTION_KEY)
+npm run go-live:check -- --production   # Env checklist before promote — checks the current shell,
+                                 # not Vercel itself; see the caveat in GO_LIVE_RUNBOOK.md's A2
 ```
 
 ## Key Acceptance Criteria (Part 19)
@@ -141,15 +141,16 @@ npm run go-live:check           # Partial env checklist before promote — see t
 | Staging deploy verified | ✅ https://storefront-nu-woad.vercel.app |
 | Checkout (Razorpay, DB-native) | ✅ — works today; online payment needs Razorpay keys (env var or `/admin/integrations`), otherwise falls back to order-request |
 | Live email/WhatsApp | ⏳ Needs Brevo (env var or `/admin/integrations`) / WATI |
-| Production DNS | ⏳ `daakyka.com` — that domain is currently unreachable from this dev environment (it hosts an unrelated old site today; see `src/data/media/catalog.ts`'s doc comment), separate from whether it's pointed at this app yet |
+| Production DNS | ⏳ `daakyka.com` resolves and answers `200` today, but from the old Hostinger-hosted site, not this app — it isn't attached to this Vercel project yet (see `src/data/media/catalog.ts`'s doc comment and `GO_LIVE_RUNBOOK.md`'s Domain & DNS phase) |
 
 **Full status:** [LAUNCH_STATUS.md](./LAUNCH_STATUS.md)
 
 ## Support Contacts
 
-- Brand site: [daakyka.com](https://daakyka.com) — unreachable from this dev environment as of
-  2026-09-20 (DNS resolves; every connection attempt times out). Confirm current status before
-  assuming it's back, and don't hotlink assets from it — see `src/data/media/catalog.ts`.
+- Brand site: [daakyka.com](https://daakyka.com) — live, but still serving the old Hostinger-hosted
+  site as of 2026-09-26, not yet cut over to this app (see `GO_LIVE_RUNBOOK.md`'s Domain & DNS
+  phase). Confirm current status before assuming the cutover has happened, and don't hotlink assets
+  from it — see `src/data/media/catalog.ts`.
 - Master plan: `/Proposal/DAAKYKA_AUTONOMOUS_STORE_MASTER_PLAN.md`
 
 ## Post-Handover Maintenance

@@ -62,11 +62,14 @@ TEST_BASE_URL=https://YOUR-STAGING-URL.vercel.app npm run probe:deploy -- --stag
 TEST_BASE_URL=https://YOUR-STAGING-URL.vercel.app npm run verify:staging -- --dogfood
 ```
 
-`npm run check:deploy-env` / `npm run go-live:check` only check 5 vars (`DATABASE_URL`,
-`AUTH_SECRET`, `CRON_SECRET`, `NEXT_PUBLIC_SITE_URL`, `ADMIN_SEED_PASSWORD`) — a green run from
-either does **not** mean every var `validateEnv()` requires is set. In particular neither script
-checks `CREDENTIAL_ENCRYPTION_KEY`, which the app itself hard-requires in production (see below).
-Don't treat a clean `check:deploy-env` as the full picture.
+`npm run check:deploy-env` / `npm run go-live:check` check `DATABASE_URL`, `AUTH_SECRET`,
+`CRON_SECRET`, `NEXT_PUBLIC_SITE_URL`, `ADMIN_SEED_PASSWORD` and `CREDENTIAL_ENCRYPTION_KEY` — but
+both only read the **current shell environment**, not what's actually stored on Vercel, so a green
+run only means "this shell, right now, has a complete and valid set." Pass `-- --production` (or
+`npm run go-live:check -- --production`) once real production values are loaded, not the staging
+defaults — a plain run checks staging rules (it wants `NEXT_PUBLIC_ALLOW_INDEXING=false`; production
+mode wants the opposite). Neither script checks the Razorpay/Brevo/R2 optional integrations beyond
+the `go-live:check` summary further down.
 
 ### A3. Staging checklist
 
@@ -126,7 +129,48 @@ rather than failing — see [IMAGES_AI.md](./IMAGES_AI.md).
 
 ---
 
-## Phase D — Payments & integrations (when ready)
+## Phase D — Domain & DNS cutover
+
+Do this **before** registering the Razorpay webhook in Phase E — a webhook (or a crawler, or a
+customer clicking an emailed link) pointed at a host that isn't live yet just fails (F-350). Today,
+`daakyka.com` is **not** attached to this Vercel project — DNS still points at the old Hostinger
+site (`vercel domains ls` only lists other projects' domains; `curl -sI https://daakyka.com`
+answers `200` from that old site, not this app).
+
+1. **Attach the domain**: `vercel domains add daakyka.com` (and `vercel domains add www.daakyka.com`)
+   on the `storefront` project. Vercel then tells you the exact records to set — they don't change
+   often, but confirm them there rather than trusting the table below blindly.
+2. **At the DNS host (currently Hostinger)**, set:
+
+   | Record | Type | Value | Notes |
+   |---|---|---|---|
+   | `daakyka.com` (apex) | `A` | shown by `vercel domains add` / the Project → Domains page (at the time of writing, `76.76.21.21`) | Use an `ALIAS`/`ANAME` record instead if the registrar supports one and prefers it over a bare `A` — Vercel's own instructions always take precedence over the value cached here |
+   | `www.daakyka.com` | `CNAME` | `cname.vercel-dns.com` | |
+   | `daakyka.com` `MX` | *(leave as-is)* | `mx1.hostinger.com` / `mx2.hostinger.com` | Do **not** touch — mail keeps flowing through Hostinger regardless of where the web traffic points |
+   | `daakyka.com` `TXT` (SPF) | *(leave as-is, then extend)* | existing `v=spf1 include:_spf.mail.hostinger.com ~all`, plus `include:` Brevo's SPF host once authenticated below | Removing the Hostinger include breaks existing mail; only add to it |
+   | `hostingermail-a._domainkey` | *(leave as-is)* | existing key | Existing Hostinger mail DKIM — untouched |
+
+3. **Authenticate the sending domain in Brevo** (Brevo → Senders, Domains & Dedicated IPs →
+   Domains → Authenticate a domain) so `noreply@daakyka.com` mail passes DKIM/DMARC alignment —
+   without this, Brevo signs with its own shared domain instead, which does not align with the
+   `daakyka.com` `From:` address. Brevo generates the exact records for this account (they are
+   unique per account — this doc can't state them, only where to get them):
+   - A domain-ownership `TXT` (`brevo-code=...`) at the apex.
+   - Two DKIM `CNAME` records, typically `brevo1._domainkey`/`brevo2._domainkey` (or similar) →
+     the targets Brevo's dashboard shows.
+   - Optionally, a dedicated SPF-include host to add to the `TXT` record above.
+   Also add/relax a `_dmarc.daakyka.com` `TXT` record (currently `v=DMARC1; p=none`) to
+   `v=DMARC1; p=none; rua=mailto:<an address you monitor>` once DKIM/SPF alignment is confirmed
+   working, so a misconfiguration surfaces as a report instead of silent spam-folder placement.
+4. **Verify before moving on**: `dig +short daakyka.com A` resolves to Vercel's IP, `curl -sI
+   https://daakyka.com` answers `200` from *this app* (check for `DAAKYKA` in the body, not the old
+   site), and SSL is issued (Vercel does this automatically once DNS resolves).
+5. Only then move to Phase E and register the Razorpay webhook, and update `NEXT_PUBLIC_SITE_URL`
+   to `https://daakyka.com` (see [LAUNCH_CHECKLIST.md](./LAUNCH_CHECKLIST.md) §1).
+
+---
+
+## Phase E — Payments & integrations (when ready)
 
 | Integration | How | Doc |
 |---|---|---|
@@ -141,6 +185,54 @@ and move to admin-managed keys later without a code change.
 
 Test the real flow after setting keys: place an order → Razorpay Checkout.js → `/api/checkout/verify`
 → `/admin/orders` → post-purchase journey.
+
+---
+
+## Go-live with scripts/go-live.mjs
+
+`scripts/go-live.mjs` automates Phases B and E's env-push + migrate + deploy sequence (not Phase C,
+D or the rest of E's third-party dashboard steps — see "What it does NOT do" below). Run it from
+`storefront/` with the production values in `.env` (`SUPABASE_DATABASE_URL`, `ADMIN_SEED_PASSWORD`,
+`CREDENTIAL_ENCRYPTION_KEY`, `AUTH_SECRET`, `CRON_SECRET`, `NEXT_PUBLIC_SITE_URL`, and optionally
+`OPENAI_API_KEY`/the R2 or `CLOUDFLARE_*` trio):
+
+```bash
+node scripts/go-live.mjs                  # dry run (the default) — shows the exact plan, no writes
+node scripts/go-live.mjs --yes            # actually go live: migrate -> push env -> deploy -> smoke
+```
+
+**Flags:**
+
+| Flag | Effect |
+|---|---|
+| `--yes` | Required to actually change anything — every other invocation is a dry run |
+| `--skip-env` | Skip pushing env vars to Vercel (already correct there) |
+| `--skip-migrate` | Skip the `prisma migrate deploy` step (already applied) |
+| `--allow-noindex` | Acknowledge a deliberate soft launch — turns the noindex/robots-disallow checks (preflight and smoke) from an abort into a warning. Never sets or removes `NEXT_PUBLIC_ALLOW_INDEXING` itself |
+| `--allow-non-pooler-db` | Skip the session-pooler hostname/port check on `SUPABASE_DATABASE_URL` — only for a deliberately different setup (e.g. a non-Supabase provider) |
+
+**What it does:** preflight-validates `.env` (including running the same mapping/validation
+`scripts/push-env-to-vercel.mjs` uses, so a problem there aborts *before* anything is written —
+see F-346), migrates the production database directly (proving `SUPABASE_DATABASE_URL` actually
+connects before anything reaches Vercel — see F-352), pushes env vars with `vercel env add --force`
+(safe to re-run — see F-345), deploys with `vercel --prod`, then resolves the real production
+hostname via `vercel inspect --format=json` (preferring a custom domain) and checks `/api/health`,
+the homepage (noindex meta, canonical host), and `robots.txt` before declaring it live.
+
+**What it does NOT do** — these are separate, manual (Phase D/E) steps:
+
+- Attach `daakyka.com` to the Vercel project or touch DNS (Phase D)
+- Set up R2/Cloudflare (Phase C), or Brevo/WATI (Phase E) — it only pushes the env vars for
+  R2/OpenAI if they're already in `.env`
+- Register the Razorpay webhook, or set `RAZORPAY_*` at all (set those via `/admin/integrations`
+  or push them by hand — see Phase E above)
+- Remove a leftover `NEXT_PUBLIC_ALLOW_INDEXING` from Vercel Production — it detects one and
+  aborts (or warns, with `--allow-noindex`) with the exact `vercel env rm` command to run
+- Set `DB_POOL_MAX`, `HERMES_*`, `FIREWORKS_API_KEY`, or any Shopify var — none of these are pushed
+
+On failure it prints which stages already completed (env pushed / migrations applied / deployed)
+before the failure, plus a specific recovery hint — a `prisma migrate resolve` pointer for a failed
+migration, or a `vercel rollback` suggestion once the new code is already live.
 
 ---
 
@@ -201,7 +293,7 @@ specifically needs a redeploy today, which is a real gap, not the SWR behavior d
 | Command | When |
 |---------|------|
 | `npm run verify:101` | Before every merge to staging/main |
-| `npm run check:deploy-env` | Before promoting env vars (see the caveat in A2 — it's a partial check) |
+| `npm run check:deploy-env -- --production` | Before promoting env vars — checks the current shell, not Vercel itself; see the caveat in A2 |
 | `npm run probe:deploy -- --staging` | After staging deploy |
 | `npm run verify:staging -- --dogfood` | Full remote QA |
 

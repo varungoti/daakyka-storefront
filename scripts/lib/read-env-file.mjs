@@ -26,11 +26,18 @@ export function readEnvFile(path = ".env") {
     if (eq === -1) continue;
     const key = trimmed.slice(0, eq).trim();
     let value = trimmed.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"') && value.length > 1) ||
-      (value.startsWith("'") && value.endsWith("'") && value.length > 1)
-    ) {
-      value = value.slice(1, -1);
+    // F-347 fix: a quoted value's closing quote is the FIRST matching quote
+    // character after the opening one, not necessarily the last character
+    // on the line. The previous `startsWith(...) && endsWith(...)` check
+    // only matched a quoted value with nothing after its closing quote —
+    // any inline comment after a quoted value (`KEY="value" # comment`)
+    // made `endsWith` fail, fell through to the comment-stripping branch
+    // below, and left the leading quote character in the value untouched
+    // (dotenv, which the app itself uses to load .env, strips it). That
+    // put literal quote characters into secrets pushed to production.
+    const quoted = value.match(/^(["'])([\s\S]*?)\1(?:\s*#.*)?$/);
+    if (quoted) {
+      value = quoted[2];
     } else {
       const hash = value.indexOf("#");
       if (hash !== -1) value = value.slice(0, hash).trim();

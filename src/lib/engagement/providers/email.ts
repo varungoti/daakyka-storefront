@@ -1,5 +1,6 @@
 import { getCredential } from "@/lib/integrations/credential-store";
 import { isIntegrationEnabled } from "@/lib/integrations/enabled";
+import { getSetting } from "@/lib/settings";
 
 export interface SendEmailInput {
   to: string;
@@ -42,6 +43,14 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
   const fromEmail =
     (await getCredential("BREVO", "FROM_EMAIL")) ?? process.env.BREVO_FROM_EMAIL ?? "noreply@daakyka.com";
   const fromName = process.env.BREVO_FROM_NAME ?? "DAAKYKA Apparels";
+  // F-351 fix: sender-only meant every customer reply to a transactional or
+  // marketing email landed on noreply@ — nobody monitors that inbox, so
+  // replies (and any bounce-back from a mail client that ignores the
+  // no-reply convention) silently went nowhere. `contact.email` is the
+  // one admin-editable support address the rest of the site already
+  // publishes (see src/lib/settings/index.ts), so this never invents an
+  // address — it reuses whichever one the owner has actually set.
+  const replyToEmail = await getSetting("contact.email");
 
   try {
     const response = await fetch("https://api.brevo.com/v3/smtp/email", {
@@ -54,6 +63,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       body: JSON.stringify({
         sender: { email: fromEmail, name: fromName },
         to: [{ email: input.to }],
+        ...(replyToEmail ? { replyTo: { email: replyToEmail } } : {}),
         subject: input.subject,
         htmlContent: input.html,
         textContent: input.text ?? input.html.replace(/<[^>]+>/g, ""),

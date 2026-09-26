@@ -9,6 +9,14 @@
 const isProduction = process.argv.includes("--production");
 
 console.log("\nDAAKYKA Storefront — Go-Live Check\n");
+// F-348: every check below reads process.env directly — the current shell,
+// never Vercel. A clean local `.env` in this shell and an incomplete
+// Vercel Production, or the reverse, look identical without this line.
+console.log(
+  `Checking the current shell environment (not the values stored in Vercel) — ${
+    isProduction ? "production" : "staging"
+  } mode.`,
+);
 
 const required = {
   staging: [
@@ -74,10 +82,19 @@ console.log("  5. docs/QA_CHECKLIST.md — manual cross-browser on staging\n");
 if (missing.length === 0) {
   try {
     const { spawnSync } = await import("node:child_process");
-    console.log("Running check:deploy-env...\n");
-    const result = spawnSync("npm", ["run", "check:deploy-env"], {
+    console.log(`Running check:deploy-env (${mode})...\n`);
+    // F-348 fix: this used to always run `npm run check:deploy-env` with no
+    // arguments, which silently dropped `--production` — npm only forwards
+    // args after `--` (`npm run check:deploy-env -- --production`), which
+    // this never did. check-deploy-env.mjs then ran in its default staging
+    // mode regardless of `go-live:check`'s own `--production` flag, so a
+    // correct production env failed (staging wants
+    // NEXT_PUBLIC_ALLOW_INDEXING=false) and a *noindexed* production env
+    // passed. Calling node directly on the script sidesteps the npm
+    // arg-forwarding footgun entirely instead of relying on `--`.
+    const args = ["scripts/check-deploy-env.mjs", ...(isProduction ? ["--production"] : [])];
+    const result = spawnSync(process.execPath, args, {
       stdio: "inherit",
-      shell: true,
       env: process.env,
     });
     process.exit(result.status ?? 0);

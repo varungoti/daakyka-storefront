@@ -128,9 +128,19 @@ payment method or Razorpay changes its infrastructure hosts), this is the block 
 2. **Settings → API Keys → Generate Test Key** — this gives you a `Key Id` and `Key Secret`. Set
    these as `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`.
 3. **Settings → Webhooks → Add New Webhook** — set the URL to
-   `https://<your-deployment-host>/api/webhooks/razorpay`, subscribe to at least
-   `payment.captured`, `payment.failed`, and `refund.processed`, and set a webhook secret. Set that
-   secret as `RAZORPAY_WEBHOOK_SECRET`.
+   `https://daakyka.com/api/webhooks/razorpay` once DNS is cut over to Vercel (see
+   [GO_LIVE_RUNBOOK.md](./GO_LIVE_RUNBOOK.md)'s Domain & DNS section), or
+   `https://storefront-nu-woad.vercel.app/api/webhooks/razorpay` — the project's own public alias —
+   as a temporary stand-in before that. Subscribe to at least `payment.captured`, `payment.failed`,
+   and `refund.processed`, and set a webhook secret. Set that secret as `RAZORPAY_WEBHOOK_SECRET`.
+
+   **Never** point this at a `*-projects.vercel.app` deployment or preview URL (for example
+   `storefront-varubs-projects.vercel.app` or any `storefront-git-*-varubs-projects.vercel.app`
+   branch alias) — Vercel's team-scoped alias has Deployment Protection (SSO) enabled by default, so
+   Razorpay's webhook POST hits a login redirect (302 to `vercel.com/sso-api`), not this route, and
+   payment confirmations silently never arrive. A quick check before registering: `curl -sI
+   <url>/api/webhooks/razorpay` must answer `405 Method Not Allowed` (this route only accepts POST)
+   — a `302`/`404` means the URL is wrong.
 4. Test payments use Razorpay's published test card/UPI/netbanking credentials (see Razorpay's own
    test-mode docs) — no real money moves in test mode.
 5. Restart the app (or redeploy) after setting all three variables — `src/lib/env.ts` validates

@@ -14,7 +14,7 @@ Production values, one at a time:
 |---|---|---|
 | `DATABASE_URL` | **Yes** | Supabase Postgres in production — must be the **session pooler** connection string (port 5432; the direct host and transaction pooler are IPv6-only, which Vercel's runtime can't reach). Percent-encode the password. Set on Vercel as `DATABASE_URL` — Prisma never reads `SUPABASE_DATABASE_URL`, which is only how this repo's local `.env` keeps a reference copy of the production value. |
 | `AUTH_SECRET` | **Yes** | ≥ 32 random characters |
-| `CREDENTIAL_ENCRYPTION_KEY` | **Yes** | 32 bytes (base64 or hex) — root key for `/admin/integrations` credential encryption. Not checked by `npm run check:deploy-env`; don't rely on that script alone. |
+| `CREDENTIAL_ENCRYPTION_KEY` | **Yes** | 32 bytes (base64 or hex) — root key for `/admin/integrations` credential encryption. Checked by `npm run check:deploy-env -- --production` (pass `--production`, or it checks staging rules instead). |
 | `CRON_SECRET` | **Yes** | Protects `/api/cron/*` |
 | `ADMIN_SEED_PASSWORD` | **Yes** | ≥ 12 chars, not a known default |
 | `NEXT_PUBLIC_SITE_URL` | **Yes** | `https://daakyka.com` (or wherever DNS currently points) |
@@ -28,18 +28,40 @@ Production values, one at a time:
 | `DB_POOL_MAX` | Optional | Defaults to 5; keep small with a connection pooler |
 | `HERMES_API_URL` / `HERMES_API_KEY` | Optional | Agent runtime |
 
-Run migrations and seed the admin user (this also runs automatically on every Vercel deploy via
-`scripts/vercel-build.mjs`):
+`scripts/go-live.mjs` (see [GO_LIVE_RUNBOOK.md](./GO_LIVE_RUNBOOK.md#go-live-with-scriptsgo-livemjs))
+runs migrate + seed against production for you, in the right order, as part of the full go-live —
+use it instead of the commands below unless you have a specific reason to run them by hand. Every
+Vercel deploy also re-runs both automatically (`scripts/vercel-build.mjs`).
+
+If running by hand, target `SUPABASE_DATABASE_URL` explicitly — plain `npx prisma migrate deploy`
+uses whatever `DATABASE_URL` your shell/`.env` currently has, which under the split this repo uses
+(`DATABASE_URL` = local Docker Postgres, `SUPABASE_DATABASE_URL` = production reference copy) is
+**not** production:
 
 ```bash
-npx prisma migrate deploy
-npx tsx prisma/seed.ts
+DATABASE_URL="$SUPABASE_DATABASE_URL" npx prisma migrate deploy
+DATABASE_URL="$SUPABASE_DATABASE_URL" npx tsx prisma/seed.ts
 ```
 
 `prisma/seed.ts` only ever creates the admin user — it never overwrites an existing one — so
 re-running it is always safe. Change the seed password immediately after first login regardless.
 
-## 2. Payments (Razorpay)
+## 2. Domain & DNS
+
+Do this **before** §3 Payments below — a webhook or SEO check pointed at a URL that isn't live yet
+just fails.
+
+- [ ] `daakyka.com` (and `www`) attached to the `storefront` Vercel project (`vercel domains add
+      daakyka.com`) — see [GO_LIVE_RUNBOOK.md](./GO_LIVE_RUNBOOK.md) for the exact DNS records
+- [ ] DNS cut over at the registrar (apex A/ALIAS + `www` CNAME to Vercel's values) — MX, SPF and
+      the existing mail DKIM records are left untouched so email keeps working through the cutover
+- [ ] SSL certificate active on the custom domain
+- [ ] `curl -sI https://daakyka.com` answers `200` from **this app** (not the old site, not a
+      Vercel SSO redirect) — check the response headers/body, since a stale DNS cache can return
+      `200` from either
+- [ ] 301 redirects verified (SEO paths → `/guides/*`)
+
+## 3. Payments (Razorpay)
 
 Checkout works without any of this — it falls back to an order-request flow (manual follow-up, no
 online payment) when Razorpay isn't configured. To enable real online payment:
@@ -49,16 +71,17 @@ online payment) when Razorpay isn't configured. To enable real online payment:
 2. Set `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` as env vars, **or** enter them at
    `/admin/integrations` after deploy (encrypted at rest; no redeploy needed; a value entered there
    always wins over the env var).
-3. Register a webhook (Settings → Webhooks) pointed at
-   `https://<your-production-domain>/api/webhooks/razorpay`, subscribed to at least
-   `payment.captured`, `payment.failed`, `refund.processed`. Copy its signing secret into
+3. Register a webhook (Settings → Webhooks) pointed at `https://daakyka.com/api/webhooks/razorpay`
+   (only after §2's DNS cutover is live — see [PAYMENTS_RAZORPAY.md](./PAYMENTS_RAZORPAY.md) for
+   what to use before then, and why a `*-projects.vercel.app` URL never works here), subscribed to
+   at least `payment.captured`, `payment.failed`, `refund.processed`. Copy its signing secret into
    `RAZORPAY_WEBHOOK_SECRET` (env var — the webhook secret is not currently settable from
    `/admin/integrations`, only the two API keys are).
 4. Place a real test order — verify `/admin/orders` and the post-purchase journey enrollment.
 
 Full detail, including the stock-decrement/idempotency design: [PAYMENTS_RAZORPAY.md](./PAYMENTS_RAZORPAY.md).
 
-## 3. Media (Cloudflare R2)
+## 4. Media (Cloudflare R2)
 
 - [ ] R2 credentials set (env vars or `CLOUDFLARE_*` fallback — see above)
 - [ ] `R2_PUBLIC_BASE_URL` left **unset** (bucket is private by design; `/cdn/[...key]` serves it)
@@ -67,7 +90,7 @@ Full detail, including the stock-decrement/idempotency design: [PAYMENTS_RAZORPA
 - [ ] If using AI-generated site imagery, run `npm run images:generate -- --dry-run` first to see
       the plan and estimated cost before spending anything with `--yes`
 
-## 4. Engagement
+## 5. Engagement
 
 1. Add Brevo API key + verified sender domain (env var or `/admin/integrations`)
 2. Add WATI API key for WhatsApp templates
@@ -78,15 +101,15 @@ Full detail, including the stock-decrement/idempotency design: [PAYMENTS_RAZORPA
 5. Test the welcome journey via newsletter signup
 6. Test abandoned cart (requires an email captured in the cart session)
 
-## 5. SEO
+## 6. SEO
 
-- [ ] Submit sitemap: `https://<your-production-domain>/sitemap.xml`
+- [ ] Submit sitemap: `https://daakyka.com/sitemap.xml`
 - [ ] Verify `robots.txt` allows crawling (and that `NEXT_PUBLIC_ALLOW_INDEXING` isn't left `false`)
 - [ ] Google Search Console property verified
 - [ ] Rich Results Test on homepage, product, guide page
 - [ ] All schema checks green in `/admin/seo`
 
-## 6. QA
+## 7. QA
 
 Automated QA is **complete** — run `npm run verify:101` and confirm `dogfood-output/COMPLETION.json`.
 
@@ -100,20 +123,17 @@ reload once more before filing it. (Homepage Hero/Trust-Stats/Announcement/Offer
 a separate, real exception — they currently have no revalidation at all and need a redeploy to
 update; see `GO_LIVE_RUNBOOK.md`.)
 
-## 7. Monitoring
+## 8. Monitoring
 
 - [ ] Error tracking (Sentry) connected
 - [ ] Uptime monitor on `/api/health` (not cron URLs)
 - [ ] Admin audit logs reviewed weekly
 
-## 8. Go-Live
+## 9. Go-Live
 
-- [ ] DNS pointed to Vercel
-- [ ] SSL certificate active
-- [ ] 301 redirects verified (SEO paths → `/guides/*`)
 - [ ] Announcement bar copy finalized
 - [ ] Homepage hero CMS updated for launch messaging (requires a redeploy to appear — see caching
-      note in §6)
+      note in §7)
 - [ ] Team trained on admin panel
 
 ## Post-Launch (Week 1)

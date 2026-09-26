@@ -16,7 +16,9 @@ WATI_API_URL=https://live-server.wati.io
 ## Brevo (Email)
 
 1. Create account at [brevo.com](https://www.brevo.com)
-2. Verify sender domain (`daakyka.com`) — SPF/DKIM records
+2. Verify sender domain (`daakyka.com`) — SPF/DKIM records. See
+   [GO_LIVE_RUNBOOK.md](./GO_LIVE_RUNBOOK.md)'s Domain & DNS phase for the exact records this needs
+   alongside the Vercel cutover, and why order matters (F-351)
 3. Generate API key → `BREVO_API_KEY`
 4. Set `BREVO_FROM_EMAIL` to a verified sender
 

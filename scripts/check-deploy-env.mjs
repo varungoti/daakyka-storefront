@@ -27,13 +27,26 @@ function isInsecureSeedPassword(password) {
   );
 }
 
+// F-348: this script only ever validated 5 of the vars src/lib/env.ts's
+// validateEnv() hard-requires in production — CREDENTIAL_ENCRYPTION_KEY
+// (the root key for /admin/integrations credential encryption) was
+// missing entirely, so a green `check:deploy-env` never meant "every var
+// production needs is set," despite GO_LIVE_RUNBOOK.md's own caveat about
+// exactly that gap.
 const required = [
   "DATABASE_URL",
   "AUTH_SECRET",
   "CRON_SECRET",
   "NEXT_PUBLIC_SITE_URL",
   "ADMIN_SEED_PASSWORD",
+  "CREDENTIAL_ENCRYPTION_KEY",
 ];
+
+console.log(
+  `Checking the current shell environment (not the values stored in Vercel) — ${
+    isProduction ? "production" : "staging"
+  } mode.\n`,
+);
 
 const errors = [];
 
@@ -56,6 +69,14 @@ for (const key of required) {
   }
   if (key === "NEXT_PUBLIC_SITE_URL" && isProduction && !value.startsWith("https://")) {
     errors.push("NEXT_PUBLIC_SITE_URL must be an https:// URL in production");
+  }
+  if (key === "CREDENTIAL_ENCRYPTION_KEY") {
+    const decodedLength = /^[0-9a-fA-F]{64}$/.test(value)
+      ? Buffer.from(value, "hex").length
+      : Buffer.from(value, "base64").length;
+    if (decodedLength !== 32) {
+      errors.push("CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes, as base64 or hex");
+    }
   }
 }
 

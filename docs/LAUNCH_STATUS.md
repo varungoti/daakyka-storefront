@@ -55,7 +55,9 @@ npm run verify:staging:full
 
 # After adding production env vars
 npm run go-live:check -- --production
-TEST_BASE_URL=https://daakyka.com npm run probe:deploy
+# Use the actual live production host — daakyka.com still serves the old
+# Hostinger site until GO_LIVE_RUNBOOK.md's Domain & DNS cutover is done.
+TEST_BASE_URL=https://storefront-nu-woad.vercel.app npm run probe:deploy
 ```
 
 ## Explicitly excluded
