@@ -167,6 +167,25 @@ export function validateEnv(): void {
       throw new Error("BREVO_FROM_EMAIL must be set when BREVO_API_KEY is configured");
     }
 
+    // F-235 fix: mirrors the Razorpay warning below. A missing
+    // BREVO_API_KEY here does not necessarily mean email is broken — an
+    // admin may have entered a Brevo key in /admin/integrations, which
+    // isIntegrationEnabled("BREVO") resolves from the database first (see
+    // src/lib/integrations/status.ts). This must stay a warning, not a
+    // throw: failing the build/boot on it would also break the
+    // DB-credential-only setup that's meant to work. Its job is only to
+    // make the "nothing set at all" case loud instead of silently leaving
+    // password-reset, verify-email and order-confirmation mail queued in
+    // stub mode (see src/lib/engagement/providers/email.ts) with nothing
+    // surfacing it.
+    if (!process.env.BREVO_API_KEY) {
+      console.warn(
+        "[env] BREVO_API_KEY is not set — transactional email (password reset, verify-email, " +
+          "order confirmation) will use a Brevo key saved in /admin/integrations if one exists, " +
+          "or otherwise stay in stub mode: emails are queued but never sent.",
+      );
+    }
+
     // AI image generation and R2 storage are optional integrations: warn
     // rather than fail the build/boot when their credentials aren't set
     // yet (e.g. before the client has rotated/provided them) — every

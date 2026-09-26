@@ -85,6 +85,51 @@ describe("env validation", () => {
       },
     );
   });
+
+  // F-235: production has no RAZORPAY_*/BREVO_* env vars, and nothing said
+  // so — env.ts already warned about a missing Razorpay env config; it
+  // must do the same for Brevo, as a warning (not a throw), since an
+  // admin-entered key in /admin/integrations is a valid, DB-only setup.
+  it("warns in production when BREVO_API_KEY is unset (an admin-entered DB key may still cover it)", async () => {
+    await withEnv(validProductionEnv, async () => {
+      const warnings: unknown[][] = [];
+      const originalWarn = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args);
+      };
+      try {
+        assert.doesNotThrow(() => validateEnv());
+      } finally {
+        console.warn = originalWarn;
+      }
+      assert.ok(
+        warnings.some((args) => String(args[0]).includes("BREVO_API_KEY is not set")),
+        "expected a boot-time warning about the missing BREVO_API_KEY",
+      );
+    });
+  });
+
+  it("does not warn about BREVO_API_KEY when it is set", async () => {
+    await withEnv(
+      { ...validProductionEnv, BREVO_API_KEY: "test-key", BREVO_FROM_EMAIL: "noreply@daakyka.com" },
+      async () => {
+        const warnings: unknown[][] = [];
+        const originalWarn = console.warn;
+        console.warn = (...args: unknown[]) => {
+          warnings.push(args);
+        };
+        try {
+          assert.doesNotThrow(() => validateEnv());
+        } finally {
+          console.warn = originalWarn;
+        }
+        assert.ok(
+          !warnings.some((args) => String(args[0]).includes("BREVO_API_KEY is not set")),
+          "did not expect a BREVO_API_KEY warning when it is configured",
+        );
+      },
+    );
+  });
 });
 
 // F1 (docs/audit-2026-09-19/security.md): getClientIp() must never

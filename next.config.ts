@@ -26,11 +26,19 @@ const contentSecurityPolicy = [
   // src/lib/payments/load-razorpay-script.ts) and needs to run its own
   // script and open its payment modal, which embeds an iframe served
   // from api.razorpay.com and posts back to it over fetch/XHR.
-  "script-src 'self' 'unsafe-inline' https://checkout.razorpay.com",
+  // F-119 fix: checkout.js itself pulls in a second script,
+  // cdn.razorpay.com/static/cx/razorpay-risk-detection/bundle.js, and
+  // beacons telemetry to lumberjack.razorpay.com — both were still being
+  // refused by this CSP, which silently disabled Razorpay's own
+  // fraud/risk scoring on every checkout (payment still worked; the
+  // console just filled with CSP refusals). cdn.razorpay.com is also
+  // allowed in img-src since Razorpay serves some bank/UPI app logos
+  // from there.
+  "script-src 'self' 'unsafe-inline' https://checkout.razorpay.com https://cdn.razorpay.com",
   "style-src 'self' 'unsafe-inline'",
-  `img-src 'self' data: blob: ${imageSources}`,
+  `img-src 'self' data: blob: https://cdn.razorpay.com ${imageSources}`,
   "font-src 'self' data:",
-  "connect-src 'self' https://api.razorpay.com",
+  "connect-src 'self' https://api.razorpay.com https://lumberjack.razorpay.com",
   "frame-src https://api.razorpay.com https://checkout.razorpay.com",
   "frame-ancestors 'none'",
   "base-uri 'self'",
