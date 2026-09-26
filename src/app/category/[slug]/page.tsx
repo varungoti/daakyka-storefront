@@ -1,5 +1,6 @@
 import { ShopPageContent } from "@/components/shop/shop-page-content";
 import { getSiteImage } from "@/lib/media/get-site-image";
+import { resolveCategoryHeadingImage } from "@/lib/media/category-heading-image";
 import { getCategoryBySlug, getProducts } from "@/lib/products";
 import { canonicalPath } from "@/lib/seo/canonical";
 import { getTestimonials } from "@/lib/testimonials";
@@ -37,11 +38,16 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
   if (!category) notFound();
 
   const search = await searchParams;
-  const [products, testimonials, headingImage] = await Promise.all([
+  const [products, testimonials, slotImage] = await Promise.all([
     getProducts({ categorySlug: slug }),
     getTestimonials(),
     getSiteImage(`category.${slug}`),
   ]);
+
+  // F-364: fall back to the category editor's own Category.image when the
+  // "category.<slug>" Site Images slot is empty — see that helper's doc
+  // comment.
+  const headingImage = resolveCategoryHeadingImage(slotImage, category);
 
   return (
     <ShopPageContent

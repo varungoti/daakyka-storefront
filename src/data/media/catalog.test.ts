@@ -35,14 +35,22 @@ describe("media catalog", () => {
     assert.ok(!JSON.stringify(exported).includes("daakyka.com"));
   });
 
-  it("uses local placeholders for generic uniform/manufacturing scene imagery", () => {
+  // release-hardening audit F-272: these four fields used to all be
+  // "/placeholder-scene.svg" — a large grey image-icon shown to every
+  // shopper on /shop/bespoke, /our-story and /shop, with no admin way to
+  // ever replace it (none of them are a manifest slot — see
+  // image-manifest.ts). They must now resolve to real, licensed photography
+  // like the rest of the catalog, not a placeholder graphic.
+  it("uses real photography, not a placeholder graphic, for generic uniform/manufacturing scene imagery", () => {
     for (const url of [
       daakykaMedia.productDesigns,
       daakykaMedia.hospitalUniforms,
       daakykaMedia.schoolUniforms,
       daakykaMedia.institutionalShowcase,
     ]) {
-      assert.ok(isLocalPath(url), `expected a local placeholder path, got: ${url}`);
+      assertHttpsUrl(url);
+      assert.match(url, /(pexels|unsplash)/);
+      assert.ok(!isLocalPath(url), `expected a real photo, not a local placeholder path: ${url}`);
     }
   });
 

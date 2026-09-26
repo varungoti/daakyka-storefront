@@ -15,8 +15,6 @@ export const CURRENCY_LOCALE: Record<SupportedCurrency, string> = {
   USD: "en-US",
 };
 
-export const FREE_SHIPPING_THRESHOLD_INR = 8299;
-
 export const PRICE_FILTER_MIN_INR = 2499;
 export const PRICE_FILTER_MAX_INR = 10999;
 export const PRICE_FILTER_DEFAULT_MAX_INR = 8999;

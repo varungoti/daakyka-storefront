@@ -43,6 +43,15 @@ export const fabricFilters = [
   { id: "eco-flex", label: "EcoFlex™ Sustainable" },
 ];
 
+// F-008 fix: `title`s here are always shown as-is, but the `description`s
+// for "Free Shipping" (index 0) and "Easy Returns" (index 1) are just
+// fallback text — TrustBar overrides both from real settings
+// (`shipping.freeAbove` via CurrencyProvider, `returns.windowDays` via its
+// own prop) so this can never drift from what checkout/the PDP actually
+// do again, the way the old hard-coded "₹8,299" and "30-day" strings did.
+// "Customer Support" used to claim "24/7 live support", which nothing in
+// the admin could confirm or change — WhatsApp and phone support are the
+// channels that actually exist (see src/data/brand.ts / the header/footer).
 export const trustItems = [
   {
     title: "Free Shipping",
@@ -50,7 +59,7 @@ export const trustItems = [
   },
   {
     title: "Easy Returns",
-    description: "30-day return policy",
+    description: "Hassle-free returns",
   },
   {
     title: "Bulk Orders",
@@ -62,6 +71,6 @@ export const trustItems = [
   },
   {
     title: "Customer Support",
-    description: "24/7 live support",
+    description: "WhatsApp & phone support",
   },
 ];

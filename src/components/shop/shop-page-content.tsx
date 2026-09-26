@@ -92,6 +92,13 @@ interface ShopPageContentProps {
    * via `getSiteImage` by /category/[slug]/page.tsx. `null`/omitted keeps
    * the plain text-only heading band (/shop's existing behavior). */
   headingImage?: { url: string; alt: string } | null;
+  /** F-008: the `returns.windowDays` setting, forwarded to TrustBar (only
+   * rendered when `showExtras` is true, i.e. on /shop) so its "Easy
+   * Returns" claim can't drift from what the PDP/returns/terms pages
+   * actually promise. Defaults to 30 — settings/index.ts's own default —
+   * only for a caller that predates this prop; /shop/page.tsx always
+   * passes the real setting. */
+  returnWindowDays?: number;
 }
 
 export function ShopPageContent({
@@ -106,6 +113,7 @@ export function ShopPageContent({
   showExtras = true,
   syncUrl = true,
   headingImage,
+  returnWindowDays = 30,
 }: ShopPageContentProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -343,7 +351,7 @@ export function ShopPageContent({
       {showExtras && (
         <>
           <ShopMixMatchPromo mixMatchEnabled={mixMatchEnabled} />
-          <TrustBar />
+          <TrustBar returnWindowDays={returnWindowDays} />
           <TestimonialsSection testimonials={testimonials} />
           <ShopFeatureCards fabricTechEnabled={fabricTechEnabled} />
         </>

@@ -11,7 +11,8 @@ import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Bulk Orders",
-  description: "Hospital and team uniform bulk order enquiries for DAAKYKA Apparels.",
+  description:
+    "Bulk uniform enquiries for hospitals, schools, sports teams and corporate offices — DAAKYKA Apparels, Pan India.",
 };
 
 export default async function BulkOrdersPage() {
@@ -25,12 +26,12 @@ export default async function BulkOrdersPage() {
       <PageHeroBand image={heroImage}>
         <SectionHeading
           eyebrow="B2B"
-          title="Uniforms for Healthcare Teams"
-          description="Department-wise uniform planning, logo embroidery, color standardization, and bulk pricing for hospitals, clinics, and nursing colleges."
+          title="Uniforms for Institutions & Teams"
+          description="Department-wise uniform planning, logo embroidery, color standardization, and bulk pricing for hospitals, schools, sports teams, and corporate offices."
           align="center"
         />
         <div className="mt-10 grid gap-4 md:grid-cols-3">
-          <BenefitCard icon={Building2} title="Hospital Programs" text="Standardized uniforms across departments with brand consistency." />
+          <BenefitCard icon={Building2} title="Institutional Programs" text="Standardized uniforms across departments and locations with brand consistency." />
           <BenefitCard icon={Users} title="Bulk Pricing" text="Volume-based pricing for teams of any size." />
           <BenefitCard icon={ShieldCheck} title="Quality Assurance" text="Premium fabrics with fit confidence for every role." />
         </div>

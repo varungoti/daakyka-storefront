@@ -48,8 +48,12 @@ export async function InsightsStrip({
         <article className="hover:border-brand hover:shadow-sm transition-colors overflow-hidden rounded-[2rem] border border-border bg-surface-muted">
           <div className="relative h-48">
             <Image
+              // release-hardening audit F-272: this card is "Why 4-Way
+              // Stretch?" — its image and alt text used to be a leftover
+              // "Hospital linens and institutional apparel" caption that
+              // matched a different card entirely.
               src={marketingMedia.insightsInstitutional}
-              alt="Hospital linens and institutional apparel"
+              alt="Healthcare professional moving freely in stretch-fit scrubs"
               fill
               className="object-cover"
               sizes="400px"

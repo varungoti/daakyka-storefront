@@ -75,6 +75,7 @@ export default async function RootLayout({
     contactAddress,
     bulkCtaEnabled,
     navigation,
+    freeShippingThresholdInr,
   ] = await Promise.all([
     isPageEnabled("fabricTech"),
     isPageEnabled("mixMatch"),
@@ -86,6 +87,9 @@ export default async function RootLayout({
     getSetting("contact.address"),
     getSetting("header.bulkCta.enabled"),
     getNavigation(),
+    // F-008: the single source of truth for the trust bar's free-shipping
+    // threshold — see CurrencyProvider's doc comment on this prop.
+    getSetting("shipping.freeAbove"),
   ]);
 
   return (
@@ -99,7 +103,7 @@ export default async function RootLayout({
       </head>
       <body className="min-h-full flex flex-col antialiased">
         <GlobalJsonLd contactAddress={contactAddress} contactPhone={contactPhone} contactEmail={contactEmail} />
-        <CurrencyProvider>
+        <CurrencyProvider freeShippingThresholdInr={freeShippingThresholdInr}>
           <WishlistProvider>
             <CartProvider>
               <SiteShell

@@ -46,7 +46,7 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     bullets: [
       "Department-wise color standardization",
       "Logo embroidery and name personalization",
-      "Anti-microbial and liquid-repellent fabric options",
+      "Fluid-resistant OT gowns and easy-care poly-cotton uniforms",
       "Pan India fulfillment from Hyderabad",
     ],
     faqs: [
@@ -59,6 +59,7 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
         answer: "Yes — bedsheets, pillow covers, patient gowns, aprons, and staff apparel are all part of our healthcare specialization.",
       },
     ],
+    productCategory: "for-hospitals",
     shopHref: "/bulk-orders",
     shopLabel: "Request Hospital Quote",
     secondaryHref: "/shop",
@@ -69,15 +70,15 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     path: "/scrubs-for-men",
     title: "Scrubs for Men",
     metaDescription:
-      "Premium men's medical scrubs with 4-way stretch, liquid repellent fabric, and tailored fits. Shop DAAKYKA Apparels.",
+      "Premium men's medical scrub sets, tops, and joggers with tailored fits and durable poly-cotton fabric. Shop DAAKYKA Apparels.",
     h1: "Scrubs for Men",
     intro:
-      "Engineered for long shifts — men's scrub tops, joggers, and sets with performance fabrics that move with you and stay professional shift after shift.",
+      "Engineered for long shifts — men's scrub tops, joggers, and sets in durable fabric that stays comfortable and professional shift after shift.",
     bullets: [
       "V-neck, mandarin, and zip-neck styles",
       "Jogger and straight-leg bottom options",
-      "4-way stretch and moisture-wicking fabrics",
-      "Mix & Match builder for custom sets",
+      "Durable poly-cotton 65/35 fabric for daily wear",
+      "Multiple pocket layouts for clinical tools",
     ],
     faqs: [
       {
@@ -85,7 +86,8 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
         answer: "Relaxed tops with tapered joggers offer the best balance of mobility and a polished silhouette for active clinical roles.",
       },
     ],
-    shopHref: "/shop?category=tops",
+    productCategory: "scrub-sets",
+    shopHref: "/category/scrub-sets",
     shopLabel: "Shop Men's Scrubs",
     secondaryHref: "/mix-and-match",
     secondaryLabel: "Build Your Set",
@@ -103,15 +105,16 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
       "Flattering silhouettes for all body types",
       "Wide color palette for department coding",
       "Custom embroidery available",
-      "Bespoke collection for premium roles",
+      "Tailored fits for a polished, professional silhouette",
     ],
     faqs: [
       {
         question: "Can I mix tops and bottoms in different sizes?",
-        answer: "Yes — use our Mix & Match builder to select separate top and bottom sizes and preview your set before ordering.",
+        answer: "Yes — scrub tops and pants are sold separately, so you can choose the size that fits each best.",
       },
     ],
-    shopHref: "/shop?category=tops",
+    productCategory: "scrub-sets",
+    shopHref: "/category/scrub-sets",
     shopLabel: "Shop Women's Scrubs",
     // release-hardening audit F-003: /shop/bespoke has no real catalogue
     // behind it yet — repointed to the enquiry flow a "bespoke" request
@@ -124,12 +127,12 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     path: "/nurse-uniforms",
     title: "Nurse Uniforms",
     metaDescription:
-      "Premium nurse uniforms and scrubs with anti-microbial fabric, comfortable fits, and Pan India delivery by DAAKYKA Apparels.",
+      "Premium nurse uniforms and scrubs with durable fabric, comfortable fits, and Pan India delivery by DAAKYKA Apparels.",
     h1: "Nurse Uniforms & Scrubs",
     intro:
-      "Built for nurses who never stop moving — breathable, stretch-ready scrubs with liquid-repellent protection and styles that stay polished through the longest shifts.",
+      "Built for nurses who never stop moving — comfortable, easy-care scrubs in styles that stay polished through the longest shifts.",
     bullets: [
-      "Moisture-wicking and anti-microbial fabrics",
+      "Breathable poly-cotton 65/35 fabric",
       "Multiple pocket configurations for clinical tools",
       "Department color coding support",
       "Bulk pricing for nursing teams and colleges",
@@ -137,9 +140,10 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     faqs: [
       {
         question: "What fabrics are best for nursing shifts?",
-        answer: "4-way stretch with moisture-wicking and anti-microbial finishes offer the best combination of comfort, hygiene, and durability.",
+        answer: "A relaxed poly-cotton scrub with a tapered jogger and multiple pockets balances comfort, storage, and a professional look across a long shift.",
       },
     ],
+    productCategory: "scrub-sets",
     shopHref: "/shop",
     shopLabel: "Shop Nurse Scrubs",
     secondaryHref: "/fabric-technology",
@@ -150,13 +154,13 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     path: "/medical-scrubs",
     title: "Medical Scrubs",
     metaDescription:
-      "Shop premium medical scrubs online — 4-way stretch, liquid repellent, and bespoke options. DAAKYKA Apparels, Pan India.",
+      "Shop premium medical scrubs online — tops, pants, and sets in durable poly-cotton fabric. DAAKYKA Apparels, Pan India.",
     h1: "Premium Medical Scrubs",
     intro:
-      "DAAKYKA medical scrubs combine fabric science with refined design — for doctors, nurses, technicians, and healthcare teams who demand more from their uniforms.",
+      "DAAKYKA medical scrubs combine durable fabric with refined design — for doctors, nurses, technicians, and healthcare teams who demand more from their uniforms.",
     bullets: [
-      "Shop tops, bottoms, sets, and jackets",
-      "Mix & Match builder with live preview",
+      "Shop tops, bottoms, and sets",
+      "Tops and bottoms sold separately or as a set",
       "INR pricing with optional USD display",
       "Institutional and bulk order programs",
     ],
@@ -166,6 +170,7 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
         answer: "Yes — we supply both individual retail orders and institutional programs with embroidery, color standards, and Pan India delivery.",
       },
     ],
+    productCategory: "scrub-sets",
     shopHref: "/shop",
     shopLabel: "Shop Medical Scrubs",
     secondaryHref: "/mix-and-match",
@@ -176,10 +181,10 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     path: "/custom-embroidered-scrubs",
     title: "Custom Embroidered Scrubs",
     metaDescription:
-      "Personalized embroidered medical scrubs with name and logo options. DAAKYKA Mix & Match builder — Pan India.",
+      "Personalized embroidered medical scrubs with name and logo options from DAAKYKA Apparels — Pan India delivery.",
     h1: "Custom Embroidered Scrubs",
     intro:
-      "Add your name, credentials, or department logo — our Mix & Match builder lets you preview embroidery placement before you order.",
+      "Add your name, credentials, or department logo to your scrubs with custom embroidery for individuals and institutional teams.",
     bullets: [
       "Name and title embroidery",
       "Hospital and department logo programs",
@@ -189,9 +194,10 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     faqs: [
       {
         question: "Can I preview embroidery before ordering?",
-        answer: "Yes — use the Mix & Match builder to enter your name and see it on your selected top style.",
+        answer: "Share your name, title, or logo details with your order or bulk enquiry, and our team will confirm placement and thread colors before production.",
       },
     ],
+    productCategory: "scrub-sets",
     shopHref: "/mix-and-match",
     shopLabel: "Open Mix & Match Builder",
     secondaryHref: "/bulk-orders",
@@ -207,9 +213,9 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     intro:
       "Twelve-hour shifts demand scrubs that breathe, stretch, and resist stains. Here is what healthcare professionals should prioritize when choosing workwear.",
     bullets: [
-      "4-way stretch for unrestricted movement",
-      "Moisture-wicking to stay dry under pressure",
-      "Liquid-repellent finishes for spill protection",
+      "Relaxed, easy-movement fits for unrestricted movement",
+      "Breathable poly-cotton fabric",
+      "Reinforced seams for repeated hospital laundering",
       "Relaxed fits that maintain a professional silhouette",
     ],
     faqs: [
@@ -219,11 +225,12 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
       },
       {
         question: "How should I care for performance scrubs?",
-        answer: "Wash in cold water, avoid fabric softener on technical weaves, and tumble dry low to preserve repellent and stretch properties.",
+        answer: "Wash in cold water, avoid fabric softener, and tumble dry low to keep fabric and stitching in good condition.",
       },
     ],
-    shopHref: "/fabric-technology/4-way-stretch",
-    shopLabel: "Explore 4-Way Stretch",
+    productCategory: "scrub-sets",
+    shopHref: "/category/scrub-sets",
+    shopLabel: "Shop Scrubs",
     secondaryHref: "/blog/how-to-choose-medical-scrubs",
     secondaryLabel: "Read Full Guide",
   },
@@ -232,14 +239,14 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     path: "/doctor-scrubs",
     title: "Doctor Scrubs",
     metaDescription:
-      "Premium doctor scrubs with refined fits, 4-way stretch, and liquid-repellent fabrics. Shop DAAKYKA Apparels — Pan India.",
+      "Premium doctor scrubs with refined fits and durable poly-cotton fabric. Shop DAAKYKA Apparels — Pan India.",
     h1: "Doctor Scrubs",
     intro:
-      "From rounds to procedures — doctor scrubs that balance authority, comfort, and performance fabric technology for demanding clinical schedules.",
+      "From rounds to procedures — doctor scrubs that balance authority, comfort, and durability for demanding clinical schedules.",
     bullets: [
       "Mandarin and V-neck styles for professional presentation",
-      "4-way stretch for unrestricted movement during procedures",
-      "Liquid-repellent and anti-microbial fabric options",
+      "Relaxed, easy-movement fits during procedures",
+      "Durable poly-cotton 65/35 fabric",
       "Custom embroidery for name and credentials",
     ],
     faqs: [
@@ -252,7 +259,8 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
         answer: "Yes — we support department color coding, logo embroidery, and bulk procurement programs with Pan India delivery.",
       },
     ],
-    shopHref: "/shop?category=sets",
+    productCategory: "scrub-sets",
+    shopHref: "/category/scrub-sets",
     shopLabel: "Shop Doctor Scrubs",
     secondaryHref: "/mandarin-collar-scrubs",
     secondaryLabel: "Mandarin Collar Styles",
@@ -262,14 +270,14 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     path: "/scrub-tops",
     title: "Scrub Tops",
     metaDescription:
-      "Medical scrub tops — V-neck, mandarin, zip-neck, and bespoke styles with 4-way stretch. DAAKYKA Apparels.",
+      "Medical scrub tops — V-neck, mandarin, and zip-neck styles in durable poly-cotton fabric. DAAKYKA Apparels.",
     h1: "Scrub Tops",
     intro:
-      "The right scrub top sets the tone for your shift. Browse performance tops engineered for stretch, breathability, and a clean professional silhouette.",
+      "The right scrub top sets the tone for your shift. Browse tops in breathable, durable fabric with a clean professional silhouette.",
     bullets: [
       "V-neck, mandarin collar, and zip-neck silhouettes",
       "Multiple pocket layouts for clinical essentials",
-      "Mix & Match with any bottom size",
+      "Pair with any of our scrub pants",
       "Embroidery for name and department branding",
     ],
     faqs: [
@@ -279,7 +287,7 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
       },
     ],
     productCategory: "scrub-tops",
-    shopHref: "/shop?category=tops",
+    shopHref: "/category/scrub-tops",
     shopLabel: "Shop Scrub Tops",
     secondaryHref: "/mix-and-match",
     secondaryLabel: "Build Your Set",
@@ -289,15 +297,15 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     path: "/scrub-pants",
     title: "Scrub Pants",
     metaDescription:
-      "Medical scrub pants and joggers with 4-way stretch, drawstring comfort, and liquid-repellent finishes. DAAKYKA Apparels.",
+      "Medical scrub pants and joggers with drawstring comfort and durable poly-cotton fabric. DAAKYKA Apparels.",
     h1: "Scrub Pants",
     intro:
-      "From straight-leg classics to athletic joggers — scrub bottoms built for 12-hour shifts with stretch, secure pockets, and easy care.",
+      "From straight-leg classics to athletic joggers — scrub bottoms built for 12-hour shifts with secure pockets and easy care.",
     bullets: [
       "Jogger and straight-leg fits",
       "Drawstring and elastic waistbands for all-day comfort",
       "Reinforced seams for durability",
-      "Pair any bottom with tops via Mix & Match",
+      "Pair with any of our scrub tops",
     ],
     faqs: [
       {
@@ -305,7 +313,8 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
         answer: "Joggers suit active clinical roles with tapered ankles; straight-leg pants offer a traditional fit preferred in many hospital dress codes.",
       },
     ],
-    shopHref: "/shop?category=bottoms",
+    productCategory: "scrub-pants",
+    shopHref: "/category/scrub-pants",
     shopLabel: "Shop Scrub Pants",
     secondaryHref: "/jogger-scrub-pants",
     secondaryLabel: "Explore Joggers",
@@ -315,13 +324,13 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     path: "/jogger-scrub-pants",
     title: "Jogger Scrub Pants",
     metaDescription:
-      "Athletic jogger scrub pants with 4-way stretch, tapered fit, and moisture-wicking fabric. DAAKYKA Apparels — Pan India.",
+      "Athletic jogger scrub pants with a tapered fit and durable poly-cotton fabric. DAAKYKA Apparels — Pan India.",
     h1: "Jogger Scrub Pants",
     intro:
-      "The modern scrub bottom — tapered joggers with stretch fabric that moves with you through rounds, procedures, and long shifts on your feet.",
+      "The modern scrub bottom — tapered joggers in durable fabric that move with you through rounds, procedures, and long shifts on your feet.",
     bullets: [
       "Tapered ankle for a clean, athletic silhouette",
-      "4-way stretch and moisture-wicking performance",
+      "Elastic cuffs and a drawstring waist for all-day comfort",
       "Secure zip or cargo pockets",
       "Available across men's and women's sizing",
     ],
@@ -331,7 +340,8 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
         answer: "Many modern hospitals accept jogger-style scrubs; confirm your institution's dress code — we offer both joggers and straight-leg options.",
       },
     ],
-    shopHref: "/shop?category=bottoms",
+    productCategory: "scrub-pants",
+    shopHref: "/category/scrub-pants",
     shopLabel: "Shop Jogger Scrubs",
     secondaryHref: "/best-scrubs-for-long-shifts",
     secondaryLabel: "Long Shift Guide",
@@ -347,7 +357,7 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
       "A sharper alternative to the classic V-neck — mandarin collar scrubs deliver contemporary elegance for doctors, specialists, and premium healthcare roles.",
     bullets: [
       "Stand-up collar for a distinguished clinical look",
-      "Premium fabric options including bespoke collection",
+      "Durable poly-cotton fabric with a tailored, tidy finish",
       "Ideal for leadership and specialist roles",
       "Custom embroidery available",
     ],
@@ -358,8 +368,9 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
       },
     ],
     // release-hardening audit F-003: /shop/bespoke has no real catalogue
-    // behind it yet — /shop?category=tops has this guide's actual products.
-    shopHref: "/shop?category=tops",
+    // behind it yet — /category/scrub-tops has this guide's actual products.
+    productCategory: "scrub-tops",
+    shopHref: "/category/scrub-tops",
     shopLabel: "Shop Mandarin Styles",
     secondaryHref: "/doctor-scrubs",
     secondaryLabel: "Doctor Scrubs Guide",
@@ -389,6 +400,7 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
         answer: "Yes — Babaji Enterprises fulfills institutional orders Pan India from our Hyderabad operations.",
       },
     ],
+    productCategory: "for-hospitals",
     shopHref: "/bulk-orders",
     shopLabel: "Request Bulk Quote",
     secondaryHref: "/for-hospitals",
@@ -405,16 +417,17 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
       "Doctors need scrubs that project professionalism while surviving long shifts. Here is what to prioritize when selecting clinical workwear.",
     bullets: [
       "Mandarin or zip-neck tops for a refined silhouette",
-      "4-way stretch for procedure-room mobility",
-      "Liquid-repellent finishes for spill protection",
+      "Relaxed, easy-movement fits for procedure-room mobility",
+      "Reinforced seams for repeated hospital laundering",
       "Embroidery for credentials and department identity",
     ],
     faqs: [
       {
         question: "What fabric is best for doctor scrubs?",
-        answer: "4-way stretch with moisture-wicking and liquid-repellent treatments offers the best balance of comfort, hygiene, and durability.",
+        answer: "A relaxed, breathable poly-cotton scrub offers a good balance of comfort and durability across long clinical shifts.",
       },
     ],
+    productCategory: "scrub-sets",
     shopHref: "/doctor-scrubs",
     shopLabel: "Shop Doctor Scrubs",
     secondaryHref: "/fabric-technology",
@@ -430,7 +443,7 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     intro:
       "Nurses are on their feet all day — the best scrubs combine breathable stretch fabric, practical pockets, and fits that stay comfortable through every shift.",
     bullets: [
-      "Moisture-wicking and anti-microbial fabrics",
+      "Breathable poly-cotton fabric with reinforced seams",
       "Multiple pocket configurations for clinical tools",
       "Relaxed tops with tapered joggers for mobility",
       "Department color options for team identification",
@@ -441,6 +454,7 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
         answer: "At minimum two side pockets plus a chest pocket; cargo-style options add utility for nurses carrying multiple clinical tools.",
       },
     ],
+    productCategory: "scrub-sets",
     shopHref: "/nurse-uniforms",
     shopLabel: "Shop Nurse Scrubs",
     secondaryHref: "/best-scrubs-for-long-shifts",
@@ -454,23 +468,24 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
       "Scrub sizing guide — measure for the perfect fit. DAAKYKA size guide for men's and women's medical scrubs.",
     h1: "How to Find Your Scrub Size",
     intro:
-      "Ill-fitting scrubs distract from patient care. Use our sizing approach to match your measurements to the right top and bottom sizes — mix sizes freely with Mix & Match.",
+      "Ill-fitting scrubs distract from patient care. Use our sizing approach to match your measurements to the right top and bottom sizes — tops and bottoms are sold separately, so you can choose different sizes for each.",
     bullets: [
       "Measure chest, waist, and hip for accurate sizing",
       "Tops and bottoms can be different sizes",
       "Relaxed vs athletic fit guidance by role",
-      "XXS through 5XL available across styles",
+      "S through 2XL available across our scrub styles",
     ],
     faqs: [
       {
         question: "Should scrub tops and bottoms be the same size?",
-        answer: "Not necessarily — many professionals wear a different top and bottom size. Use Mix & Match to select each piece independently.",
+        answer: "Not necessarily — many professionals wear a different top and bottom size. Scrub tops and pants are sold separately, so choose the size that fits each best.",
       },
       {
         question: "What if I'm between sizes?",
         answer: "For tops, size up if you layer under scrubs; for joggers, refer to waist measurement and preferred fit (relaxed vs tapered).",
       },
     ],
+    productCategory: "scrub-sets",
     shopHref: "/size-guide",
     shopLabel: "Open Size Guide",
     secondaryHref: "/mix-and-match",
@@ -486,27 +501,28 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     intro:
       "The right scrubs improve comfort, confidence, and focus through every shift. Prioritize fabric technology, fit for your role, and care requirements before color or style.",
     bullets: [
-      "4-way stretch for active clinical movement",
-      "Moisture-wicking and anti-microbial for long shifts",
-      "Mix & Match separate top and bottom sizes",
+      "Relaxed, easy-movement fits for active clinical roles",
+      "Durable, easy-care poly-cotton fabric",
+      "Tops and bottoms sold separately for a better fit",
       "Institutional programs for hospital teams",
     ],
     buyingGuide: [
-      "Start with fabric — 4-way stretch and liquid-repellent finishes suit high-activity roles.",
+      "Start with fit — a relaxed cut that doesn't restrict movement suits high-activity roles.",
       "Choose fit by role — relaxed tops with joggers for nurses; mandarin collars for doctors.",
       "Confirm pocket layout matches your clinical tool carry needs.",
-      "Check care labels — performance fabrics need cold wash and low-heat dry.",
+      "Check care labels — poly-cotton scrubs need a cold wash and low-heat dry to last.",
     ],
     faqs: [
       {
         question: "What is the most important factor when choosing scrubs?",
-        answer: "Fabric performance — stretch, breathability, and repellency — has the biggest impact on comfort across a full shift.",
+        answer: "Fit and fabric — a relaxed, breathable poly-cotton cut has the biggest impact on comfort across a full shift.",
       },
       {
         question: "Should I buy scrub sets or mix tops and bottoms?",
-        answer: "Mix & Match lets you choose different sizes and styles for top and bottom, which most professionals prefer.",
+        answer: "Tops and bottoms are sold separately as well as in sets, so you can choose different sizes and styles for each, which most professionals prefer.",
       },
     ],
+    productCategory: "scrub-sets",
     shopHref: "/shop",
     shopLabel: "Shop Medical Scrubs",
     secondaryHref: "/blog/how-to-choose-medical-scrubs",
@@ -520,32 +536,33 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     path: "/how-to-wash-medical-scrubs",
     title: "How to Wash Medical Scrubs",
     metaDescription:
-      "Care guide for performance medical scrubs — preserve stretch, repellency, and antimicrobial finishes. DAAKYKA Apparels.",
+      "Care guide for medical scrubs — wash and dry instructions to keep fabric and stitching in good condition. DAAKYKA Apparels.",
     h1: "How to Wash Medical Scrubs",
     intro:
-      "Performance scrubs need the right wash routine to preserve 4-way stretch, liquid-repellent coatings, and anti-microbial treatments shift after shift.",
+      "Scrubs need the right wash routine to keep their fit, colour, and stitching in good condition shift after shift.",
     bullets: [
       "Cold water wash protects elastic fibers",
-      "Skip fabric softener on technical weaves",
+      "Skip fabric softener, which can coat fibres over time",
       "Low-heat tumble dry or air dry",
       "Wash after each clinical shift for hygiene",
     ],
     buyingGuide: [
-      "Pre-treat stains promptly — avoid harsh bleach on repellent finishes.",
-      "Turn garments inside out to protect surface treatments.",
+      "Pre-treat stains promptly, and avoid harsh bleach, which weakens fabric over time.",
+      "Turn garments inside out to protect surface prints and embroidery.",
       "Wash scrubs separately from heavily soiled laundry when possible.",
       "Hang or fold promptly to reduce wrinkles without high-heat ironing.",
     ],
     faqs: [
       {
         question: "Can I use fabric softener on scrub uniforms?",
-        answer: "Avoid fabric softener on moisture-wicking and liquid-repellent scrubs — it coats fibers and reduces performance.",
+        answer: "Avoid fabric softener on scrubs — it coats fibres and can make fabric feel less breathable over time.",
       },
       {
         question: "How often should medical scrubs be washed?",
-        answer: "After every shift. Regular laundering is essential even with antimicrobial fabric treatments.",
+        answer: "After every shift. Regular laundering is essential for hospital-grade hygiene.",
       },
     ],
+    productCategory: "scrub-sets",
     shopHref: "/fabric-technology",
     shopLabel: "Explore Fabric Tech",
     secondaryHref: "/blog/caring-for-performance-scrubs",
@@ -584,6 +601,7 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
         answer: "Scrubs are designed for all-day wear with stretch and moisture management; lab coats are typically worn as an outer layer.",
       },
     ],
+    productCategory: "scrub-sets",
     shopHref: "/doctor-scrubs",
     shopLabel: "Shop Doctor Scrubs",
     secondaryHref: "/for-hospitals",
@@ -621,6 +639,7 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
         answer: "Yes — bulk and institutional programs support custom color standards with embroidery and Pan India fulfillment.",
       },
     ],
+    productCategory: "for-hospitals",
     shopHref: "/bulk-orders",
     shopLabel: "Request Bulk Quote",
     secondaryHref: "/blog/best-colors-for-hospital-uniforms",
@@ -633,21 +652,21 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
     path: "/what-is-4-way-stretch-fabric",
     title: "What Is 4-Way Stretch Fabric",
     metaDescription:
-      "What is 4-way stretch fabric in medical scrubs — definition, benefits, and care. DAAKYKA fabric technology guide.",
+      "What is 4-way stretch fabric in medical scrubs — a plain-language definition, benefits, and care basics.",
     h1: "What Is 4-Way Stretch Fabric?",
     intro:
-      "4-way stretch is a performance textile that expands and recovers both horizontally and vertically — the foundation of modern clinical comfort for active healthcare roles.",
+      "4-way stretch is a performance textile that expands and recovers both horizontally and vertically — a fabric technology worth understanding as clinical workwear evolves.",
     bullets: [
       "Stretches width-wise and length-wise for full mobility",
       "Maintains shape recovery after repeated wear",
-      "Essential for bending, reaching, and long shifts",
-      "Pairs with moisture-wicking and repellent finishes",
+      "Useful for bending, reaching, and long shifts",
+      "One of several performance-fabric options in modern uniforms",
     ],
     buyingGuide: [
-      "Choose 4-way stretch for high-activity roles — nurses, ER, surgery support.",
-      "Compare with 2-way stretch if you prefer a more structured drape.",
-      "Verify care instructions to preserve elasticity over time.",
-      "Try Mix & Match to pair stretch tops with jogger bottoms.",
+      "Look for stretch panels at the shoulders, elbows, and knees, where mobility matters most.",
+      "Compare with 2-way stretch, which moves primarily in one direction, if you prefer a more structured drape.",
+      "Whatever fabric you choose, follow the garment's care label to preserve shape over time.",
+      "Prioritise fit and pocket layout alongside fabric — comfort during a shift depends on both.",
     ],
     faqs: [
       {
@@ -659,10 +678,11 @@ export const seoLandingPages: SeoLandingPageConfig[] = [
         answer: "Premium blends with recovery yarns maintain shape when washed in cold water and dried on low heat without fabric softener.",
       },
     ],
-    shopHref: "/fabric-technology/4-way-stretch",
-    shopLabel: "Explore 4-Way Stretch",
-    secondaryHref: "/shop?fabric=4-way-stretch",
-    secondaryLabel: "Shop Stretch Scrubs",
+    productCategory: "scrub-sets",
+    shopHref: "/category/scrub-sets",
+    shopLabel: "Shop Scrub Sets",
+    secondaryHref: "/how-to-choose-medical-scrubs",
+    secondaryLabel: "How to Choose Scrubs",
     relatedGuides: ["best-scrubs-for-long-shifts", "jogger-scrub-pants", "how-to-wash-medical-scrubs"],
   },
 ];

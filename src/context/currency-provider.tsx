@@ -2,7 +2,6 @@
 
 import {
   DEFAULT_CURRENCY,
-  FREE_SHIPPING_THRESHOLD_INR,
   SupportedCurrency,
 } from "@/lib/currency/config";
 import {
@@ -66,7 +65,21 @@ function subscribeToCurrencyChanges(onStoreChange: () => void) {
   };
 }
 
-export function CurrencyProvider({ children }: { children: ReactNode }) {
+export function CurrencyProvider({
+  children,
+  // F-008 fix: this used to be the hard-coded FREE_SHIPPING_THRESHOLD_INR
+  // constant (₹8,299), which drifted from the admin-editable
+  // `shipping.freeAbove` setting checkout and the PDP actually charge
+  // against (₹8,000 by default). The root layout now fetches that setting
+  // and passes it down here, so the trust bar, and anything else that
+  // reads `freeShippingLabel`, always shows the real threshold — including
+  // after an admin changes it in Site Controls (getSetting is cached under
+  // SETTINGS_CACHE_TAG, which saving a setting already revalidates).
+  freeShippingThresholdInr,
+}: {
+  children: ReactNode;
+  freeShippingThresholdInr: number;
+}) {
   const currency = useSyncExternalStore(
     subscribeToCurrencyChanges,
     readStoredCurrency,
@@ -103,8 +116,8 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
   );
 
   const freeShippingLabel = useMemo(
-    () => formatFreeShippingThreshold(currency, FREE_SHIPPING_THRESHOLD_INR),
-    [currency],
+    () => formatFreeShippingThreshold(currency, freeShippingThresholdInr),
+    [currency, freeShippingThresholdInr],
   );
 
   const value = useMemo(

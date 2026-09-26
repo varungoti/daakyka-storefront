@@ -24,8 +24,8 @@ export const blogPosts: BlogPost[] = [
     readTime: "6 min read",
     image: blogMedia.chooseScrubs,
     content: [
-      "Choosing scrubs is about more than color. Healthcare professionals need garments that breathe, stretch, and maintain a professional appearance through long shifts.",
-      "Start with fabric technology. 4-way stretch supports dynamic movement, while moisture-wicking and antimicrobial finishes improve comfort and freshness.",
+      "Choosing scrubs is about more than color. Healthcare professionals need garments that breathe and maintain a professional appearance through long shifts.",
+      "Start with fabric. A durable poly-cotton blend holds up to daily hospital laundering better than lighter, purely fashion-driven fabrics.",
       "Next, evaluate fit. A relaxed top with a tapered jogger may suit active roles, while straight pants offer a more traditional silhouette.",
       "Finally, consider care requirements. Easy-care fabrics reduce time spent maintaining uniforms outside of work.",
     ],
@@ -50,15 +50,15 @@ export const blogPosts: BlogPost[] = [
     slug: "caring-for-performance-scrubs",
     title: "Caring for Performance Scrubs",
     excerpt:
-      "Extend the life of liquid-repellent and antimicrobial fabrics with the right wash and care routine.",
+      "Extend the life of your scrubs with the right wash and care routine.",
     category: "Fabric",
     author: "DAAKYKA Editorial",
     publishedAt: "2026-05-05",
     readTime: "4 min read",
     image: blogMedia.careScrubs,
     content: [
-      "Performance scrubs require gentle care to preserve stretch, repellency, and antimicrobial finishes.",
-      "Wash in cold water with mild detergent and avoid fabric softeners that can coat technical fibers.",
+      "Scrubs need gentle care to keep their fit, colour, and stitching looking good wash after wash.",
+      "Wash in cold water with mild detergent and avoid fabric softeners that can coat fibers over time.",
     ],
   },
 ];

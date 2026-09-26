@@ -111,7 +111,7 @@ export function BulkOrderForm() {
     <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-border bg-surface p-8">
       <HoneypotField />
       <FormField
-        label="Hospital / Clinic Name *"
+        label="Organisation / Institution Name *"
         name="organization"
         required
         minLength={2}
@@ -141,7 +141,7 @@ export function BulkOrderForm() {
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         <FormField label="City" name="city" />
-        <FormField label="Number of Staff" name="staffCount" type="number" min={1} step={1} error={fieldErrors.staffCount} />
+        <FormField label="Team Size / Headcount" name="staffCount" type="number" min={1} step={1} error={fieldErrors.staffCount} />
       </div>
       <div>
         <label htmlFor="organizationType" className="mb-2 block text-sm font-semibold text-ink">

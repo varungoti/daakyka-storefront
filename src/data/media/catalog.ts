@@ -9,8 +9,12 @@
  * on both port 80 and 443, confirmed independently via curl and a
  * .NET/PowerShell socket test (ruling out a client-specific quirk like the
  * documented R2 TLS issue in src/lib/storage/r2.ts, where the TCP/TLS
- * handshake itself succeeds). These fields now point at local neutral
- * placeholders instead, so nothing site-wide renders a broken image box.
+ * handshake itself succeeds). These fields pointed at a local placeholder
+ * SVG for a while so nothing site-wide rendered a broken image box, but a
+ * placeholder graphic on a live shopper-facing page is its own bug
+ * (release-hardening audit F-272 — see daakykaMedia's own doc comment
+ * below) — they now point at real, licensed Pexels/Unsplash photography
+ * like the rest of this file.
  *
  * Founder portraits and real client logos are NOT here — real people and
  * real trademarks must never be a hardcoded hotlink (or an AI-generated
@@ -18,9 +22,6 @@
  * `about.founder.*` / `about.client.*` in src/data/media/image-manifest.ts,
  * read through `getSiteImage`/`getSiteImages` from src/app/about/page.tsx
  * and src/components/brand/client-logos-strip.tsx.
- *
- * Priority for the imagery that IS still here: Pexels/Unsplash scrub-
- * specific photos (`scrubMedia`), then the local placeholders above.
  */
 
 /** Tuned widths for Lighthouse — cards ~560, PDP gallery ~800, hero ~960 */
@@ -61,19 +62,27 @@ export function withImageWidth(url: string, width: number): string {
  * Generic uniform/manufacturing scene photography — NOT real, identifiable
  * people or trademarks (contrast with the founder portraits and client
  * logos, which are admin-managed via the image manifest; see the file
- * doc comment above). Local placeholders until real photography (or an
- * AI-generated stand-in via the `hospital-scene`/`school-scene` manifest
- * presets) replaces them.
+ * doc comment above).
+ *
+ * release-hardening audit F-272: these four fields used to all point at
+ * `/placeholder-scene.svg` — a large grey image-icon shown to every
+ * shopper on /shop/bespoke, /our-story and /shop (see bespoke-section.tsx
+ * and shop-feature-cards.tsx). None of them are declared slots in
+ * src/data/media/image-manifest.ts, so there was also no way for an admin
+ * to ever replace them from Site Images. Until real photography (or a
+ * proper manifest slot + AI-generated stand-in) replaces these, they now
+ * point at the same licensed Pexels/Unsplash photography used elsewhere
+ * on the site (`scrubMedia` below) rather than a placeholder graphic.
  */
 export const daakykaMedia = {
   /** Product design collage — scrubs, hospital linen, institutional uniforms */
-  productDesigns: "/placeholder-scene.svg",
+  productDesigns: pexelsPhoto(8460109, imageWidths.feature),
   /** Healthcare & hospital uniform manufacturing showcase */
-  hospitalUniforms: "/placeholder-scene.svg",
+  hospitalUniforms: pexelsPhoto(5712513, imageWidths.hero),
   /** School & sports uniform production */
-  schoolUniforms: "/placeholder-scene.svg",
+  schoolUniforms: pexelsPhoto(4386466, imageWidths.hero),
   /** Institutional apparel & linen quality showcase */
-  institutionalShowcase: "/placeholder-scene.svg",
+  institutionalShowcase: pexelsPhoto(4173251, imageWidths.feature),
 } as const;
 
 /** People wearing medical scrubs / scrub suits — verified stock IDs */

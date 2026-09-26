@@ -133,7 +133,11 @@ export const draftCategories: DraftCategory[] = [
     parentSlug: "for-hospitals",
     sortOrder: 15,
     showInMenu: true,
-    sizeChartKey: "adult-scrubs",
+    // release-hardening audit F-273: was "adult-scrubs" — a real chart, but
+    // named for the wrong garment (a gown buyer saw a chart titled "Adult
+    // Scrubs"). "gowns" has the same measurement columns under a name that
+    // matches what's actually being sized.
+    sizeChartKey: "gowns",
   },
   {
     slug: "patient-gowns",
@@ -142,7 +146,7 @@ export const draftCategories: DraftCategory[] = [
     parentSlug: "for-hospitals",
     sortOrder: 16,
     showInMenu: true,
-    sizeChartKey: "adult-scrubs",
+    sizeChartKey: "gowns",
   },
   {
     slug: "staff-nurse-uniforms",
@@ -243,7 +247,12 @@ export const draftCategories: DraftCategory[] = [
     parentSlug: "school-uniforms",
     sortOrder: 35,
     showInMenu: true,
-    sizeChartKey: "school-shirts",
+    // release-hardening audit F-273: was "school-shirts" — these blazers'
+    // only size is "Made to Measure" (see MADE_TO_MEASURE_SIZE below), so a
+    // school-shirt chest/age chart made no sense here. "made-to-measure"
+    // explains the measuring process instead of showing a numeric chart
+    // that doesn't apply.
+    sizeChartKey: "made-to-measure",
   },
   {
     slug: "sweaters",
@@ -261,7 +270,12 @@ export const draftCategories: DraftCategory[] = [
     parentSlug: "school-uniforms",
     sortOrder: 37,
     showInMenu: true,
-    sizeChartKey: "school-trousers",
+    // release-hardening audit F-273: was "school-trousers" — a real chart,
+    // but titled for the wrong garment (a PE jersey shopper saw a chart
+    // called "School Trousers"). "sportswear" carries the same size numbers
+    // (24-32, matching SCHOOL_TROUSER_SIZES below) under a name that fits
+    // the jersey/shorts/tracksuit sold here.
+    sizeChartKey: "sportswear",
   },
   {
     slug: "ties-belts",
@@ -331,11 +345,18 @@ export const draftCategories: DraftCategory[] = [
   {
     slug: "corporate-uniforms",
     name: "Corporate Uniforms",
-    description: "Executive and corporate wear — toggle on in site controls to list in the menu.",
+    // release-hardening audit F-097: this used to be an admin instruction
+    // ("toggle on in site controls to list in the menu") stored directly as
+    // the public Category.description, so it rendered as the hero copy and
+    // <meta description> on /category/corporate-uniforms. Customer-facing
+    // text only from here — the admin hint now lives in this comment.
+    // hidden from the menu by default; toggle showInMenu in Site Controls.
+    description:
+      "Executive and corporate uniforms — blazers, shirts, trousers and skirts for offices and front-desk teams, with bulk and logo options.",
     section: "GENERAL",
     sortOrder: 70,
     showInMenu: false,
-    sizeChartKey: "adult-scrubs",
+    sizeChartKey: "corporate-apparel",
   },
   {
     slug: "sports-teams",
@@ -344,7 +365,11 @@ export const draftCategories: DraftCategory[] = [
     section: "GENERAL",
     sortOrder: 71,
     showInMenu: false,
-    sizeChartKey: "adult-scrubs",
+    // release-hardening audit F-273: was "adult-scrubs" — same pitfall as
+    // corporate-uniforms above, a team-kit buyer saw a chart titled "Adult
+    // Scrubs". "team-kit" has adult sizing under a name that matches these
+    // jersey/tracksuit kits.
+    sizeChartKey: "team-kit",
   },
 ];
 
@@ -428,16 +453,95 @@ export const draftSizeCharts: DraftSizeChart[] = [
     key: "kids-wear",
     name: "Kids Wear",
     unit: "CM",
-    columns: ["Age", "Height (cm)", "Chest (in)"],
+    // release-hardening audit F-273: three fixes —
+    // 1) Age labels now use the same hyphen ("2-3Y") the variant sizes use
+    //    (KIDS_SIZES below), instead of an en dash ("2–3Y") that never
+    //    matched the size buttons on the PDP.
+    // 2) Dropped the 12-13Y and 13-14Y rows — KIDS_SIZES only goes up to
+    //    10-11Y, so those sizes were never actually sold.
+    // 3) Chest is now in the same unit (cm) as height, matching this
+    //    chart's declared "CM" unit and the PDP's "Measurements in
+    //    centimeters" footer — it used to be "Chest (in)", inches, printed
+    //    right above that footer.
+    columns: ["Age", "Height (cm)", "Chest (cm)"],
     rows: [
-      { Age: "2–3Y", "Height (cm)": "92–98", "Chest (in)": 21 },
-      { Age: "4–5Y", "Height (cm)": "104–110", "Chest (in)": 22 },
-      { Age: "6–7Y", "Height (cm)": "116–122", "Chest (in)": 24 },
-      { Age: "8–9Y", "Height (cm)": "128–134", "Chest (in)": 26 },
-      { Age: "10–11Y", "Height (cm)": "140–146", "Chest (in)": 28 },
-      { Age: "12–13Y", "Height (cm)": "152–158", "Chest (in)": 30 },
-      { Age: "13–14Y", "Height (cm)": "158–164", "Chest (in)": 32 },
+      { Age: "2-3Y", "Height (cm)": "92-98", "Chest (cm)": 53 },
+      { Age: "4-5Y", "Height (cm)": "104-110", "Chest (cm)": 56 },
+      { Age: "6-7Y", "Height (cm)": "116-122", "Chest (cm)": 61 },
+      { Age: "8-9Y", "Height (cm)": "128-134", "Chest (cm)": 66 },
+      { Age: "10-11Y", "Height (cm)": "140-146", "Chest (cm)": 71 },
     ],
+  },
+  {
+    key: "corporate-apparel",
+    name: "Corporate Apparel",
+    unit: "IN",
+    columns: ["Size", "Chest", "Waist", "Length"],
+    rows: [
+      { Size: "S", Chest: 36, Waist: 30, Length: 27 },
+      { Size: "M", Chest: 38, Waist: 32, Length: 28 },
+      { Size: "L", Chest: 40, Waist: 34, Length: 29 },
+      { Size: "XL", Chest: 42, Waist: 36, Length: 30 },
+      { Size: "2XL", Chest: 44, Waist: 38, Length: 31 },
+    ],
+    notes: "Measurements in inches. Covers executive shirts, trousers, skirts and blazer jackets.",
+  },
+  {
+    key: "sportswear",
+    name: "Sportswear (PE)",
+    unit: "IN",
+    columns: ["Size", "Chest", "Waist", "Length"],
+    rows: [
+      { Size: "24", Chest: 28, Waist: 24, Length: 30 },
+      { Size: "26", Chest: 30, Waist: 26, Length: 31 },
+      { Size: "28", Chest: 32, Waist: 28, Length: 32 },
+      { Size: "30", Chest: 34, Waist: 30, Length: 33 },
+      { Size: "32", Chest: 36, Waist: 32, Length: 34 },
+    ],
+    notes: "Measurements in inches. Covers PE jerseys, shorts and tracksuits.",
+  },
+  {
+    key: "team-kit",
+    name: "Team Jersey & Tracksuit Kit",
+    unit: "IN",
+    columns: ["Size", "Chest", "Length"],
+    rows: [
+      { Size: "S", Chest: 36, Length: 27 },
+      { Size: "M", Chest: 38, Length: 28 },
+      { Size: "L", Chest: 40, Length: 29 },
+      { Size: "XL", Chest: 42, Length: 30 },
+      { Size: "2XL", Chest: 44, Length: 31 },
+    ],
+    notes: "Measurements in inches.",
+  },
+  {
+    key: "gowns",
+    name: "Patient & OT Gowns",
+    unit: "IN",
+    columns: ["Size", "Chest", "Length"],
+    rows: [
+      { Size: "S", Chest: 36, Length: 42 },
+      { Size: "M", Chest: 38, Length: 43 },
+      { Size: "L", Chest: 40, Length: 44 },
+      { Size: "XL", Chest: 42, Length: 45 },
+      { Size: "2XL", Chest: 44, Length: 46 },
+      { Size: "3XL", Chest: 46, Length: 47 },
+    ],
+    notes: "Measurements in inches, laid flat.",
+  },
+  {
+    key: "made-to-measure",
+    name: "Made-to-Measure Blazers: How We Measure",
+    unit: "IN",
+    columns: ["What we measure", "Details"],
+    rows: [
+      { "What we measure": "Chest", Details: "Around the fullest part, under the arms, garment worn open" },
+      { "What we measure": "Shoulder", Details: "From one shoulder seam to the other, across the back" },
+      { "What we measure": "Sleeve length", Details: "From shoulder seam to wrist bone" },
+      { "What we measure": "Jacket length", Details: "From base of collar to desired hem" },
+    ],
+    notes:
+      "Every blazer is cut to individual measurements rather than a standard size chart — our team takes these on-site for bulk school orders.",
   },
   {
     key: "linens",

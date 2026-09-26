@@ -155,4 +155,32 @@ describe("draft catalog data", () => {
       assert.ok(blazer.tags.includes("made-to-measure"));
     }
   });
+
+  // release-hardening audit F-273: the "Kids Wear" size chart's Age labels
+  // used to use an en dash ("2–3Y") while every kids product variant uses a
+  // hyphen ("2-3Y"), and the chart listed ages (12-13Y, 13-14Y) no kids
+  // product actually stocks. Both regress silently if either list changes
+  // without the other, so compare them directly instead of hard-coding one
+  // side.
+  it("the kids-wear size chart's Age labels match the kids sizes actually sold", () => {
+    const kidsChart = draftSizeCharts.find((c) => c.key === "kids-wear");
+    assert.ok(kidsChart, "expected a \"kids-wear\" size chart");
+    const chartAges = kidsChart!.rows.map((row) => row.Age);
+
+    const kidsCategorySlugs = new Set(
+      draftCategories.filter((c) => c.section === "KIDS").map((c) => c.slug),
+    );
+    const kidsSizesSold = new Set(
+      draftProducts
+        .filter((p) => kidsCategorySlugs.has(p.categorySlug))
+        .flatMap((p) => p.variants.map((v) => v.size)),
+    );
+
+    assert.ok(kidsSizesSold.size > 0, "expected at least one kids product with variants");
+    assert.deepEqual(
+      new Set(chartAges),
+      kidsSizesSold,
+      "kids-wear chart Age rows must exactly match the sizes kids products are sold in",
+    );
+  });
 });

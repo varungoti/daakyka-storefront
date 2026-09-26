@@ -12,13 +12,31 @@ import {
 
 const icons = [Truck, RefreshCw, Package, CreditCard, Headphones];
 
-export function TrustBar() {
-  const { freeShippingLabel } = useCurrency();
-
-  const descriptions = trustItems.map((item, index) => {
+/**
+ * F-008 fix: index 0 ("Free Shipping") and index 1 ("Easy Returns") used to
+ * be hard-coded strings ("On orders over ₹8,299", "30-day return policy")
+ * that could silently drift from what checkout and the PDP actually
+ * promise. `freeShippingLabel` comes from CurrencyProvider (fed by the
+ * `shipping.freeAbove` setting); `returnWindowDays` is the same
+ * `returns.windowDays` setting the PDP, /returns and /terms already render
+ * (see settings/index.ts's F-026 note). Pulled out as a pure function so
+ * this mapping is unit-testable without rendering the component (this repo
+ * has no jsdom/React Testing Library — see trust-bar.test.ts).
+ */
+export function computeTrustItemDescriptions(
+  freeShippingLabel: string,
+  returnWindowDays: number,
+): string[] {
+  return trustItems.map((item, index) => {
     if (index === 0) return `On orders over ${freeShippingLabel}`;
+    if (index === 1) return `${returnWindowDays}-day return policy`;
     return item.description;
   });
+}
+
+export function TrustBar({ returnWindowDays }: { returnWindowDays: number }) {
+  const { freeShippingLabel } = useCurrency();
+  const descriptions = computeTrustItemDescriptions(freeShippingLabel, returnWindowDays);
 
   return (
     <section className="border-y border-border bg-alt-surface py-8">

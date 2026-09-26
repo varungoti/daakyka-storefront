@@ -247,7 +247,11 @@ export function CategoryForm({
       </Field>
 
       <div>
-        <p className="mb-2 text-xs font-semibold text-muted">Image</p>
+        {/* release-hardening audit F-364: this used to just say "Image",
+            giving no hint that it's also what shows on the category's own
+            /category/[slug] banner (when no separate "category.<slug>"
+            Site Images slot has been uploaded — see that page's fallback). */}
+        <p className="mb-2 text-xs font-semibold text-muted">Image — used for category tiles and banner</p>
         <MediaPicker usage="CATEGORY" value={image} onChange={setImage} aiFields={{ name, category: SECTION_LABELS[section] }} />
       </div>
 

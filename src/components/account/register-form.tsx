@@ -130,7 +130,20 @@ export function RegisterForm({ returnTo }: { returnTo: string }) {
       />
       <label className="flex items-start gap-3 text-sm text-muted">
         <input type="checkbox" name="consentGiven" required className="mt-1 h-4 w-4 rounded border-border text-brand" />
-        I agree to the terms of service and privacy policy.
+        {/* F-143: this used to be plain, unlinked text — a shopper had no
+            way to actually read what they were agreeing to before signing
+            up. */}
+        <span>
+          I agree to the{" "}
+          <Link href="/terms" target="_blank" className="font-semibold text-brand hover:underline">
+            terms of service
+          </Link>{" "}
+          and{" "}
+          <Link href="/privacy-policy" target="_blank" className="font-semibold text-brand hover:underline">
+            privacy policy
+          </Link>
+          .
+        </span>
       </label>
       {error && (
         <p className="text-sm text-red-600" role="alert">

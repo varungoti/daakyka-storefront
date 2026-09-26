@@ -10,7 +10,7 @@ import { getHeroContent, getHeroSlidesContent, getTrustStatsContent } from "@/li
 import { getSiteImages } from "@/lib/media/get-site-image";
 import { getCategoryTree, getProducts } from "@/lib/products";
 import { getSeoOverrideForPath } from "@/lib/seo/records";
-import { isSaleEnabled } from "@/lib/settings";
+import { getSetting, isSaleEnabled } from "@/lib/settings";
 import { getTestimonials } from "@/lib/testimonials";
 import { GraduationCap, HeartPulse } from "lucide-react";
 import type { Metadata } from "next";
@@ -47,16 +47,27 @@ export async function generateMetadata(): Promise<Metadata> {
  * testimonials -> a values row.
  */
 export default async function HomePage() {
-  const [categoryTree, saleEnabled, heroContent, heroSlidesContent, trustStats, testimonials, siteImages] =
-    await Promise.all([
-      getCategoryTree(),
-      isSaleEnabled(),
-      getHeroContent(),
-      getHeroSlidesContent(),
-      getTrustStatsContent(),
-      getTestimonials(),
-      getSiteImages(HOME_IMAGE_SLOTS),
-    ]);
+  const [
+    categoryTree,
+    saleEnabled,
+    heroContent,
+    heroSlidesContent,
+    trustStats,
+    testimonials,
+    siteImages,
+    returnWindowDays,
+  ] = await Promise.all([
+    getCategoryTree(),
+    isSaleEnabled(),
+    getHeroContent(),
+    getHeroSlidesContent(),
+    getTrustStatsContent(),
+    getTestimonials(),
+    getSiteImages(HOME_IMAGE_SLOTS),
+    // F-008: same `returns.windowDays` setting the PDP/returns/terms
+    // pages already render — see TrustBar's doc comment.
+    getSetting("returns.windowDays"),
+  ]);
 
   const topLevelMenu = categoryTree.filter((category) => category.showInMenu);
   const findTopLevel = (slug: string) => topLevelMenu.find((category) => category.slug === slug);
@@ -154,7 +165,7 @@ export default async function HomePage() {
       />
       <BulkOrdersSection />
       <TestimonialsSection testimonials={testimonials} />
-      <TrustBar />
+      <TrustBar returnWindowDays={returnWindowDays} />
     </>
   );
 }
