@@ -51,8 +51,8 @@ export function UserInviteForm() {
           User created: <span className="font-mono">{createdEmail}</span>
         </p>
         <p className="text-sm text-muted">
-          Share this temporary password with them now — it will not be shown again. They should
-          sign in and change it as soon as possible.
+          Share this temporary password with them now — it will not be shown again. They&apos;ll be
+          asked to set their own password (Account → Change Password) the moment they sign in.
         </p>
         <p className="select-all rounded-xl border border-border bg-surface p-3 font-mono text-lg tracking-wider text-ink">
           {tempPassword}

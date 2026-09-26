@@ -18,6 +18,13 @@ import { loginSchema } from "@/lib/validation/schemas";
 // "authenticated but not allowed to touch this resource").
 const LOCKED_STATUS = 423;
 
+// F-137: the old copy ("Account temporarily locked. Try again later.")
+// never told a locked-out customer that a password reset (which also
+// clears the lock — see src/app/api/account/reset-password/route.ts)
+// gets them back in immediately, instead of waiting out the full 15
+// minutes. login-form.tsx shows a "Reset password" link alongside this.
+const LOCKED_MESSAGE = "Too many failed attempts. Try again in 15 minutes, or reset your password.";
+
 export async function POST(request: Request) {
   const bodyResult = await readJsonBody(request);
   if (!bodyResult.ok) return bodyResult.response;
@@ -34,8 +41,12 @@ export async function POST(request: Request) {
   // network (hospital Wi-Fi) must not lock each other out of the login
   // form. Per-account brute-force protection still comes from the lockout
   // check below, which is identity-only by design.
+  // F-326: a limiter DB error on login must not quietly fall open to a
+  // per-instance counter (see rate-limit.ts's CheckRateLimitOptions) —
+  // this is exactly the route the account lockout is meant to backstop.
   const limited = await identityRateLimitOrResponse(request, "account-login", 5, 60_000, {
     identity: email,
+    failClosed: true,
   });
   if (limited) return limited;
 
@@ -52,20 +63,14 @@ export async function POST(request: Request) {
     }
 
     if (isLocked(customer)) {
-      return NextResponse.json(
-        { error: "Account temporarily locked. Try again later." },
-        { status: LOCKED_STATUS },
-      );
+      return NextResponse.json({ error: LOCKED_MESSAGE }, { status: LOCKED_STATUS });
     }
 
     const valid = await verifyPassword(parsed.data.password, customer.passwordHash);
     if (!valid) {
       const { locked } = await recordFailedLogin(customer.id);
       if (locked) {
-        return NextResponse.json(
-          { error: "Account temporarily locked. Try again later." },
-          { status: LOCKED_STATUS },
-        );
+        return NextResponse.json({ error: LOCKED_MESSAGE }, { status: LOCKED_STATUS });
       }
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
     }
@@ -79,10 +84,7 @@ export async function POST(request: Request) {
       // No session is issued; report the same 423 an ordinary locked
       // attempt gets instead of falling through to the generic 500 below.
       if (err instanceof AccountLockedError) {
-        return NextResponse.json(
-          { error: "Account temporarily locked. Try again later." },
-          { status: LOCKED_STATUS },
-        );
+        return NextResponse.json({ error: LOCKED_MESSAGE }, { status: LOCKED_STATUS });
       }
       throw err;
     }

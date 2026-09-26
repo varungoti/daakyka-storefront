@@ -3,17 +3,25 @@
 import { Button } from "@/components/ui/button";
 import { HoneypotField } from "@/components/ui/honeypot-field";
 import { HONEYPOT_FIELD_NAME } from "@/lib/validation/honeypot";
+import { retryAfterMessage } from "@/lib/security/retry-after";
 import { useState } from "react";
 
 export function NewsletterSignup({ source = "footer" }: { source?: string }) {
   const [email, setEmail] = useState("");
   const [consentGiven, setConsentGiven] = useState(false);
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  // F-323: this used to be inferred from the consent checkbox ("consent
+  // ticked but still an error? must be the email") instead of read from
+  // the response — which meant a 429 (rate limited) showed "Please enter
+  // a valid email" even for a perfectly valid, already-confirmed address.
+  const [errorMessage, setErrorMessage] = useState("");
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    setErrorMessage("");
     if (!consentGiven) {
       setStatus("error");
+      setErrorMessage("Please agree to receive emails to subscribe.");
       return;
     }
     const formElement = event.currentTarget;
@@ -34,6 +42,14 @@ export function NewsletterSignup({ source = "footer" }: { source?: string }) {
 
       if (!response.ok) {
         setStatus("error");
+        if (response.status === 429) {
+          // Keep the entered email/consent — this isn't a validation
+          // problem, so there's nothing to fix before retrying.
+          setErrorMessage(retryAfterMessage(response, "subscribe attempts"));
+        } else {
+          const data = await response.json().catch(() => null);
+          setErrorMessage(data?.error ?? "Please enter a valid email.");
+        }
         return;
       }
 
@@ -42,6 +58,7 @@ export function NewsletterSignup({ source = "footer" }: { source?: string }) {
       setConsentGiven(false);
     } catch {
       setStatus("error");
+      setErrorMessage("Something went wrong. Please try again.");
     }
   };
 
@@ -81,11 +98,7 @@ export function NewsletterSignup({ source = "footer" }: { source?: string }) {
           time.
         </span>
       </label>
-      {status === "error" && (
-        <p className="text-sm text-red-600">
-          {consentGiven ? "Please enter a valid email." : "Please agree to receive emails to subscribe."}
-        </p>
-      )}
+      {status === "error" && <p className="text-sm text-red-600">{errorMessage}</p>}
     </form>
   );
 }

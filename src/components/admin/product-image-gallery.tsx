@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useState } from "react";
 import { GripVertical } from "lucide-react";
 import { moveArrayItem, swapStepsForMove } from "@/lib/admin/reorder";
+import { summarizeFailuresByMessage, uploadFilesSequentially } from "@/lib/admin/retryable-upload";
 import { MediaLibraryBrowser } from "@/components/admin/media-library-browser";
 import { cn } from "@/lib/utils";
 
@@ -100,25 +101,57 @@ export function ProductImageGallery({
     }
   }
 
+  /**
+   * F-324: a 429 from admin-media-upload's 30/minute limiter used to be
+   * treated exactly like a bad file — skipped with a single generic "One
+   * or more uploads failed.", with no indication of which files didn't
+   * make it or that waiting a moment would fix it. uploadFilesSequentially
+   * retries a 429'd file once, honouring its Retry-After, before giving
+   * up; every distinct failure reason is then reported with the file
+   * names it affected instead of a blanket message.
+   */
   async function onUploadFiles(files: FileList) {
     setUploading(true);
     setNotice(null);
-    for (const file of Array.from(files)) {
+
+    const outcomes = await uploadFilesSequentially(Array.from(files), (file) => {
       const form = new FormData();
       form.append("file", file);
       form.append("usage", "PRODUCT");
-      const response = await fetch("/api/admin/media", { method: "POST", body: form });
+      return fetch("/api/admin/media", { method: "POST", body: form });
+    });
+
+    const attached: { id: string; alt: string }[] = [];
+    const failures: { file: File; message: string }[] = [];
+
+    for (const { file, response, retriedAfterRateLimit } of outcomes) {
       if (response.status === 503) {
-        setNotice("Image storage isn't configured yet — ask an admin to set up Cloudflare R2.");
+        failures.push({ file, message: "Image storage isn't configured yet — ask an admin to set up Cloudflare R2." });
         continue;
       }
       if (!response.ok) {
-        setNotice("One or more uploads failed.");
+        failures.push({
+          file,
+          message:
+            response.status === 429 && retriedAfterRateLimit
+              ? "Still being rate limited after waiting — try again shortly"
+              : "Upload failed",
+        });
         continue;
       }
       const body = await response.json();
-      await attachAsset(body.asset.id, aiFields.name ?? "");
+      attached.push({ id: body.asset.id, alt: aiFields.name ?? "" });
     }
+
+    if (attached.length > 0) {
+      // Note: this may itself set a notice (e.g. "Couldn't attach one or
+      // more images") — only overwrite it below when the upload stage
+      // itself also has something to report, so an attach-stage failure
+      // isn't silently cleared by an unconditional setNotice(null).
+      await attachAssets(attached);
+    }
+    const uploadNotice = summarizeFailuresByMessage(failures);
+    if (uploadNotice) setNotice(uploadNotice);
     setUploading(false);
   }
 

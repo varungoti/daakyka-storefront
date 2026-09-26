@@ -76,6 +76,25 @@ export async function destroyCustomerSession(): Promise<void> {
 }
 
 /**
+ * F-138: Sign Out used to only delete the cookie — the JWT itself stays
+ * valid (signature + expiry both still check out) for the rest of its
+ * 30-day life, so a copied/leaked token kept working long after the
+ * owner "signed out". Bumping `sessionVersion` is the same revocation
+ * mechanism password reset already relies on (see
+ * verifyCustomerSessionTokenResult's sessionVersion check above): every
+ * outstanding token for this customer, on every device, stops verifying
+ * immediately, not just the cookie in the browser that clicked Sign Out.
+ * That's an acceptable trade-off for a small store with no per-device
+ * session list to sign out selectively.
+ */
+export async function revokeCustomerSessions(customerId: string): Promise<void> {
+  await db.customer.update({
+    where: { id: customerId },
+    data: { sessionVersion: { increment: 1 } },
+  });
+}
+
+/**
  * Verifies a raw customer session JWT string without touching `cookies()`.
  * Split out (mirroring src/lib/auth/session.ts's verifySessionTokenResult)
  * so the DB-outage classification below is directly testable, and so the

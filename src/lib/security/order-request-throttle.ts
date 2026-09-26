@@ -84,21 +84,32 @@ export async function orderRequestThrottleOrResponse(
 
   const consumedKeys: string[] = [];
 
+  // F-326: ORDER_REQUEST creates a real Order and decrements real stock
+  // with no payment step (see the module doc comment above) — exactly the
+  // kind of route this throttle exists to backstop, so a limiter DB error
+  // here must not silently fall open to an unthrottled in-memory counter.
+  const rateLimitOptions = { failClosed: true };
+
   // F-118: the hard cap, checked first — an attacker who can't clear this
   // never gets to burn through the identity keys below with junk data.
   const ip = getClientIp(request);
   if (ip) {
     const ipKey = orderRequestKey("ip", ip);
-    const ipResult = await checkRateLimit(ipKey, ORDER_REQUEST_IP_LIMIT, ORDER_REQUEST_WINDOW_MS);
+    const ipResult = await checkRateLimit(ipKey, ORDER_REQUEST_IP_LIMIT, ORDER_REQUEST_WINDOW_MS, rateLimitOptions);
     if (!ipResult.ok) {
       return {
-        response: NextResponse.json(
-          {
-            error:
-              "Too many order requests from this network. Please wait before submitting another, or contact us to complete this order.",
-          },
-          { status: 429, headers: { "Retry-After": String(ipResult.retryAfter) } },
-        ),
+        response: ipResult.dbUnavailable
+          ? NextResponse.json(
+              { error: "Service temporarily unavailable. Please try again shortly." },
+              { status: 503, headers: { "Retry-After": String(ipResult.retryAfter) } },
+            )
+          : NextResponse.json(
+              {
+                error:
+                  "Too many order requests from this network. Please wait before submitting another, or contact us to complete this order.",
+              },
+              { status: 429, headers: { "Retry-After": String(ipResult.retryAfter) } },
+            ),
         consumedKeys,
       };
     }
@@ -111,16 +122,21 @@ export async function orderRequestThrottleOrResponse(
   }
 
   for (const key of identityKeys) {
-    const result = await checkRateLimit(key, ORDER_REQUEST_LIMIT, ORDER_REQUEST_WINDOW_MS);
+    const result = await checkRateLimit(key, ORDER_REQUEST_LIMIT, ORDER_REQUEST_WINDOW_MS, rateLimitOptions);
     if (!result.ok) {
       return {
-        response: NextResponse.json(
-          {
-            error:
-              "Too many order requests for this email/phone. Please wait before submitting another, or contact us to complete this order.",
-          },
-          { status: 429, headers: { "Retry-After": String(result.retryAfter) } },
-        ),
+        response: result.dbUnavailable
+          ? NextResponse.json(
+              { error: "Service temporarily unavailable. Please try again shortly." },
+              { status: 503, headers: { "Retry-After": String(result.retryAfter) } },
+            )
+          : NextResponse.json(
+              {
+                error:
+                  "Too many order requests for this email/phone. Please wait before submitting another, or contact us to complete this order.",
+              },
+              { status: 429, headers: { "Retry-After": String(result.retryAfter) } },
+            ),
         consumedKeys,
       };
     }

@@ -24,7 +24,12 @@ const GENERIC_RESPONSE = {
 };
 
 export async function POST(request: Request) {
-  const limited = await rateLimitOrResponse(request, "account-forgot-password", 5, 60_000);
+  // F-326: a limiter DB error here must not silently fall open to a
+  // per-instance counter (see rate-limit.ts's CheckRateLimitOptions) — a
+  // forgot-password flood is exactly what this limit exists to backstop.
+  const limited = await rateLimitOrResponse(request, "account-forgot-password", 5, 60_000, {
+    failClosed: true,
+  });
   if (limited) return limited;
 
   try {

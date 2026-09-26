@@ -2,6 +2,7 @@ import { AdminShell } from "@/components/admin/admin-shell";
 import { UnsavedChangesProvider } from "@/components/admin/unsaved-changes";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSessionResult } from "@/lib/auth/session";
+import { db } from "@/lib/db";
 import { getUnreadNotificationCount } from "@/lib/notifications";
 import { getPendingReviewCount } from "@/lib/reviews/pending-count";
 import { redirect } from "next/navigation";
@@ -60,6 +61,17 @@ export default async function AdminPanelLayout({
   const pendingReviews = hasPermission(session.role, "reviews:moderate")
     ? await getPendingReviewCount()
     : 0;
+  // F-057: not carried on the JWT (see src/lib/auth/session.ts's
+  // SessionUser) — an admin-issued temp password (invite or reset) sets
+  // this in the DB, and AdminShell redirects to /admin/account until it's
+  // cleared. Best-effort: if this lookup fails for some reason, fail open
+  // (don't force the redirect) rather than lock an admin out of the panel
+  // over an unrelated query hiccup — getSessionResult() above is already
+  // the real "is this a working session" check.
+  const mustChangePassword = await db.user
+    .findUnique({ where: { id: session.id }, select: { mustChangePassword: true } })
+    .then((user) => user?.mustChangePassword ?? false)
+    .catch(() => false);
 
   return (
     // F-13: shared dirty-form state so a <GuardedLink> in the sidebar
@@ -67,7 +79,12 @@ export default async function AdminPanelLayout({
     // rendered in `children`, two levels down. See
     // src/components/admin/unsaved-changes.tsx.
     <UnsavedChangesProvider>
-      <AdminShell user={session} unreadNotifications={unreadNotifications} pendingReviews={pendingReviews}>
+      <AdminShell
+        user={session}
+        unreadNotifications={unreadNotifications}
+        pendingReviews={pendingReviews}
+        mustChangePassword={mustChangePassword}
+      >
         {children}
       </AdminShell>
     </UnsavedChangesProvider>

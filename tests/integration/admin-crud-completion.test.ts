@@ -83,6 +83,9 @@ import { PATCH as patchNotification } from "@/app/api/admin/notifications/[id]/r
 import { POST as markAllReadRoute } from "@/app/api/admin/notifications/mark-all-read/route";
 
 import {
+  AccountLockedForPasswordChangeError,
+  changeOwnPassword,
+  CurrentPasswordIncorrectError,
   deleteUser,
   inviteUser,
   LastSuperAdminError,
@@ -91,10 +94,13 @@ import {
   UserEmailConflictError,
   UserNotFoundError,
   UserSelfActionBlockedError,
+  WeakPasswordError,
 } from "@/lib/auth/user-admin";
+import { verifyPassword } from "@/lib/auth/password";
 import { POST as postUser } from "@/app/api/admin/users/route";
 import { DELETE as deleteUserRoute } from "@/app/api/admin/users/[id]/route";
 import { POST as resetPasswordRoute } from "@/app/api/admin/users/[id]/reset-password/route";
+import { POST as postChangeOwnPassword } from "@/app/api/admin/account/password/route";
 import { findAnyAdminId } from "../helpers/admin-user";
 
 /**
@@ -631,6 +637,9 @@ describe("users admin CRUD (invite, reset-password, delete)", () => {
     const row = await db.user.findUnique({ where: { id: result.user.id } });
     assert.ok(row);
     assert.notEqual(row!.passwordHash, result.tempPassword, "only the hash should be stored");
+    // F-057: a fresh invite's temp password must be flagged for a
+    // mandatory change at next login, not silently usable forever.
+    assert.equal(row!.mustChangePassword, true);
 
     const { verifyPassword } = await import("@/lib/auth/password");
     assert.equal(await verifyPassword(result.tempPassword, row!.passwordHash), true);
@@ -657,6 +666,12 @@ describe("users admin CRUD (invite, reset-password, delete)", () => {
     assert.equal(after!.sessionVersion, before!.sessionVersion + 1);
     const { verifyPassword } = await import("@/lib/auth/password");
     assert.equal(await verifyPassword(result.tempPassword, after!.passwordHash), true);
+
+    // F-057: an admin-triggered reset must also require a change at next
+    // login — otherwise the new temp password can just as easily become
+    // permanent as the original one.
+    const afterFull = await db.user.findUnique({ where: { id: invited.user.id }, select: { mustChangePassword: true } });
+    assert.equal(afterFull!.mustChangePassword, true);
   });
 
   it("resetUserPassword throws UserNotFoundError for an unknown id", async () => {
@@ -726,6 +741,83 @@ describe("users admin CRUD (invite, reset-password, delete)", () => {
     assert.equal(await verifySessionToken(staleToken), null);
   });
 
+  // F-057: self-service password change — admins previously had no way to
+  // rotate their own password at all (only a SUPER_ADMIN-triggered reset
+  // to another random temp password). See src/lib/auth/user-admin.ts's
+  // changeOwnPassword doc comment.
+  describe("changeOwnPassword (F-057)", () => {
+    it("changes the password, bumps sessionVersion, and clears mustChangePassword", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const invited = await inviteUser({ name: "Change PW", email: `changepw-${unique}@example.com`, role: "VIEWER" }, adminId);
+      createdUserIds.push(invited.user.id);
+
+      const before = await db.user.findUnique({ where: { id: invited.user.id }, select: { sessionVersion: true } });
+      const result = await changeOwnPassword(invited.user.id, invited.tempPassword, "a-brand-new-password-123");
+      assert.equal(result.sessionVersion, before!.sessionVersion + 1);
+
+      const after = await db.user.findUnique({ where: { id: invited.user.id } });
+      assert.equal(after!.mustChangePassword, false, "a self-chosen password clears the forced-change flag");
+      assert.equal(await verifyPassword("a-brand-new-password-123", after!.passwordHash), true);
+      assert.equal(await verifyPassword(invited.tempPassword, after!.passwordHash), false, "the old temp password must stop working");
+    });
+
+    it("rejects the wrong current password and counts it toward the same lockout login uses", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const invited = await inviteUser({ name: "Wrong PW", email: `wrongpw-${unique}@example.com`, role: "VIEWER" }, adminId);
+      createdUserIds.push(invited.user.id);
+
+      await assert.rejects(
+        () => changeOwnPassword(invited.user.id, "not-the-real-temp-password", "a-brand-new-password-123"),
+        CurrentPasswordIncorrectError,
+      );
+
+      const after = await db.user.findUnique({ where: { id: invited.user.id }, select: { failedLoginCount: true } });
+      assert.equal(after!.failedLoginCount, 1, "a mismatch must feed the same lockout counter a failed login does");
+    });
+
+    it("locks the account after enough wrong guesses, and then rejects even the correct password", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const invited = await inviteUser({ name: "Lock PW", email: `lockpw-${unique}@example.com`, role: "VIEWER" }, adminId);
+      createdUserIds.push(invited.user.id);
+
+      for (let attempt = 1; attempt <= 9; attempt++) {
+        await assert.rejects(
+          () => changeOwnPassword(invited.user.id, "wrong-guess", "a-brand-new-password-123"),
+          CurrentPasswordIncorrectError,
+          `attempt ${attempt} should still be a plain mismatch, not yet locked`,
+        );
+      }
+
+      await assert.rejects(
+        () => changeOwnPassword(invited.user.id, "wrong-guess", "a-brand-new-password-123"),
+        AccountLockedForPasswordChangeError,
+        "the 10th wrong guess should lock the account, mirroring login's own threshold",
+      );
+
+      await assert.rejects(
+        () => changeOwnPassword(invited.user.id, invited.tempPassword, "a-brand-new-password-123"),
+        AccountLockedForPasswordChangeError,
+        "even the correct temp password must be refused while locked",
+      );
+    });
+
+    it("rejects a new password shorter than 12 characters and one identical to the current password", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const invited = await inviteUser({ name: "Weak PW", email: `weakpw-${unique}@example.com`, role: "VIEWER" }, adminId);
+      createdUserIds.push(invited.user.id);
+
+      await assert.rejects(
+        () => changeOwnPassword(invited.user.id, invited.tempPassword, invited.tempPassword),
+        WeakPasswordError,
+        "reusing the current password must be rejected",
+      );
+    });
+
+    it("throws UserNotFoundError for an unknown id", async () => {
+      await assert.rejects(() => changeOwnPassword("does-not-exist", "whatever", "a-brand-new-password-123"), UserNotFoundError);
+    });
+  });
+
   it("deleteUser removes a fresh user with no activity history", async () => {
     const unique = randomUUID().slice(0, 8);
     const invited = await inviteUser({ name: "Delete Me", email: `delete-${unique}@example.com`, role: "VIEWER" }, adminId);
@@ -780,6 +872,19 @@ describe("users admin CRUD (invite, reset-password, delete)", () => {
     assert.ok(
       [401, 403].includes(
         (await resetPasswordRoute(jsonRequest("http://localhost/api/admin/users/any-id/reset-password", "POST"), { params: idParams })).status,
+      ),
+    );
+    // F-057
+    assert.ok(
+      [401, 403].includes(
+        (
+          await postChangeOwnPassword(
+            jsonRequest("http://localhost/api/admin/account/password", "POST", {
+              currentPassword: "whatever",
+              newPassword: "a-brand-new-password-123",
+            }),
+          )
+        ).status,
       ),
     );
   });

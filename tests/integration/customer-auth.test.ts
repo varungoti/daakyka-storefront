@@ -7,6 +7,10 @@ import { hashPassword, verifyPassword } from "@/lib/customer-auth/password";
 import { hashToken, invalidateOutstandingTokens, issueCustomerToken } from "@/lib/customer-auth/tokens";
 import { createAddressForCustomer, deleteAddressAndPromoteDefault, loadOwnAddress } from "@/lib/customer-auth/addresses";
 import { AccountLockedError, recordFailedLogin, resetLoginFailures } from "@/lib/customer-auth/lockout";
+import { verifyCurrentPassword } from "@/lib/customer-auth/verify-current-password";
+import { revokeCustomerSessions, verifyCustomerSessionTokenResult } from "@/lib/customer-auth/session";
+import { withEnv } from "../helpers/env";
+import { SignJWT } from "jose";
 
 import { POST as postRegister } from "@/app/api/account/register/route";
 import { POST as postLogin } from "@/app/api/account/login/route";
@@ -25,6 +29,22 @@ function jsonRequest(url: string, method: string, body?: unknown): Request {
     headers: { "Content-Type": "application/json" },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+}
+
+// F-138: mints a raw customer session JWT the same shape
+// createCustomerSession() would sign, without going through cookies()
+// (which throws outside a real Next.js request — see this file's harness
+// note above). Mirrors src/lib/customer-auth/session.test.ts's identical
+// helper.
+async function signCustomerToken(customerId: string, sessionVersion: number): Promise<string> {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) throw new Error("AUTH_SECRET environment variable is required");
+  return new SignJWT({ sub: customerId, email: "customer@example.com", name: "Test Customer", sv: sessionVersion })
+    .setProtectedHeader({ alg: "HS256" })
+    .setAudience("customer")
+    .setIssuedAt()
+    .setExpirationTime("30d")
+    .sign(new TextEncoder().encode(secret));
 }
 
 /**
@@ -57,6 +77,7 @@ const ACCOUNT_RATE_LIMIT_PREFIXES = [
   "account-forgot-password",
   "account-reset-password",
   "account-resend-verification",
+  "account-password-change",
 ] as const;
 
 describe("customer accounts (Phase D1)", () => {
@@ -240,6 +261,11 @@ describe("customer accounts (Phase D1)", () => {
         }),
       );
       assert.equal(lockedResponse.status, 423, "the 10th failed attempt should lock the account");
+      // F-137: the message must point the customer at a way back in
+      // (reset the password, which also clears the lock) rather than
+      // just "try again later" with no next step.
+      const lockedBody = await lockedResponse.json();
+      assert.match(lockedBody.error, /reset your password/i);
 
       const locked = await db.customer.findUnique({ where: { id: customer.id } });
       assert.ok(locked!.lockedUntil && locked!.lockedUntil.getTime() > Date.now());
@@ -426,6 +452,35 @@ describe("customer accounts (Phase D1)", () => {
         "the lock must survive the failed reset attempt untouched",
       );
       assert.ok(row!.failedLoginCount >= 10);
+    });
+
+    // F-326: account-login is exactly the route the lockout above is meant
+    // to backstop — a limiter DB outage must block (503), never silently
+    // let the attempt through unthrottled.
+    it("fails CLOSED (503) rather than allowing the attempt through when the rate limiter's DB is unreachable", async () => {
+      await withEnv({ NODE_ENV: "production", DISABLE_RATE_LIMIT: undefined, VERCEL: "1" }, async () => {
+        const original = db.$queryRaw;
+        db.$queryRaw = (() => {
+          throw new Error("simulated DB outage");
+        }) as typeof db.$queryRaw;
+        const originalError = console.error;
+        console.error = () => {};
+
+        try {
+          const response = await postLogin(
+            new Request("http://localhost/api/account/login", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "x-vercel-forwarded-for": "203.0.113.210" },
+              body: JSON.stringify({ email: `failclosed-login-${randomUUID()}@example.com`, password: "whatever123" }),
+            }),
+          );
+          assert.equal(response.status, 503, "a limiter DB outage must block login, not silently allow it");
+          assert.ok(response.headers.get("Retry-After"));
+        } finally {
+          db.$queryRaw = original;
+          console.error = originalError;
+        }
+      });
     });
   });
 
@@ -850,6 +905,163 @@ describe("customer accounts (Phase D1)", () => {
 
       const refreshedFirst = await db.customerAddress.findUnique({ where: { id: first.id } });
       assert.equal(refreshedFirst?.isDefault, true, "the existing default must be unaffected");
+    });
+  });
+
+  // F-325: PATCH /api/account/profile's password-change branch used to let
+  // an already-authenticated session guess `currentPassword` with no rate
+  // limit and no lockout counting — 40 wrong guesses in 16s, all a plain
+  // 400. verifyCurrentPassword() is the shared logic the route now calls;
+  // it needs no session cookie of its own (see the harness-limitation
+  // comment at the top of this file), so it's exercised directly here.
+  describe("verifyCurrentPassword (F-325)", () => {
+    it("succeeds for the correct current password", async () => {
+      const customer = await db.customer.create({
+        data: { email: `pwchange-ok-${randomUUID()}@example.com`, name: "PW Change", passwordHash: await hashPassword("correct-password-1") },
+      });
+      createdCustomerIds.push(customer.id);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
+
+      const result = await verifyCurrentPassword(
+        jsonRequest("http://localhost/api/account/profile", "PATCH"),
+        customer.id,
+        "correct-password-1",
+      );
+      assert.deepEqual(result, { status: "ok" });
+    });
+
+    it("reports 'incorrect' (not locked) for a single wrong guess, and does not touch the rate limiter's job", async () => {
+      const customer = await db.customer.create({
+        data: { email: `pwchange-wrong-${randomUUID()}@example.com`, name: "PW Change", passwordHash: await hashPassword("correct-password-1") },
+      });
+      createdCustomerIds.push(customer.id);
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
+
+      const result = await verifyCurrentPassword(
+        jsonRequest("http://localhost/api/account/profile", "PATCH"),
+        customer.id,
+        "wrong-guess",
+      );
+      assert.deepEqual(result, { status: "incorrect" });
+
+      const updated = await db.customer.findUnique({ where: { id: customer.id } });
+      assert.equal(updated!.failedLoginCount, 1, "a mismatch must feed the same lockout counter recordFailedLogin uses for login");
+    });
+
+    it("locks the account after enough wrong guesses, mirroring login's own threshold (F-325 core fix)", async () => {
+      const customer = await db.customer.create({
+        data: { email: `pwchange-lock-${randomUUID()}@example.com`, name: "PW Change", passwordHash: await hashPassword("correct-password-1") },
+      });
+      createdCustomerIds.push(customer.id);
+
+      // Before the fix, none of this ever ran: every one of these 40
+      // guesses (the finding's own repro count) returned a plain 400
+      // with failedLoginCount/lockedUntil untouched. Each iteration
+      // resets the separate per-IP/identity rate-limit bucket so this
+      // test is only exercising the *lockout* counter, not the limiter.
+      let lastResult: Awaited<ReturnType<typeof verifyCurrentPassword>> | undefined;
+      for (let attempt = 1; attempt <= 10; attempt++) {
+        await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
+        lastResult = await verifyCurrentPassword(
+          jsonRequest("http://localhost/api/account/profile", "PATCH"),
+          customer.id,
+          "wrong-guess",
+        );
+      }
+      assert.equal(lastResult!.status, "locked", "the 10th wrong guess should lock the account, exactly like login");
+
+      // Even the CORRECT password is now refused while locked — this is
+      // what stops the "copied session + F-138" attack the finding
+      // describes: the account locks before the real password can be
+      // confirmed.
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
+      const correctButLocked = await verifyCurrentPassword(
+        jsonRequest("http://localhost/api/account/profile", "PATCH"),
+        customer.id,
+        "correct-password-1",
+      );
+      assert.equal(correctButLocked.status, "locked");
+    });
+
+    it("rate-limits repeated guesses per account (account-password-change), independent of the lockout counter", async () => {
+      // identityRateLimitOrResponse only attributes a request to an IP
+      // (and therefore only actually limits) when getClientIp() trusts
+      // the request — see src/lib/security/rate-limit.ts. The other
+      // tests in this block use plain jsonRequest() (no trusted IP
+      // header), which is exactly why they can hammer the lockout
+      // counter without also tripping this limiter; this test explicitly
+      // opts in with a Vercel-shaped request, mirroring
+      // src/lib/security/rate-limit.test.ts's own identityRateLimitOrResponse
+      // coverage.
+      await withEnv({ NODE_ENV: "production", DISABLE_RATE_LIMIT: undefined, VERCEL: "1" }, async () => {
+        const customer = await db.customer.create({
+          data: { email: `pwchange-ratelimit-${randomUUID()}@example.com`, name: "PW Change", passwordHash: await hashPassword("correct-password-1") },
+        });
+        createdCustomerIds.push(customer.id);
+        await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
+
+        const requestFromIp = () =>
+          new Request("http://localhost/api/account/profile", {
+            method: "PATCH",
+            headers: { "x-vercel-forwarded-for": "203.0.113.201" },
+          });
+
+        // The tight identity bucket is 5/min; stop just short of the
+        // lockout threshold (10) so this test is isolated to the limiter.
+        for (let attempt = 1; attempt <= 5; attempt++) {
+          const result = await verifyCurrentPassword(requestFromIp(), customer.id, "wrong-guess");
+          assert.notEqual(result.status, "rate-limited", `attempt ${attempt} should still be within the limit`);
+        }
+
+        const limited = await verifyCurrentPassword(requestFromIp(), customer.id, "wrong-guess");
+        assert.equal(limited.status, "rate-limited");
+        if (limited.status === "rate-limited") {
+          assert.equal(limited.response.status, 429);
+          assert.ok(limited.response.headers.get("Retry-After"));
+        }
+      });
+    });
+  });
+
+  // F-138: Sign Out used to only clear the cookie — a copied/leaked token
+  // kept verifying for the rest of its 30-day life. revokeCustomerSessions
+  // is the shared logic POST /api/account/logout now calls first; tested
+  // directly here (real DB row, real JWT) since — same harness limitation
+  // as elsewhere in this file — calling the logout route itself can't
+  // carry a real session cookie.
+  describe("revokeCustomerSessions (F-138)", () => {
+    it("a token minted before revocation is rejected (unauthenticated) afterwards", async () => {
+      const customer = await db.customer.create({
+        data: { email: `logout-revoke-${randomUUID()}@example.com`, name: "Logout Test", passwordHash: await hashPassword("correct-password-1") },
+      });
+      createdCustomerIds.push(customer.id);
+
+      const tokenBeforeLogout = await signCustomerToken(customer.id, customer.sessionVersion);
+      const before = await verifyCustomerSessionTokenResult(tokenBeforeLogout);
+      assert.equal(before.status, "ok", "sanity check: the token verifies before revocation");
+
+      await revokeCustomerSessions(customer.id);
+
+      const after = await verifyCustomerSessionTokenResult(tokenBeforeLogout);
+      assert.deepEqual(
+        after,
+        { status: "unauthenticated" },
+        "a token minted before logout must stop verifying once sessionVersion is bumped",
+      );
+    });
+
+    it("does not affect a token minted afterwards, at the new sessionVersion", async () => {
+      const customer = await db.customer.create({
+        data: { email: `logout-revoke-new-${randomUUID()}@example.com`, name: "Logout Test", passwordHash: await hashPassword("correct-password-1") },
+      });
+      createdCustomerIds.push(customer.id);
+
+      await revokeCustomerSessions(customer.id);
+
+      const refreshed = await db.customer.findUnique({ where: { id: customer.id } });
+      const tokenAfterLogout = await signCustomerToken(customer.id, refreshed!.sessionVersion);
+      const result = await verifyCustomerSessionTokenResult(tokenAfterLogout);
+      assert.equal(result.status, "ok", "a fresh sign-in after logout must still work normally");
     });
   });
 

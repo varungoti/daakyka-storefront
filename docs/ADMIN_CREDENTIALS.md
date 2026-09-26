@@ -43,9 +43,12 @@ you left it unset). Login: `/admin/login`.
 
 ### Option B — Rotate your own password
 
-Use the account settings / change-password flow once it's available
-(tracked in the release plan). Until then, a SUPER_ADMIN can deactivate
-an account and re-invite.
+Sign in, then use Account → Change Password in the sidebar (or
+`/admin/account`) — it requires your current password and signs out
+every other device that was using the old one. A SUPER_ADMIN who has
+forgotten their current password can instead use "Reset password" under
+`/admin/users`, which issues a new temporary one that must be changed on
+next sign-in.
 
 ### Option C — Handover to a client
 

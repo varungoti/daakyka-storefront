@@ -72,16 +72,69 @@ describe("rate-limit (DB-backed)", () => {
       throw new Error("simulated DB outage");
     }) as typeof db.$queryRaw;
 
-    let originalWarn: typeof console.warn | undefined;
+    let originalError: typeof console.error | undefined;
     try {
-      originalWarn = console.warn;
-      console.warn = () => {};
+      originalError = console.error;
+      console.error = () => {};
       const result = await checkRateLimit(key, 1, 60_000);
       assert.equal(result.ok, true, "should fail open rather than block or throw");
     } finally {
       db.$queryRaw = original;
-      if (originalWarn) console.warn = originalWarn;
+      if (originalError) console.error = originalError;
     }
+  });
+
+  /**
+   * F-326: the handful of routes lockout is meant to backstop must not
+   * silently fall open to a per-instance counter when the limiter's DB
+   * is unreachable — `{ failClosed: true }` reports the DB error as
+   * blocked (503) instead of falling through to checkRateLimitInMemory.
+   */
+  it("fails CLOSED (blocks the request, dbUnavailable) when failClosed is set and the database is unreachable", async () => {
+    const key = `unit-test-failclosed:${randomUUID()}`;
+    const original = db.$queryRaw;
+    db.$queryRaw = (() => {
+      throw new Error("simulated DB outage");
+    }) as typeof db.$queryRaw;
+
+    let originalError: typeof console.error | undefined;
+    try {
+      originalError = console.error;
+      console.error = () => {};
+      const result = await checkRateLimit(key, 1, 60_000, { failClosed: true });
+      assert.equal(result.ok, false, "should fail closed rather than allow the request");
+      if (!result.ok) {
+        assert.equal(result.dbUnavailable, true);
+        assert.ok(result.retryAfter >= 1);
+      }
+    } finally {
+      db.$queryRaw = original;
+      if (originalError) console.error = originalError;
+    }
+  });
+
+  it("a fail-closed DB outage still allows the request once the DB recovers (no lingering block)", async () => {
+    const key = `unit-test-failclosed-recovery:${randomUUID()}`;
+    const original = db.$queryRaw;
+    db.$queryRaw = (() => {
+      throw new Error("simulated DB outage");
+    }) as typeof db.$queryRaw;
+
+    let originalError: typeof console.error | undefined;
+    try {
+      originalError = console.error;
+      console.error = () => {};
+      const blocked = await checkRateLimit(key, 1, 60_000, { failClosed: true });
+      assert.equal(blocked.ok, false);
+    } finally {
+      db.$queryRaw = original;
+      if (originalError) console.error = originalError;
+    }
+
+    const recovered = await checkRateLimit(key, 1, 60_000, { failClosed: true });
+    assert.equal(recovered.ok, true, "once the DB is reachable again, failClosed must not still block");
+
+    await db.rateLimitBucket.delete({ where: { key } }).catch(() => {});
   });
 });
 
@@ -315,6 +368,77 @@ describe("identityRateLimitOrResponse (F-322)", () => {
       });
       assert.ok(blocked, "a fresh identity past the IP backstop must still be blocked");
       assert.equal(blocked!.status, 429);
+    });
+  });
+});
+
+/**
+ * F-326: at the rateLimitOrResponse/identityRateLimitOrResponse level —
+ * the level auth-login, account-login, account-forgot-password and
+ * order-request-throttle.ts actually call — a limiter DB outage on a
+ * `failClosed` route must produce a 503 (with Retry-After), never a null
+ * (i.e. "request allowed").
+ */
+describe("fail-closed rate limiting (F-326)", () => {
+  function withSimulatedDbOutage<T>(fn: () => Promise<T>): Promise<T> {
+    const original = db.$queryRaw;
+    db.$queryRaw = (() => {
+      throw new Error("simulated DB outage");
+    }) as typeof db.$queryRaw;
+    const originalError = console.error;
+    console.error = () => {};
+    return fn().finally(() => {
+      db.$queryRaw = original;
+      console.error = originalError;
+    });
+  }
+
+  it("rateLimitOrResponse returns a 503 (not null) when failClosed and the DB is down", async () => {
+    await withEnv({ NODE_ENV: "production", DISABLE_RATE_LIMIT: undefined, VERCEL: "1" }, async () => {
+      const route = `unit-test-failclosed-wrapper-${randomUUID()}`;
+      const request = new Request("http://localhost/api/auth/login", {
+        headers: { "x-vercel-forwarded-for": "203.0.113.77" },
+      });
+
+      await withSimulatedDbOutage(async () => {
+        const response = await rateLimitOrResponse(request, route, 5, 60_000, { failClosed: true });
+        assert.ok(response, "a DB outage on a failClosed route must block the request, not allow it");
+        assert.equal(response!.status, 503);
+        assert.ok(response!.headers.get("Retry-After"));
+      });
+    });
+  });
+
+  it("identityRateLimitOrResponse returns a 503 (not null) when failClosed and the DB is down", async () => {
+    await withEnv({ NODE_ENV: "production", DISABLE_RATE_LIMIT: undefined, VERCEL: "1" }, async () => {
+      const route = `unit-test-failclosed-identity-wrapper-${randomUUID()}`;
+      const request = new Request("http://localhost/api/account/login", {
+        headers: { "x-vercel-forwarded-for": "203.0.113.78" },
+      });
+
+      await withSimulatedDbOutage(async () => {
+        const response = await identityRateLimitOrResponse(request, route, 5, 60_000, {
+          identity: "shopper@example.com",
+          failClosed: true,
+        });
+        assert.ok(response, "a DB outage on a failClosed route must block the request, not allow it");
+        assert.equal(response!.status, 503);
+        assert.ok(response!.headers.get("Retry-After"));
+      });
+    });
+  });
+
+  it("without failClosed, the same DB outage still falls open (unaffected default behaviour)", async () => {
+    await withEnv({ NODE_ENV: "production", DISABLE_RATE_LIMIT: undefined, VERCEL: "1" }, async () => {
+      const route = `unit-test-failopen-wrapper-${randomUUID()}`;
+      const request = new Request("http://localhost/api/newsletter/subscribe", {
+        headers: { "x-vercel-forwarded-for": "203.0.113.79" },
+      });
+
+      await withSimulatedDbOutage(async () => {
+        const response = await rateLimitOrResponse(request, route, 5, 60_000);
+        assert.equal(response, null, "a non-failClosed route must still fall open on a DB outage");
+      });
     });
   });
 });

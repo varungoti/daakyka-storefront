@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { canCommitImport } from "@/lib/catalog/import-commit-gate";
+import { retryAfterMessage } from "@/lib/security/retry-after";
 import { cn } from "@/lib/utils";
 
 interface RowResult {
@@ -51,6 +52,12 @@ export function ProductImportForm() {
     const response = await fetch("/api/admin/products/import", { method: "POST", body: form });
     setBusy("idle");
     if (!response.ok) {
+      if (response.status === 429) {
+        // F-324: this used to fall into the generic "Dry run failed"
+        // message below, telling the admin the CSV itself was at fault.
+        setNotice(retryAfterMessage(response, "import attempts"));
+        return;
+      }
       setNotice("Dry run failed — check the file and try again.");
       return;
     }
@@ -68,6 +75,11 @@ export function ProductImportForm() {
     const response = await fetch("/api/admin/products/import", { method: "POST", body: form });
     setBusy("idle");
     if (!response.ok) {
+      if (response.status === 429) {
+        // F-324: read Retry-After instead of the API's fixed generic text.
+        setNotice(retryAfterMessage(response, "import attempts"));
+        return;
+      }
       const body = await response.json().catch(() => ({}));
       setNotice(body?.error ?? "Commit failed.");
       return;

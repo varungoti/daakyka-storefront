@@ -343,6 +343,26 @@ export const notificationMarkReadSchema = z.object({
   read: z.boolean(),
 });
 
+/**
+ * F-057: POST /api/admin/account/password (self-service admin password
+ * change). Deliberately its own schema rather than reusing
+ * newPasswordField() — that helper's min(8) matches the customer-facing
+ * bounds; an admin account can see every order and customer's PII, so
+ * this uses the same 12-character floor prisma/seed.ts's
+ * isInsecureSeedPassword() already enforces for a Vercel deploy's seed
+ * password (src/lib/auth/seed-defaults.ts's MIN_SEED_PASSWORD_LENGTH).
+ */
+export const adminChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z
+    .string()
+    .min(12, "Password must be at least 12 characters")
+    .max(200)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= 72, {
+      message: "Password must be at most 72 bytes (bcrypt truncates beyond that)",
+    }),
+});
+
 export const userInviteSchema = z.object({
   name: z.string().trim().min(2).max(150),
   email: z.string().trim().email().max(254),

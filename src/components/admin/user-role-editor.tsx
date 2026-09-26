@@ -97,7 +97,10 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
         {errorMessage && <p className="mt-1 text-xs text-red-600">{errorMessage}</p>}
         {tempPassword && (
           <div className="mt-2 max-w-xs rounded-lg border border-brand/30 bg-brand/5 p-2 text-xs">
-            <p className="text-muted">New temporary password (shown once):</p>
+            {/* F-057: they'll now be forced to /admin/account to set their
+                own password on next sign-in — see AdminShell's
+                mustChangePassword redirect. */}
+            <p className="text-muted">New temporary password (shown once) — they&apos;ll be asked to change it on next sign-in:</p>
             <p className="select-all font-mono text-sm text-ink">{tempPassword}</p>
           </div>
         )}

@@ -9,6 +9,34 @@ import {
 import { withEnv } from "../../../tests/helpers/env";
 
 /**
+ * F-326: ORDER_REQUEST creates a real Order and decrements real stock with
+ * no payment step — a limiter DB outage here must block (503), never
+ * silently fall back to an unthrottled in-memory counter.
+ */
+describe("orderRequestThrottleOrResponse fails CLOSED on a limiter DB outage (F-326)", () => {
+  it("returns a 503 with Retry-After instead of allowing the request through", async () => {
+    const original = db.$queryRaw;
+    db.$queryRaw = (() => {
+      throw new Error("simulated DB outage");
+    }) as typeof db.$queryRaw;
+    const originalError = console.error;
+    console.error = () => {};
+
+    try {
+      const email = `failclosed-${randomUUID()}@example.com`;
+      const result = await orderRequestThrottleOrResponse(new Request("http://localhost/api/checkout"), email, undefined);
+      assert.ok(result.response, "a limiter DB outage must block the request, not allow it");
+      assert.equal(result.response!.status, 503);
+      assert.ok(result.response!.headers.get("Retry-After"));
+      assert.equal(result.consumedKeys.length, 0, "a blocked attempt must not report any consumed key");
+    } finally {
+      db.$queryRaw = original;
+      console.error = originalError;
+    }
+  });
+});
+
+/**
  * Release-hardening Finding B: an IP-independent abuse guard for the
  * unpaid ORDER_REQUEST checkout fallback (see src/app/api/checkout/route.ts,
  * which calls this before createOrderFromCart whenever Razorpay isn't

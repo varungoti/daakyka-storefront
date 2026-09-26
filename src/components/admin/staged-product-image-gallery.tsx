@@ -12,6 +12,7 @@ import {
   type StagedImage,
 } from "@/lib/admin/staged-images";
 import { moveArrayItem } from "@/lib/admin/reorder";
+import { summarizeFailuresByMessage, uploadFilesSequentially } from "@/lib/admin/retryable-upload";
 import { MediaLibraryBrowser } from "@/components/admin/media-library-browser";
 import { cn } from "@/lib/utils";
 
@@ -73,27 +74,49 @@ export function StagedProductImageGallery({
   const [candidates, setCandidates] = useState<GeneratedCandidate[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
 
+  /**
+   * F-324: see ProductImageGallery's identical fix — a 429 from
+   * admin-media-upload's limiter used to be dropped exactly like a bad
+   * file, with one generic "One or more uploads failed." and no
+   * indication which file(s) didn't make it. uploadFilesSequentially
+   * retries a 429'd file once (honouring Retry-After) before giving up.
+   */
   async function onUploadFiles(files: FileList) {
     setUploading(true);
     setNotice(null);
-    let current = images;
-    for (const file of Array.from(files)) {
+
+    const outcomes = await uploadFilesSequentially(Array.from(files), (file) => {
       const form = new FormData();
       form.append("file", file);
       form.append("usage", "PRODUCT");
-      const response = await fetch("/api/admin/media", { method: "POST", body: form });
+      return fetch("/api/admin/media", { method: "POST", body: form });
+    });
+
+    let current = images;
+    const failures: { file: File; message: string }[] = [];
+
+    for (const { file, response, retriedAfterRateLimit } of outcomes) {
       if (response.status === 503) {
-        setNotice("Image storage isn't configured yet — ask an admin to set up Cloudflare R2.");
+        failures.push({ file, message: "Image storage isn't configured yet — ask an admin to set up Cloudflare R2." });
         continue;
       }
       if (!response.ok) {
-        setNotice("One or more uploads failed.");
+        failures.push({
+          file,
+          message:
+            response.status === 429 && retriedAfterRateLimit
+              ? "Still being rate limited after waiting — try again shortly"
+              : "Upload failed",
+        });
         continue;
       }
       const body = await response.json();
       current = addStagedImage(current, { mediaAssetId: body.asset.id, url: body.asset.url, alt: aiFields.name ?? "", color: null, origin: "new" });
       onChange(current);
     }
+
+    const uploadNotice = summarizeFailuresByMessage(failures);
+    if (uploadNotice) setNotice(uploadNotice);
     setUploading(false);
   }
 

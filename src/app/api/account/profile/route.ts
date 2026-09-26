@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createCustomerSession, getCustomerSession } from "@/lib/customer-auth/session";
-import { hashPassword, verifyPassword } from "@/lib/customer-auth/password";
+import { hashPassword } from "@/lib/customer-auth/password";
+import { lockedResponse, verifyCurrentPassword } from "@/lib/customer-auth/verify-current-password";
 import { db } from "@/lib/db";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { customerProfileUpdateSchema } from "@/lib/validation/schemas";
@@ -42,16 +43,16 @@ export async function PATCH(request: Request) {
 
     let newPasswordHash: string | undefined;
     if (parsed.data.newPassword) {
-      // currentPassword's presence is already enforced by the schema
-      // refinement; re-fetch the hash to verify it (session payload
-      // doesn't carry it).
-      const current = await db.customer.findUnique({
-        where: { id: session.id },
-        select: { passwordHash: true },
-      });
-      const valid =
-        current && (await verifyPassword(parsed.data.currentPassword!, current.passwordHash));
-      if (!valid) {
+      // F-325: this used to let anyone holding a valid session test
+      // unlimited currentPassword guesses — 40 wrong guesses in 16s, no
+      // 429, no lockout — because it never called either the rate limiter
+      // or the same failedLoginCount/lockedUntil counter a login attempt
+      // feeds. verifyCurrentPassword now applies both, exactly as a login
+      // attempt would (see its doc comment).
+      const check = await verifyCurrentPassword(request, session.id, parsed.data.currentPassword!);
+      if (check.status === "rate-limited") return check.response;
+      if (check.status === "locked") return lockedResponse();
+      if (check.status === "incorrect") {
         return NextResponse.json({ error: "Current password is incorrect" }, { status: 400 });
       }
       newPasswordHash = await hashPassword(parsed.data.newPassword);

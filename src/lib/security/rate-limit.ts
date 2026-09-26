@@ -15,13 +15,21 @@ import { isVercel } from "@/lib/env";
  *
  * Availability trade-off (deliberate): every rate-limited request now costs
  * one DB round trip. If the database is unreachable, `checkRateLimit` fails
- * OPEN (logs a warning and allows the request) rather than failing closed —
- * a rate-limit outage should degrade to "no rate limiting" (bounded risk:
- * spam/brute-force is opportunistic and mitigated elsewhere by lockout,
- * captcha-free honeypots, etc.) rather than take the whole site down by
- * 500-ing every request that happens to pass through a rate-limited route.
- * This mirrors the "don't take the whole site down if rate-limit storage
- * hiccups" instruction from the Phase G plan.
+ * OPEN by default (logs an error and falls back to an in-memory,
+ * per-instance counter) rather than failing closed — a rate-limit outage
+ * on most routes should degrade to "a looser, per-instance limit" rather
+ * than take the whole site down by 500-ing every request that happens to
+ * pass through a rate-limited route. This mirrors the "don't take the
+ * whole site down if rate-limit storage hiccups" instruction from the
+ * Phase G plan.
+ *
+ * F-326: that trade-off doesn't hold for the handful of routes lockout is
+ * meant to backstop (auth-login, account-login, account-forgot-password,
+ * account-register, order-request:*) — an in-memory fallback there is
+ * silently `limit * warm-instance-count` on a platform with many
+ * short-lived instances, i.e. exactly when the shared brute-force/abuse
+ * guard is needed most. Those callers pass `{ failClosed: true }` (see
+ * CheckRateLimitOptions) to report a DB error as blocked (503) instead.
  */
 
 interface Bucket {
@@ -36,7 +44,48 @@ interface Bucket {
 // the DB rows. Not relied upon for correctness across instances.
 const fallbackBuckets = new Map<string, Bucket>();
 
-let warnedAboutDbFailure = false;
+/**
+ * F-326: a limiter DB outage used to log a warning only once per minute
+ * (see the removed `warnedAboutDbFailure` throttle this replaced) and,
+ * for every route including auth-login/account-login/account-register/
+ * account-forgot-password/order-request, silently fall open to a
+ * per-instance in-memory counter — on Vercel's many short-lived
+ * instances, that turns "5 attempts/min" into "5 * warm-instance-count",
+ * with nothing in the logs proportional to how often it's happening (the
+ * once-a-minute warning looks identical whether it's 1 fallback or
+ * 10,000). Every fallback is now logged at error level, not throttled, so
+ * an operator's log-based alert (once F-234 wires one up) actually sees
+ * outage volume instead of a single line an hour.
+ */
+function logRateLimitDbFailure(error: unknown): void {
+  console.error(
+    "[rate-limit] DB-backed rate limiting unavailable:",
+    error instanceof Error ? error.message : error,
+  );
+}
+
+/**
+ * F-326: the fixed Retry-After (seconds) handed back when a
+ * fail-closed route's limiter check couldn't reach the DB at all — there
+ * is no real bucket state to compute a precise value from, so this is
+ * just "wait a few seconds and the DB has likely recovered," short enough
+ * that a genuine spike in legitimate traffic isn't locked out for long.
+ */
+const FAIL_CLOSED_RETRY_AFTER_S = 5;
+
+/** Prunes expired fallback-Map entries at roughly the same rate
+ * upsertBucket() sweeps expired DB rows (a random 1% of calls) — the Map
+ * has no TTL/expiry of its own and was never cleared before, so a
+ * sustained DB outage (or just accumulated one-off keys, like the F-322
+ * per-IP+identity buckets) grew it without bound for the life of the
+ * process. */
+function pruneFallbackBuckets(): void {
+  if (Math.random() >= 0.01) return;
+  const now = Date.now();
+  for (const [key, bucket] of fallbackBuckets) {
+    if (bucket.resetAt < now) fallbackBuckets.delete(key);
+  }
+}
 
 /**
  * Clears rate-limit buckets. Test-only.
@@ -187,6 +236,7 @@ function checkRateLimitInMemory(
   limit: number,
   windowMs: number,
 ): { ok: true } | { ok: false; retryAfter: number } {
+  pruneFallbackBuckets();
   const now = Date.now();
   const bucket = fallbackBuckets.get(key);
 
@@ -254,11 +304,26 @@ async function upsertBucket(
   return row;
 }
 
+export interface CheckRateLimitOptions {
+  /**
+   * F-326: routes that lockout is meant to backstop — auth-login,
+   * account-login, account-forgot-password, account-register, and
+   * order-request:* — must not quietly lose their limit the instant the
+   * limiter's DB is unreachable. When true, a DB error here is reported
+   * as blocked (`ok: false`) instead of falling back to the in-memory,
+   * per-instance counter (which is only a bounded backstop for
+   * everything else, and on Vercel's many short-lived instances turns
+   * one shared limit into `limit * warm-instance-count`).
+   */
+  failClosed?: boolean;
+}
+
 export async function checkRateLimit(
   key: string,
   limit: number,
   windowMs: number,
-): Promise<{ ok: true } | { ok: false; retryAfter: number }> {
+  options?: CheckRateLimitOptions,
+): Promise<{ ok: true } | { ok: false; retryAfter: number; dbUnavailable?: true }> {
   try {
     const { count, resetAt } = await upsertBucket(key, windowMs);
 
@@ -269,20 +334,15 @@ export async function checkRateLimit(
 
     return { ok: true };
   } catch (error) {
+    logRateLimitDbFailure(error);
+
+    if (options?.failClosed) {
+      return { ok: false, retryAfter: FAIL_CLOSED_RETRY_AFTER_S, dbUnavailable: true };
+    }
+
     // Fail OPEN: see the module-level comment for the reasoning. Fall back
     // to an in-memory, per-process check so a DB blip doesn't remove rate
-    // limiting entirely, then log once (not on every request) so an
-    // outage is still visible without flooding logs.
-    if (!warnedAboutDbFailure) {
-      warnedAboutDbFailure = true;
-      console.warn(
-        "[rate-limit] DB-backed rate limiting unavailable, falling back to in-memory (fail-open):",
-        error instanceof Error ? error.message : error,
-      );
-      setTimeout(() => {
-        warnedAboutDbFailure = false;
-      }, 60_000).unref?.();
-    }
+    // limiting entirely for routes that don't ask to fail closed.
     return checkRateLimitInMemory(key, limit, windowMs);
   }
 }
@@ -341,6 +401,28 @@ function tooManyRequestsResponse(retryAfter: number): NextResponse {
   );
 }
 
+/**
+ * F-326: what a fail-closed route returns when the limiter's DB is
+ * unreachable — deliberately a 503, not the 429 `tooManyRequestsResponse`
+ * returns, since this caller isn't actually over any limit; the service
+ * backing that check is just down. Still carries Retry-After so a
+ * well-behaved client (see the storefront/admin fetch helpers this
+ * package also fixed for F-323/F-324) can show a real wait time instead
+ * of a bare error.
+ */
+function serviceUnavailableResponse(retryAfter: number): NextResponse {
+  return NextResponse.json(
+    { error: "Service temporarily unavailable. Please try again shortly." },
+    { status: 503, headers: { "Retry-After": String(retryAfter) } },
+  );
+}
+
+function responseForBlockedResult(result: { retryAfter: number; dbUnavailable?: true }): NextResponse {
+  return result.dbUnavailable
+    ? serviceUnavailableResponse(result.retryAfter)
+    : tooManyRequestsResponse(result.retryAfter);
+}
+
 // F-322: a shared network (hospital Wi-Fi, a carrier's NAT, an office)
 // puts many independent shoppers behind one client IP. A tight bucket
 // keyed on IP alone throttles them as if they were one abusive caller —
@@ -364,6 +446,10 @@ export interface IdentityRateLimitOptions {
   backstopLimit?: number;
   /** Defaults to the same window as the tight bucket. */
   backstopWindowMs?: number;
+  /** F-326: see CheckRateLimitOptions.failClosed — applied to both the
+   * backstop and the identity bucket, so a DB outage can't be dodged by
+   * whichever of the two would otherwise have fallen open. */
+  failClosed?: boolean;
 }
 
 /**
@@ -401,14 +487,16 @@ export async function identityRateLimitOrResponse(
     return null;
   }
 
+  const rateLimitOptions = options.failClosed ? { failClosed: true } : undefined;
+
   const backstopLimit = options.backstopLimit ?? DEFAULT_IP_BACKSTOP_LIMIT;
   const backstopWindowMs = options.backstopWindowMs ?? windowMs;
-  const backstop = await checkRateLimit(`${route}:ip:${ip}`, backstopLimit, backstopWindowMs);
-  if (!backstop.ok) return tooManyRequestsResponse(backstop.retryAfter);
+  const backstop = await checkRateLimit(`${route}:ip:${ip}`, backstopLimit, backstopWindowMs, rateLimitOptions);
+  if (!backstop.ok) return responseForBlockedResult(backstop);
 
   const idKey = `${route}:id:${ip}:${hashIdentity(options.identity)}`;
-  const identityResult = await checkRateLimit(idKey, limit, windowMs);
-  if (!identityResult.ok) return tooManyRequestsResponse(identityResult.retryAfter);
+  const identityResult = await checkRateLimit(idKey, limit, windowMs, rateLimitOptions);
+  if (!identityResult.ok) return responseForBlockedResult(identityResult);
 
   return null;
 }
@@ -418,6 +506,7 @@ export async function rateLimitOrResponse(
   route: string,
   limit = 10,
   windowMs = 60_000,
+  options?: CheckRateLimitOptions,
 ): Promise<NextResponse | null> {
   if (process.env.NODE_ENV === "test" || process.env.DISABLE_RATE_LIMIT === "1") {
     return null;
@@ -439,8 +528,8 @@ export async function rateLimitOrResponse(
     return null;
   }
 
-  const result = await checkRateLimit(`${route}:${ip}`, limit, windowMs);
-  if (!result.ok) return tooManyRequestsResponse(result.retryAfter);
+  const result = await checkRateLimit(`${route}:${ip}`, limit, windowMs, options);
+  if (!result.ok) return responseForBlockedResult(result);
 
   return null;
 }

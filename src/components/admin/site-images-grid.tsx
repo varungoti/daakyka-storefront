@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import type { ManifestAspect } from "@/data/media/image-manifest";
 import { aspectClassName, placeholderForAspect, toGenerationAspect } from "@/data/media/image-manifest";
 import type { PromptFields, PromptPreset } from "@/lib/ai/prompt-presets";
+import { retryAfterMessage } from "@/lib/security/retry-after";
 
 export interface SiteImageSlotRow {
   slot: string;
@@ -131,6 +132,12 @@ function SiteImageCard({
       const response = await fetch("/api/admin/media", { method: "POST", body: form });
       if (response.status === 503) {
         setNotice("Image storage isn't configured yet — ask an admin to set up Cloudflare R2.");
+        return;
+      }
+      if (response.status === 429) {
+        // F-324: this used to fall into the generic "Upload failed"
+        // branch below, telling the admin the image itself was at fault.
+        setNotice(retryAfterMessage(response, "uploads"));
         return;
       }
       if (!response.ok) {

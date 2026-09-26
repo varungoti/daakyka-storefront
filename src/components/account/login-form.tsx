@@ -9,6 +9,9 @@ export function LoginForm({ returnTo }: { returnTo: string }) {
   const router = useRouter();
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState("");
+  // F-137: the account was locked out (423) — show a way out (reset the
+  // password) instead of leaving the shopper to just wait 15 minutes.
+  const [locked, setLocked] = useState(false);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -17,6 +20,7 @@ export function LoginForm({ returnTo }: { returnTo: string }) {
     setError("");
 
     const form = new FormData(formElement);
+    setLocked(false);
     try {
       const response = await fetch("/api/account/login", {
         method: "POST",
@@ -31,9 +35,14 @@ export function LoginForm({ returnTo }: { returnTo: string }) {
         const data = await response.json().catch(() => null);
         setStatus("error");
         if (response.status === 423) {
-          setError(data?.error ?? "Account temporarily locked. Try again later.");
+          setError(data?.error ?? "Too many failed attempts. Try again in 15 minutes, or reset your password.");
+          setLocked(true);
         } else if (response.status === 429) {
           setError("Too many attempts. Please wait a moment and try again.");
+        } else if (response.status >= 500) {
+          // F-326: a limiter DB outage now fails closed (503) rather than
+          // silently letting the attempt through.
+          setError(data?.error ?? "Couldn't reach the server. Please try again shortly.");
         } else {
           setError(data?.error ?? "Invalid email or password.");
         }
@@ -81,7 +90,19 @@ export function LoginForm({ returnTo }: { returnTo: string }) {
           className="w-full rounded-2xl border border-border px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
         />
       </div>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && (
+        <p className="text-sm text-red-600">
+          {error}
+          {locked && (
+            <>
+              {" "}
+              <Link href="/account/forgot-password" className="font-semibold underline">
+                Reset password
+              </Link>
+            </>
+          )}
+        </p>
+      )}
       <Button type="submit" className="w-full" disabled={status === "loading"}>
         {status === "loading" ? "Signing in..." : "Sign In"}
       </Button>

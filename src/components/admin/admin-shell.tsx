@@ -7,6 +7,7 @@ import {
   ClipboardList,
   FileText,
   Image as ImageIcon,
+  KeyRound,
   LayoutDashboard,
   LayoutTemplate,
   LogOut,
@@ -221,10 +222,19 @@ function AdminAccountFooter({
   return (
     <div>
       <p className="px-3 text-xs text-muted">{formatRole(role)}</p>
+      {/* F-057: previously the only account control at all was Sign Out —
+          there was nowhere to change your own password. */}
+      <GuardedLink
+        href="/admin/account"
+        className="mt-2 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted hover:bg-lilac/40 hover:text-ink"
+      >
+        <KeyRound size={18} />
+        Change Password
+      </GuardedLink>
       <button
         type="button"
         onClick={onLogout}
-        className="mt-2 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted hover:bg-red-50 hover:text-red-600"
+        className="mt-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted hover:bg-red-50 hover:text-red-600"
       >
         <LogOut size={18} />
         Sign Out
@@ -350,14 +360,34 @@ export function AdminShell({
   children,
   unreadNotifications = 0,
   pendingReviews = 0,
+  mustChangePassword = false,
 }: {
   user: SessionUser;
   children: React.ReactNode;
   unreadNotifications?: number;
   /** F-297: sidebar badge for pending reviews, mirroring the notifications badge. */
   pendingReviews?: number;
+  /** F-057: set on an admin-issued temp password (invite or reset) —
+   * see src/lib/auth/user-admin.ts. While true, every page but the
+   * account page itself redirects here instead of rendering, so a fresh
+   * invite or reset can't be put off indefinitely. */
+  mustChangePassword?: boolean;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
+
+  // F-057: server-redirect (the (panel) layout also gates this) would be
+  // cleaner, but SessionUser/the JWT don't carry mustChangePassword (it's
+  // a DB-only flag — see the layout's own query) and every page under
+  // (panel) renders through this one client shell, so enforcing it here
+  // covers every current and future page the same way canSeeNavItem
+  // already covers every nav link.
+  useEffect(() => {
+    if (mustChangePassword && pathname !== "/admin/account") {
+      router.replace("/admin/account?required=1");
+    }
+  }, [mustChangePassword, pathname, router]);
+
   // F-297: generalized from the old single hardcoded
   // `href === "/admin/notifications"` check so Reviews can carry a badge
   // too, without every future badge needing its own special case.
@@ -365,7 +395,6 @@ export function AdminShell({
     "/admin/notifications": unreadNotifications,
     "/admin/reviews": pendingReviews,
   };
-  const router = useRouter();
   const [drawerOpen, setDrawerOpen] = useState(false);
   // F-244 fix: so the mobile nav drawer can return focus here on close —
   // see MobileNavDrawer's `triggerRef`.

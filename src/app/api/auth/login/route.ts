@@ -14,7 +14,10 @@ import { loginSchema } from "@/lib/validation/schemas";
 const LOCKED_STATUS = 423;
 
 export async function POST(request: Request) {
-  const limited = await rateLimitOrResponse(request, "auth-login", 5, 60_000);
+  // F-326: admin login is exactly the route the account lockout is meant
+  // to backstop — a limiter DB error must not quietly fall open to a
+  // per-instance counter (see rate-limit.ts's CheckRateLimitOptions).
+  const limited = await rateLimitOrResponse(request, "auth-login", 5, 60_000, { failClosed: true });
   if (limited) return limited;
 
   try {

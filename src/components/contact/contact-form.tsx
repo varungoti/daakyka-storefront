@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { HoneypotField } from "@/components/ui/honeypot-field";
 import { HONEYPOT_FIELD_NAME } from "@/lib/validation/honeypot";
+import { retryAfterMessage } from "@/lib/security/retry-after";
 import { useState } from "react";
 
 export function ContactForm({
@@ -55,7 +56,9 @@ export function ContactForm({
           setFieldErrors(flattened);
           setErrorMessage("Please fix the highlighted field(s) below.");
         } else if (response.status === 429) {
-          setErrorMessage("Too many attempts, please wait a minute and try again.");
+          // F-323: read Retry-After instead of a fixed "wait a minute" —
+          // the data is preserved either way (no form reset on error).
+          setErrorMessage(retryAfterMessage(response, "enquiries"));
         } else {
           setErrorMessage("Something went wrong. Please try again.");
         }

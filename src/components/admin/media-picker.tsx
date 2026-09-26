@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useState } from "react";
 import { MediaLibraryBrowser } from "@/components/admin/media-library-browser";
+import { retryAfterMessage } from "@/lib/security/retry-after";
 import { cn } from "@/lib/utils";
 
 export interface PickedAsset {
@@ -54,6 +55,12 @@ export function MediaPicker({
     setUploading(false);
     if (response.status === 503) {
       setNotice("Image storage isn't configured yet — ask an admin to set up Cloudflare R2.");
+      return;
+    }
+    if (response.status === 429) {
+      // F-324: this used to fall into the generic "Upload failed" branch
+      // below, telling the admin the *image* was the problem.
+      setNotice(retryAfterMessage(response, "uploads"));
       return;
     }
     if (!response.ok) {

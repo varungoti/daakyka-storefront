@@ -1,6 +1,8 @@
 import { Prisma, type AdminRole, type User } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
-import { hashPassword } from "@/lib/auth/password";
+import { hashPassword, verifyPassword } from "@/lib/auth/password";
+import { isLocked, recordFailedLogin } from "@/lib/auth/lockout";
+import { isInsecureSeedPassword } from "@/lib/auth/seed-defaults";
 import { generateTempPassword } from "@/lib/auth/temp-password";
 import { db } from "@/lib/db";
 
@@ -64,6 +66,34 @@ export class UserDeleteBlockedError extends Error {
   }
 }
 
+/**
+ * F-057: distinguishes "wrong current password" from "the account is
+ * currently locked" for changeOwnPassword's caller (the route), the same
+ * way src/lib/customer-auth/verify-current-password.ts does for the
+ * customer-facing equivalent (F-325) — never a bare boolean, since the
+ * route needs to pick between a 400 and a 423.
+ */
+export class CurrentPasswordIncorrectError extends Error {
+  constructor() {
+    super("Current password is incorrect");
+    this.name = "CurrentPasswordIncorrectError";
+  }
+}
+
+export class AccountLockedForPasswordChangeError extends Error {
+  constructor() {
+    super("Too many incorrect attempts. Try again later.");
+    this.name = "AccountLockedForPasswordChangeError";
+  }
+}
+
+export class WeakPasswordError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WeakPasswordError";
+  }
+}
+
 export async function inviteUser(input: InviteUserInput, actingUserId: string): Promise<InviteUserResult> {
   const tempPassword = generateTempPassword();
   const passwordHash = await hashPassword(tempPassword);
@@ -76,6 +106,12 @@ export async function inviteUser(input: InviteUserInput, actingUserId: string): 
         role: input.role,
         passwordHash,
         active: true,
+        // F-057: the invite copy already tells the new admin to "sign in
+        // and change it as soon as possible" — mustChangePassword is what
+        // actually enforces that (see the (panel) layout's redirect),
+        // instead of the temp password quietly becoming their permanent
+        // credential.
+        mustChangePassword: true,
       },
       select: { id: true, email: true, name: true, role: true, active: true, createdAt: true },
     });
@@ -125,6 +161,10 @@ export async function resetUserPassword(
         failedLoginCount: 0,
         lastFailedLoginAt: null,
         lockedUntil: null,
+        // F-057: an admin-issued temp password must be changed at next
+        // login, the same as a fresh invite — otherwise it can quietly
+        // become the account's permanent credential.
+        mustChangePassword: true,
       },
       select: { id: true, email: true, name: true, role: true, sessionVersion: true },
     });
@@ -149,6 +189,69 @@ export async function resetUserPassword(
     }
     throw err;
   }
+}
+
+/**
+ * F-057: self-service password change — the gap that left temp passwords
+ * relayed over chat, and the developer-set ADMIN_SEED_PASSWORD, as the
+ * only credential an admin could ever actually use, with no way to
+ * rotate it themselves. Mirrors
+ * src/lib/customer-auth/verify-current-password.ts's customer-facing
+ * equivalent (F-325): the same account lockout a failed *login* feeds
+ * (src/lib/auth/lockout.ts) also counts a wrong currentPassword guess
+ * here, so this can't be used to brute-force a stolen session's real
+ * password. Callers (the route) map each thrown error to the right HTTP
+ * status; nothing here touches `Response`.
+ */
+export async function changeOwnPassword(
+  userId: string,
+  currentPassword: string,
+  newPassword: string,
+): Promise<{ sessionVersion: number }> {
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { passwordHash: true, lockedUntil: true },
+  });
+  if (!user) throw new UserNotFoundError(userId);
+
+  if (isLocked(user)) {
+    throw new AccountLockedForPasswordChangeError();
+  }
+
+  const valid = await verifyPassword(currentPassword, user.passwordHash);
+  if (!valid) {
+    const { locked } = await recordFailedLogin(userId);
+    throw locked ? new AccountLockedForPasswordChangeError() : new CurrentPasswordIncorrectError();
+  }
+
+  if (newPassword === currentPassword) {
+    throw new WeakPasswordError("New password must be different from your current password");
+  }
+  if (isInsecureSeedPassword(newPassword)) {
+    throw new WeakPasswordError("That password is too weak or has been leaked — choose a stronger one");
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+  const updated = await db.user.update({
+    where: { id: userId },
+    data: {
+      passwordHash,
+      sessionVersion: { increment: 1 },
+      mustChangePassword: false,
+    },
+    select: { sessionVersion: true },
+  });
+
+  await logAuditEvent({
+    userId,
+    action: "update",
+    entity: "user",
+    entityId: userId,
+    // Never log either password — only that a change happened.
+    metadata: { selfPasswordChange: true },
+  });
+
+  return { sessionVersion: updated.sessionVersion };
 }
 
 /**
