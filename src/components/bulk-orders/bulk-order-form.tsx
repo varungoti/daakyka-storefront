@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { HoneypotField } from "@/components/ui/honeypot-field";
 import { HONEYPOT_FIELD_NAME } from "@/lib/validation/honeypot";
+import { retryAfterMessage } from "@/lib/security/retry-after";
 import { useState } from "react";
 
 const ORGANIZATION_TYPES = [
@@ -78,7 +79,9 @@ export function BulkOrderForm() {
           setFieldErrors(flattened);
           setError("Please fix the highlighted field(s) below.");
         } else if (response.status === 429) {
-          setError("Too many attempts, please wait a minute and try again.");
+          // F-323: read Retry-After instead of a fixed "wait a minute" —
+          // mirrors src/components/contact/contact-form.tsx.
+          setError(retryAfterMessage(response, "enquiries"));
         } else {
           setError("Please check all required fields and try again.");
         }

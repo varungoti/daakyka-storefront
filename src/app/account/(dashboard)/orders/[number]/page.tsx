@@ -1,11 +1,14 @@
+import { OrderPrintButton } from "@/components/account/order-print-button";
 import { OrderStatusBadge } from "@/components/account/order-status-badge";
 import { OrderTimelineView } from "@/components/account/order-timeline";
 import { OrderTrackingCard } from "@/components/account/order-tracking-card";
+import { brand } from "@/data/brand";
 import { getCustomerSession } from "@/lib/customer-auth/session";
-import { formatDateIST } from "@/lib/format/datetime";
 import { getAuthorizedOrder } from "@/lib/orders/get-order";
+import { formatReceiptDate, getReceiptPaymentSummary } from "@/lib/orders/receipt";
 import { getOrderTimeline } from "@/lib/orders/timeline";
 import { getClientIp, checkRateLimit } from "@/lib/security/rate-limit";
+import { getSetting } from "@/lib/settings";
 import type { ShippingAddressInput } from "@/lib/validation/schemas";
 import Image from "next/image";
 import Link from "next/link";
@@ -80,27 +83,44 @@ export default async function AccountOrderDetailPage({
   // F-141 fix: see getOrderTimeline's doc comment — only matters for a
   // RAZORPAY order that never captured a payment.
   const timeline = getOrderTimeline(order.status, order.paymentMethod, order.razorpayPaymentId !== null);
+  // F-328: same receipt facts (date, payment status, seller) the guest
+  // /order/[number] page shows — see src/lib/orders/receipt.ts.
+  const placedDate = formatReceiptDate(order.createdAt);
+  const paymentSummary = getReceiptPaymentSummary(
+    order.status,
+    order.paymentMethod,
+    order.razorpayPaymentId !== null,
+  );
+  const [gstin, sellerAddress] = await Promise.all([
+    getSetting("legal.gstin"),
+    getSetting("contact.address"),
+  ]);
 
   return (
     <div className="mx-auto max-w-3xl">
-      <Link href="/account/orders" className="text-xs font-semibold text-brand hover:underline">
+      <Link href="/account/orders" className="text-xs font-semibold text-brand hover:underline print:hidden">
         ← Back to Orders
       </Link>
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+      <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="font-display text-2xl font-bold text-ink">{order.number}</h1>
-          <p className="text-sm text-muted">Placed {formatDateIST(order.createdAt)}</p>
+          <p className="text-sm text-muted">
+            Placed {placedDate} · {paymentSummary}
+          </p>
         </div>
-        <OrderStatusBadge status={order.status} paymentMethod={order.paymentMethod} />
+        <div className="flex items-center gap-3">
+          <OrderStatusBadge status={order.status} paymentMethod={order.paymentMethod} />
+          <OrderPrintButton />
+        </div>
       </div>
 
-      <section className="mt-8 rounded-2xl border border-border bg-surface p-5">
+      <section className="mt-8 rounded-2xl border border-border bg-surface p-5 print:hidden">
         <h2 className="mb-4 font-display text-lg font-bold text-ink">Order status</h2>
         <OrderTimelineView timeline={timeline} />
       </section>
 
-      <section className="mt-6 space-y-4">
+      <section className="mt-6 space-y-4 print:break-inside-avoid">
         <h2 className="font-display text-lg font-bold text-ink">Items</h2>
         <div className="divide-y divide-border rounded-2xl border border-border bg-surface">
           {order.items.map((item) => (
@@ -121,7 +141,7 @@ export default async function AccountOrderDetailPage({
         </div>
       </section>
 
-      <section className="mt-6 space-y-1 rounded-2xl border border-border bg-surface p-4 text-sm">
+      <section className="mt-6 space-y-1 rounded-2xl border border-border bg-surface p-4 text-sm print:break-inside-avoid">
         <div className="flex justify-between">
           <span className="text-muted">Subtotal</span>
           <span className="text-ink">{formatInr(Number(order.subtotal))}</span>
@@ -143,12 +163,12 @@ export default async function AccountOrderDetailPage({
       </section>
 
       {order.trackingNumber && (
-        <div className="mt-6">
+        <div className="mt-6 print:hidden">
           <OrderTrackingCard trackingNumber={order.trackingNumber} courier={order.courier} />
         </div>
       )}
 
-      <section className="mt-6 rounded-2xl border border-border bg-surface p-4 text-sm">
+      <section className="mt-6 rounded-2xl border border-border bg-surface p-4 text-sm print:break-inside-avoid">
         <h2 className="mb-2 font-display text-lg font-bold text-ink">Shipping to</h2>
         <p className="text-ink">{address?.name}</p>
         <p className="text-muted">
@@ -161,11 +181,19 @@ export default async function AccountOrderDetailPage({
         <p className="text-muted">{address?.country === "IN" ? "India" : address?.country}</p>
       </section>
 
-      <section className="mt-6 rounded-2xl border border-border bg-surface p-4 text-sm">
+      <section className="mt-6 rounded-2xl border border-border bg-surface p-4 text-sm print:break-inside-avoid">
         <h2 className="mb-2 font-display text-lg font-bold text-ink">Payment method</h2>
-        <p className="text-ink">
-          {order.paymentMethod === "RAZORPAY" ? "Razorpay" : "Order Request (manual invoice)"}
-        </p>
+        <p className="text-ink">{paymentSummary}</p>
+      </section>
+
+      {/* F-328: seller identity block for the printed receipt — same
+          settings-driven, hide-when-blank facts the guest /order/[number]
+          page and the admin invoice page show. */}
+      <section className="mt-6 rounded-2xl border border-border bg-surface p-4 text-sm print:break-inside-avoid">
+        <h2 className="mb-2 font-display text-lg font-bold text-ink">Sold by</h2>
+        <p className="font-semibold text-ink">{brand.legalName}</p>
+        {sellerAddress && <p className="text-muted">{sellerAddress}</p>}
+        {gstin && <p className="text-muted">GSTIN {gstin}</p>}
       </section>
     </div>
   );

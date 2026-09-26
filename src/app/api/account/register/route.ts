@@ -41,6 +41,7 @@ export async function POST(request: Request) {
   // network (hospital Wi-Fi) must not lock each other out of sign-up.
   const limited = await identityRateLimitOrResponse(request, "account-register", 5, 60_000, {
     identity: email,
+    failClosed: true,
   });
   if (limited) return limited;
 
