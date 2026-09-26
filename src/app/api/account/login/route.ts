@@ -5,7 +5,7 @@ import { isLocked, recordFailedLogin, resetLoginFailures } from "@/lib/customer-
 import { db } from "@/lib/db";
 import { linkGuestOrdersToCustomer } from "@/lib/orders/claim-guest-orders";
 import { readJsonBody } from "@/lib/security/parse-json-body";
-import { rateLimitOrResponse } from "@/lib/security/rate-limit";
+import { identityRateLimitOrResponse } from "@/lib/security/rate-limit";
 import { loginSchema } from "@/lib/validation/schemas";
 
 // 423 Locked is used consistently across D1 for "account temporarily
@@ -14,19 +14,27 @@ import { loginSchema } from "@/lib/validation/schemas";
 const LOCKED_STATUS = 423;
 
 export async function POST(request: Request) {
-  const limited = await rateLimitOrResponse(request, "account-login", 5, 60_000);
+  const bodyResult = await readJsonBody(request);
+  if (!bodyResult.ok) return bodyResult.response;
+  const parsed = loginSchema.safeParse(bodyResult.data);
+
+  if (!parsed.success) {
+    return NextResponse.json({ error: "Invalid credentials" }, { status: 400 });
+  }
+
+  const email = parsed.data.email.toLowerCase();
+
+  // F-322: keyed on IP+email (plus a loose per-IP backstop) rather than
+  // IP alone — many independent shoppers signing in from one shared
+  // network (hospital Wi-Fi) must not lock each other out of the login
+  // form. Per-account brute-force protection still comes from the lockout
+  // check below, which is identity-only by design.
+  const limited = await identityRateLimitOrResponse(request, "account-login", 5, 60_000, {
+    identity: email,
+  });
   if (limited) return limited;
 
   try {
-    const bodyResult = await readJsonBody(request);
-    if (!bodyResult.ok) return bodyResult.response;
-    const parsed = loginSchema.safeParse(bodyResult.data);
-
-    if (!parsed.success) {
-      return NextResponse.json({ error: "Invalid credentials" }, { status: 400 });
-    }
-
-    const email = parsed.data.email.toLowerCase();
     const customer = await db.customer.findUnique({ where: { email } });
 
     if (!customer || !customer.active) {
@@ -59,19 +67,21 @@ export async function POST(request: Request) {
 
     await resetLoginFailures(customer.id);
 
-    // Claim guest orders placed under this email since the account was
-    // created: checking out logged-out (expired session, another device, a
-    // private window) leaves Order.customerId null even though the account
-    // exists, and registration's own claim only ever covers orders placed
-    // before signup. Logging in proves this account's password — stronger
-    // evidence of owning the address than registering, which only requires
-    // typing it — so this adds no trust assumption beyond the one
-    // claim-guest-orders.ts documents. Best-effort: an unclaimed order is
-    // recoverable on the next sign-in, a rejected sign-in isn't.
-    try {
-      await linkGuestOrdersToCustomer(customer.id, customer.email);
-    } catch {
-      // Intentionally swallowed — see above.
+    // F-037: only claim guest orders placed under this email once the
+    // account has proven it owns that address (emailVerifiedAt set) —
+    // logging in only proves the password, not that the registrant is who
+    // they say they are. Verified accounts still benefit here: checking
+    // out logged-out (expired session, another device, a private window)
+    // leaves Order.customerId null even though the account exists, and
+    // verify-email's own claim only ever covers orders placed before
+    // verification. Best-effort: an unclaimed order is recoverable on the
+    // next sign-in, a rejected sign-in isn't.
+    if (customer.emailVerifiedAt) {
+      try {
+        await linkGuestOrdersToCustomer(customer.id, customer.email);
+      } catch {
+        // Intentionally swallowed — see above.
+      }
     }
 
     await createCustomerSession({

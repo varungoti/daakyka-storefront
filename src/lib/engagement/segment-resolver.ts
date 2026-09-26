@@ -45,23 +45,6 @@ export async function resolveSegmentRecipients(
 
   const criteria = parseCriteria(segment.criteria);
 
-  if (criteria.leadType === "bulk_order") {
-    const leads = await db.bulkOrderLead.findMany({
-      where: { consentGiven: true },
-      orderBy: { createdAt: "desc" },
-      take: 500,
-    });
-    return dedupeRecipients(
-      leads.map((lead) => ({
-        email: lead.email,
-        phone: lead.phone,
-        contactName: lead.contactPerson,
-        firstName: lead.contactPerson.split(" ")[0],
-        organization: lead.organization,
-      })),
-    );
-  }
-
   // engagement_compliance: a marketing send may only go to a subscriber who
   // (a) opted in (consentGiven), (b) confirmed via the double opt-in link
   // (confirmedAt set) and (c) hasn't since unsubscribed. `consentGiven` was
@@ -75,6 +58,37 @@ export async function resolveSegmentRecipients(
     confirmedAt: { not: null },
     unsubscribedAt: null,
   } as const;
+
+  if (criteria.leadType === "bulk_order") {
+    // F-071: BulkOrderLead.consentGiven only ever means "contact me about
+    // this enquiry" (the checkbox text is explicit about that) — it is not
+    // marketing consent, the same distinction the pages-branch comment
+    // below already draws for ContactEnquiry. A lead only belongs in a
+    // marketing segment if it separately, affirmatively opted into
+    // marketing the same way anyone else does: a confirmed, not-
+    // unsubscribed NewsletterSubscriber row for that email.
+    const confirmedSubscribers = await db.newsletterSubscriber.findMany({
+      where: marketingConsentFilter,
+      select: { email: true },
+    });
+    const confirmedEmails = new Set(confirmedSubscribers.map((s) => s.email.toLowerCase()));
+    if (confirmedEmails.size === 0) return [];
+
+    const leads = await db.bulkOrderLead.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 500,
+    });
+    const consented = leads.filter((lead) => confirmedEmails.has(lead.email.toLowerCase()));
+    return dedupeRecipients(
+      consented.map((lead) => ({
+        email: lead.email,
+        phone: lead.phone,
+        contactName: lead.contactPerson,
+        firstName: lead.contactPerson.split(" ")[0],
+        organization: lead.organization,
+      })),
+    );
+  }
 
   if (criteria.source === "newsletter" || criteria.consent === true) {
     const subscribers = await db.newsletterSubscriber.findMany({

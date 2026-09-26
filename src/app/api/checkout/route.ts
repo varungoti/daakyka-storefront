@@ -18,9 +18,12 @@ import {
 } from "@/lib/discounts";
 import { notifyNewOrder } from "@/lib/orders/notify";
 import { createRazorpayOrder, getRazorpayKeyId, isRazorpayConfigured } from "@/lib/payments/razorpay";
-import { orderRequestThrottleOrResponse } from "@/lib/security/order-request-throttle";
+import {
+  orderRequestThrottleOrResponse,
+  releaseOrderRequestThrottle,
+} from "@/lib/security/order-request-throttle";
 import { readJsonBody } from "@/lib/security/parse-json-body";
-import { rateLimitOrResponse } from "@/lib/security/rate-limit";
+import { identityRateLimitOrResponse } from "@/lib/security/rate-limit";
 import { checkoutSchema } from "@/lib/validation/schemas";
 
 /**
@@ -58,9 +61,6 @@ async function getOptionalCustomerId(): Promise<string | undefined> {
  *    the checkout page's real fallback path (see /checkout).
  */
 export async function POST(request: Request) {
-  const limited = await rateLimitOrResponse(request, "checkout", 10, 60_000);
-  if (limited) return limited;
-
   const body = await readJsonBody(request);
   if (!body.ok) return body.response;
 
@@ -73,16 +73,35 @@ export async function POST(request: Request) {
   }
 
   const { items, email, phone, shippingAddress, discountCode } = parsed.data;
+
+  // F-322: keyed on IP+email (a tight per-identity bucket, plus a loose
+  // per-IP backstop) rather than IP alone — independent shoppers checking
+  // out from the same network (hospital Wi-Fi, a shared office) must not
+  // throttle each other. Body is parsed first so the email is available to
+  // key on; it's a cheap, size-capped parse (readJsonBody), not a DB call.
+  const limited = await identityRateLimitOrResponse(request, "checkout", 10, 60_000, {
+    identity: email,
+  });
+  if (limited) return limited;
+
   const razorpayReady = await isRazorpayConfigured();
 
   // Finding B: the ORDER_REQUEST fallback below has no payment gate, so an
-  // IP-independent throttle keyed on the order's own email/phone guards it
-  // against a script that rotates IPs/headers to drain stock for free. A
-  // Razorpay-bound order still has to clear real payment, so it isn't
-  // throttled here.
+  // IP-independent throttle keyed on the order's own email/phone (plus,
+  // F-118, a hard IP cap) guards it against a script that mints fresh
+  // identities to drain stock for free. A Razorpay-bound order still has
+  // to clear real payment, so it isn't throttled here.
+  //
+  // F-123: consumedThrottleKeys is what got incremented, so a submit that
+  // then fails for a reason the shopper can fix and retry (their cart went
+  // out of stock, an invalid variant, an empty cart, a bad discount code)
+  // can give that use back in the catch block below, rather than counting
+  // a broken-cart retry the same as a stock-draining script.
+  let consumedThrottleKeys: string[] = [];
   if (!razorpayReady) {
-    const throttled = await orderRequestThrottleOrResponse(email, phone);
-    if (throttled) return throttled;
+    const throttle = await orderRequestThrottleOrResponse(request, email, phone);
+    if (throttle.response) return throttle.response;
+    consumedThrottleKeys = throttle.consumedKeys;
   }
 
   try {
@@ -148,15 +167,18 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     if (error instanceof EmptyCartError) {
+      await releaseOrderRequestThrottle(consumedThrottleKeys);
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     if (error instanceof OutOfStockError) {
+      await releaseOrderRequestThrottle(consumedThrottleKeys);
       return NextResponse.json(
         { error: error.message, variantId: error.variantId },
         { status: 409 },
       );
     }
     if (error instanceof InvalidVariantError) {
+      await releaseOrderRequestThrottle(consumedThrottleKeys);
       return NextResponse.json(
         { error: error.message, variantId: error.variantId },
         { status: 400 },
@@ -171,6 +193,7 @@ export async function POST(request: Request) {
       error instanceof DiscountUsageLimitReachedError ||
       error instanceof DiscountAlreadyUsedError
     ) {
+      await releaseOrderRequestThrottle(consumedThrottleKeys);
       return NextResponse.json({ error: error.message, field: "discountCode" }, { status: 400 });
     }
     console.error("[checkout] failed to create order", error);

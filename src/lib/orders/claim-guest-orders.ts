@@ -19,29 +19,45 @@ import { db } from "@/lib/db";
  * both key off `Order.customerId` alone and don't distinguish how it was
  * set.
  *
+ * F-037 (P0): typing someone's email address is not proof you own it, so
+ * this must never run for an unverified account — that would hand every
+ * shopper's name, address and order history to anyone who knows their
+ * email. The trust boundary is `Customer.emailVerifiedAt`, proven either by
+ * clicking the emailed verification link (verify-email.ts) or by
+ * completing a password reset, which also goes through an emailed token.
+ * Registering an account or merely knowing its password proves neither, so
+ * register/route.ts no longer calls this at all, and login/route.ts only
+ * calls it when `customer.emailVerifiedAt` is already set. As defence in
+ * depth against a future caller reintroducing that mistake, this function
+ * re-checks verification itself before claiming anything.
+ *
  * Deliberately keyed on email only (case-insensitive, matching Postgres
- * `citext`-style comparison via Prisma's `mode: "insensitive"`), the same
- * trust boundary customer-auth already relies on elsewhere: registering
- * with an email *is* what establishes "this is my email" today (see the
- * D1 design note in src/app/api/account/register/route.ts — the account is
- * usable immediately, before `emailVerifiedAt` is ever set), and logging in
- * additionally proves the password for that account. This function adds no
- * new trust assumption beyond those.
+ * `citext`-style comparison via Prisma's `mode: "insensitive"`) once that
+ * verification gate is passed.
  *
  * Called from two places, both best-effort — a failure here must never
  * fail the auth flow that triggered it, since an unclaimed order can
- * always be claimed on the next sign-in while a rejected registration or
- * login cannot be undone:
- *  - POST /api/account/register, right after `db.customer.create`, which
- *    covers orders placed as a guest *before* the account existed;
- *  - POST /api/account/login, once credentials check out, which covers
- *    orders placed as a guest *after* it did — checking out logged-out
- *    (expired session, another device, a private window) still leaves
- *    `Order.customerId` null, and registration's claim has long since run.
+ * always be claimed on the next verified sign-in while a rejected
+ * registration or login cannot be undone:
+ *  - verifyEmailToken(), right after `emailVerifiedAt` is set, which
+ *    covers orders placed as a guest *before* the account existed (or
+ *    before it was verified);
+ *  - POST /api/account/login, once credentials check out *and* the
+ *    account is verified, which covers orders placed as a guest *after*
+ *    that — checking out logged-out (expired session, another device, a
+ *    private window) still leaves `Order.customerId` null.
  */
 export async function linkGuestOrdersToCustomer(customerId: string, email: string): Promise<number> {
   const normalizedEmail = email.trim();
   if (!customerId || !normalizedEmail) return 0;
+
+  // Defence in depth: never claim on behalf of an account that hasn't
+  // proven it owns this email, no matter what a caller believes.
+  const customer = await db.customer.findFirst({
+    where: { id: customerId, emailVerifiedAt: { not: null } },
+    select: { id: true },
+  });
+  if (!customer) return 0;
 
   const result = await db.order.updateMany({
     where: {

@@ -11,6 +11,9 @@ export function RegisterForm({ returnTo }: { returnTo: string }) {
   const router = useRouter();
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState("");
+  // F-042: an existing account gets its own message with real sign-in/
+  // reset-password links, rather than the generic dead-end error text.
+  const [emailTaken, setEmailTaken] = useState(false);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -18,6 +21,7 @@ export function RegisterForm({ returnTo }: { returnTo: string }) {
     const formElement = event.currentTarget;
     setStatus("loading");
     setError("");
+    setEmailTaken(false);
 
     const form = new FormData(formElement);
     try {
@@ -37,7 +41,12 @@ export function RegisterForm({ returnTo }: { returnTo: string }) {
       if (!response.ok) {
         const data = await response.json().catch(() => null);
         setStatus("error");
-        setError(data?.error ?? "Could not create your account. Please try again.");
+        if (data?.code === "EMAIL_TAKEN") {
+          setEmailTaken(true);
+          setError(data.error);
+        } else {
+          setError(data?.error ?? "Could not create your account. Please try again.");
+        }
         return;
       }
 
@@ -68,7 +77,27 @@ export function RegisterForm({ returnTo }: { returnTo: string }) {
         <input type="checkbox" name="consentGiven" required className="mt-1 h-4 w-4 rounded border-border text-brand" />
         I agree to the terms of service and privacy policy.
       </label>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && (
+        <p className="text-sm text-red-600" role="alert">
+          {error}
+          {emailTaken && (
+            <>
+              {" "}
+              <Link
+                href={`/account/login?returnTo=${encodeURIComponent(returnTo)}`}
+                className="font-semibold underline"
+              >
+                Sign in
+              </Link>{" "}
+              or{" "}
+              <Link href="/account/forgot-password" className="font-semibold underline">
+                reset your password
+              </Link>
+              .
+            </>
+          )}
+        </p>
+      )}
       <Button type="submit" className="w-full" disabled={status === "loading"}>
         {status === "loading" ? "Creating account..." : "Create Account"}
       </Button>

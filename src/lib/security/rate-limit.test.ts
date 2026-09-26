@@ -2,7 +2,14 @@ import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
-import { checkRateLimit, rateLimitOrResponse, resetRateLimits } from "@/lib/security/rate-limit";
+import {
+  checkRateLimit,
+  hashIdentity,
+  identityRateLimitOrResponse,
+  rateLimitOrResponse,
+  refundRateLimit,
+  resetRateLimits,
+} from "@/lib/security/rate-limit";
 import { withEnv } from "../../../tests/helpers/env";
 
 /**
@@ -174,5 +181,140 @@ describe("rateLimitOrResponse resists X-Forwarded-For spoofing (F1)", () => {
         },
       ),
     );
+  });
+});
+
+/**
+ * F-123: refundRateLimit gives back one use of a bucket a caller consumed
+ * for a request that then turned out not to be abuse (a shopper retrying
+ * a broken cart, say) — see order-request-throttle.ts for the real
+ * caller. Exercised directly here against the DB-backed bucket.
+ */
+describe("refundRateLimit (F-123)", () => {
+  after(async () => {
+    await resetRateLimits(["unit-test-refund"]);
+  });
+
+  it("gives back one use, so a refunded attempt doesn't count toward the limit", async () => {
+    const key = `unit-test-refund:${randomUUID()}`;
+
+    for (let i = 0; i < 3; i++) {
+      const result = await checkRateLimit(key, 3, 60_000);
+      assert.equal(result.ok, true, `attempt ${i + 1} should be allowed`);
+    }
+    // The bucket is now at its limit (3/3) — refund one use back.
+    await refundRateLimit(key);
+
+    const afterRefund = await checkRateLimit(key, 3, 60_000);
+    assert.equal(afterRefund.ok, true, "a refunded bucket should allow one more request");
+
+    const stillAtLimit = await checkRateLimit(key, 3, 60_000);
+    assert.equal(stillAtLimit.ok, false, "only the refunded use was given back, not the whole bucket");
+  });
+
+  it("never goes negative when refunding an already-empty bucket repeatedly", async () => {
+    const key = `unit-test-refund-empty:${randomUUID()}`;
+    await checkRateLimit(key, 5, 60_000);
+
+    await refundRateLimit(key);
+    await refundRateLimit(key);
+    await refundRateLimit(key);
+
+    const row = await db.rateLimitBucket.findUnique({ where: { key } });
+    assert.ok(row);
+    assert.ok(row!.count >= 0, "count must never go negative");
+
+    await db.rateLimitBucket.delete({ where: { key } }).catch(() => {});
+  });
+
+  it("is a safe no-op for a key that was never created", async () => {
+    const key = `unit-test-refund-missing:${randomUUID()}`;
+    await assert.doesNotReject(() => refundRateLimit(key));
+    const row = await db.rateLimitBucket.findUnique({ where: { key } });
+    assert.equal(row, null);
+  });
+});
+
+describe("hashIdentity", () => {
+  it("is case- and whitespace-insensitive, matching the normalisation other identity keys already use", () => {
+    assert.equal(hashIdentity("Buyer@Example.com"), hashIdentity("buyer@example.com"));
+    assert.equal(hashIdentity("  buyer@example.com  "), hashIdentity("buyer@example.com"));
+  });
+
+  it("never returns the raw value itself", () => {
+    const identity = "someone@example.com";
+    assert.notEqual(hashIdentity(identity), identity);
+    assert.match(hashIdentity(identity), /^[a-f0-9]{64}$/, "expected a sha256 hex digest");
+  });
+
+  it("different identities hash to different values", () => {
+    assert.notEqual(hashIdentity("a@example.com"), hashIdentity("b@example.com"));
+  });
+});
+
+/**
+ * F-322: independent shoppers behind one shared IP (hospital Wi-Fi, a
+ * carrier's NAT) must not throttle each other — the tight bucket has to
+ * key on IP+identity, not IP alone, while a much looser per-IP backstop
+ * still catches an outright flood from one address.
+ */
+describe("identityRateLimitOrResponse (F-322)", () => {
+  after(async () => {
+    await resetRateLimits(["unit-test-identity"]);
+  });
+
+  it("two different identities behind the same IP each get their own tight bucket", async () => {
+    await withEnv({ NODE_ENV: "production", DISABLE_RATE_LIMIT: undefined, VERCEL: "1" }, async () => {
+      const route = `unit-test-identity-${randomUUID()}`;
+      const ip = "203.0.113.10";
+      const requestFromIp = () =>
+        new Request("http://localhost/api/account/login", { headers: { "x-vercel-forwarded-for": ip } });
+
+      // Shopper A hits their own tight limit (2/min here).
+      for (let i = 0; i < 2; i++) {
+        const response = await identityRateLimitOrResponse(requestFromIp(), route, 2, 60_000, {
+          identity: "a@example.com",
+        });
+        assert.equal(response, null, `shopper A attempt ${i + 1} should be allowed`);
+      }
+      const blockedA = await identityRateLimitOrResponse(requestFromIp(), route, 2, 60_000, {
+        identity: "a@example.com",
+      });
+      assert.ok(blockedA, "shopper A should now be throttled on their own identity bucket");
+      assert.equal(blockedA!.status, 429);
+
+      // Shopper B, same IP, different identity — must not be affected by
+      // A's bucket being exhausted.
+      const responseB = await identityRateLimitOrResponse(requestFromIp(), route, 2, 60_000, {
+        identity: "b@example.com",
+      });
+      assert.equal(responseB, null, "a different identity on the same IP must not be throttled by A's bucket");
+    });
+  });
+
+  it("the loose IP backstop still blocks an outright flood from one IP, regardless of identity", async () => {
+    await withEnv({ NODE_ENV: "production", DISABLE_RATE_LIMIT: undefined, VERCEL: "1" }, async () => {
+      const route = `unit-test-identity-backstop-${randomUUID()}`;
+      const ip = "203.0.113.20";
+      const requestFrom = () => new Request("http://localhost/api/checkout", { headers: { "x-vercel-forwarded-for": ip } });
+
+      // A tiny backstop (3) so the test doesn't need 100+ iterations; a
+      // generous per-identity limit (50) so it's the backstop, not the
+      // tight bucket, that trips.
+      for (let i = 0; i < 3; i++) {
+        const response = await identityRateLimitOrResponse(requestFrom(), route, 50, 60_000, {
+          identity: `flood-${i}@example.com`,
+          backstopLimit: 3,
+        });
+        assert.equal(response, null, `attempt ${i + 1} should be within the backstop`);
+      }
+
+      const blocked = await identityRateLimitOrResponse(requestFrom(), route, 50, 60_000, {
+        identity: "flood-final@example.com",
+        backstopLimit: 3,
+      });
+      assert.ok(blocked, "a fresh identity past the IP backstop must still be blocked");
+      assert.equal(blocked!.status, 429);
+    });
   });
 });

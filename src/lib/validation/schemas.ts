@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { INDIAN_PHONE_HINT, INDIAN_PINCODE_HINT, normalizeIndianPhone, normalizeIndianPincode } from "./india";
+import { isTrustedImageUrl } from "@/lib/security/image-hosts";
 
 // Phase C7: kept as a plain string (not a Prisma enum) so the field stays
 // additive/backward-compatible — older clients that omit it are unaffected.
@@ -127,6 +128,14 @@ export const bulkOrderSchema = z.object({
   consentGiven: z
     .boolean()
     .refine((value) => value === true, { message: "You must agree to be contacted" }),
+  // F-071: kept separate from — and never used as a substitute for —
+  // consentGiven above, which only ever means "contact me about this
+  // enquiry". This is real, optional marketing consent: left unticked by
+  // default, it double-opt-ins the lead through the same
+  // subscribeToNewsletter() flow as the footer newsletter form, so a lead
+  // can only land in a marketing segment (segment-resolver.ts) after
+  // confirming it from their inbox, same as anyone else.
+  marketingOptIn: z.boolean().default(false),
 });
 
 export type BulkOrderInput = z.infer<typeof bulkOrderSchema>;
@@ -194,12 +203,37 @@ export const campaignSchema = z.object({
   notes: z.string().optional(),
 });
 
+// F-211: Media Library assets are served from this app's own relative
+// `/cdn/<key>` route (see publicUrlForKey in src/lib/storage/r2.ts)
+// whenever no public R2 base URL is configured — true for every asset in
+// this environment — so a plain `.url()` check rejects every real asset
+// the Media Library picker can actually return, the same trap
+// heroSlideImageSchema's doc comment further down documents (and
+// sidesteps by skipping URL validation entirely; this one instead
+// validates the *shape* of what it accepts, since `avatar` is a bare
+// string with no separate `assetId` field to lean on). Accepts: empty
+// (no photo — testimonials-section.tsx falls back to initials), a
+// same-origin `/cdn/...` media path, or an https URL on an allowed host
+// (isTrustedImageUrl — covers the seeded Pexels/Unsplash testimonials and
+// an R2 public base URL when one is configured).
+const avatarImageSchema = z
+  .string()
+  .trim()
+  .max(500)
+  .refine(
+    (value) =>
+      value === "" ||
+      (value.startsWith("/cdn/") && !value.startsWith("//") && !value.includes("..")) ||
+      isTrustedImageUrl(value),
+    "Pick an image from the Media Library, or use an https image URL from an allowed host",
+  );
+
 export const testimonialSchema = z.object({
   quote: z.string().trim().min(10).max(2000),
   name: z.string().trim().min(2).max(150),
   title: z.string().trim().min(2).max(150),
   rating: z.number().int().min(1).max(5),
-  avatar: z.string().trim().url().max(500),
+  avatar: avatarImageSchema.default(""),
   featured: z.boolean(),
   active: z.boolean(),
   sortOrder: z.number().int().min(0).max(1_000_000),

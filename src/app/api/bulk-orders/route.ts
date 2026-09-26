@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { extractRequestAttribution } from "@/lib/analytics/attribution";
 import { triggerJourneys } from "@/lib/engagement/journey-triggers";
+import { subscribeToNewsletter } from "@/lib/engagement/newsletter";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { bulkOrderSchema } from "@/lib/validation/schemas";
@@ -28,12 +29,27 @@ export async function POST(request: Request) {
       );
     }
 
+    // F-071: marketingOptIn is real marketing consent, kept out of
+    // BulkOrderLead entirely (that model has no such column, and
+    // consentGiven there means enquiry-contact consent only — see
+    // segment-resolver.ts). It's handled below via the newsletter's own
+    // double opt-in, never persisted on the lead itself.
+    const { marketingOptIn, ...leadData } = parsed.data;
+
     // F-318: best-effort attribution (query params / Referer header) — see
     // src/lib/analytics/attribution.ts.
     const attribution = extractRequestAttribution(request);
     const lead = await db.bulkOrderLead.create({
-      data: { ...parsed.data, ...attribution },
+      data: { ...leadData, ...attribution },
     });
+
+    if (marketingOptIn) {
+      try {
+        await subscribeToNewsletter({ email: lead.email, source: "bulk-order" });
+      } catch {
+        // Best-effort — a failed opt-in must never fail the enquiry itself.
+      }
+    }
 
     await triggerJourneys("bulk_lead_created", {
       email: lead.email,

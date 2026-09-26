@@ -1,7 +1,10 @@
 "use client";
 
+import Image from "next/image";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { MediaLibraryBrowser } from "@/components/admin/media-library-browser";
+import { formatApiError } from "@/lib/validation/format-api-error";
 
 export interface TestimonialFormInitial {
   id: string;
@@ -27,13 +30,18 @@ export function TestimonialForm({ initial }: { initial?: TestimonialFormInitial 
   const [featured, setFeatured] = useState(initial?.featured ?? false);
   const [active, setActive] = useState(initial?.active ?? true);
   const [sortOrder, setSortOrder] = useState(initial?.sortOrder ?? 0);
+  // F-211: "choose an existing photo from the Media Library" instead of a
+  // free-text URL box.
+  const [libraryOpen, setLibraryOpen] = useState(false);
 
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const save = async () => {
     setStatus("saving");
     setErrorMessage(null);
+    setFieldErrors({});
 
     const payload = { quote, name, title, rating, avatar, featured, active, sortOrder };
 
@@ -48,8 +56,10 @@ export function TestimonialForm({ initial }: { initial?: TestimonialFormInitial 
 
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
+      const formatted = formatApiError(body, "Couldn't save — check the fields above.");
       setStatus("error");
-      setErrorMessage(body?.error ?? "Couldn't save — check the fields above.");
+      setErrorMessage(formatted.summary);
+      setFieldErrors(formatted.fieldErrors);
       return;
     }
 
@@ -107,14 +117,49 @@ export function TestimonialForm({ initial }: { initial?: TestimonialFormInitial 
         </Field>
       </div>
 
-      <Field label="Avatar URL" hint="Paste an image URL (upload via Media Manager, then copy its URL here)">
-        <input
-          value={avatar}
-          onChange={(e) => setAvatar(e.target.value)}
-          placeholder="https://..."
-          className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
-        />
+      <Field label="Photo" hint="Optional — shows initials when left empty" error={fieldErrors.avatar}>
+        <div className="flex items-center gap-3">
+          <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-full border border-border bg-lavender/40">
+            {avatar ? (
+              <Image src={avatar} alt="" fill className="object-cover" sizes="64px" />
+            ) : (
+              <div className="flex h-full items-center justify-center text-[11px] text-muted">
+                {name.trim() ? name.trim().charAt(0).toUpperCase() : "—"}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setLibraryOpen(true)}
+              className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-muted hover:bg-lilac/40"
+            >
+              Choose from library
+            </button>
+            {avatar && (
+              <button
+                type="button"
+                onClick={() => setAvatar("")}
+                className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-muted hover:bg-red-50 hover:text-red-600"
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        </div>
       </Field>
+
+      {libraryOpen && (
+        <MediaLibraryBrowser
+          title="Choose a testimonial photo"
+          defaultUsage="AVATAR"
+          onClose={() => setLibraryOpen(false)}
+          onSelect={(asset) => {
+            setLibraryOpen(false);
+            setAvatar(asset.url);
+          }}
+        />
+      )}
 
       <div className="flex flex-wrap gap-4">
         <label className="flex items-center gap-2 text-sm font-medium text-ink">
@@ -133,7 +178,7 @@ export function TestimonialForm({ initial }: { initial?: TestimonialFormInitial 
         <button
           type="button"
           onClick={save}
-          disabled={status === "saving" || !quote.trim() || !name.trim() || !avatar.trim()}
+          disabled={status === "saving" || !quote.trim() || !name.trim() || !title.trim()}
           className="rounded-full bg-brand px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-brand/90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {status === "saving" ? "Saving…" : isEdit ? "Save changes" : "Create testimonial"}
@@ -150,12 +195,26 @@ export function TestimonialForm({ initial }: { initial?: TestimonialFormInitial 
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({
+  label,
+  hint,
+  error,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  error?: string;
+  children: React.ReactNode;
+}) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-semibold text-muted">{label}</span>
       {children}
-      {hint ? <span className="mt-1 block text-[11px] text-muted">{hint}</span> : null}
+      {error ? (
+        <span className="mt-1 block text-[11px] text-red-600">{error}</span>
+      ) : hint ? (
+        <span className="mt-1 block text-[11px] text-muted">{hint}</span>
+      ) : null}
     </label>
   );
 }

@@ -42,7 +42,7 @@ function guestOrderData(overrides: { number: string; email: string; customerId?:
 }
 
 describe("linkGuestOrdersToCustomer (F-01 claim mechanism)", () => {
-  it("attaches an unclaimed guest order matching the email, case-insensitively", async () => {
+  it("attaches an unclaimed guest order matching the email, case-insensitively, for a verified account", async () => {
     const unique = randomUUID().slice(0, 8);
     const email = `Claim-Test-${unique}@Example.com`;
 
@@ -52,7 +52,7 @@ describe("linkGuestOrdersToCustomer (F-01 claim mechanism)", () => {
     createdOrderIds.push(guestOrder.id);
 
     const customer = await db.customer.create({
-      data: { email: email.toLowerCase(), name: "Claim Test", passwordHash: "x" },
+      data: { email: email.toLowerCase(), name: "Claim Test", passwordHash: "x", emailVerifiedAt: new Date() },
     });
     createdCustomerIds.push(customer.id);
 
@@ -73,7 +73,9 @@ describe("linkGuestOrdersToCustomer (F-01 claim mechanism)", () => {
     const second = await db.order.create({ data: guestOrderData({ number: `DK-CLAIM-B-${unique}`, email }) });
     createdOrderIds.push(first.id, second.id);
 
-    const customer = await db.customer.create({ data: { email, name: "Claim Multi", passwordHash: "x" } });
+    const customer = await db.customer.create({
+      data: { email, name: "Claim Multi", passwordHash: "x", emailVerifiedAt: new Date() },
+    });
     createdCustomerIds.push(customer.id);
 
     const linked = await linkGuestOrdersToCustomer(customer.id, email);
@@ -94,7 +96,9 @@ describe("linkGuestOrdersToCustomer (F-01 claim mechanism)", () => {
     });
     createdOrderIds.push(alreadyLinked.id);
 
-    const newCustomer = await db.customer.create({ data: { email, name: "New Registrant", passwordHash: "x" } });
+    const newCustomer = await db.customer.create({
+      data: { email, name: "New Registrant", passwordHash: "x", emailVerifiedAt: new Date() },
+    });
     createdCustomerIds.push(newCustomer.id);
 
     const linked = await linkGuestOrdersToCustomer(newCustomer.id, email);
@@ -112,7 +116,7 @@ describe("linkGuestOrdersToCustomer (F-01 claim mechanism)", () => {
     createdOrderIds.push(unrelatedOrder.id);
 
     const customer = await db.customer.create({
-      data: { email: `claimer-${unique}@example.com`, name: "Claimer", passwordHash: "x" },
+      data: { email: `claimer-${unique}@example.com`, name: "Claimer", passwordHash: "x", emailVerifiedAt: new Date() },
     });
     createdCustomerIds.push(customer.id);
 
@@ -126,5 +130,28 @@ describe("linkGuestOrdersToCustomer (F-01 claim mechanism)", () => {
   it("is a no-op for a blank email or id", async () => {
     assert.equal(await linkGuestOrdersToCustomer("some-id", "   "), 0);
     assert.equal(await linkGuestOrdersToCustomer("", "someone@example.com"), 0);
+  });
+
+  // F-037: registering (or logging into) an account is not proof that its
+  // holder owns the email address — only a verified account may claim.
+  it("does NOT claim orders for an unverified account, even with a matching email", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const email = `claim-unverified-${unique}@example.com`;
+
+    const guestOrder = await db.order.create({
+      data: guestOrderData({ number: `DK-CLAIM-UNVERIFIED-${unique}`, email }),
+    });
+    createdOrderIds.push(guestOrder.id);
+
+    const customer = await db.customer.create({
+      data: { email, name: "Unverified Registrant", passwordHash: "x" }, // emailVerifiedAt left null
+    });
+    createdCustomerIds.push(customer.id);
+
+    const linked = await linkGuestOrdersToCustomer(customer.id, email);
+    assert.equal(linked, 0, "an unverified account must never claim guest orders (F-037)");
+
+    const unchanged = await db.order.findUnique({ where: { id: guestOrder.id } });
+    assert.equal(unchanged?.customerId, null);
   });
 });

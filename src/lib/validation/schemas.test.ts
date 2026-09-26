@@ -98,6 +98,38 @@ describe("validation schemas", () => {
     assert.equal(result.success, false);
   });
 
+  // F-071: marketingOptIn is separate, optional marketing consent — the
+  // required consentGiven checkbox only ever means "contact me about this
+  // enquiry" and must never be treated as opting the lead into campaigns.
+  it("defaults marketingOptIn to false when the bulk order payload omits it", () => {
+    const result = bulkOrderSchema.safeParse({
+      organization: "City Hospital",
+      contactPerson: "Dr. Rao",
+      email: "admin@hospital.com",
+      phone: "9876543210",
+      consentGiven: true,
+    });
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.data.marketingOptIn, false);
+    }
+  });
+
+  it("accepts an explicit marketingOptIn: true on the bulk order payload", () => {
+    const result = bulkOrderSchema.safeParse({
+      organization: "City Hospital",
+      contactPerson: "Dr. Rao",
+      email: "admin@hospital.com",
+      phone: "9876543210",
+      consentGiven: true,
+      marketingOptIn: true,
+    });
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.data.marketingOptIn, true);
+    }
+  });
+
   it("rejects short admin passwords", () => {
     const result = loginSchema.safeParse({
       email: "varungoti@gmail.com",
@@ -411,7 +443,10 @@ describe("testimonialSchema / testimonialUpdateSchema", () => {
     name: "Dr. Rao",
     title: "City Hospital",
     rating: 5,
-    avatar: "https://example.com/avatar.jpg",
+    // A trusted host (see TRUSTED_IMAGE_HOSTS in image-hosts.ts) — an
+    // arbitrary https URL like https://example.com/... is rejected, same
+    // as it always would have been by next/image's remotePatterns.
+    avatar: "https://images.pexels.com/photos/123/avatar.jpg",
     featured: false,
     active: true,
     sortOrder: 0,
@@ -427,6 +462,52 @@ describe("testimonialSchema / testimonialUpdateSchema", () => {
 
   it("rejects a non-URL avatar", () => {
     assert.equal(testimonialSchema.safeParse({ ...valid, avatar: "not-a-url" }).success, false);
+  });
+
+  it("rejects an untrusted https host", () => {
+    assert.equal(testimonialSchema.safeParse({ ...valid, avatar: "https://evil.example/x.jpg" }).success, false);
+  });
+
+  // F-211: the Media Library's own "copy URL" always returns a relative
+  // `/cdn/<key>` path (see publicUrlForKey in src/lib/storage/r2.ts) —
+  // this used to be rejected outright by a bare `z.string().url()`.
+  it("accepts a relative Media Library /cdn/ path", () => {
+    const result = testimonialSchema.safeParse({
+      ...valid,
+      avatar: "/cdn/media/testimonials/2026/09/abc123.webp",
+    });
+    assert.equal(result.success, true);
+  });
+
+  it("rejects a /cdn/ path attempting path traversal", () => {
+    assert.equal(
+      testimonialSchema.safeParse({ ...valid, avatar: "/cdn/../secrets.json" }).success,
+      false,
+    );
+  });
+
+  it("rejects a protocol-relative //host path masquerading as /cdn/", () => {
+    assert.equal(
+      testimonialSchema.safeParse({ ...valid, avatar: "//evil.example/cdn/x.jpg" }).success,
+      false,
+    );
+  });
+
+  // F-211: avatar is now optional — the owner can leave a testimonial
+  // without a photo and the storefront falls back to initials, rather
+  // than the field being a hard requirement to save at all.
+  it("accepts an empty avatar (no photo)", () => {
+    const result = testimonialSchema.safeParse({ ...valid, avatar: "" });
+    assert.equal(result.success, true);
+    if (result.success) assert.equal(result.data.avatar, "");
+  });
+
+  it("defaults avatar to an empty string when omitted", () => {
+    const withoutAvatar: Record<string, unknown> = { ...valid };
+    delete withoutAvatar.avatar;
+    const result = testimonialSchema.safeParse(withoutAvatar);
+    assert.equal(result.success, true);
+    if (result.success) assert.equal(result.data.avatar, "");
   });
 
   it("rejects a too-short quote", () => {

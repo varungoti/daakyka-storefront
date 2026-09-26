@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@/generated/prisma/client";
 import { createCustomerSession } from "@/lib/customer-auth/session";
 import { hashPassword } from "@/lib/customer-auth/password";
 import { issueCustomerToken } from "@/lib/customer-auth/tokens";
 import { sendVerificationEmail } from "@/lib/customer-auth/mailer";
 import { db } from "@/lib/db";
-import { linkGuestOrdersToCustomer } from "@/lib/orders/claim-guest-orders";
 import { readJsonBody } from "@/lib/security/parse-json-body";
-import { rateLimitOrResponse } from "@/lib/security/rate-limit";
+import { identityRateLimitOrResponse } from "@/lib/security/rate-limit";
 import { customerRegisterSchema } from "@/lib/validation/schemas";
 import { isHoneypotTripped } from "@/lib/validation/honeypot";
 
@@ -18,33 +18,48 @@ import { isHoneypotTripped } from "@/lib/validation/honeypot";
 // itself. This avoids a dead-end "check your email, come back and log in"
 // step for the common case, while still tracking verification status.
 export async function POST(request: Request) {
-  const limited = await rateLimitOrResponse(request, "account-register", 5, 60_000);
+  const bodyResult = await readJsonBody(request);
+  if (!bodyResult.ok) return bodyResult.response;
+
+  if (isHoneypotTripped(bodyResult.data)) {
+    // Fake success: give the bot no signal it was caught.
+    return NextResponse.json({ ok: true }, { status: 201 });
+  }
+
+  const parsed = customerRegisterSchema.safeParse(bodyResult.data);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Validation failed", details: parsed.error.flatten() },
+      { status: 400 },
+    );
+  }
+
+  const email = parsed.data.email.toLowerCase();
+
+  // F-322: keyed on IP+email (plus a loose per-IP backstop) rather than
+  // IP alone — many independent shoppers registering from one shared
+  // network (hospital Wi-Fi) must not lock each other out of sign-up.
+  const limited = await identityRateLimitOrResponse(request, "account-register", 5, 60_000, {
+    identity: email,
+  });
   if (limited) return limited;
 
   try {
-    const bodyResult = await readJsonBody(request);
-    if (!bodyResult.ok) return bodyResult.response;
-
-    if (isHoneypotTripped(bodyResult.data)) {
-      // Fake success: give the bot no signal it was caught.
-      return NextResponse.json({ ok: true }, { status: 201 });
-    }
-
-    const parsed = customerRegisterSchema.safeParse(bodyResult.data);
-    if (!parsed.success) {
-      return NextResponse.json(
-        { error: "Validation failed", details: parsed.error.flatten() },
-        { status: 400 },
-      );
-    }
-
-    const email = parsed.data.email.toLowerCase();
     const existing = await db.customer.findUnique({ where: { email } });
     if (existing) {
-      // Don't reveal whether the account exists via a distinct message —
-      // treat it the same class of information leak as forgot-password.
+      // F-042: this route logs the new account in immediately on success
+      // (see the module comment above), so a genuinely non-enumerating
+      // response was never achievable here — success and failure can
+      // never look the same when one of them also sets a session cookie.
+      // Given that, say so plainly (Shopify does the same) and point the
+      // shopper at the accounts that already exist for common cases this
+      // hits often: a returning guest buyer, or a colleague sharing one
+      // hospital procurement mailbox. `code` lets the form show real
+      // sign-in/reset links instead of a dead-end message. Status stays
+      // 400 (not switched to 409) so this remains the same status class
+      // existing callers/tests already branch on.
       return NextResponse.json(
-        { error: "Could not create account with those details" },
+        { error: "An account with this email already exists.", code: "EMAIL_TAKEN" },
         { status: 400 },
       );
     }
@@ -59,15 +74,10 @@ export async function POST(request: Request) {
       },
     });
 
-    // Attach any orders this person placed as a guest with the same
-    // address, so "My orders" isn't empty for a returning shopper who
-    // only now created an account. Never fails registration: an
-    // unclaimed order is recoverable later, a failed signup isn't.
-    try {
-      await linkGuestOrdersToCustomer(customer.id, customer.email);
-    } catch {
-      // Intentionally swallowed — see above.
-    }
+    // F-037: guest orders are claimed only once this email is proven
+    // (verifyEmailToken, once the link below is clicked), never on bare
+    // registration — typing someone else's address is not proof of
+    // ownership. See claim-guest-orders.ts for the claim itself.
 
     const { raw } = await issueCustomerToken(customer.id, "VERIFY");
     const origin = new URL(request.url).origin;
@@ -87,7 +97,17 @@ export async function POST(request: Request) {
       },
       { status: 201 },
     );
-  } catch {
+  } catch (error) {
+    // F-042: two concurrent registrations for the same email race past the
+    // findUnique check above — the unique constraint on Customer.email is
+    // what actually decides it, and the loser must get the same "already
+    // exists" response, not a generic 500.
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return NextResponse.json(
+        { error: "An account with this email already exists.", code: "EMAIL_TAKEN" },
+        { status: 400 },
+      );
+    }
     return NextResponse.json({ error: "Registration failed" }, { status: 500 });
   }
 }

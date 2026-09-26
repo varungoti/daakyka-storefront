@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { isVercel } from "@/lib/env";
@@ -286,6 +287,132 @@ export async function checkRateLimit(
   }
 }
 
+/**
+ * F-123: gives back one use of a bucket that was consumed by a request
+ * that then failed for a reason the caller (a shopper, not an attacker)
+ * can fix and retry — an out-of-stock cart line, an invalid discount code,
+ * a broken variant — so retrying a legitimately-broken request doesn't
+ * burn down the same identity/IP-scoped limit an abuse script would hit.
+ * Best-effort and silent: a failed refund must never surface to the
+ * caller, who already has the real (non-rate-limit) error to show. Mirrors
+ * upsertBucket's atomicity — GREATEST(count - 1, 0) can't go negative even
+ * under a concurrent refund of the same key — and only refunds a bucket
+ * still inside its window, so a refund can never resurrect an
+ * already-expired/rolled-over bucket.
+ */
+export async function refundRateLimit(key: string): Promise<void> {
+  try {
+    await db.$executeRaw`
+      UPDATE "RateLimitBucket"
+      SET count = GREATEST(count - 1, 0)
+      WHERE key = ${key} AND "resetAt" > now()
+    `;
+  } catch {
+    // Best-effort only — see the doc comment above.
+  }
+
+  // Keep the in-memory fail-open fallback consistent with the same
+  // best-effort semantics, so a refund still behaves sanely during a DB
+  // outage (checkRateLimitInMemory is what's actually enforcing limits
+  // then).
+  const bucket = fallbackBuckets.get(key);
+  if (bucket && bucket.count > 0) {
+    bucket.count -= 1;
+  }
+}
+
+/**
+ * F-322: sha256 of the trimmed, lowercased identity value (an email or
+ * phone) — never the raw value itself, so a RateLimitBucket row (visible
+ * to anyone with DB access, and swept only by age) doesn't double as a
+ * plaintext log of who attempted what. Not a secret needing a slow hash:
+ * this only has to keep the key column from being literally the address,
+ * the same reason customer-auth/tokens.ts's hashToken uses sha256 rather
+ * than bcrypt for its own non-password random values.
+ */
+export function hashIdentity(value: string): string {
+  return createHash("sha256").update(value.trim().toLowerCase()).digest("hex");
+}
+
+function tooManyRequestsResponse(retryAfter: number): NextResponse {
+  return NextResponse.json(
+    { error: "Too many requests. Please try again later." },
+    { status: 429, headers: { "Retry-After": String(retryAfter) } },
+  );
+}
+
+// F-322: a shared network (hospital Wi-Fi, a carrier's NAT, an office)
+// puts many independent shoppers behind one client IP. A tight bucket
+// keyed on IP alone throttles them as if they were one abusive caller —
+// live-tested at 20 shoppers on one IP: 10/20 checkouts and 7/12 logins
+// blocked, with none of them retrying. DEFAULT_IP_BACKSTOP_LIMIT is the
+// loose ceiling that still applies per IP (catching a real flood off one
+// address, whatever identity it claims), while the *tight* limit the
+// caller passes in now applies per IP+identity instead of per IP alone —
+// this is what actually stops one attacker from brute-forcing a specific
+// account or hammering checkout as themselves, without punishing everyone
+// else who happens to share their network.
+const DEFAULT_IP_BACKSTOP_LIMIT = 100;
+
+export interface IdentityRateLimitOptions {
+  /** The value that scopes the tight bucket — typically the email or
+   * phone the request claims to act as. Hashed before it ever reaches a
+   * bucket key (see hashIdentity). */
+  identity: string;
+  /** Loose per-IP ceiling, checked in addition to (not instead of) the
+   * tight per-IP+identity bucket. Defaults to DEFAULT_IP_BACKSTOP_LIMIT. */
+  backstopLimit?: number;
+  /** Defaults to the same window as the tight bucket. */
+  backstopWindowMs?: number;
+}
+
+/**
+ * Like rateLimitOrResponse, but for routes where the caller supplies an
+ * identity (an email on a login/register/checkout attempt) that a script
+ * can trivially rotate to dodge a per-IP bucket, while genuine shoppers on
+ * the same IP are genuinely different people (F-322). Checks TWO buckets,
+ * both must pass:
+ *
+ *  1. A loose, IP-only backstop (`${route}:ip:<ip>`) — still catches a
+ *     flood from one address outright, no matter what identity it claims.
+ *  2. A tight, IP+identity bucket (`${route}:id:<ip>:<hash(identity)>`) at
+ *     the caller's own `limit`/`windowMs` — this is the bucket that
+ *     actually guards against brute-forcing one account or hammering
+ *     checkout under one identity; two different identities behind the
+ *     same IP get two independent buckets instead of sharing one.
+ *
+ * Same NODE_ENV=test / DISABLE_RATE_LIMIT=1 / unattributed-IP bypasses as
+ * rateLimitOrResponse, for the same reasons — see that function.
+ */
+export async function identityRateLimitOrResponse(
+  request: Request,
+  route: string,
+  limit: number,
+  windowMs: number,
+  options: IdentityRateLimitOptions,
+): Promise<NextResponse | null> {
+  if (process.env.NODE_ENV === "test" || process.env.DISABLE_RATE_LIMIT === "1") {
+    return null;
+  }
+
+  const ip = getClientIp(request);
+  if (ip === null) {
+    warnOnceAboutUnattributedIp(route);
+    return null;
+  }
+
+  const backstopLimit = options.backstopLimit ?? DEFAULT_IP_BACKSTOP_LIMIT;
+  const backstopWindowMs = options.backstopWindowMs ?? windowMs;
+  const backstop = await checkRateLimit(`${route}:ip:${ip}`, backstopLimit, backstopWindowMs);
+  if (!backstop.ok) return tooManyRequestsResponse(backstop.retryAfter);
+
+  const idKey = `${route}:id:${ip}:${hashIdentity(options.identity)}`;
+  const identityResult = await checkRateLimit(idKey, limit, windowMs);
+  if (!identityResult.ok) return tooManyRequestsResponse(identityResult.retryAfter);
+
+  return null;
+}
+
 export async function rateLimitOrResponse(
   request: Request,
   route: string,
@@ -313,16 +440,7 @@ export async function rateLimitOrResponse(
   }
 
   const result = await checkRateLimit(`${route}:${ip}`, limit, windowMs);
-
-  if (!result.ok) {
-    return NextResponse.json(
-      { error: "Too many requests. Please try again later." },
-      {
-        status: 429,
-        headers: { "Retry-After": String(result.retryAfter) },
-      },
-    );
-  }
+  if (!result.ok) return tooManyRequestsResponse(result.retryAfter);
 
   return null;
 }

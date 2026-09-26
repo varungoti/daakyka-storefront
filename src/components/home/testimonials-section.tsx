@@ -43,7 +43,7 @@ export function TestimonialsSection({ testimonials }: TestimonialsSectionProps) 
             <div className="mt-8 flex items-center justify-between gap-4">
               <div className="flex items-center gap-4">
                 <div className="relative h-14 w-14 overflow-hidden rounded-full ring-2 ring-brand/20">
-                  <Image src={featured.avatar} alt={featured.name} fill className="object-cover" sizes="56px" />
+                  <TestimonialAvatar avatar={featured.avatar} name={featured.name} sizePx={56} />
                 </div>
                 <div>
                   <p className="font-display font-bold text-ink">{featured.name}</p>
@@ -62,7 +62,7 @@ export function TestimonialsSection({ testimonials }: TestimonialsSectionProps) 
             <div className="mt-6 flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="relative h-11 w-11 overflow-hidden rounded-full">
-                  <Image src={current.avatar} alt={current.name} fill className="object-cover" sizes="44px" />
+                  <TestimonialAvatar avatar={current.avatar} name={current.name} sizePx={44} />
                 </div>
                 <div>
                   <p className="font-semibold text-ink">{current.name}</p>
@@ -109,4 +109,18 @@ export function TestimonialsSection({ testimonials }: TestimonialsSectionProps) 
       </div>
     </section>
   );
+}
+
+/** F-211: `avatar` is optional (the admin can leave it blank instead of
+ * being forced to pick a photo) — next/image throws on an empty `src`, so
+ * an empty avatar renders an initials circle instead. */
+function TestimonialAvatar({ avatar, name, sizePx }: { avatar: string; name: string; sizePx: number }) {
+  if (!avatar) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-brand/10 text-sm font-semibold text-brand">
+        {name.trim().charAt(0).toUpperCase() || "?"}
+      </div>
+    );
+  }
+  return <Image src={avatar} alt={name} fill className="object-cover" sizes={`${sizePx}px`} />;
 }

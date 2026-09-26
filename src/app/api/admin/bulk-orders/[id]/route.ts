@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { db } from "@/lib/db";
@@ -26,10 +27,22 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "Invalid status" }, { status: 400 });
   }
 
-  const lead = await db.bulkOrderLead.update({
-    where: { id },
-    data: { status: parsed.data.status },
-  });
+  // F-196: an unknown id (a stale page, or a lead deleted through some
+  // other path) must 404, not fall through to an unhandled Prisma
+  // P2025 and a bare 500 — the audit log below must also only be written
+  // once the update actually happened.
+  let lead;
+  try {
+    lead = await db.bulkOrderLead.update({
+      where: { id },
+      data: { status: parsed.data.status },
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025") {
+      return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+    }
+    throw err;
+  }
 
   await logAuditEvent({
     userId: session.id,

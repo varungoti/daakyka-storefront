@@ -11,7 +11,7 @@ import {
   resolveDiscount,
 } from "@/lib/discounts";
 import { readJsonBody } from "@/lib/security/parse-json-body";
-import { rateLimitOrResponse } from "@/lib/security/rate-limit";
+import { identityRateLimitOrResponse, rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { discountPreviewSchema } from "@/lib/validation/schemas";
 
 /**
@@ -30,9 +30,6 @@ import { discountPreviewSchema } from "@/lib/validation/schemas";
  * so the previewed amount can't be inflated by a stale or tampered cart.
  */
 export async function POST(request: Request) {
-  const limited = await rateLimitOrResponse(request, "checkout-discount", 20, 60_000);
-  if (limited) return limited;
-
   const body = await readJsonBody(request);
   if (!body.ok) return body.response;
 
@@ -42,6 +39,16 @@ export async function POST(request: Request) {
   }
 
   const { items, code, email } = parsed.data;
+
+  // F-322: independent shoppers on the same shared network preview
+  // different discount codes — keyed on IP+email when the shopper has
+  // typed one in already (a loose per-IP backstop still applies either
+  // way), falling back to the previous IP-only limit when there's no
+  // email yet to key on.
+  const limited = email
+    ? await identityRateLimitOrResponse(request, "checkout-discount", 20, 60_000, { identity: email })
+    : await rateLimitOrResponse(request, "checkout-discount", 20, 60_000);
+  if (limited) return limited;
 
   try {
     const lines = await repriceLines(items);

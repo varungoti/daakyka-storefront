@@ -50,6 +50,7 @@ export function BulkOrderForm() {
       organizationType: form.get("organizationType") || undefined,
       categoryInterest: categoryInterest.length > 0 ? categoryInterest : undefined,
       consentGiven: form.get("consentGiven") === "on",
+      marketingOptIn: form.get("marketingOptIn") === "on",
       [HONEYPOT_FIELD_NAME]: form.get(HONEYPOT_FIELD_NAME) || undefined,
     };
 
@@ -165,6 +166,16 @@ export function BulkOrderForm() {
           className="mt-1 h-4 w-4 rounded border-border text-brand"
         />
         I agree to be contacted by DAAKYKA regarding this bulk order enquiry.
+      </label>
+      {/* F-071: separate, unticked opt-in — the checkbox above only covers
+          this enquiry, not general marketing. */}
+      <label className="flex items-start gap-3 text-sm text-muted">
+        <input
+          type="checkbox"
+          name="marketingOptIn"
+          className="mt-1 h-4 w-4 rounded border-border text-brand"
+        />
+        Also send me offers, new arrivals and updates from DAAKYKA by email.
       </label>
       {error && <p className="text-sm text-red-600">{error}</p>}
       <Button type="submit" className="w-full" disabled={status === "loading"}>
