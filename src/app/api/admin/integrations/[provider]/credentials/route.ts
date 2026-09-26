@@ -5,11 +5,24 @@ import {
   getCredentialMeta,
   isCredentialKey,
   setCredential,
+  validateCredentialFormat,
   type CredentialProvider,
 } from "@/lib/integrations/credential-store";
+import { maybeAutoEnableBrevo } from "@/lib/integrations/enabled";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { z } from "zod";
+
+const BREVO_CREDENTIAL_KEYS = ["API_KEY", "FROM_EMAIL"] as const;
+type BrevoCredentialKey = (typeof BREVO_CREDENTIAL_KEYS)[number];
+
+function otherBrevoKey(key: BrevoCredentialKey): BrevoCredentialKey {
+  return key === "API_KEY" ? "FROM_EMAIL" : "API_KEY";
+}
+
+function isBrevoCredentialKey(key: string): key is BrevoCredentialKey {
+  return (BREVO_CREDENTIAL_KEYS as readonly string[]).includes(key);
+}
 
 const providers: CredentialProvider[] = ["RAZORPAY", "BREVO"];
 
@@ -57,11 +70,30 @@ export async function POST(request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "Unknown credential key" }, { status: 400 });
   }
 
+  const validationError = validateCredentialFormat(provider, key, value);
+  if (validationError) {
+    return NextResponse.json({ error: validationError }, { status: 400 });
+  }
+
+  // F-267: capture whether this key was already configured *before* this
+  // save, so the auto-enable check below only ever fires on a genuine
+  // first-time save of the credential pair, never on re-saving an
+  // already-configured value.
+  const wasAlreadyConfigured = (await getCredentialMeta(provider, key)).configured;
+
   await setCredential(provider, key, value, session!.id);
   const meta = await getCredentialMeta(provider, key);
 
+  let autoEnabled = false;
+  if (provider === "BREVO" && isBrevoCredentialKey(key)) {
+    const otherKey = otherBrevoKey(key);
+    const otherFieldConfigured =
+      (await getCredentialMeta(provider, otherKey)).configured || Boolean(process.env[`BREVO_${otherKey}`]);
+    autoEnabled = await maybeAutoEnableBrevo({ wasAlreadyConfigured, otherFieldConfigured });
+  }
+
   // Never echo the value back — the response only proves it was set.
-  return NextResponse.json({ provider, key, ...meta });
+  return NextResponse.json({ provider, key, ...meta, ...(autoEnabled ? { autoEnabled: true } : {}) });
 }
 
 export async function DELETE(request: Request, { params }: RouteParams) {

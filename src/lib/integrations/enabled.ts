@@ -38,3 +38,34 @@ export async function setIntegrationEnabled(
     create: { provider, enabled, config: "{}" },
   });
 }
+
+/**
+ * F-267: saving a Brevo credential through the admin UI never touched
+ * `IntegrationSetting.enabled` — `isIntegrationEnabled("BREVO")` also
+ * requires that flag, and prisma/seed.ts seeds every provider disabled, so
+ * an admin who pasted a working API key and a From Email still had every
+ * email silently stay in stub mode until they separately found and
+ * clicked the unrelated "Disabled — click to enable" pill elsewhere on the
+ * integrations page. Once BOTH credentials Brevo actually needs to send
+ * (an API key and a From Email) are present *for the first time*, treat
+ * that as the admin's intent to turn email on.
+ *
+ * Deliberately narrow — `wasAlreadyConfigured` must be false — so
+ * re-saving an already-configured field (e.g. fixing a typo in an
+ * existing key) never re-enables an integration an admin explicitly
+ * turned back off after it was already fully configured. Returns whether
+ * it actually flipped the flag, so the caller can reflect that back to
+ * the admin instead of them discovering it separately.
+ */
+export async function maybeAutoEnableBrevo(params: {
+  wasAlreadyConfigured: boolean;
+  otherFieldConfigured: boolean;
+}): Promise<boolean> {
+  if (params.wasAlreadyConfigured || !params.otherFieldConfigured) return false;
+
+  const setting = await db.integrationSetting.findUnique({ where: { provider: "BREVO" } });
+  if (setting?.enabled) return false;
+
+  await setIntegrationEnabled("BREVO", true);
+  return true;
+}

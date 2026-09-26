@@ -1,6 +1,6 @@
-import { describe, it, after } from "node:test";
+import { describe, it, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { isIntegrationEnabled, setIntegrationEnabled } from "@/lib/integrations/enabled";
+import { isIntegrationEnabled, maybeAutoEnableBrevo, setIntegrationEnabled } from "@/lib/integrations/enabled";
 import { db } from "@/lib/db";
 import { withEnv } from "../helpers/env";
 
@@ -33,5 +33,43 @@ describe("isIntegrationEnabled defaults to disabled", () => {
       await setIntegrationEnabled("BREVO", false);
       assert.equal(await isIntegrationEnabled("BREVO"), false);
     });
+  });
+});
+
+describe("maybeAutoEnableBrevo (F-267)", () => {
+  beforeEach(async () => {
+    await db.integrationSetting.deleteMany({ where: { provider: "BREVO" } });
+  });
+
+  after(async () => {
+    await db.integrationSetting.deleteMany({ where: { provider: "BREVO" } });
+  });
+
+  it("does nothing when the other credential still isn't configured", async () => {
+    const enabled = await maybeAutoEnableBrevo({ wasAlreadyConfigured: false, otherFieldConfigured: false });
+    assert.equal(enabled, false);
+    assert.equal((await db.integrationSetting.findUnique({ where: { provider: "BREVO" } }))?.enabled, undefined);
+  });
+
+  it("turns Brevo on the first time both credentials become present", async () => {
+    const enabled = await maybeAutoEnableBrevo({ wasAlreadyConfigured: false, otherFieldConfigured: true });
+    assert.equal(enabled, true);
+    assert.equal((await db.integrationSetting.findUnique({ where: { provider: "BREVO" } }))?.enabled, true);
+  });
+
+  it("does NOT re-enable when the credential being saved was already configured (e.g. fixing a typo)", async () => {
+    // Simulate an admin who had it configured, then deliberately disabled it.
+    await setIntegrationEnabled("BREVO", true);
+    await setIntegrationEnabled("BREVO", false);
+
+    const enabled = await maybeAutoEnableBrevo({ wasAlreadyConfigured: true, otherFieldConfigured: true });
+    assert.equal(enabled, false);
+    assert.equal((await db.integrationSetting.findUnique({ where: { provider: "BREVO" } }))?.enabled, false);
+  });
+
+  it("is a no-op when already enabled", async () => {
+    await setIntegrationEnabled("BREVO", true);
+    const enabled = await maybeAutoEnableBrevo({ wasAlreadyConfigured: false, otherFieldConfigured: true });
+    assert.equal(enabled, false);
   });
 });

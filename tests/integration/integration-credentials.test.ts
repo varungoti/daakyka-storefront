@@ -1,6 +1,7 @@
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { DELETE as deleteCredential, POST as postCredential } from "@/app/api/admin/integrations/[provider]/credentials/route";
+import { POST as postBrevoTest } from "@/app/api/admin/integrations/brevo/test/route";
 import { db } from "@/lib/db";
 import {
   clearCredential,
@@ -181,6 +182,15 @@ describe("POST/DELETE /api/admin/integrations/[provider]/credentials", () => {
       { params: Promise.resolve({ provider: "not-a-real-provider" }) },
     );
     assert.ok([401, 403].includes(response.status));
+  });
+});
+
+describe("POST /api/admin/integrations/brevo/test (F-267)", () => {
+  it("rejects with 401/403 when called with no session", async () => {
+    const response = await postBrevoTest(
+      new Request("http://localhost/api/admin/integrations/brevo/test", { method: "POST" }),
+    );
+    assert.ok([401, 403].includes(response.status), `expected 401 or 403, got ${response.status}`);
   });
 });
 
