@@ -134,7 +134,14 @@ export function MediaLibraryBrowser({
     if (requestId !== requestIdRef.current) return;
     setLoading(false);
     if (!response.ok) {
-      setError("Couldn't load the media library — try again.");
+      // F-291: a 403 here means the role genuinely can't browse the
+      // library (not a transient failure) — "try again" told an admin to
+      // retry something that would never succeed.
+      setError(
+        response.status === 403
+          ? "You don't have access to the media library — ask an admin with Media access."
+          : "Couldn't load the media library — try again.",
+      );
       return;
     }
     const body = await response.json();

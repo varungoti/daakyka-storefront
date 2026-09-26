@@ -17,11 +17,22 @@ export type Permission =
   | "users:manage"
   | "audit:view"
   | "settings:manage"
+  // F-061: split out of "settings:manage" — the sale banner, announcement
+  // bar and header bulk-order CTA, which MARKETING_ADMIN was documented to
+  // be limited to (see src/lib/settings/permissions.ts's settingPermissions
+  // map). "settings:manage" now covers everything else: shipping rates,
+  // public contact details/order-alert inbox, and page toggles.
+  | "settings:marketing"
   | "products:view"
   | "products:manage"
   | "products:publish"
   | "categories:manage"
   | "media:manage"
+  // F-291: read-only access to the media library, separate from
+  // "media:manage" (upload/delete) — lets a role that can edit content
+  // (homepage hero slides, etc.) pick an existing image without also being
+  // able to upload or remove assets.
+  | "media:view"
   | "ai:generate"
   | "reviews:moderate"
   | "orders:view"
@@ -47,11 +58,13 @@ const superAdminPermissions: Permission[] = [
   "users:manage",
   "audit:view",
   "settings:manage",
+  "settings:marketing",
   "products:view",
   "products:manage",
   "products:publish",
   "categories:manage",
   "media:manage",
+  "media:view",
   "ai:generate",
   "reviews:moderate",
   "orders:view",
@@ -73,6 +86,7 @@ const rolePermissions: Record<AdminRole, Permission[]> = {
     "products:manage",
     "categories:manage",
     "media:manage",
+    "media:view",
     "ai:generate",
   ],
   // Orders, customers (view), bulk-orders.
@@ -96,10 +110,27 @@ const rolePermissions: Record<AdminRole, Permission[]> = {
     "market:view",
     "testimonials:manage",
     "audit:view",
-    // Limited to sale/announcement settings, not the full site-controls surface.
-    "settings:manage",
+    // F-061: this used to be the blanket "settings:manage", with only a
+    // comment claiming the narrower scope — nothing enforced it, so this
+    // role could change shipping rates, the public contact phone/WhatsApp/
+    // email, and the admin order-alert inbox. "settings:marketing" is
+    // checked per-key by settingPermissions (src/lib/settings/permissions.ts)
+    // against the sale banner, announcement bar and header bulk-order CTA
+    // only.
+    "settings:marketing",
+    // F-291: can browse (not upload/delete) the media library to pick a
+    // homepage hero-slide image, which this role already manages via
+    // "homepage:manage".
+    "media:view",
   ],
-  CONTENT_EDITOR: ["dashboard:view", "blog:manage", "testimonials:manage", "homepage:manage", "media:manage"],
+  CONTENT_EDITOR: [
+    "dashboard:view",
+    "blog:manage",
+    "testimonials:manage",
+    "homepage:manage",
+    "media:manage",
+    "media:view",
+  ],
   BULK_ORDER_MANAGER: ["dashboard:view", "bulk-orders:manage"],
   SEO_MANAGER: [
     "dashboard:view",
@@ -111,6 +142,10 @@ const rolePermissions: Record<AdminRole, Permission[]> = {
     "market:view",
     "audit:view",
     "products:view",
+    // F-291: can browse (not upload/delete) the media library to pick a
+    // homepage hero-slide image, which this role already manages via
+    // "homepage:manage".
+    "media:view",
   ],
   // Orders view, customers view, reviews moderate, enquiries.
   SUPPORT_AGENT: [

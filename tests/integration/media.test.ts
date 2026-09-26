@@ -26,7 +26,7 @@ import {
   SlotNotAiGeneratableError,
   type OpenAIImageClient,
 } from "@/lib/ai/image-generation";
-import { POST as postMediaUpload } from "@/app/api/admin/media/route";
+import { GET as getMediaList, POST as postMediaUpload } from "@/app/api/admin/media/route";
 import { POST as postMediaGenerate } from "@/app/api/admin/media/generate/route";
 import { withEnv } from "../helpers/env";
 import { findAnyAdminId } from "../helpers/admin-user";
@@ -478,6 +478,21 @@ describe("real (uninjected) configuration checks — this environment has no rea
 // above, against the exact error types each route's catch block checks
 // for.
 describe("admin media routes without a session", () => {
+  // F-291: GET now checks "media:view" instead of "media:manage" (see
+  // src/app/api/admin/media/route.ts) so MARKETING_ADMIN/SEO_MANAGER can
+  // browse the library — role-specific allow/deny for that permission
+  // change is covered directly in src/lib/auth/rbac.test.ts (this harness
+  // can't fabricate an authenticated session, so it can only prove the
+  // route still requires *some* session).
+  it("GET /api/admin/media rejects with 401/403 with no session", async () => {
+    const request = new Request("http://localhost/api/admin/media?limit=24&offset=0");
+    const response = await getMediaList(request);
+    assert.ok(
+      response.status === 401 || response.status === 403,
+      `expected 401 or 403, got ${response.status}`,
+    );
+  });
+
   it("POST /api/admin/media rejects with 401/403 before any content-type or config check", async () => {
     const request = new Request("http://localhost/api/admin/media", {
       method: "POST",

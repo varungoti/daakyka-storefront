@@ -23,16 +23,21 @@ see any file under `src/app/admin/(panel)/**/page.tsx`. `middleware.ts` separate
 - **STORE_OWNER** — every permission *except* `users:manage`. Intended for the business owner who
   needs full operational control of the storefront but shouldn't be creating admin accounts.
 - **MARKETING_ADMIN** — homepage, blog, engagement/journeys, Hermes, SEO, offers, market
-  intelligence, testimonials, and audit log. Also has `settings:manage`, but that's meant for the
-  sale/announcement toggles on `/admin/site-controls`, not full operational control of the site
-  (see [SITE_CONTROLS.md](./SITE_CONTROLS.md)).
+  intelligence, testimonials, and audit log. Also has `settings:marketing` (F-061: split out of
+  `settings:manage`, which this role used to hold wholesale with only a comment claiming a
+  narrower scope) — the sale/announcement toggles on `/admin/site-controls` only, checked per-key
+  by `settingPermissions` in `src/lib/settings/permissions.ts`; shipping rates and the public
+  contact details/order-alert inbox need `settings:manage` (see
+  [SITE_CONTROLS.md](./SITE_CONTROLS.md)). Also has `media:view` (F-291) to browse the media
+  library for homepage hero-slide images, without the upload/delete rights `media:manage` grants.
 - **CATALOG_MANAGER** — can view, create, and edit products and categories, manage media, and
   generate AI images, but deliberately **cannot** publish (`products:publish` is withheld) — a
   catalog manager stages changes for someone with publish rights to ship.
 - **ORDER_MANAGER** — order queue (view + manage status/fulfillment), customer list (view only),
   and bulk-order leads.
 - **SEO_MANAGER** — SEO/metadata tooling, homepage and blog copy, market intelligence, Hermes, and
-  read-only product visibility (to check what's live) — no catalog write access.
+  read-only product visibility (to check what's live) — no catalog write access. Also has
+  `media:view` (F-291) to browse the media library for homepage hero-slide images.
 - **CONTENT_EDITOR** — blog, testimonials, homepage copy, and media uploads. No product, order, or
   settings access.
 - **BULK_ORDER_MANAGER** — narrowly scoped to hospital/institutional bulk-order leads plus the
@@ -65,12 +70,14 @@ Columns: **SA** = SUPER_ADMIN, **SO** = STORE_OWNER, **MA** = MARKETING_ADMIN,
 | `testimonials:manage` | ✓ | ✓ | ✓ | | | | ✓ | | | |
 | `users:manage` | ✓ | | | | | | | | | |
 | `audit:view` | ✓ | ✓ | ✓ | | | ✓ | | | | ✓ |
-| `settings:manage` | ✓ | ✓ | ✓ | | | | | | | |
+| `settings:manage` | ✓ | ✓ | | | | | | | | |
+| `settings:marketing` | ✓ | ✓ | ✓ | | | | | | | |
 | `products:view` | ✓ | ✓ | | ✓ | | ✓ | | | | |
 | `products:manage` | ✓ | ✓ | | ✓ | | | | | | |
 | `products:publish` | ✓ | ✓ | | | | | | | | |
 | `categories:manage` | ✓ | ✓ | | ✓ | | | | | | |
 | `media:manage` | ✓ | ✓ | | ✓ | | | ✓ | | | |
+| `media:view` | ✓ | ✓ | ✓ | ✓ | | ✓ | ✓ | | | |
 | `ai:generate` | ✓ | ✓ | | ✓ | | | | | | |
 | `reviews:moderate` | ✓ | ✓ | | | | | | | ✓ | |
 | `orders:view` | ✓ | ✓ | | | ✓ | | | | ✓ | |

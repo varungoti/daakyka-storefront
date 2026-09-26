@@ -92,6 +92,7 @@ export default async function AdminIntegrationsPage() {
                     provider={item.provider}
                     enabled={enabled}
                     configured={item.status === "configured"}
+                    hasCredentialForm={item.provider === "BREVO"}
                   />
                 ) : null}
                 <span className="rounded-full bg-lavender/40 px-3 py-1 font-mono text-muted">
@@ -108,7 +109,10 @@ export default async function AdminIntegrationsPage() {
           <h2 className="font-display text-lg font-bold text-ink">Credentials</h2>
           <p className="text-sm text-muted">
             Paste real Razorpay and Brevo credentials here — no redeploy needed. Clearing a
-            credential falls back to its environment variable, if one is set.
+            credential falls back to its environment variable, if one is set. Use{" "}
+            <span className="font-semibold text-ink">Test connection</span> to confirm a saved key
+            actually works before relying on it. Saving both Brevo fields for the first time turns
+            the Brevo toggle above on automatically.
           </p>
         </div>
         <div className="grid gap-4 md:grid-cols-2">

@@ -7,10 +7,15 @@ export function IntegrationToggle({
   provider,
   enabled,
   configured,
+  hasCredentialForm = false,
 }: {
   provider: string;
   enabled: boolean;
   configured: boolean;
+  /** F-215: Razorpay/Brevo can be configured right here in the admin UI —
+   * "Configure env vars first" was actively wrong for Brevo, which has a
+   * credential form directly below this toggle. */
+  hasCredentialForm?: boolean;
 }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
@@ -39,7 +44,13 @@ export function IntegrationToggle({
       className={`rounded-full px-3 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
         isEnabled ? "bg-trust/15 text-trust" : "bg-lavender/60 text-muted"
       }`}
-      title={configured ? "Toggle provider in admin" : "Configure env vars first"}
+      title={
+        configured
+          ? "Toggle provider in admin"
+          : hasCredentialForm
+            ? "Add credentials below first"
+            : "Configure env vars first"
+      }
     >
       {loading ? "Saving…" : isEnabled ? "Enabled — click to disable" : "Disabled — click to enable"}
     </button>

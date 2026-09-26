@@ -2,7 +2,13 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
-import { CustomerNotFoundError, getCustomerForAdmin, listCustomersForAdmin, setCustomerActive } from "@/lib/customers/admin-customers";
+import {
+  CustomerNotFoundError,
+  getCustomerForAdmin,
+  listCustomersForAdmin,
+  listGuestBuyersForAdmin,
+  setCustomerActive,
+} from "@/lib/customers/admin-customers";
 import { GET as getCustomers } from "@/app/api/admin/customers/route";
 import { GET as getCustomer, PATCH as patchCustomer } from "@/app/api/admin/customers/[id]/route";
 import { findAnyAdminId } from "../helpers/admin-user";
@@ -79,17 +85,22 @@ describe("customers admin service (Phase D4)", () => {
     createdOrderIds.push(paid.id, pending.id);
   });
 
-  it("computes order count and total spent from PAID+ orders only, not N+1", async () => {
+  // F-198 fix: orderCount now counts every order (matching the order list
+  // on the detail page), not just the ones that count as revenue — a
+  // customer whose only order is unpaid or cancelled used to show 0
+  // orders, contradicting their own order history one click away.
+  // totalSpent still only counts real revenue, not N+1.
+  it("computes order count from every order and total spent from PAID+ Razorpay orders only", async () => {
     const result = await listCustomersForAdmin({ search: "customer-admin-test" });
     const item = result.items.find((c) => c.id === customerId);
     assert.ok(item, "expected the test customer in the list");
-    assert.equal(item!.orderCount, 1);
+    assert.equal(item!.orderCount, 2);
     assert.equal(item!.totalSpent, 1000);
   });
 
   it("getCustomerForAdmin returns the same aggregate plus order/review history", async () => {
     const detail = await getCustomerForAdmin(customerId);
-    assert.equal(detail.orderCount, 1);
+    assert.equal(detail.orderCount, 2);
     assert.equal(detail.totalSpent, 1000);
     assert.equal(detail.orders.length, 2);
     assert.deepEqual(detail.reviews, []);
@@ -190,5 +201,113 @@ describe("customers admin routes without a session", () => {
     });
     const response = await patchCustomer(request, { params: idParams });
     assert.ok(response.status === 401 || response.status === 403);
+  });
+});
+
+// F-198: SPENT_STATUSES used to include PROCESSING for *every* payment
+// method, but ORDER_REQUEST orders are created straight into PROCESSING
+// with no payment step at all (src/lib/orders/create-order.ts) — so an
+// unpaid, just-placed order request counted as revenue the moment it was
+// placed. isRevenueOrder/REVENUE_WHERE (src/lib/customers/admin-customers.ts)
+// now draw the line per payment method: Razorpay counts from PAID onward
+// (real capture), ORDER_REQUEST only once it has actually shipped.
+describe("revenue rules per payment method (F-198)", () => {
+  const marker = `revenue-${randomUUID().slice(0, 8)}`;
+  let customerId: string;
+
+  before(async () => {
+    const customer = await db.customer.create({
+      data: {
+        email: `${marker}@example.com`,
+        name: "Revenue Rules Test Customer",
+        passwordHash: "not-a-real-hash",
+        active: true,
+      },
+    });
+    customerId = customer.id;
+    createdCustomerIds.push(customerId);
+
+    const baseOrder = {
+      customerId,
+      email: customer.email,
+      shippingAddress: { name: "Test", line1: "1 Test St", city: "Hyderabad", state: "TG", pincode: "500001", country: "IN" },
+      subtotal: 100,
+      shipping: 0,
+      discount: 0,
+      currency: "INR",
+    };
+
+    const [processingRequest, shippedRequest, cancelled] = await Promise.all([
+      db.order.create({
+        data: { ...baseOrder, number: `DK-TEST-${marker}-PROC`, total: 100, status: "PROCESSING", paymentMethod: "ORDER_REQUEST" },
+      }),
+      db.order.create({
+        data: { ...baseOrder, number: `DK-TEST-${marker}-SHIP`, total: 200, status: "SHIPPED", paymentMethod: "ORDER_REQUEST" },
+      }),
+      db.order.create({
+        data: { ...baseOrder, number: `DK-TEST-${marker}-CANC`, total: 300, status: "CANCELLED", paymentMethod: "RAZORPAY" },
+      }),
+    ]);
+    createdOrderIds.push(processingRequest.id, shippedRequest.id, cancelled.id);
+  });
+
+  it("an unpaid, still-PROCESSING order request counts toward orders but not revenue", async () => {
+    const result = await listCustomersForAdmin({ search: marker });
+    const item = result.items.find((c) => c.id === customerId);
+    assert.ok(item, "expected the test customer in the list");
+    // 3 orders placed; only the SHIPPED order request counts as revenue.
+    assert.equal(item!.orderCount, 3);
+    assert.equal(item!.totalSpent, 200);
+  });
+
+  it("getCustomerForAdmin applies the same rule", async () => {
+    const detail = await getCustomerForAdmin(customerId);
+    assert.equal(detail.orderCount, 3);
+    assert.equal(detail.totalSpent, 200);
+  });
+});
+
+// F-198: guest checkouts (no Customer account) never appeared anywhere in
+// /admin/customers, even though most orders at this store are guest
+// orders — listGuestBuyersForAdmin aggregates them by email instead.
+describe("listGuestBuyersForAdmin (F-198)", () => {
+  const marker = `guest-${randomUUID().slice(0, 8)}`;
+  const guestEmail = `${marker}@example.com`;
+
+  before(async () => {
+    const baseOrder = {
+      email: guestEmail,
+      customerId: null,
+      shippingAddress: { name: "Guest", line1: "1 Test St", city: "Hyderabad", state: "TG", pincode: "500001", country: "IN" },
+      subtotal: 100,
+      shipping: 0,
+      discount: 0,
+      currency: "INR",
+    };
+    const [delivered, pending] = await Promise.all([
+      db.order.create({
+        data: { ...baseOrder, number: `DK-TEST-${marker}-DEL`, total: 400, status: "DELIVERED", paymentMethod: "RAZORPAY" },
+      }),
+      db.order.create({
+        data: { ...baseOrder, number: `DK-TEST-${marker}-PEND`, total: 500, status: "PENDING_PAYMENT", paymentMethod: "RAZORPAY" },
+      }),
+    ]);
+    createdOrderIds.push(delivered.id, pending.id);
+  });
+
+  it("aggregates guest orders by email, with orderCount over all orders and totalSpent over revenue only", async () => {
+    const result = await listGuestBuyersForAdmin({ search: marker });
+    assert.equal(result.items.length, 1);
+    const guest = result.items[0];
+    assert.equal(guest.email, guestEmail);
+    assert.equal(guest.orderCount, 2);
+    assert.equal(guest.totalSpent, 400);
+  });
+
+  it("never includes an order that has a customerId", async () => {
+    // The very first describe block's customer has real orders; make sure
+    // a search matching *their* email doesn't pull them in here.
+    const result = await listGuestBuyersForAdmin({ search: "customer-admin-test" });
+    assert.equal(result.items.length, 0);
   });
 });

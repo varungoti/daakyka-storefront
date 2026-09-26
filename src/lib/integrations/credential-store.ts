@@ -37,6 +37,35 @@ export function isCredentialKey(provider: CredentialProvider, key: string): bool
   return CREDENTIAL_FIELDS[provider].some((field) => field.key === key);
 }
 
+// F-215 fix: previously any 1-500 character string was accepted for any
+// field, so a mistyped Razorpay key or a Brevo key pasted into the wrong
+// field went straight to "CONFIGURED" and only broke checkout/email later.
+// These are cheap, provider-documented shape checks — not a substitute for
+// the "Test connection" endpoint (src/app/api/admin/integrations/[provider]/
+// test/route.ts), which is what actually proves a key works.
+const RAZORPAY_KEY_ID_PATTERN = /^rzp_(test|live)_[A-Za-z0-9]{8,}$/;
+const BREVO_API_KEY_PATTERN = /^xkeysib-/;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Returns a user-facing error message if `value` doesn't look like a valid
+ * value for this (provider, key), or `null` if it's fine to save. */
+export function validateCredentialFormat(
+  provider: CredentialProvider,
+  key: string,
+  value: string,
+): string | null {
+  if (provider === "RAZORPAY" && key === "KEY_ID" && !RAZORPAY_KEY_ID_PATTERN.test(value)) {
+    return "Razorpay Key ID should look like rzp_test_… or rzp_live_…";
+  }
+  if (provider === "BREVO" && key === "API_KEY" && !BREVO_API_KEY_PATTERN.test(value)) {
+    return "Brevo API keys start with xkeysib-";
+  }
+  if (provider === "BREVO" && key === "FROM_EMAIL" && !EMAIL_PATTERN.test(value)) {
+    return "Enter a valid email address";
+  }
+  return null;
+}
+
 export const CREDENTIALS_CACHE_TAG = "integration-credentials";
 
 /**
@@ -172,9 +201,30 @@ export async function getCredentialMeta(
   };
 }
 
+// F-215 fix: this used to be `revalidateTag(CREDENTIALS_CACHE_TAG, "max")`.
+// Per the Next 16 docs (node_modules/next/dist/docs/01-app/03-api-reference/
+// 04-functions/revalidateTag.md), "max" is stale-while-revalidate — the very
+// next read after a save/clear is still served the *old* cached value while
+// a fresh one loads in the background. That meant a cleared or rotated
+// Razorpay/Brevo credential kept being used by sendEmail() and the Razorpay
+// key resolution (both go through getCredential() below) for one more
+// request after an admin rotated it, and the /admin/integrations status
+// badge could show "configured" for one load after a Clear. `updateTag`
+// would avoid this outright, but it only works inside Server Actions —
+// these writes happen in a Route Handler (see the credentials API route) —
+// so `{ expire: 0 }` is the documented alternative: it never serves stale
+// data, making the next read a blocking revalidate instead.
+//
+// Exported (rather than inlined) so a test can pin this exact value:
+// `unstable_cache`/`revalidateTag` only do anything inside a real Next.js
+// request (see getCredential's catch block below), so a plain `tsx --test`
+// run can never exercise the actual stale-vs-fresh behavior end to end —
+// this constant is the one part of the fix a unit test *can* verify.
+export const CREDENTIALS_CACHE_REVALIDATE_PROFILE = { expire: 0 } as const;
+
 function invalidateCredentialsCache(): void {
   try {
-    revalidateTag(CREDENTIALS_CACHE_TAG, "max");
+    revalidateTag(CREDENTIALS_CACHE_TAG, CREDENTIALS_CACHE_REVALIDATE_PROFILE);
   } catch {
     // No static generation store in this context (unit tests, scripts) —
     // nothing to revalidate.

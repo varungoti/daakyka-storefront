@@ -3,20 +3,19 @@ import { logAuditEvent } from "@/lib/auth/audit";
 import { db } from "@/lib/db";
 import type { SeoPageRecord } from "@/generated/prisma/client";
 import type { z } from "zod";
+import { isWiredSeoPath } from "@/lib/seo/wired-paths";
 import type { seoPageRecordSchema, seoPageRecordUpdateSchema } from "@/lib/validation/schemas";
 
-/** Paths whose generateMetadata() actually reads getSeoOverrideForPath()
- * below (see src/app/page.tsx and src/app/shop/page.tsx). Both are
- * statically prerendered (confirmed via `npm run build`'s route list: "○
- * /" and "ƒ /shop" — home in particular is fully static), so an admin
- * edit needs an explicit revalidatePath() or it would never show up
- * without a full rebuild/redeploy — the whole point of making these
- * editable. Any other path is just a recorded override with no live
- * storefront read, so there's nothing to revalidate for it. */
-const WIRED_PATHS = new Set(["/", "/shop"]);
+// isWiredSeoPath (src/lib/seo/wired-paths.ts): both wired paths are
+// statically prerendered (confirmed via `npm run build`'s route list: "○
+// /" and "ƒ /shop" — home in particular is fully static), so an admin edit
+// needs an explicit revalidatePath() or it would never show up without a
+// full rebuild/redeploy — the whole point of making these editable. Any
+// other path is just a recorded override with no live storefront read, so
+// there's nothing to revalidate for it.
 
 function safeRevalidatePath(path: string): void {
-  if (!WIRED_PATHS.has(path)) return;
+  if (!isWiredSeoPath(path)) return;
   try {
     revalidatePath(path);
   } catch {
@@ -61,6 +60,19 @@ export class SeoPagePathConflictError extends Error {
   }
 }
 
+/** F-052 fix: creating an override for a path the storefront never reads
+ * (see isWiredSeoPath) used to silently succeed — the admin saw "created"
+ * with no indication it would never apply. Only blocks *new* records;
+ * existing off-wired rows (created before this fix, or intentionally kept
+ * "for reference") can still be edited — see updateSeoRecord below, which
+ * doesn't call this. */
+export class SeoPagePathNotWiredError extends Error {
+  constructor(path: string) {
+    super(`"${path}" isn't read live by the storefront yet — only / and /shop are`);
+    this.name = "SeoPagePathNotWiredError";
+  }
+}
+
 export async function listSeoRecordsForAdmin(): Promise<SeoPageRecord[]> {
   return db.seoPageRecord.findMany({ orderBy: { path: "asc" } });
 }
@@ -82,6 +94,9 @@ export async function createSeoRecord(
   input: SeoPageRecordInput,
   userId: string,
 ): Promise<SeoPageRecord> {
+  if (!isWiredSeoPath(input.path)) {
+    throw new SeoPagePathNotWiredError(input.path);
+  }
   await assertPathAvailable(input.path);
 
   const record = await db.seoPageRecord.create({

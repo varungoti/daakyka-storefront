@@ -7,15 +7,51 @@ import { logAuditEvent } from "@/lib/auth/audit";
  * Phase D4: admin customer listing, detail (with order/review history) and
  * active/inactive toggle, built on top of D1's `Customer` model.
  *
- * "Total spent" is computed from orders with status PAID or later in the
- * lifecycle (PAID, PROCESSING, SHIPPED, DELIVERED — i.e. money actually
- * received; PENDING_PAYMENT hasn't been paid, CANCELLED/REFUNDED gave the
- * money back). It's aggregated with a single `groupBy` over all matching
- * orders rather than one query per customer, so listing N customers never
- * costs N+1 queries.
+ * F-198 fix: "Total spent" used to be computed from orders with status
+ * PAID or later in the lifecycle (PAID, PROCESSING, SHIPPED, DELIVERED),
+ * with a comment calling that "money actually received". That's true for
+ * Razorpay orders — Razorpay only reaches those statuses once it has
+ * actually captured payment — but every ORDER_REQUEST order (the fallback
+ * used whenever Razorpay isn't configured — i.e. every local/dev order, and
+ * any production order placed before Razorpay is set up) is created
+ * straight into PROCESSING with no payment step at all (see
+ * src/lib/orders/create-order.ts). So an unpaid, just-placed order request
+ * counted as revenue the moment it was placed. There's no `paidAt`/"paid"
+ * flag on Order to check instead, so `isRevenueOrder` below draws the line
+ * per payment method: a Razorpay order counts once captured; an
+ * ORDER_REQUEST order counts once it has actually shipped (by then staff
+ * have manually confirmed and collected payment) — a business-policy
+ * choice the owner can revisit once a real `paidAt` column exists.
+ *
+ * "Orders" is now a *separate* count of every order regardless of payment
+ * status (so it matches the order list shown on the customer detail page),
+ * aggregated with a single `groupBy` per metric over all matching orders
+ * rather than one query per customer, so listing N customers never costs
+ * N+1 queries.
  */
 
-const SPENT_STATUSES = ["PAID", "PROCESSING", "SHIPPED", "DELIVERED"] as const;
+const RAZORPAY_REVENUE_STATUSES = ["PAID", "PROCESSING", "SHIPPED", "DELIVERED"] as const;
+const ORDER_REQUEST_REVENUE_STATUSES = ["SHIPPED", "DELIVERED"] as const;
+
+/** Shared by the list (SQL `where`, see REVENUE_WHERE) and the detail view
+ * (a JS filter over an already-loaded order list) so both agree on exactly
+ * which orders count as real revenue. */
+function isRevenueOrder(paymentMethod: string, status: string): boolean {
+  if (paymentMethod === "RAZORPAY") {
+    return (RAZORPAY_REVENUE_STATUSES as readonly string[]).includes(status);
+  }
+  if (paymentMethod === "ORDER_REQUEST") {
+    return (ORDER_REQUEST_REVENUE_STATUSES as readonly string[]).includes(status);
+  }
+  return false;
+}
+
+const REVENUE_WHERE: Prisma.OrderWhereInput = {
+  OR: [
+    { paymentMethod: "RAZORPAY", status: { in: [...RAZORPAY_REVENUE_STATUSES] } },
+    { paymentMethod: "ORDER_REQUEST", status: { in: [...ORDER_REQUEST_REVENUE_STATUSES] } },
+  ],
+};
 
 export class CustomerNotFoundError extends Error {
   constructor(id: string) {
@@ -90,16 +126,30 @@ export async function listCustomersForAdmin(
     take: pageSize,
   });
 
-  const aggregates = await db.order.groupBy({
-    by: ["customerId"],
-    where: { customerId: { in: customers.map((c) => c.id) }, status: { in: [...SPENT_STATUSES] } },
-    _count: { _all: true },
-    _sum: { total: true },
-  });
-  const aggByCustomer = new Map(aggregates.map((a) => [a.customerId as string, a]));
+  const customerIds = customers.map((c) => c.id);
+  // Two separate aggregates, run in parallel (still no N+1: both are one
+  // query each, scoped to just this page's customer ids) — F-198 fix:
+  // "orders placed" and "revenue" are no longer the same query. A customer
+  // whose only order is a CANCELLED or still-PROCESSING order request now
+  // shows an accurate order count with ₹0 spent, instead of 0 orders shown
+  // while their detail page lists one.
+  const [allOrdersAgg, revenueAgg] = await Promise.all([
+    db.order.groupBy({
+      by: ["customerId"],
+      where: { customerId: { in: customerIds } },
+      _count: { _all: true },
+    }),
+    db.order.groupBy({
+      by: ["customerId"],
+      where: { customerId: { in: customerIds }, ...REVENUE_WHERE },
+      _sum: { total: true },
+    }),
+  ]);
+  const orderCountByCustomer = new Map(allOrdersAgg.map((a) => [a.customerId as string, a._count._all]));
+  const revenueByCustomer = new Map(revenueAgg.map((a) => [a.customerId as string, a._sum.total]));
 
   const items: AdminCustomerListItem[] = customers.map((c) => {
-    const agg = aggByCustomer.get(c.id);
+    const revenue = revenueByCustomer.get(c.id);
     return {
       id: c.id,
       email: c.email,
@@ -107,9 +157,97 @@ export async function listCustomersForAdmin(
       phone: c.phone,
       emailVerified: c.emailVerifiedAt !== null,
       active: c.active,
-      orderCount: agg?._count._all ?? 0,
-      totalSpent: agg?._sum.total ? Number(agg._sum.total) : 0,
+      orderCount: orderCountByCustomer.get(c.id) ?? 0,
+      totalSpent: revenue ? Number(revenue) : 0,
       createdAt: c.createdAt,
+    };
+  });
+
+  return { items, total, page, pageSize, totalPages };
+}
+
+// ---------------------------------------------------------------------------
+// Guest buyers
+// ---------------------------------------------------------------------------
+
+export interface AdminGuestBuyer {
+  email: string;
+  orderCount: number;
+  totalSpent: number;
+  lastOrderAt: Date;
+}
+
+export interface ListGuestBuyersForAdminOptions {
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface ListGuestBuyersForAdminResult {
+  items: AdminGuestBuyer[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+/**
+ * F-198 fix: most orders in this store are guest checkouts (no `Customer`
+ * account — see docs/ROLES.md-adjacent claim guest-orders flow at
+ * src/lib/orders/claim-guest-orders.ts), and they never showed up anywhere
+ * in /admin/customers — a buyer who ordered five times as a guest looked,
+ * to an admin searching by email, like they didn't exist.
+ *
+ * A guest isn't a `Customer` row, so this aggregates `Order` directly by
+ * email instead of extending listCustomersForAdmin — there's no id to page
+ * detail views by, and "customer" here means "a group of guest orders
+ * sharing an email", not an account. Kept intentionally simple (no DB-side
+ * total count query beyond one `findMany({distinct})`) since this is an
+ * admin-only report at this store's scale, not a customer-facing list.
+ */
+export async function listGuestBuyersForAdmin(
+  options: ListGuestBuyersForAdminOptions = {},
+): Promise<ListGuestBuyersForAdminResult> {
+  const where: Prisma.OrderWhereInput = { customerId: null };
+  if (options.search && options.search.trim()) {
+    where.email = { contains: options.search.trim(), mode: "insensitive" };
+  }
+
+  const distinctEmails = await db.order.findMany({ where, distinct: ["email"], select: { email: true } });
+  const total = distinctEmails.length;
+  const pageSize = Math.min(Math.max(options.pageSize ?? 24, 1), 100);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(options.page ?? 1, 1), totalPages);
+
+  const grouped = await db.order.groupBy({
+    by: ["email"],
+    where,
+    _count: { _all: true },
+    _max: { createdAt: true },
+    orderBy: { _max: { createdAt: "desc" } },
+    skip: (page - 1) * pageSize,
+    take: pageSize,
+  });
+
+  const pageEmails = grouped.map((g) => g.email);
+  const revenueAgg =
+    pageEmails.length > 0
+      ? await db.order.groupBy({
+          by: ["email"],
+          where: { customerId: null, email: { in: pageEmails }, ...REVENUE_WHERE },
+          _sum: { total: true },
+        })
+      : [];
+  const revenueByEmail = new Map(revenueAgg.map((r) => [r.email, r._sum.total]));
+
+  const items: AdminGuestBuyer[] = grouped.map((g) => {
+    const revenue = revenueByEmail.get(g.email);
+    return {
+      email: g.email,
+      orderCount: g._count._all,
+      totalSpent: revenue ? Number(revenue) : 0,
+      // Always set: every row in `grouped` comes from at least one order.
+      lastOrderAt: g._max.createdAt!,
     };
   });
 
@@ -171,7 +309,10 @@ export async function getCustomerForAdmin(id: string): Promise<AdminCustomerDeta
     where: { id },
     include: {
       addresses: { orderBy: { isDefault: "desc" } },
-      orders: { orderBy: { createdAt: "desc" }, select: { id: true, number: true, status: true, total: true, currency: true, createdAt: true } },
+      orders: {
+        orderBy: { createdAt: "desc" },
+        select: { id: true, number: true, status: true, paymentMethod: true, total: true, currency: true, createdAt: true },
+      },
       // Read-only: product name/rating/status for the customer's review
       // history. This queries the shared `Review` model directly rather
       // than importing anything from src/lib/reviews/* or the /admin/reviews
@@ -184,7 +325,7 @@ export async function getCustomerForAdmin(id: string): Promise<AdminCustomerDeta
   });
   if (!customer) throw new CustomerNotFoundError(id);
 
-  const spentOrders = customer.orders.filter((o) => (SPENT_STATUSES as readonly string[]).includes(o.status));
+  const revenueOrders = customer.orders.filter((o) => isRevenueOrder(o.paymentMethod, o.status));
 
   return {
     id: customer.id,
@@ -214,8 +355,10 @@ export async function getCustomerForAdmin(id: string): Promise<AdminCustomerDeta
       currency: o.currency,
       createdAt: o.createdAt,
     })),
-    orderCount: spentOrders.length,
-    totalSpent: spentOrders.reduce((sum, o) => sum + Number(o.total), 0),
+    // F-198 fix: orderCount is now every order (matching the `orders` list
+    // right below), not just the ones that count as revenue.
+    orderCount: customer.orders.length,
+    totalSpent: revenueOrders.reduce((sum, o) => sum + Number(o.total), 0),
     reviews: customer.reviews.map((r) => ({
       id: r.id,
       productName: r.product.name,

@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { db } from "@/lib/db";
 import {
   CREDENTIAL_FIELDS,
+  CREDENTIALS_CACHE_REVALIDATE_PROFILE,
   decrypt,
   encrypt,
   getCredential,
   isCredentialKey,
+  validateCredentialFormat,
 } from "@/lib/integrations/credential-store";
 import { withEnv } from "../../../tests/helpers/env";
 
@@ -90,6 +92,50 @@ describe("CREDENTIAL_FIELDS / isCredentialKey", () => {
     assert.equal(isCredentialKey("RAZORPAY", "API_KEY"), false);
     assert.equal(isCredentialKey("BREVO", "FROM_EMAIL"), true);
     assert.equal(isCredentialKey("BREVO", "WEBHOOK_SECRET"), false);
+  });
+});
+
+// F-215: unstable_cache/revalidateTag only do anything inside a real
+// Next.js request, so a plain `tsx --test` run can never exercise the
+// actual stale-vs-fresh cache behavior end to end (see getCredential's
+// resilience test below, and integration-credentials.test.ts's round trip —
+// both always take the uncached fallback path in this harness). This pins
+// the one part of the fix that *is* directly testable here: the cache is
+// invalidated with a profile that never serves stale data. "max" (the
+// pre-fix value) means the opposite — see the doc comment on
+// invalidateCredentialsCache in credential-store.ts.
+describe("credentials cache invalidation profile (F-215)", () => {
+  it("never serves stale data after a save/clear", () => {
+    assert.deepEqual(CREDENTIALS_CACHE_REVALIDATE_PROFILE, { expire: 0 });
+  });
+});
+
+describe("validateCredentialFormat (F-215)", () => {
+  it("accepts a well-formed Razorpay test/live Key ID and rejects garbage", () => {
+    assert.equal(validateCredentialFormat("RAZORPAY", "KEY_ID", "rzp_test_1DP5mmOlF5G5ag"), null);
+    assert.equal(validateCredentialFormat("RAZORPAY", "KEY_ID", "rzp_live_1DP5mmOlF5G5ag"), null);
+    assert.match(
+      validateCredentialFormat("RAZORPAY", "KEY_ID", "not-a-razorpay-key") ?? "",
+      /rzp_test_|rzp_live_/,
+    );
+  });
+
+  it("doesn't format-check the Razorpay Key Secret or Webhook Secret (opaque provider strings)", () => {
+    assert.equal(validateCredentialFormat("RAZORPAY", "KEY_SECRET", "anything-goes-here"), null);
+    assert.equal(validateCredentialFormat("RAZORPAY", "WEBHOOK_SECRET", "anything-goes-here"), null);
+  });
+
+  it("accepts a well-formed Brevo API key and rejects one missing the xkeysib- prefix", () => {
+    assert.equal(validateCredentialFormat("BREVO", "API_KEY", "xkeysib-abc123"), null);
+    assert.match(validateCredentialFormat("BREVO", "API_KEY", "sk-not-a-brevo-key") ?? "", /xkeysib-/);
+  });
+
+  it("accepts a valid Brevo FROM_EMAIL and rejects a non-email value", () => {
+    assert.equal(validateCredentialFormat("BREVO", "FROM_EMAIL", "orders@daakyka.com"), null);
+    assert.match(
+      validateCredentialFormat("BREVO", "FROM_EMAIL", "not-an-email") ?? "",
+      /valid email/,
+    );
   });
 });
 

@@ -45,11 +45,13 @@ describe("RBAC", () => {
         "users:manage",
         "audit:view",
         "settings:manage",
+        "settings:marketing",
         "products:view",
         "products:manage",
         "products:publish",
         "categories:manage",
         "media:manage",
+        "media:view",
         "ai:generate",
         "reviews:moderate",
         "orders:view",
@@ -102,22 +104,39 @@ describe("RBAC", () => {
       },
       {
         role: "MARKETING_ADMIN",
-        allowed: ["homepage:manage", "settings:manage", "offers:manage"],
+        allowed: ["homepage:manage", "settings:marketing", "offers:manage", "media:view"],
         // integrations:manage now gates payment/email credentials
         // (Razorpay, Brevo) via the admin UI, so it's deliberately kept
         // out of MARKETING_ADMIN — narrower than settings:manage,
         // SUPER_ADMIN/STORE_OWNER only.
-        denied: ["users:manage", "products:manage", "orders:manage", "integrations:manage"],
+        //
+        // F-061: "settings:manage" itself is now denied too — it used to be
+        // granted wholesale (with only a comment claiming a narrower scope),
+        // letting this role change shipping rates and the public contact
+        // details/order-alert inbox. "settings:marketing" (above) is the
+        // narrower permission that actually gets enforced per-key now (see
+        // src/lib/settings/permissions.ts).
+        denied: [
+          "users:manage",
+          "products:manage",
+          "orders:manage",
+          "integrations:manage",
+          "settings:manage",
+          "media:manage",
+        ],
       },
       {
         role: "CONTENT_EDITOR",
-        allowed: ["blog:manage", "homepage:manage", "media:manage"],
+        allowed: ["blog:manage", "homepage:manage", "media:manage", "media:view"],
         denied: ["users:manage", "orders:manage", "products:manage"],
       },
       {
         role: "SEO_MANAGER",
-        allowed: ["seo:manage", "products:view"],
-        denied: ["products:manage", "users:manage", "orders:manage"],
+        // F-291: read-only media access, so this role can pick an existing
+        // image for a homepage hero slide (it already holds
+        // "homepage:manage") without gaining upload/delete rights.
+        allowed: ["seo:manage", "products:view", "media:view"],
+        denied: ["products:manage", "users:manage", "orders:manage", "media:manage"],
       },
       {
         role: "SUPPORT_AGENT",

@@ -28,7 +28,12 @@ const MEDIA_USAGE_VALUES = new Set<string>(Object.values(MediaUsage));
  * `mediaAssetId`), so nothing here duplicates the underlying object.
  */
 export async function GET(request: Request) {
-  const { error } = await requireAdminPermission("media:manage");
+  // F-291 fix: this used to require "media:manage" just to *browse* the
+  // library, so MARKETING_ADMIN/SEO_MANAGER — who can edit the homepage
+  // hero slides but not upload/delete media — got a 403 trying to pick an
+  // existing image. "media:view" is granted to every role that already has
+  // "media:manage" plus the two read-only roles (see src/lib/auth/rbac.ts).
+  const { error } = await requireAdminPermission("media:view");
   if (error) return error;
 
   const url = new URL(request.url);

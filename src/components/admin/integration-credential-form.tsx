@@ -28,24 +28,54 @@ export function IntegrationCredentialForm({
   );
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // F-267 (checkout-csp-and-brevo-config): the save API now auto-enables
+  // Brevo the first time both fields are configured and reports that back
+  // as `autoEnabled` — surfaced here so the admin sees it happen instead of
+  // separately noticing the toggle above flipped.
+  const [autoEnabledMessage, setAutoEnabledMessage] = useState<string | null>(null);
+  // F-215: lets an admin prove a saved key pair actually works with the
+  // provider before relying on it — a mistyped Razorpay secret or a
+  // test/live mismatch used to only surface once a real shopper's checkout
+  // failed.
+  const [testState, setTestState] = useState<{ status: "idle" | "testing" | "ok" | "error"; message?: string }>({
+    status: "idle",
+  });
 
   const endpoint = `/api/admin/integrations/${provider.toLowerCase()}/credentials`;
+  const testEndpoint = `/api/admin/integrations/${provider.toLowerCase()}/test`;
+  const anyFieldConfigured = fields.some((field) => field.configured);
+
+  const testConnection = async () => {
+    setTestState({ status: "testing" });
+    const response = await fetch(testEndpoint, { method: "POST" });
+    const body = await response.json().catch(() => ({}));
+    if (response.ok && body.ok) {
+      setTestState({ status: "ok", message: body.message ?? "Connection verified." });
+    } else {
+      setTestState({ status: "error", message: body.message ?? body.error ?? "Couldn't verify the connection." });
+    }
+  };
 
   const save = async (key: string) => {
     const value = drafts[key]?.trim();
     if (!value) return;
     setBusyKey(key);
     setErrorMessage(null);
+    setAutoEnabledMessage(null);
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key, value }),
     });
+    const body = await response.json().catch(() => ({}));
     setBusyKey(null);
     if (response.ok) {
+      if (body?.autoEnabled) {
+        setAutoEnabledMessage(`${provider === "BREVO" ? "Brevo" : provider} was turned on automatically.`);
+      }
       router.refresh();
     } else {
-      setErrorMessage("Couldn't save that credential.");
+      setErrorMessage(body?.error ?? "Couldn't save that credential.");
     }
   };
 
@@ -115,6 +145,23 @@ export function IntegrationCredentialForm({
         </div>
       ))}
       {errorMessage ? <p className="text-xs text-red-600">{errorMessage}</p> : null}
+      {autoEnabledMessage ? <p className="text-xs text-trust">{autoEnabledMessage}</p> : null}
+
+      <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+        <button
+          type="button"
+          disabled={!anyFieldConfigured || testState.status === "testing"}
+          onClick={testConnection}
+          className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-lilac/40 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {testState.status === "testing" ? "Testing…" : "Test connection"}
+        </button>
+        {testState.status === "ok" ? (
+          <p className="text-xs text-trust">{testState.message}</p>
+        ) : testState.status === "error" ? (
+          <p className="text-xs text-red-600">{testState.message}</p>
+        ) : null}
+      </div>
     </div>
   );
 }

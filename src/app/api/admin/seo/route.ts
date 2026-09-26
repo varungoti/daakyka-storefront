@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { readJsonBody } from "@/lib/security/parse-json-body";
-import { createSeoRecord, listSeoRecordsForAdmin, SeoPagePathConflictError } from "@/lib/seo/records";
+import {
+  createSeoRecord,
+  listSeoRecordsForAdmin,
+  SeoPagePathConflictError,
+  SeoPagePathNotWiredError,
+} from "@/lib/seo/records";
 import { seoPageRecordSchema } from "@/lib/validation/schemas";
 
 export async function GET() {
@@ -28,6 +33,9 @@ export async function POST(request: Request) {
   } catch (err) {
     if (err instanceof SeoPagePathConflictError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    if (err instanceof SeoPagePathNotWiredError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
     }
     throw err;
   }

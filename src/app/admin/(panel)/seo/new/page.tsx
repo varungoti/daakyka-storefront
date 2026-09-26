@@ -14,8 +14,8 @@ export default async function NewSeoRecordPage() {
       <div>
         <h1 className="font-display text-3xl font-bold text-ink">New SEO Override</h1>
         <p className="text-muted">
-          Add a title/meta description override for a page path. Home (/) and Shop (/shop) are
-          read live by the storefront; other paths are recorded for reference.
+          Add a title/meta description override for Home (/) or Shop (/shop) — the only paths the
+          storefront reads these overrides from live.
         </p>
       </div>
       <SeoRecordForm />

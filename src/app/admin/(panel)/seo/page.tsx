@@ -2,6 +2,7 @@ import { DeleteButton } from "@/components/admin/delete-button";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
+import { getProducts } from "@/lib/products";
 import { getStaticSeoAudits, summarizeSeoAudits } from "@/lib/seo/audit";
 import {
   breadcrumbJsonLd,
@@ -14,6 +15,7 @@ import {
   summarizeSchemaValidation,
   validateJsonLdObject,
 } from "@/lib/seo/schema-validation";
+import { isWiredSeoPath } from "@/lib/seo/wired-paths";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -42,23 +44,24 @@ export default async function AdminSeoPage() {
   const summary = summarizeSeoAudits(pages);
   const dbRecords = await listSeoRecordsForAdmin();
 
+  // F-052 fix: this used to validate a hand-written "Sample Scrub Top"
+  // fixture (fake image URL, made-up rating/review count) instead of any
+  // real product, so the card always showed a fixed "5 Valid, 0 Issues"
+  // regardless of what the catalog actually contains. Organization/WebSite
+  // schemas were already real; only the product fixture is replaced here —
+  // real products, most-recently-updated first, so the card reflects
+  // what's actually live right now.
+  const sampleProducts = (await getProducts()).slice(0, 2);
   const schemaChecks = [
     { label: "Organization", data: organizationJsonLd() },
     { label: "WebSite", data: websiteJsonLd() },
-    {
-      label: "Sample Product",
+    ...sampleProducts.map((product) => ({
+      label: `Product: ${product.name}`,
       data: productJsonLd({
-        id: "schema-sample",
-        handle: "sample-scrub",
-        name: "Sample Scrub Top",
-        description: "Schema validation sample product",
-        image: "https://daakyka.com/favicon.ico",
-        price: 1999,
-        available: true,
-        rating: 4.7,
-        reviewCount: 50,
+        ...product,
+        images: product.images?.map((img) => img.url),
       }),
-    },
+    })),
     {
       label: "Sample Breadcrumb",
       data: breadcrumbJsonLd([
@@ -189,7 +192,7 @@ export default async function AdminSeoPage() {
               <tr>
                 <th className="px-4 py-3">Path</th>
                 <th className="px-4 py-3">Title</th>
-                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Applied</th>
                 <th className="px-4 py-3">Updated</th>
                 <th className="px-4 py-3" />
               </tr>
@@ -200,7 +203,12 @@ export default async function AdminSeoPage() {
                   <td className="px-4 py-3 font-semibold text-ink">{record.path}</td>
                   <td className="max-w-xs px-4 py-3 text-ink">{record.title}</td>
                   <td className="px-4 py-3">
-                    <StatusBadge status={record.status} />
+                    {/* F-052 fix: this used to show the free-text `status`
+                        field an admin picked from a dropdown (ok/needs meta/
+                        missing h1/review) that nothing else reads — it said
+                        nothing about whether the override actually reaches
+                        the storefront. This reflects that instead. */}
+                    <AppliedBadge applied={isWiredSeoPath(record.path)} />
                   </td>
                   <td className="px-4 py-3 text-xs text-muted">
                     {record.updatedAt.toLocaleDateString("en-IN")}
@@ -242,6 +250,18 @@ function StatCard({ label, value }: { label: string; value: string }) {
       <p className="text-sm text-muted">{label}</p>
       <p className="mt-2 font-display text-2xl font-bold text-brand">{value}</p>
     </div>
+  );
+}
+
+function AppliedBadge({ applied }: { applied: boolean }) {
+  return (
+    <span
+      className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase ${
+        applied ? "bg-trust/15 text-trust" : "bg-lavender/60 text-muted"
+      }`}
+    >
+      {applied ? "live" : "not applied"}
+    </span>
   );
 }
 

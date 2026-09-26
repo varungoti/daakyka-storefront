@@ -19,8 +19,14 @@ validation — settings reads never throw and never crash a page.
   `revalidateTag("settings")` so every cached reader picks up the new value (the admin page's own
   copy says "Changes apply within a few minutes" to set expectations, though revalidation is
   usually much faster).
-- `PATCH /api/admin/settings/[key]` (requires `settings:manage` — see [ROLES.md](./ROLES.md)) is
-  the only write path; it 404s on an unknown key and 400s on a value that fails the key's schema.
+- `PATCH /api/admin/settings/[key]` is the only write path; it 401s with no session, 404s on an
+  unknown key, and 400s on a value that fails the key's schema. Which permission it requires
+  depends on the key — F-061 fix: `src/lib/settings/permissions.ts`'s `settingPermissions` map
+  gives each key either `settings:marketing` (the sale banner, announcement bar, and header
+  bulk-order CTA) or `settings:manage` (everything else — page toggles, shipping, contact details).
+  This used to be a single blanket `settings:manage` check for every key, which is what let
+  MARKETING_ADMIN change shipping rates and the public contact details/order-alert inbox despite
+  being documented as limited to the marketing-facing keys (see [ROLES.md](./ROLES.md)).
 - `isPageEnabled("fabricTech" | "mixMatch")` and `isSaleEnabled()` are thin, commonly-used wrappers
   around `getSetting()` for the two page-visibility keys and the sale-section key.
 
@@ -72,19 +78,23 @@ doc reflects only what's in `SettingValueMap` today.
 
 ## Changing settings from `/admin/site-controls`
 
-Requires `settings:manage` (`SUPER_ADMIN`, `STORE_OWNER`, or `MARKETING_ADMIN` — see
-[ROLES.md](./ROLES.md); `MARKETING_ADMIN`'s access here is intended for the sale/announcement
-toggles specifically, not full operational control of the site).
+The page opens for `SUPER_ADMIN`, `STORE_OWNER`, or `MARKETING_ADMIN` — see [ROLES.md](./ROLES.md)
+— but which sections it renders now depends on which of `settings:manage`/`settings:marketing` the
+role actually holds (F-061 fix; the page used to render every editor for any role that could open
+it at all):
 
-1. **Pages & sections** — four toggle switches (`SiteSettingToggle`,
-   `src/components/admin/site-setting-toggle.tsx`): Fabric Technology page, Mix & Match page, Sale
-   section, and Header Bulk Order CTA. Each flips a boolean via
+1. **Pages & sections** — `settings:marketing` (MARKETING_ADMIN included) sees the Sale section and
+   Header Bulk Order CTA toggles. Fabric Technology and Mix & Match are `settings:manage`-only
+   (`SiteSettingToggle`, `src/components/admin/site-setting-toggle.tsx`). Each flips a boolean via
    `PATCH /api/admin/settings/[key]` immediately on click.
 2. **Content** (`src/components/admin/site-controls-editors.tsx`):
-   - **AnnouncementEditor** — add/remove/reorder the rotating announcement messages (1–10 of them,
-     each up to 200 characters).
-   - **ContactEditor** — phone, WhatsApp, email, and address shown across the site.
-   - **ShippingEditor** — the flat shipping rate and the free-shipping threshold.
+   - **AnnouncementEditor** — `settings:marketing` — add/remove/reorder the rotating announcement
+     messages (1–10 of them, each up to 200 characters).
+   - **ContactEditor** — `settings:manage`-only — phone, WhatsApp, email, and address shown across
+     the site (the same `contact.email` also receives the internal "New order" alert — see
+     `src/lib/orders/notify.ts`).
+   - **ShippingEditor** — `settings:manage`-only — the flat shipping rate and the free-shipping
+     threshold.
 
 Every change goes through the same `settingSchemas` validation as the API route, so a rejected
 value (e.g. a malformed email, or an announcement list with more than 10 entries) fails with a 400
