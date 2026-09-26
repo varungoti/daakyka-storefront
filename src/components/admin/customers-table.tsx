@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { formatInrExact } from "@/lib/currency/admin-money";
 
 interface CustomerListItem {
   id: string;
@@ -15,8 +16,11 @@ interface CustomerListItem {
   createdAt: string;
 }
 
+// F-202 fix: was `maximumFractionDigits: 0`, rounding a customer's
+// lifetime spend (built from orders that can carry paise) to the nearest
+// whole rupee — see src/lib/currency/admin-money.ts.
 function formatInr(amount: number): string {
-  return `₹${amount.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+  return formatInrExact(amount);
 }
 
 /**

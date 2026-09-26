@@ -29,8 +29,11 @@ export function OfferToggle({ id, active }: { id: string; active: boolean }) {
       type="button"
       onClick={toggle}
       disabled={busy}
+      // F-243 fix: `text-trust` is ~2.8:1 on `bg-trust/15`, below WCAG
+      // AA's 4.5:1 — `text-trust-ink` is the existing F-299 token built
+      // for exactly this (~6:1 on the same tint).
       className={`rounded-full px-2.5 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
-        active ? "bg-trust/15 text-trust hover:bg-trust/25" : "bg-lavender/60 text-muted hover:bg-lavender"
+        active ? "bg-trust/15 text-trust-ink hover:bg-trust/25" : "bg-lavender/60 text-muted hover:bg-lavender"
       }`}
     >
       {busy ? "…" : active ? "Active" : "Inactive"}

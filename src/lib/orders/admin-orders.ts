@@ -4,7 +4,7 @@ import { Prisma } from "@/generated/prisma/client";
 import type { Order, OrderStatus, PaymentMethod } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
 import { assertValidOrderStatusTransition, orderStatusTimestampField } from "@/lib/orders/status-transitions";
-import { buildOrdersCsv, type OrderCsvRow } from "@/lib/orders/csv";
+import { buildOrdersCsv, formatOrderCsvRows, ORDER_EXPORT_COLUMNS, type OrderCsvRow } from "@/lib/orders/csv";
 import { applyPaidSideEffects, releaseOrderInventory } from "@/lib/orders/payment-transitions";
 import { revalidateProductStockForVariants } from "@/lib/products";
 import { notifyOrderStatusChange } from "@/lib/orders/notify";
@@ -38,6 +38,37 @@ export function extractGuestName(shippingAddress: unknown): string | null {
   if (!shippingAddress || typeof shippingAddress !== "object") return null;
   const name = (shippingAddress as { name?: unknown }).name;
   return typeof name === "string" && name.trim() ? name.trim() : null;
+}
+
+/**
+ * F-204 fix: the orders CSV export used to leave the shipping address out
+ * entirely, even though it's the one piece of data a courier booking or a
+ * GST return actually needs. Reads the same JSON `extractGuestName` reads,
+ * just as defensively — never throws on malformed/legacy data, only ever
+ * returns `null` fields.
+ */
+function extractShippingAddressFields(shippingAddress: unknown): {
+  name: string | null;
+  line1: string | null;
+  line2: string | null;
+  city: string | null;
+  state: string | null;
+  pincode: string | null;
+  country: string | null;
+} {
+  const empty = { name: null, line1: null, line2: null, city: null, state: null, pincode: null, country: null };
+  if (!shippingAddress || typeof shippingAddress !== "object") return empty;
+  const addr = shippingAddress as Record<string, unknown>;
+  const str = (key: string): string | null => (typeof addr[key] === "string" && addr[key].trim() ? (addr[key] as string).trim() : null);
+  return {
+    name: str("name"),
+    line1: str("line1"),
+    line2: str("line2"),
+    city: str("city"),
+    state: str("state"),
+    pincode: str("pincode"),
+    country: str("country"),
+  };
 }
 
 export const orderStatusValues = [
@@ -146,27 +177,76 @@ export interface ListOrdersForAdminResult {
   totalPages: number;
 }
 
-function buildOrderWhere(options: {
+/**
+ * F-200 fix: pulls out the digits of a search term so "9876543212",
+ * "+91 98765 43212" and "98765-43212" all match a phone stored as plain
+ * digits. Strips a leading country/trunk prefix only when there are more
+ * than 10 digits left afterwards, so a genuine 10-digit number is never
+ * mistakenly shortened. Returns null when there aren't enough digits to
+ * search on (avoids a `phone contains ""` clause matching every order).
+ */
+function normalizePhoneSearchTerm(term: string): string | null {
+  const digits = term.replace(/\D/g, "");
+  if (digits.length < 4) return null;
+  if (digits.length > 10 && (digits.startsWith("91") || digits.startsWith("0"))) {
+    return digits.slice(digits.length - 10);
+  }
+  return digits;
+}
+
+/**
+ * F-200 fix: `buildOrderWhere` is async because a guest order's real name
+ * lives only in `Order.shippingAddress` (JSON — see `extractGuestName`'s
+ * doc comment), and Postgres's `Json` filters have no case-insensitive
+ * `contains` on this Prisma version. Rather than loading every order into
+ * JS to filter there (defeating the whole point of F-224's DB-side
+ * pagination), this runs one small parameterized raw query to prefilter by
+ * id, then folds those ids into the same `OR` as every other search
+ * clause — the enclosing `where` still ANDs in status/paymentMethod/date
+ * normally.
+ */
+async function buildOrderWhere(options: {
   status?: OrderStatus;
   paymentMethod?: PaymentMethod;
   search?: string;
   dateFrom?: Date;
   dateTo?: Date;
-}): Prisma.OrderWhereInput {
+}): Promise<Prisma.OrderWhereInput> {
   const where: Prisma.OrderWhereInput = {};
   if (options.status) where.status = options.status;
   if (options.paymentMethod) where.paymentMethod = options.paymentMethod;
   if (options.search && options.search.trim()) {
     const term = options.search.trim();
-    where.OR = [
+    const or: Prisma.OrderWhereInput[] = [
       { number: { contains: term, mode: "insensitive" } },
       { email: { contains: term, mode: "insensitive" } },
+      // F-200 fix: a registered customer's name, via the relation.
+      { customer: { is: { name: { contains: term, mode: "insensitive" } } } },
     ];
+    const phoneDigits = normalizePhoneSearchTerm(term);
+    if (phoneDigits) {
+      or.push({ phone: { contains: phoneDigits } });
+    }
+    // F-200 fix: a guest order's name (no linked Customer) — parameterized
+    // raw query, never string concatenation.
+    const guestNameMatches = await db.$queryRaw<{ id: string }[]>`
+      SELECT id FROM "Order" WHERE "shippingAddress"->>'name' ILIKE ${`%${term}%`}
+    `;
+    if (guestNameMatches.length > 0) {
+      or.push({ id: { in: guestNameMatches.map((row) => row.id) } });
+    }
+    where.OR = or;
   }
   if (options.dateFrom || options.dateTo) {
     where.createdAt = {
       ...(options.dateFrom ? { gte: options.dateFrom } : {}),
-      ...(options.dateTo ? { lte: options.dateTo } : {}),
+      // F-068 fix: `dateTo` is now the *exclusive* upper bound (the next
+      // IST midnight after the selected "To" day — see
+      // src/lib/format/datetime.ts's parseIstDateOnlyExclusiveEnd, which
+      // both admin routes call before this ever runs). `lt`, not `lte`,
+      // so the whole "To" day is included instead of being cut off at its
+      // very first instant.
+      ...(options.dateTo ? { lt: options.dateTo } : {}),
     };
   }
   return where;
@@ -229,7 +309,7 @@ function mapOrderListRow(row: OrderListRow): AdminOrderListItem {
 export async function listOrdersForAdmin(
   options: ListOrdersForAdminOptions = {},
 ): Promise<ListOrdersForAdminResult> {
-  const where = buildOrderWhere(options);
+  const where = await buildOrderWhere(options);
   const sort = options.sort ?? "createdAt-desc";
   const orderBy = buildOrderOrderBy(sort);
 
@@ -251,7 +331,13 @@ export async function listOrdersForAdmin(
   return { items, total, page, pageSize, totalPages };
 }
 
+// F-204 fix: the export used to select only 14 flat columns. Now also
+// pulls the shipping address JSON, the linked customer's name (for a
+// guest order, extractGuestName reads the same shippingAddress below) and
+// each line item's sku/name/qty, so the CSV can drive a courier booking or
+// a GST return without opening every order individually.
 const ORDER_CSV_SELECT = {
+  id: true,
   number: true,
   email: true,
   phone: true,
@@ -260,48 +346,132 @@ const ORDER_CSV_SELECT = {
   subtotal: true,
   shipping: true,
   discount: true,
+  discountCode: true,
   total: true,
   currency: true,
   trackingNumber: true,
   courier: true,
   createdAt: true,
-  _count: { select: { items: true } },
+  shippingAddress: true,
+  customer: { select: { name: true } },
+  items: { select: { sku: true, productName: true, quantity: true } },
 } satisfies Prisma.OrderSelect;
+
+type OrderCsvSourceRow = Prisma.OrderGetPayload<{ select: typeof ORDER_CSV_SELECT }>;
+
+function mapOrderRowToCsvRow(row: OrderCsvSourceRow): OrderCsvRow {
+  const address = extractShippingAddressFields(row.shippingAddress);
+  return {
+    number: row.number,
+    email: row.email,
+    phone: row.phone,
+    customerName: row.customer?.name ?? extractGuestName(row.shippingAddress),
+    status: row.status,
+    paymentMethod: row.paymentMethod,
+    itemCount: row.items.length,
+    // F-204 fix: a compact per-order line-item summary rather than
+    // exploding one CSV row per item — keeps the export at one row per
+    // order (what the admin's filters/sort already operate on) while
+    // still surfacing SKU/qty for courier and accounting use.
+    itemsSummary: row.items.map((item) => `${item.sku ?? item.productName} x${item.quantity}`).join("; "),
+    subtotal: Number(row.subtotal),
+    shipping: Number(row.shipping),
+    discount: Number(row.discount),
+    discountCode: row.discountCode,
+    total: Number(row.total),
+    currency: row.currency,
+    trackingNumber: row.trackingNumber,
+    courier: row.courier,
+    shipName: address.name,
+    shipAddressLine1: address.line1,
+    shipAddressLine2: address.line2,
+    shipCity: address.city,
+    shipState: address.state,
+    shipPincode: address.pincode,
+    shipCountry: address.country,
+    createdAt: row.createdAt,
+  };
+}
 
 export async function exportOrdersCsv(
   options: Omit<ListOrdersForAdminOptions, "sort" | "page" | "pageSize"> = {},
 ): Promise<string> {
-  const where = buildOrderWhere(options);
+  const where = await buildOrderWhere(options);
   // Deliberately unbounded (no skip/take) — a CSV export has to return
   // every matching row by design. The DB does the sort (createdAt desc,
-  // id as a tie-breaker) instead of an in-memory sort, and the query
-  // selects only the columns the CSV actually renders — no
-  // shippingAddress/notes/adminNotes payload for rows the export never
-  // reads.
+  // id as a tie-breaker) instead of an in-memory sort. Kept for callers
+  // (unit/integration tests, and anywhere a plain string is fine) that
+  // don't need the streamed response — see `streamOrdersCsv` below, which
+  // the actual export route uses so a large export never has to hold its
+  // whole body in memory at once (F-342).
   const rows = await db.order.findMany({
     where,
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
     select: ORDER_CSV_SELECT,
   });
 
-  const csvRows: OrderCsvRow[] = rows.map((row) => ({
-    number: row.number,
-    email: row.email,
-    phone: row.phone,
-    status: row.status,
-    paymentMethod: row.paymentMethod,
-    itemCount: row._count.items,
-    subtotal: Number(row.subtotal),
-    shipping: Number(row.shipping),
-    discount: Number(row.discount),
-    total: Number(row.total),
-    currency: row.currency,
-    trackingNumber: row.trackingNumber,
-    courier: row.courier,
-    createdAt: row.createdAt,
-  }));
+  return buildOrdersCsv(rows.map(mapOrderRowToCsvRow));
+}
 
-  return buildOrdersCsv(csvRows);
+/**
+ * F-342 fix: the export route used to call `exportOrdersCsv` above and
+ * return the whole CSV as one `Response` body — fine at launch volume, but
+ * it means building a multi-megabyte string (and the equivalent Prisma
+ * result set) in memory for one request, and Vercel functions cap a
+ * response body at 4.5MB regardless. This streams the same rows in
+ * `batchSize`-sized pages, cursor-paginated on `id` (never `skip`, which
+ * would re-scan every prior page on every batch), so memory stays
+ * bounded by one batch instead of the whole export. `batchSize` is a
+ * parameter (not just the default) so tests can force multiple batches
+ * without needing thousands of fixture rows.
+ */
+export function streamOrdersCsv(
+  options: Omit<ListOrdersForAdminOptions, "sort" | "page" | "pageSize"> = {},
+  batchSize = 1000,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        const where = await buildOrderWhere(options);
+        // UTF-8 BOM first, so Excel (which the export exists for) opens
+        // the file as UTF-8 instead of guessing a legacy codepage — added
+        // here, not in buildOrdersCsv, so the pure string-builder used by
+        // unit tests stays BOM-free and easy to assert on.
+        // Built via fromCharCode(0xfeff), not a quoted escape sequence for
+        // that code point — the latter is indistinguishable, once written,
+        // from a literal (invisible) BOM character pasted straight into
+        // the source file: functionally identical, but unreviewable.
+        controller.enqueue(encoder.encode(String.fromCharCode(0xfeff)));
+        controller.enqueue(encoder.encode(`${ORDER_EXPORT_COLUMNS.join(",")}\n`));
+
+        let cursor: string | undefined;
+        for (;;) {
+          const rows = await db.order.findMany({
+            where,
+            orderBy: [{ id: "asc" }],
+            take: batchSize,
+            ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+            select: ORDER_CSV_SELECT,
+          });
+          if (rows.length === 0) break;
+
+          const chunk = formatOrderCsvRows(rows.map(mapOrderRowToCsvRow));
+          if (chunk) controller.enqueue(encoder.encode(`${chunk}\n`));
+
+          if (rows.length < batchSize) break;
+          cursor = rows[rows.length - 1].id;
+        }
+        controller.close();
+      } catch (err) {
+        // A mid-stream failure can't turn into an HTTP error status (the
+        // headers already went out) — erroring the stream at least
+        // truncates the download instead of silently serving a
+        // truncated-but-200 file, and surfaces in server logs.
+        controller.error(err);
+      }
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -423,6 +593,72 @@ export async function getOrderForAdmin(id: string): Promise<AdminOrderDetail> {
 }
 
 // ---------------------------------------------------------------------------
+// History (F-205)
+// ---------------------------------------------------------------------------
+
+export interface OrderHistoryEntry {
+  id: string;
+  action: string;
+  createdAt: Date;
+  actorName: string | null;
+  fromStatus: OrderStatus | null;
+  toStatus: OrderStatus | null;
+  trackingNumber: string | null;
+  courier: string | null;
+  adminNotesUpdated: boolean;
+  manualPaidTransition: boolean;
+  restockedUnits: number | null;
+}
+
+/**
+ * F-205 fix: the order detail page showed no history at all, even though
+ * every status change, tracking update and note edit is already recorded
+ * in AuditLog (see updateOrderAdmin's `logAuditEvent` call below). This
+ * reads that same trail back out for one order's timeline.
+ *
+ * `AuditLog.metadata` is a free-text JSON-encoded column (see
+ * src/lib/auth/audit.ts's `logAuditEvent`), not a typed relation — parsed
+ * defensively here, exactly like `extractGuestName` treats
+ * `shippingAddress`: malformed or unexpected metadata renders the row with
+ * no details rather than failing the whole timeline.
+ */
+export async function getOrderHistory(orderId: string): Promise<OrderHistoryEntry[]> {
+  const rows = await db.auditLog.findMany({
+    where: { entity: "order", entityId: orderId },
+    orderBy: { createdAt: "asc" },
+    include: { user: { select: { name: true } } },
+  });
+
+  const asOrderStatus = (value: unknown): OrderStatus | null =>
+    typeof value === "string" && (orderStatusValues as readonly string[]).includes(value) ? (value as OrderStatus) : null;
+
+  return rows.map((row) => {
+    let metadata: Record<string, unknown> = {};
+    if (row.metadata) {
+      try {
+        const parsed: unknown = JSON.parse(row.metadata);
+        if (parsed && typeof parsed === "object") metadata = parsed as Record<string, unknown>;
+      } catch {
+        // Malformed/legacy metadata — never block the timeline over it.
+      }
+    }
+    return {
+      id: row.id,
+      action: row.action,
+      createdAt: row.createdAt,
+      actorName: row.user?.name ?? row.actorEmail ?? null,
+      fromStatus: asOrderStatus(metadata.fromStatus),
+      toStatus: asOrderStatus(metadata.toStatus),
+      trackingNumber: typeof metadata.trackingNumber === "string" ? metadata.trackingNumber : null,
+      courier: typeof metadata.courier === "string" ? metadata.courier : null,
+      adminNotesUpdated: metadata.adminNotesUpdated === true,
+      manualPaidTransition: metadata.manualPaidTransition === true,
+      restockedUnits: typeof metadata.restockedUnits === "number" ? metadata.restockedUnits : null,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Update (status transition + tracking + admin notes)
 // ---------------------------------------------------------------------------
 
@@ -491,6 +727,17 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
   // nothing ever decremented. Routed through the same
   // applyPaidSideEffects used by /api/checkout/verify and the webhook.
   let isManualPaidTransition = false;
+  // F-205 fix: a caller (only reachable via a direct API call today — the
+  // admin UI never sends `status` unless it actually changed) that resends
+  // the order's current status used to still write a `fromStatus ===
+  // toStatus` audit row, purely because the metadata assembly below only
+  // checked `input.status !== undefined` rather than whether it actually
+  // differed from `existing.status`. That's noise on the timeline this
+  // finding adds — computed once here (kept in sync with the `if` below,
+  // which needs the full non-undefined check for its own type narrowing)
+  // so the metadata and notify steps further down agree on what counts as
+  // "changed".
+  const statusChanged = input.status !== undefined && input.status !== existing.status;
 
   if (input.status !== undefined && input.status !== existing.status) {
     assertValidOrderStatusTransition(existing.status, input.status);
@@ -605,7 +852,7 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
     entity: "order",
     entityId: id,
     metadata: {
-      ...(input.status !== undefined ? { fromStatus: existing.status, toStatus: input.status } : {}),
+      ...(statusChanged ? { fromStatus: existing.status, toStatus: input.status } : {}),
       ...(input.trackingNumber !== undefined ? { trackingNumber: input.trackingNumber } : {}),
       ...(input.courier !== undefined ? { courier: input.courier } : {}),
       ...(input.adminNotes !== undefined ? { adminNotesUpdated: true } : {}),
@@ -623,8 +870,7 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
   // notifyOrderStatusChange is itself fully best-effort (never throws),
   // same contract as notifyNewOrder.
   if (
-    input.status !== undefined &&
-    input.status !== existing.status &&
+    statusChanged &&
     (updated.status === "SHIPPED" || updated.status === "CANCELLED" || updated.status === "REFUNDED")
   ) {
     await notifyOrderStatusChange({

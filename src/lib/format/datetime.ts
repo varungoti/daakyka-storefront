@@ -52,3 +52,36 @@ export function startOfTodayIST(now: Date = new Date()): Date {
   const ymd = new Intl.DateTimeFormat("en-CA", { timeZone: STORE_TZ }).format(now);
   return new Date(`${ymd}T00:00:00+05:30`);
 }
+
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * F-068 fix (release-hardening admin-order-list-detail-ux): parses a plain
+ * "YYYY-MM-DD" string — exactly what `<input type="date">` sends — as the
+ * IST calendar day it names, returning the UTC instant of that day's IST
+ * midnight. Never falls back to `new Date(value)`: a date-only ISO string
+ * is always read as *UTC* midnight (05:30 IST on this store), which is
+ * what silently dropped the admin orders date filter's first ~5.5h of
+ * every "From" day (see the admin-orders/export routes, which used to each
+ * carry their own `new Date(value)` parseDate). Returns undefined for
+ * anything that isn't a strict, valid yyyy-mm-dd string, so a malformed
+ * value is ignored rather than becoming an Invalid Date or a UTC-shifted
+ * one.
+ */
+export function parseIstDateOnly(value: string | null | undefined): Date | undefined {
+  if (!value || !DATE_ONLY_RE.test(value)) return undefined;
+  const date = new Date(`${value}T00:00:00+05:30`);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+/**
+ * The exclusive upper bound (the *next* day's IST midnight) for a
+ * "YYYY-MM-DD" day — pass to a range filter as `lt`, never `lte`, so the
+ * whole named day (through 23:59:59.999 IST) is included. India has a
+ * single fixed UTC+5:30 offset with no DST, so adding a flat 24h is exact
+ * year-round.
+ */
+export function parseIstDateOnlyExclusiveEnd(value: string | null | undefined): Date | undefined {
+  const start = parseIstDateOnly(value);
+  return start ? new Date(start.getTime() + 24 * 60 * 60 * 1000) : undefined;
+}

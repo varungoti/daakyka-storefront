@@ -3,12 +3,18 @@ import Image from "next/image";
 import { notFound, redirect } from "next/navigation";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
-import { getOrderForAdmin, OrderNotFoundError } from "@/lib/orders/admin-orders";
+import { getOrderForAdmin, getOrderHistory, OrderNotFoundError } from "@/lib/orders/admin-orders";
 import { OrderDetailActions } from "@/components/admin/order-detail-actions";
+import { BackToOrdersLink } from "@/components/admin/back-to-orders-link";
+import { OrderTimeline } from "@/components/admin/order-timeline";
+import { formatInrExact } from "@/lib/currency/admin-money";
 import type { ShippingAddressInput } from "@/lib/validation/schemas";
 
+// F-202 fix: was `maximumFractionDigits: 0`, which silently rounded a
+// paise total (any percentage-discount order) to the nearest whole rupee
+// — see src/lib/currency/admin-money.ts.
 function formatInr(amount: number): string {
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
+  return formatInrExact(amount);
 }
 
 export default async function AdminOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -18,10 +24,17 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
   }
 
   const { id } = await params;
-  const order = await getOrderForAdmin(id).catch((err) => {
-    if (err instanceof OrderNotFoundError) return null;
-    throw err;
-  });
+  const [order, history] = await Promise.all([
+    getOrderForAdmin(id).catch((err) => {
+      if (err instanceof OrderNotFoundError) return null;
+      throw err;
+    }),
+    // F-205 fix: fetched alongside the order rather than after it, so this
+    // page makes one round trip instead of two. A bogus `id` just means no
+    // AuditLog rows match (an empty timeline) — the `notFound()` below
+    // still fires from the order lookup regardless.
+    getOrderHistory(id).catch(() => []),
+  ]);
   if (!order) notFound();
 
   const address = order.shippingAddress as unknown as ShippingAddressInput | null;
@@ -31,9 +44,7 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Link href="/admin/orders" className="text-xs font-semibold text-brand hover:underline">
-            ← Back to Orders
-          </Link>
+          <BackToOrdersLink />
           <h1 className="mt-2 font-display text-3xl font-bold text-ink">{order.number}</h1>
           <p className="text-muted">
             Placed {order.createdAt.toLocaleString("en-IN")} · Last updated {order.updatedAt.toLocaleString("en-IN")}
@@ -48,8 +59,18 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
         </Link>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
+      {/* F-069 fix: `grid-cols-1` (not the bare `grid`, which leaves an
+          implicit auto/1fr track below `lg`) is load-bearing here, not
+          decorative — an implicit track sizes to its content's
+          *min-content* width, and the Items row below has an unbreakable
+          SKU that used to force that min-content past the viewport,
+          widening this whole grid (and every card in it) off the right
+          edge on a phone. `min-w-0` on both columns closes the same hole
+          for any other long unbroken string (a product name, an email) —
+          see admin-shell.tsx's near-identical `min-w-0` comment on its own
+          flex column, same underlying CSS sizing rule. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="min-w-0 space-y-6 lg:col-span-2">
           <section className="rounded-2xl border border-border bg-surface p-5">
             <h2 className="mb-4 font-display text-lg font-bold text-ink">Items</h2>
             <div className="divide-y divide-border">
@@ -58,14 +79,20 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
                   <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-border bg-lavender/40">
                     {item.imageUrl ? <Image src={item.imageUrl} alt={item.productName} fill className="object-cover" sizes="56px" /> : null}
                   </div>
-                  <div className="flex-1">
-                    <p className="font-semibold text-ink">{item.productName}</p>
-                    <p className="text-xs text-muted">
+                  {/* min-w-0 alone doesn't stop this flex item from
+                      widening its grid ancestor — the SKU also needs a
+                      wrap rule, since `min-width: 0` only allows *this box*
+                      to shrink; it doesn't make the unbreakable text inside
+                      it wrap. break-all matches the Razorpay id treatment
+                      below. */}
+                  <div className="min-w-0 flex-1">
+                    <p className="break-all font-semibold text-ink">{item.productName}</p>
+                    <p className="break-all text-xs text-muted">
                       {item.variantLabel ?? "—"} {item.sku ? `· SKU ${item.sku}` : ""}
                     </p>
                   </div>
-                  <p className="text-sm text-muted">Qty {item.quantity}</p>
-                  <p className="w-24 text-right font-semibold text-ink">{formatInr(item.unitPrice * item.quantity)}</p>
+                  <p className="shrink-0 text-sm text-muted">Qty {item.quantity}</p>
+                  <p className="w-24 shrink-0 text-right font-semibold text-ink">{formatInr(item.unitPrice * item.quantity)}</p>
                 </div>
               ))}
             </div>
@@ -110,9 +137,15 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
               <p className="text-sm text-muted">No address on file.</p>
             )}
           </section>
+
+          {/* F-205 fix: the page used to show no history at all — only
+              "Placed … · Last updated …" above — even though every status
+              change, tracking update and notes edit is already recorded in
+              AuditLog by updateOrderAdmin. */}
+          <OrderTimeline placedAt={order.createdAt.toISOString()} entries={history} />
         </div>
 
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <section className="rounded-2xl border border-border bg-surface p-5">
             <h2 className="mb-3 font-display text-lg font-bold text-ink">Customer</h2>
             <div className="text-sm">
@@ -122,7 +155,7 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
               {!order.customerId && (
                 <p className="text-xs text-muted">Guest checkout — not a registered account</p>
               )}
-              <p className="text-muted">{order.email}</p>
+              <p className="break-all text-muted">{order.email}</p>
               {order.phone && <p className="text-muted">{order.phone}</p>}
               {order.customerId && (
                 <Link href={`/admin/customers/${order.customerId}`} className="mt-2 inline-block text-xs font-semibold text-brand hover:underline">

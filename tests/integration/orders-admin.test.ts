@@ -5,11 +5,13 @@ import { db } from "@/lib/db";
 import {
   exportOrdersCsv,
   getOrderForAdmin,
+  getOrderHistory,
   listOrdersForAdmin,
   MissingTrackingInfoError,
   OrderNotFoundError,
   OrderUpdateConflictError,
   RefundAcknowledgementRequiredError,
+  streamOrdersCsv,
   updateOrderAdmin,
 } from "@/lib/orders/admin-orders";
 import { createOrderFromCart } from "@/lib/orders/create-order";
@@ -34,6 +36,7 @@ import { findAnyAdminId } from "../helpers/admin-user";
 const createdOrderIds: string[] = [];
 const createdProductIds: string[] = [];
 const createdCategoryIds: string[] = [];
+const createdCustomerIds: string[] = [];
 
 /**
  * Release-hardening Finding B: a real Product/ProductVariant, plus an
@@ -108,6 +111,9 @@ after(async () => {
   }
   if (createdCategoryIds.length > 0) {
     await db.category.deleteMany({ where: { id: { in: createdCategoryIds } } }).catch(() => {});
+  }
+  if (createdCustomerIds.length > 0) {
+    await db.customer.deleteMany({ where: { id: { in: createdCustomerIds } } }).catch(() => {});
   }
 });
 
@@ -575,6 +581,198 @@ describe("orders admin pagination (F-224)", () => {
     const csv = await exportOrdersCsv({ search: marker });
     const dataLines = csv.trim().split("\n").slice(1); // drop the header row
     assert.equal(dataLines.length, 5);
+  });
+});
+
+// F-200 fix: search used to match only `number`/`email` — a shopper's own
+// name or phone number (what a customer actually gives an admin over the
+// phone) found nothing.
+describe("orders admin search (F-200)", () => {
+  const marker = `search-${randomUUID().slice(0, 8)}`;
+  let customerOrderId: string;
+  let guestOrderId: string;
+
+  before(async () => {
+    const customer = await db.customer.create({
+      data: {
+        email: `${marker}-customer@example.com`,
+        name: `Priya Search ${marker}`,
+        phone: "9123456780",
+        passwordHash: "not-a-real-hash",
+      },
+    });
+    createdCustomerIds.push(customer.id);
+
+    const customerOrder = await db.order.create({
+      data: baseOrderData({
+        number: `DK-TEST-SEARCH-CUST-${marker}`,
+        email: customer.email,
+        customerId: customer.id,
+        phone: "9123456780",
+      }),
+    });
+    customerOrderId = customerOrder.id;
+    createdOrderIds.push(customerOrderId);
+
+    const guestOrder = await db.order.create({
+      data: baseOrderData({
+        number: `DK-TEST-SEARCH-GUEST-${marker}`,
+        email: `${marker}-guest@example.com`,
+        phone: "9199988877",
+        shippingAddress: {
+          name: `Rahul Guest ${marker}`,
+          line1: "1 Test St",
+          city: "Hyderabad",
+          state: "TG",
+          pincode: "500001",
+          country: "IN",
+        },
+      }),
+    });
+    guestOrderId = guestOrder.id;
+    createdOrderIds.push(guestOrderId);
+  });
+
+  it("matches a linked customer's name", async () => {
+    const result = await listOrdersForAdmin({ search: `Priya Search ${marker}` });
+    assert.ok(result.items.some((o) => o.id === customerOrderId));
+    assert.ok(!result.items.some((o) => o.id === guestOrderId));
+  });
+
+  it("matches a guest order's shipping-address name (no linked Customer)", async () => {
+    const result = await listOrdersForAdmin({ search: `Rahul Guest ${marker}` });
+    assert.ok(result.items.some((o) => o.id === guestOrderId));
+    assert.ok(!result.items.some((o) => o.id === customerOrderId));
+  });
+
+  it("matches by plain phone digits", async () => {
+    const result = await listOrdersForAdmin({ search: "9199988877" });
+    assert.ok(result.items.some((o) => o.id === guestOrderId));
+  });
+
+  it("matches a phone typed with a country code and spacing", async () => {
+    const result = await listOrdersForAdmin({ search: "+91 91999-88877" });
+    assert.ok(result.items.some((o) => o.id === guestOrderId));
+  });
+});
+
+// F-342 fix: streamOrdersCsv must produce the exact same rows as the
+// unbounded exportOrdersCsv, just delivered in batches.
+describe("orders admin streamed CSV export (F-342)", () => {
+  const marker = `stream-${randomUUID().slice(0, 8)}`;
+
+  before(async () => {
+    for (let i = 0; i < 12; i += 1) {
+      const order = await db.order.create({
+        data: baseOrderData({
+          number: `DK-TEST-STREAM-${marker}-${i}`,
+          email: `${marker}@example.com`,
+        }),
+      });
+      createdOrderIds.push(order.id);
+    }
+  });
+
+  /** Returns the raw concatenated bytes and, separately, the text decoded
+   * with the BOM left in place (`ignoreBOM: true` — otherwise `TextDecoder`
+   * silently strips a leading BOM by design, which would defeat the whole
+   * point of asserting on it here). */
+  async function readStream(stream: ReadableStream<Uint8Array>): Promise<{ bytes: Uint8Array; text: string }> {
+    const reader = stream.getReader();
+    const chunks: Uint8Array[] = [];
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(chunks.reduce((sum, c) => sum + c.length, 0));
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return { bytes, text: new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes) };
+  }
+
+  it("streams every matching row across several small batches", async () => {
+    // batchSize 5 over 12 rows forces 3 batches (5, 5, 2) — well below the
+    // production default, so this doesn't need thousands of fixture rows
+    // to actually exercise cursor pagination across multiple batches.
+    const { bytes, text } = await readStream(streamOrdersCsv({ search: marker }, 5));
+
+    assert.deepEqual([...bytes.slice(0, 3)], [0xef, 0xbb, 0xbf], "should start with a UTF-8 BOM");
+    const withoutBom = text.slice(1); // drop the decoded BOM character itself
+    const lines = withoutBom.trim().split("\n");
+    assert.equal(
+      lines[0],
+      "order_number,email,phone,customer_name,status,payment_method,item_count,items,subtotal,shipping,discount,discount_code,total,currency,tracking_number,courier,ship_name,ship_address_line1,ship_address_line2,ship_city,ship_state,ship_pincode,ship_country,created_at_ist",
+    );
+    assert.equal(lines.length - 1, 12, "12 data rows across 3 batches");
+  });
+
+  it("matches exportOrdersCsv's row count for the same filter", async () => {
+    const [{ text: streamed }, plain] = await Promise.all([
+      readStream(streamOrdersCsv({ search: marker }, 5)),
+      exportOrdersCsv({ search: marker }),
+    ]);
+    const streamedRows = streamed.slice(1).trim().split("\n").length - 1;
+    const plainRows = plain.trim().split("\n").length - 1;
+    assert.equal(streamedRows, plainRows);
+  });
+});
+
+// F-205 fix: the order detail page had no history at all — getOrderHistory
+// reads back the same AuditLog trail updateOrderAdmin already writes.
+describe("getOrderHistory (F-205)", () => {
+  it("records a status change with its tracking info, and the actor's name", async () => {
+    const adminId = await findAnyAdminId();
+    const order = await db.order.create({
+      data: baseOrderData({ email: `history-${randomUUID().slice(0, 8)}@example.com`, status: "PROCESSING" }),
+    });
+    createdOrderIds.push(order.id);
+
+    await updateOrderAdmin(
+      order.id,
+      { status: "SHIPPED", trackingNumber: "TRK-HISTORY-1", courier: "Bluedart" },
+      adminId,
+    );
+
+    const history = await getOrderHistory(order.id);
+    assert.equal(history.length, 1);
+    assert.equal(history[0].fromStatus, "PROCESSING");
+    assert.equal(history[0].toStatus, "SHIPPED");
+    assert.equal(history[0].trackingNumber, "TRK-HISTORY-1");
+    assert.equal(history[0].courier, "Bluedart");
+    assert.ok(history[0].actorName, "should attribute the change to an actor");
+  });
+
+  it("does not record a fromStatus/toStatus pair for a resend of the same status (no status-change noise)", async () => {
+    const adminId = await findAnyAdminId();
+    const order = await db.order.create({
+      data: baseOrderData({ email: `history-noop-${randomUUID().slice(0, 8)}@example.com`, status: "PENDING_PAYMENT" }),
+    });
+    createdOrderIds.push(order.id);
+
+    // Resends the order's *current* status — only reachable via a direct
+    // service/API call (the admin UI never sends `status` unless it
+    // actually changed), but must not fabricate a "PENDING_PAYMENT ->
+    // PENDING_PAYMENT" timeline entry.
+    await updateOrderAdmin(order.id, { status: "PENDING_PAYMENT" }, adminId);
+
+    const history = await getOrderHistory(order.id);
+    assert.equal(history.length, 1);
+    assert.equal(history[0].fromStatus, null);
+    assert.equal(history[0].toStatus, null);
+  });
+
+  it("returns an empty timeline for an order with no admin edits yet", async () => {
+    const order = await db.order.create({
+      data: baseOrderData({ email: `history-empty-${randomUUID().slice(0, 8)}@example.com` }),
+    });
+    createdOrderIds.push(order.id);
+
+    const history = await getOrderHistory(order.id);
+    assert.deepEqual(history, []);
   });
 });
 

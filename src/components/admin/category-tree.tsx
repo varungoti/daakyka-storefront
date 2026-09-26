@@ -156,7 +156,11 @@ function Row({
           onClick={() => toggle("active")}
           className={cn(
             "rounded-full px-2.5 py-1 text-[11px] font-semibold transition disabled:opacity-40",
-            node.active ? "bg-trust/15 text-trust" : "bg-lavender/60 text-muted",
+            // F-243 fix: `text-trust` is ~2.8:1 on the `bg-trust/15` tint,
+            // below WCAG AA's 4.5:1 for this small text — `text-trust-ink`
+            // is the existing F-299 token built for exactly this (~6:1 on
+            // the same tint).
+            node.active ? "bg-trust/15 text-trust-ink" : "bg-lavender/60 text-muted",
           )}
         >
           {node.active ? "Active" : "Inactive"}

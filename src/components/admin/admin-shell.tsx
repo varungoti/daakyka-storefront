@@ -171,7 +171,10 @@ function NavLinks({
     <nav className="mt-8 space-y-6">
       {groups.map((group) => (
         <div key={group.label}>
-          <p className="px-3 text-[11px] font-bold uppercase tracking-wider text-muted/70">{group.label}</p>
+          {/* F-243 fix: `text-muted/70` on white is ~3.0:1, below WCAG AA's
+              4.5:1 for small text — `text-muted` alone (no opacity) is
+              ~5.9:1. */}
+          <p className="px-3 text-[11px] font-bold uppercase tracking-wider text-muted">{group.label}</p>
           <div className="mt-2 space-y-1">
             {group.items.map(({ href, label, icon: Icon, activePrefixes }) => {
               const matchesPrefix = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
@@ -241,6 +244,7 @@ function MobileNavDrawer({
   badges,
   role,
   onLogout,
+  triggerRef,
 }: {
   open: boolean;
   onClose: () => void;
@@ -249,6 +253,10 @@ function MobileNavDrawer({
   badges: Record<string, number>;
   role: SessionUser["role"];
   onLogout: () => void;
+  /** F-244 fix: the hamburger button that opened this drawer, so closing
+   * it (Escape, the × button, or picking a nav link) can return focus
+   * there instead of dropping it onto `<body>`. */
+  triggerRef: React.RefObject<HTMLButtonElement | null>;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -256,6 +264,11 @@ function MobileNavDrawer({
   useEffect(() => {
     if (!open) return;
 
+    // Captured now, not read again inside the cleanup below — by the time
+    // that runs, `triggerRef.current` could in principle point at a
+    // different node (React ref semantics), even though in practice this
+    // ref is attached to the always-mounted hamburger button.
+    const trigger = triggerRef.current;
     closeButtonRef.current?.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -290,13 +303,23 @@ function MobileNavDrawer({
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.overflow = previousOverflow;
+      // F-244 fix: this doc comment already promised focus returns to the
+      // hamburger on close, but nothing here actually did it — Escape (or
+      // the × button, or a nav link's onNavigate) left focus on `<body>`.
+      trigger?.focus();
     };
-  }, [open, onClose]);
+  }, [open, onClose, triggerRef]);
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Admin navigation">
+    <div
+      id="admin-mobile-nav"
+      className="fixed inset-0 z-50 lg:hidden print:hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Admin navigation"
+    >
       <div className="absolute inset-0 bg-ink/50" onClick={onClose} aria-hidden="true" />
       <div ref={panelRef} className="absolute inset-y-0 left-0 w-72 max-w-[85vw] overflow-y-auto bg-surface p-6 shadow-xl">
         <div className="flex items-center justify-between">
@@ -344,6 +367,9 @@ export function AdminShell({
   };
   const router = useRouter();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // F-244 fix: so the mobile nav drawer can return focus here on close —
+  // see MobileNavDrawer's `triggerRef`.
+  const hamburgerRef = useRef<HTMLButtonElement>(null);
   const { confirmLeave } = useUnsavedChangesNav();
 
   const handleLogout = async () => {
@@ -370,9 +396,24 @@ export function AdminShell({
     .filter((group) => group.items.length > 0);
 
   return (
-    <div className="min-h-screen bg-lavender/40">
-      <div className="mx-auto flex min-h-screen max-w-7xl">
-        <aside className="hidden w-64 shrink-0 border-r border-border bg-surface p-6 lg:block">
+    <div className="min-h-screen bg-lavender/40 print:bg-white">
+      {/* F-244 fix: no way to skip the sidebar nav before this existed —
+          a keyboard user tabbed through every nav link on every admin page
+          before reaching the page content. Mirrors the storefront's own
+          skip link (site-shell.tsx). */}
+      <a
+        href="#admin-main"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-xl focus:bg-brand focus:px-4 focus:py-3 focus:text-sm focus:font-semibold focus:text-white"
+      >
+        Skip to content
+      </a>
+      <div className="mx-auto flex min-h-screen max-w-7xl print:block print:max-w-none">
+        {/* F-208 fix: printing an order invoice (which lives inside this
+            same admin panel layout — src/app/admin/(panel)/orders/[id]/invoice/page.tsx)
+            used to print the whole sidebar and header around it — hamburger,
+            "Admin Panel", the signed-in admin's name and "View Storefront" —
+            on a lavender page background, above the actual document. */}
+        <aside className="hidden w-64 shrink-0 border-r border-border bg-surface p-6 lg:block print:hidden">
           <GuardedLink href="/admin/dashboard" className="font-display text-xl font-extrabold text-brand">
             DAAKYKA Admin
           </GuardedLink>
@@ -395,6 +436,7 @@ export function AdminShell({
           badges={badges}
           role={user.role}
           onLogout={handleLogout}
+          triggerRef={hamburgerRef}
         />
 
         {/* F-05 (docs/audit-2026-09-19/admin-ux.md): `min-w-0` is required
@@ -414,13 +456,16 @@ export function AdminShell({
             width again, so `overflow-x-auto` descendants scroll within
             their own box instead of blowing out the shell. */}
         <div className="min-w-0 flex-1">
-          <header className="border-b border-border bg-surface px-4 py-4 lg:px-8">
+          <header className="border-b border-border bg-surface px-4 py-4 lg:px-8 print:hidden">
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <button
+                  ref={hamburgerRef}
                   type="button"
                   onClick={() => setDrawerOpen(true)}
                   aria-label="Open navigation"
+                  aria-expanded={drawerOpen}
+                  aria-controls="admin-mobile-nav"
                   className="rounded-lg p-2 text-muted hover:bg-lilac/40 hover:text-ink lg:hidden"
                 >
                   <Menu size={22} />
@@ -435,7 +480,9 @@ export function AdminShell({
               </GuardedLink>
             </div>
           </header>
-          <main className="p-4 lg:p-8">{children}</main>
+          <main id="admin-main" tabIndex={-1} className="p-4 outline-none lg:p-8 print:p-0">
+            {children}
+          </main>
         </div>
       </div>
     </div>

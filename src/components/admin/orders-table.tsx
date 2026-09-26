@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { formatInrExact } from "@/lib/currency/admin-money";
 
 interface OrderListItem {
   id: string;
@@ -30,8 +31,50 @@ const STATUS_STYLES: Record<string, string> = {
   REFUNDED: "bg-red-100 text-red-700",
 };
 
+// F-202 fix: was a local `maximumFractionDigits: 0` formatter, which
+// silently rounded any order with paise (any percentage-discount order)
+// to the nearest whole rupee — see src/lib/currency/admin-money.ts.
 function formatInr(amount: number): string {
-  return `₹${amount.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+  return formatInrExact(amount);
+}
+
+/** F-200 fix: filter/search/sort/page state that should survive a
+ * round trip to an order's detail page and back — read once, on mount,
+ * from the current URL (not `useSearchParams`, so this client component
+ * needs no Suspense boundary from its server-rendered parent). */
+interface OrdersFilterState {
+  search: string;
+  status: string;
+  paymentMethod: string;
+  dateFrom: string;
+  dateTo: string;
+  sort: string;
+  page: number;
+}
+
+const DEFAULT_FILTERS: OrdersFilterState = {
+  search: "",
+  status: "",
+  paymentMethod: "",
+  dateFrom: "",
+  dateTo: "",
+  sort: "createdAt-desc",
+  page: 1,
+};
+
+function readFiltersFromLocation(): OrdersFilterState {
+  if (typeof window === "undefined") return DEFAULT_FILTERS;
+  const params = new URLSearchParams(window.location.search);
+  const page = Number(params.get("page"));
+  return {
+    search: params.get("q") ?? "",
+    status: params.get("status") ?? "",
+    paymentMethod: params.get("paymentMethod") ?? "",
+    dateFrom: params.get("dateFrom") ?? "",
+    dateTo: params.get("dateTo") ?? "",
+    sort: params.get("sort") ?? DEFAULT_FILTERS.sort,
+    page: Number.isFinite(page) && page > 0 ? page : 1,
+  };
 }
 
 /**
@@ -40,24 +83,69 @@ function formatInr(amount: number): string {
  * filters through as query params so "export" always matches what's on
  * screen. Follows the same client-fetch pattern as ProductsTable
  * (src/components/admin/products-table.tsx).
+ *
+ * F-200 fix: search now also matches a customer's name and phone (see
+ * admin-orders.ts's buildOrderWhere), the search input is debounced so
+ * every keystroke doesn't fire its own request, and every filter/the
+ * current page is mirrored into the URL (via `history.replaceState`, not a
+ * Next navigation — this is just reflecting client state, not routing) so
+ * opening an order and pressing Back restores exactly what was on screen,
+ * and the list is shareable/bookmarkable with its filters intact.
  */
 export function OrdersTable() {
   const [items, setItems] = useState<OrderListItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
 
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [sort, setSort] = useState("createdAt-desc");
+  // Lazy `useState` initializer: `readFiltersFromLocation` only actually
+  // runs once, on mount — a plain call here would re-parse
+  // `window.location.search` on every render for a value React would
+  // discard after the first anyway.
+  const [initialFilters] = useState(readFiltersFromLocation);
+  const [page, setPage] = useState(initialFilters.page);
+  // `searchInput` is what the text field shows (updates every keystroke);
+  // `search` is what's actually queried/URL-synced, 300ms after the admin
+  // stops typing.
+  const [searchInput, setSearchInput] = useState(initialFilters.search);
+  const [search, setSearch] = useState(initialFilters.search);
+  const [status, setStatus] = useState(initialFilters.status);
+  const [paymentMethod, setPaymentMethod] = useState(initialFilters.paymentMethod);
+  const [dateFrom, setDateFrom] = useState(initialFilters.dateFrom);
+  const [dateTo, setDateTo] = useState(initialFilters.dateTo);
+  const [sort, setSort] = useState(initialFilters.sort);
+
+  // Skips the debounce's own first run (mount) — `searchInput` starts equal
+  // to `search` already, and without this guard the 300ms timer would
+  // still fire once after mount and reset `page` to 1, throwing away a
+  // page number this component just read from the URL (e.g. after Back
+  // from an order on page 3).
+  const isFirstSearchRender = useRef(true);
+  useEffect(() => {
+    if (isFirstSearchRender.current) {
+      isFirstSearchRender.current = false;
+      return;
+    }
+    const timer = setTimeout(() => {
+      setSearch(searchInput);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  /** Resets to page 1 whenever a filter (not the debounced search input,
+   * which resets its own page above once it actually takes effect) changes
+   * — called from each control's own onChange rather than a `useEffect`,
+   * so this never fires on mount and clobbers a page number read from the
+   * URL. */
+  function updateFilter<T>(setter: (value: T) => void, value: T) {
+    setter(value);
+    setPage(1);
+  }
 
   const buildParams = useCallback(() => {
     const params = new URLSearchParams({ page: String(page), sort });
-    if (search.trim()) params.set("search", search.trim());
+    if (search.trim()) params.set("q", search.trim());
     if (status) params.set("status", status);
     if (paymentMethod) params.set("paymentMethod", paymentMethod);
     if (dateFrom) params.set("dateFrom", dateFrom);
@@ -67,7 +155,11 @@ export function OrdersTable() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const response = await fetch(`/api/admin/orders?${buildParams()}`);
+    const apiParams = new URLSearchParams(buildParams());
+    const searchTerm = apiParams.get("q");
+    apiParams.delete("q");
+    if (searchTerm) apiParams.set("search", searchTerm);
+    const response = await fetch(`/api/admin/orders?${apiParams}`);
     if (response.ok) {
       const body = await response.json();
       setItems(body.items);
@@ -82,25 +174,38 @@ export function OrdersTable() {
     load();
   }, [load]);
 
+  // F-200 fix: mirrors the current filters/page into the URL so a Back
+  // navigation from an order's detail page (or a reload/bookmark) restores
+  // them. `replaceState`, not `router.replace` — this is reflecting
+  // already-fetched client state, not a page navigation, and doesn't need
+  // the server component above to re-render.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPage(1);
-  }, [search, status, paymentMethod, dateFrom, dateTo]);
+    const qs = buildParams().toString();
+    const url = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
+    window.history.replaceState(null, "", url);
+  }, [buildParams]);
 
   const exportParams = buildParams();
   exportParams.delete("page");
   exportParams.delete("sort");
+  const exportSearchTerm = exportParams.get("q");
+  exportParams.delete("q");
+  if (exportSearchTerm) exportParams.set("search", exportSearchTerm);
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by order number or email…"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Search order #, name, email or phone…"
           className="w-64 rounded-xl border border-border p-2 text-sm"
         />
-        <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-xl border border-border p-2 text-sm">
+        <select
+          value={status}
+          onChange={(e) => updateFilter(setStatus, e.target.value)}
+          className="rounded-xl border border-border p-2 text-sm"
+        >
           <option value="">All statuses</option>
           {STATUS_OPTIONS.map((s) => (
             <option key={s} value={s}>
@@ -108,7 +213,11 @@ export function OrdersTable() {
             </option>
           ))}
         </select>
-        <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)} className="rounded-xl border border-border p-2 text-sm">
+        <select
+          value={paymentMethod}
+          onChange={(e) => updateFilter(setPaymentMethod, e.target.value)}
+          className="rounded-xl border border-border p-2 text-sm"
+        >
           <option value="">All payment methods</option>
           {PAYMENT_OPTIONS.map((p) => (
             <option key={p} value={p}>
@@ -118,11 +227,21 @@ export function OrdersTable() {
         </select>
         <label className="flex items-center gap-1 text-xs text-muted">
           From
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="rounded-xl border border-border p-2 text-sm" />
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => updateFilter(setDateFrom, e.target.value)}
+            className="rounded-xl border border-border p-2 text-sm"
+          />
         </label>
         <label className="flex items-center gap-1 text-xs text-muted">
           To
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="rounded-xl border border-border p-2 text-sm" />
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => updateFilter(setDateTo, e.target.value)}
+            className="rounded-xl border border-border p-2 text-sm"
+          />
         </label>
         <select value={sort} onChange={(e) => setSort(e.target.value)} className="rounded-xl border border-border p-2 text-sm">
           <option value="createdAt-desc">Newest first</option>

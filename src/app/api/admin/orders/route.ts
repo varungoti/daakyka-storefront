@@ -7,13 +7,8 @@ import {
   paymentMethodValues,
   type OrderListSort,
 } from "@/lib/orders/admin-orders";
+import { parseIstDateOnly, parseIstDateOnlyExclusiveEnd } from "@/lib/format/datetime";
 import type { OrderStatus, PaymentMethod } from "@/generated/prisma/client";
-
-function parseDate(value: string | null): Date | undefined {
-  if (!value) return undefined;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? undefined : date;
-}
 
 export async function GET(request: Request) {
   const { error } = await requireAdminPermission("orders:view");
@@ -31,8 +26,12 @@ export async function GET(request: Request) {
       paymentMethod && (paymentMethodValues as readonly string[]).includes(paymentMethod)
         ? (paymentMethod as PaymentMethod)
         : undefined,
-    dateFrom: parseDate(url.searchParams.get("dateFrom")),
-    dateTo: parseDate(url.searchParams.get("dateTo")),
+    // F-068 fix: parsed as IST calendar-day boundaries, not
+    // `new Date(value)` (which reads a date-only string as UTC midnight —
+    // 05:30 IST — and used to drop the whole "To" day). `dateTo` is the
+    // *exclusive* upper bound (see admin-orders.ts's buildOrderWhere).
+    dateFrom: parseIstDateOnly(url.searchParams.get("dateFrom")),
+    dateTo: parseIstDateOnlyExclusiveEnd(url.searchParams.get("dateTo")),
     sort: sort && (orderListSortValues as readonly string[]).includes(sort) ? (sort as OrderListSort) : undefined,
     page: Number(url.searchParams.get("page")) || 1,
     pageSize: Number(url.searchParams.get("pageSize")) || undefined,

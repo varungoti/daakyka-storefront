@@ -4,9 +4,15 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { CustomerNotFoundError, getCustomerForAdmin } from "@/lib/customers/admin-customers";
 import { CustomerActiveToggle } from "@/components/admin/customer-active-toggle";
+import { formatInrExact } from "@/lib/currency/admin-money";
 
+// F-202 fix (release-hardening admin-order-list-detail-ux): was
+// `maximumFractionDigits: 0`, which silently rounded a customer's
+// lifetime-spend total (built from orders that can carry paise — a
+// percentage discount code) to the nearest whole rupee. See
+// src/lib/currency/admin-money.ts.
 function formatInr(amount: number): string {
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
+  return formatInrExact(amount);
 }
 
 export default async function AdminCustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {

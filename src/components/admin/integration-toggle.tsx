@@ -55,8 +55,11 @@ export function IntegrationToggle({
       type="button"
       disabled={loading || !configured}
       onClick={toggle}
+      // F-243 fix: `text-trust` is ~2.8:1 on `bg-trust/15`, below WCAG
+      // AA's 4.5:1 — `text-trust-ink` is the existing F-299 token built
+      // for exactly this (~6:1 on the same tint).
       className={`rounded-full px-3 py-1 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${
-        isEnabled ? "bg-trust/15 text-trust" : "bg-lavender/60 text-muted"
+        isEnabled ? "bg-trust/15 text-trust-ink" : "bg-lavender/60 text-muted"
       }`}
       title={
         configured
