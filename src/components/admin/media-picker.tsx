@@ -3,6 +3,8 @@
 import Image from "next/image";
 import { useState } from "react";
 import { MediaLibraryBrowser } from "@/components/admin/media-library-browser";
+import { uploadErrorMessage } from "@/lib/admin/retryable-upload";
+import { prepareImageForUpload } from "@/lib/media/prepare-upload";
 import { retryAfterMessage } from "@/lib/security/retry-after";
 import { cn } from "@/lib/utils";
 
@@ -45,31 +47,41 @@ export function MediaPicker({
   const [notice, setNotice] = useState<string | null>(null);
   const [promptOverride, setPromptOverride] = useState("");
 
+  // F-178: prepareImageForUpload downscales/re-encodes the file in the
+  // browser first (same fix as the product gallery's upload — see
+  // src/lib/media/prepare-upload.ts) so an ordinary phone photo fits under
+  // the server's own limit instead of failing on Vercel's 4.5MB Function
+  // body cap. F-365: a failure now shows the server's actual reason
+  // (uploadErrorMessage) instead of a fixed "Upload failed" string.
   const onUpload = async (file: File) => {
     setUploading(true);
     setNotice(null);
-    const form = new FormData();
-    form.append("file", file);
-    form.append("usage", usage);
-    const response = await fetch("/api/admin/media", { method: "POST", body: form });
-    setUploading(false);
-    if (response.status === 503) {
-      setNotice("Image storage isn't configured yet — ask an admin to set up Cloudflare R2.");
-      return;
+    try {
+      const prepared = await prepareImageForUpload(file);
+      const form = new FormData();
+      form.append("file", prepared);
+      form.append("usage", usage);
+      const response = await fetch("/api/admin/media", { method: "POST", body: form });
+      if (response.status === 503) {
+        setNotice("Image storage isn't configured yet — ask an admin to set up Cloudflare R2.");
+        return;
+      }
+      if (response.status === 429) {
+        // F-324: this used to fall into the generic "Upload failed" branch
+        // below, telling the admin the *image* was the problem.
+        setNotice(retryAfterMessage(response, "uploads"));
+        return;
+      }
+      if (!response.ok) {
+        setNotice(await uploadErrorMessage(response));
+        return;
+      }
+      const body = await response.json();
+      onChange({ id: body.asset.id, url: body.asset.url, alt: body.asset.alt ?? null });
+      setMode("closed");
+    } finally {
+      setUploading(false);
     }
-    if (response.status === 429) {
-      // F-324: this used to fall into the generic "Upload failed" branch
-      // below, telling the admin the *image* was the problem.
-      setNotice(retryAfterMessage(response, "uploads"));
-      return;
-    }
-    if (!response.ok) {
-      setNotice("Upload failed — try a different image.");
-      return;
-    }
-    const body = await response.json();
-    onChange({ id: body.asset.id, url: body.asset.url, alt: body.asset.alt ?? null });
-    setMode("closed");
   };
 
   const onGenerate = async () => {

@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils";
 import type { ManifestAspect } from "@/data/media/image-manifest";
 import { aspectClassName, placeholderForAspect, toGenerationAspect } from "@/data/media/image-manifest";
 import type { PromptFields, PromptPreset } from "@/lib/ai/prompt-presets";
+import { uploadErrorMessage } from "@/lib/admin/retryable-upload";
+import { prepareImageForUpload } from "@/lib/media/prepare-upload";
 import { retryAfterMessage } from "@/lib/security/retry-after";
 
 export interface SiteImageSlotRow {
@@ -120,12 +122,19 @@ function SiteImageCard({
     }
   };
 
+  // F-178: prepareImageForUpload downscales/re-encodes the file in the
+  // browser first (same fix as the product gallery's upload — see
+  // src/lib/media/prepare-upload.ts) so an ordinary phone photo fits under
+  // the server's own limit instead of failing on Vercel's 4.5MB Function
+  // body cap. F-365: a failure now shows the server's actual reason
+  // (uploadErrorMessage) instead of a fixed "Upload failed" string.
   const onUpload = async (file: File) => {
     setUploading(true);
     setNotice(null);
     try {
+      const prepared = await prepareImageForUpload(file);
       const form = new FormData();
-      form.append("file", file);
+      form.append("file", prepared);
       form.append("usage", row.usage);
       form.append("slot", row.slot);
       form.append("alt", row.label);
@@ -141,7 +150,7 @@ function SiteImageCard({
         return;
       }
       if (!response.ok) {
-        setNotice("Upload failed — try a different image.");
+        setNotice(await uploadErrorMessage(response));
         return;
       }
       const body = await response.json();
