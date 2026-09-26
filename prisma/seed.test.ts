@@ -97,6 +97,11 @@ describe("prisma/seed.ts journey defaults", () => {
     assert.equal(discount, null, "HERO10 should not exist as a real, redeemable discount code");
   });
 
+  it("never seeds a 'Top + Bottom Bundle' offer — no bundle pricing logic exists (F-004)", async () => {
+    const offer = await db.offerRecommendation.findFirst({ where: { name: "Top + Bottom Bundle" } });
+    assert.equal(offer, null, "no fresh database should get a bundle offer with nothing behind it");
+  });
+
   it("each of welcome-series, abandoned-cart, and post-purchase seeds exactly one step", async () => {
     // Before this fix, each of these journeys had 3-4 steps that all
     // pointed at the same MessageTemplate, so the same email went out
@@ -126,6 +131,75 @@ describe("prisma/seed.ts journey defaults", () => {
       templateIds.length,
       "the acknowledgement and quote-follow-up WhatsApp steps should not reuse the same template",
     );
+  });
+});
+
+/**
+ * F-004: the homepage offers strip used to advertise a "Top + Bottom
+ * Bundle — 10% off" and a "First Purchase — HERO10" code that checkout
+ * never honoured. Removing both from seedContent()'s `offers` array (the
+ * describe block above) only stops a *fresh* database from getting them —
+ * ensureContentSeeded() (F-223) never re-runs seedContent() at all against
+ * an already-content-seeded database, which is what production is. These
+ * tests cover the separate, always-runs-once fixup in main() that
+ * deactivates the two rows a past deploy already created there.
+ */
+describe("prisma/seed.ts deactivates the unhonoured HERO10 / bundle offers already in production (F-004)", () => {
+  it("deactivates an untouched, pre-existing 'Top + Bottom Bundle' row, and never reactivates it again", async () => {
+    // Simulate "production before this fix": the exact row the old seed
+    // used to create, still active, and the one-time marker not yet set
+    // (a database this old predates the marker entirely).
+    await db.siteSetting.delete({ where: { key: "seed.unhonouredOffersHandledAt" } }).catch(() => {});
+    const stale = await db.offerRecommendation.create({
+      data: {
+        name: "Top + Bottom Bundle",
+        type: "bundle",
+        description: "Save 10% when buying a scrub top and bottom together.",
+        active: true,
+        config: JSON.stringify({ discount: "10%", minItems: 2 }),
+      },
+    });
+
+    runSeed();
+
+    const afterFirstRun = await db.offerRecommendation.findUnique({ where: { id: stale.id } });
+    assert.equal(afterFirstRun?.active, false, "the untouched seeded bundle row should be deactivated");
+
+    // An admin can still turn it back on afterwards, and that decision
+    // must survive the next deploy — the marker written above must stop
+    // this block from ever re-deactivating it.
+    await db.offerRecommendation.update({ where: { id: stale.id }, data: { active: true } });
+    runSeed();
+    const afterSecondRun = await db.offerRecommendation.findUnique({ where: { id: stale.id } });
+    assert.equal(
+      afterSecondRun?.active,
+      true,
+      "an admin's later reactivation must survive a re-seed once the row has been handled",
+    );
+
+    await db.offerRecommendation.delete({ where: { id: stale.id } });
+  });
+
+  it("never touches an offer an admin authored, even if it reuses the stale offer's name", async () => {
+    await db.siteSetting.delete({ where: { key: "seed.unhonouredOffersHandledAt" } }).catch(() => {});
+    const adminOffer = await db.offerRecommendation.create({
+      data: {
+        name: "Top + Bottom Bundle",
+        type: "bundle",
+        // Different description/config from the original seeded row —
+        // an admin's own content, not what this fix should ever touch.
+        description: "Admin-authored: 15% off, valid through Diwali.",
+        active: true,
+        config: JSON.stringify({ discount: "15%" }),
+      },
+    });
+
+    runSeed();
+
+    const after = await db.offerRecommendation.findUnique({ where: { id: adminOffer.id } });
+    assert.equal(after?.active, true, "an admin-authored offer must never be deactivated by this fixup");
+
+    await db.offerRecommendation.delete({ where: { id: adminOffer.id } });
   });
 });
 

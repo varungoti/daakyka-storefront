@@ -20,6 +20,7 @@ const prisma = createPrismaClient();
  */
 const CONTENT_SEED_MARKER_KEY = "seed.contentSeededAt";
 const LEGACY_ACCOUNTS_SEED_MARKER_KEY = "seed.legacyAccountsHandledAt";
+const UNHONOURED_OFFERS_SEED_MARKER_KEY = "seed.unhonouredOffersHandledAt";
 
 const defaultHomepageSections = [
   {
@@ -450,6 +451,57 @@ async function main() {
     });
   }
 
+  // F-004: production already has two OfferRecommendation rows this seed
+  // used to create — "First Purchase — HERO10" (config.code "HERO10",
+  // never backed by a real Discount row) and "Top + Bottom Bundle" (no
+  // bundle pricing exists anywhere in checkout) — and both are still
+  // `active: true` there. seedContent() below is create-only and, per
+  // ensureContentSeeded()'s F-223 fix, never re-runs at all against an
+  // already-content-seeded database (which production is) — so simply
+  // dropping "Top + Bottom Bundle" from the `offers` array below (HERO10
+  // is already gone, see F-070) only keeps a *fresh* database from ever
+  // getting these cards; it does nothing for rows a past deploy already
+  // created. Deactivate exactly those two rows, matched on their untouched
+  // seeded name+description+config (never a looser match like "name
+  // contains bundle", so an admin's own edited copy — or an unrelated
+  // offer that happens to reuse a word — is never touched), and do it at
+  // most once per database so a later admin re-activation via
+  // /admin/offers sticks across the next deploy, exactly like the legacy
+  // account handling above.
+  const unhonouredOffersHandled = await prisma.siteSetting.findUnique({
+    where: { key: UNHONOURED_OFFERS_SEED_MARKER_KEY },
+  });
+  if (!unhonouredOffersHandled) {
+    const staleOffers: { name: string; description: string; config: Record<string, unknown> }[] = [
+      {
+        name: "First Purchase — HERO10",
+        description: "10% off first order for newsletter subscribers.",
+        config: { code: "HERO10" },
+      },
+      {
+        name: "Top + Bottom Bundle",
+        description: "Save 10% when buying a scrub top and bottom together.",
+        config: { discount: "10%", minItems: 2 },
+      },
+    ];
+    for (const stale of staleOffers) {
+      const row = await prisma.offerRecommendation.findFirst({ where: { name: stale.name } });
+      if (
+        row &&
+        row.active &&
+        row.description === stale.description &&
+        row.config === JSON.stringify(stale.config)
+      ) {
+        await prisma.offerRecommendation.update({ where: { id: row.id }, data: { active: false } });
+      }
+    }
+    await prisma.siteSetting.upsert({
+      where: { key: UNHONOURED_OFFERS_SEED_MARKER_KEY },
+      update: {},
+      create: { key: UNHONOURED_OFFERS_SEED_MARKER_KEY, value: new Date().toISOString() },
+    });
+  }
+
   await ensureContentSeeded();
 
   console.log("Database seeded successfully.");
@@ -763,13 +815,22 @@ async function seedContent(): Promise<void> {
     });
   }
 
-  // F-070 / release-hardening business decision: no HERO10 offer claim —
-  // it was never backed by a real Discount row, so it failed at checkout
-  // for every shopper who tried it (see the seed-welcome-email /
-  // seed-cart-abandon-email templates above).
+  // F-004 / F-070 / release-hardening business decision: no HERO10 offer
+  // claim and no "Top + Bottom Bundle" claim — neither was ever backed by
+  // real checkout logic (HERO10 had no Discount row; no bundle-pricing
+  // code exists anywhere in cart/checkout/orders), so both failed the
+  // shopper who tried them (see the seed-welcome-email /
+  // seed-cart-abandon-email templates above for HERO10). The two rows
+  // this seed already created on production before this fix are handled
+  // separately, above (see the UNHONOURED_OFFERS_SEED_MARKER_KEY block) —
+  // dropping them from this array only stops a *fresh* database from ever
+  // getting them.
   const offers = [
-    { name: "Top + Bottom Bundle", type: "bundle", description: "Save 10% when buying a scrub top and bottom together.", config: { discount: "10%", minItems: 2 } },
-    { name: "Free Shipping Threshold", type: "free_shipping", description: "Free shipping on retail orders over ₹8,299.", config: { thresholdInr: 8299 }, active: true },
+    // src/components/home/offers-strip.tsx always renders this card's
+    // description from the live shipping.freeAbove setting, never this
+    // stored text (F-004) — kept accurate here too so an admin editing
+    // this row in /admin/offers isn't shown a stale number.
+    { name: "Free Shipping Threshold", type: "free_shipping", description: "Free shipping on retail orders over ₹8,000.", config: { thresholdInr: 8000 }, active: true },
     { name: "Institutional Bulk Pricing", type: "bulk", description: "Volume discounts for hospitals, schools, and corporate teams.", config: { minStaff: 25 }, active: true },
     { name: "Festival Scrubs Spotlight", type: "festival", description: "Seasonal campaign offer — requires campaign approval before send.", config: { season: "monsoon" }, active: false },
   ];

@@ -215,6 +215,31 @@ export async function resolveDiscount(
   };
 }
 
+/**
+ * Release-hardening F-004: the homepage offers strip must never advertise
+ * a discount code checkout won't actually redeem (HERO10 was exactly this
+ * — a card promising a code with no backing Discount row). A caller that
+ * renders a code-bearing offer (e.g. src/lib/offers/index.ts) checks this
+ * FIRST and hides the card entirely when it's false, rather than showing a
+ * dead code and letting the shopper discover "Invalid discount code" at
+ * checkout. Deliberately lighter than resolveDiscount()'s full
+ * assertDiscountUsable(): this only answers "does this code currently work
+ * at all" (missing / inactive / not started / expired) for display
+ * purposes — it has no subtotal or email to check a min-subtotal or
+ * per-customer cap against, and a display check has no reason to.
+ */
+export async function isDiscountCodeActive(rawCode: string, now: Date = new Date()): Promise<boolean> {
+  const code = normalizeDiscountCode(rawCode);
+  if (!code) return false;
+
+  const discount = await db.discount.findUnique({ where: { code } });
+  if (!discount) return false;
+  if (!discount.active) return false;
+  if (discount.startsAt && discount.startsAt > now) return false;
+  if (discount.endsAt && discount.endsAt <= now) return false;
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Commit (write) — the atomic, concurrency-safe part
 // ---------------------------------------------------------------------------

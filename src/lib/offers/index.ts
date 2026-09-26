@@ -1,6 +1,9 @@
 import { revalidateTag, unstable_cache } from "next/cache";
 import { db } from "@/lib/db";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { isDiscountCodeActive } from "@/lib/discounts";
+import { getSetting } from "@/lib/settings";
+import { formatBasePrice } from "@/lib/currency/convert";
 import type { OfferRecommendation } from "@/generated/prisma/client";
 import type { z } from "zod";
 import type { offerSchema, offerUpdateSchema } from "@/lib/validation/schemas";
@@ -13,20 +16,62 @@ export interface StoreOffer {
   config: Record<string, unknown>;
 }
 
+const MAX_ACTIVE_OFFERS = 4;
+
+/**
+ * Release-hardening F-004: the homepage strip must never advertise an
+ * offer checkout doesn't honour, and must never fall back to hardcoded
+ * copy. Two type-specific corrections on top of the raw `active` rows:
+ *
+ *  - Any offer naming a discount code (`config.code`, e.g. type
+ *    "first_purchase") is only kept when that code is a real, currently
+ *    redeemable Discount row (see src/lib/discounts's isDiscountCodeActive)
+ *    — HERO10 was a card with no backing Discount at all, so every
+ *    shopper who tried it got "Invalid discount code" at checkout.
+ *  - A "free_shipping" card's description is always rendered from the
+ *    live `shipping.freeAbove` setting rather than whatever static text is
+ *    stored on the row, so it can't silently drift from what checkout
+ *    actually charges (the stored copy once said ₹8,299 while checkout
+ *    charged from a setting of ₹8,000).
+ *
+ * Fetches more than MAX_ACTIVE_OFFERS up front since the discount-code
+ * check above can drop rows — otherwise an inactive/expired code's card
+ * would leave fewer than MAX_ACTIVE_OFFERS shown even when enough other
+ * valid offers exist.
+ */
 async function readActiveOffersFromDb(): Promise<StoreOffer[]> {
   try {
     const rows = await db.offerRecommendation.findMany({
       where: { active: true },
       orderBy: { createdAt: "desc" },
-      take: 4,
+      take: MAX_ACTIVE_OFFERS * 5,
     });
-    return rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      type: row.type,
-      description: row.description,
-      config: JSON.parse(row.config) as Record<string, unknown>,
-    }));
+
+    const freeAbove = await getSetting("shipping.freeAbove");
+    const offers: StoreOffer[] = [];
+
+    for (const row of rows) {
+      const config = JSON.parse(row.config) as Record<string, unknown>;
+
+      if (typeof config.code === "string" && config.code.trim()) {
+        if (!(await isDiscountCodeActive(config.code))) continue;
+      }
+
+      offers.push({
+        id: row.id,
+        name: row.name,
+        type: row.type,
+        description:
+          row.type === "free_shipping"
+            ? `Free shipping on retail orders over ${formatBasePrice(freeAbove, "INR")}.`
+            : row.description,
+        config,
+      });
+
+      if (offers.length === MAX_ACTIVE_OFFERS) break;
+    }
+
+    return offers;
   } catch {
     return [];
   }
