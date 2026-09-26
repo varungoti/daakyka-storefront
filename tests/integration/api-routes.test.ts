@@ -312,6 +312,63 @@ describe("API integration", () => {
 
       await db.bulkOrderLead.delete({ where: { id: body.id } });
     });
+
+    // F-071: the enquiry-consent checkbox (consentGiven) must never double
+    // as marketing consent. marketingOptIn is a separate, optional field
+    // that (only when true) starts the same double opt-in newsletter flow
+    // everyone else goes through — it must never be persisted on the lead
+    // itself, since BulkOrderLead has no such column.
+    it("marketingOptIn: true starts a newsletter opt-in, unconfirmed, without touching the lead", async () => {
+      const email = `bulk-marketing-optin-${Date.now()}@example.com`;
+      const response = await postBulkOrder(
+        new Request("http://localhost/api/bulk-orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            organization: "Test Clinic",
+            contactPerson: "Dr Opt In",
+            email,
+            phone: "9876543210",
+            consentGiven: true,
+            marketingOptIn: true,
+          }),
+        }),
+      );
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as { id: string };
+
+      const subscriber = await db.newsletterSubscriber.findUnique({ where: { email } });
+      assert.ok(subscriber, "marketingOptIn: true must start a newsletter opt-in");
+      assert.equal(subscriber?.confirmedAt, null, "opt-in must still require confirmation, not be pre-confirmed");
+      assert.equal(subscriber?.source, "bulk-order");
+
+      await db.bulkOrderLead.delete({ where: { id: body.id } });
+      await db.newsletterSubscriber.delete({ where: { email } }).catch(() => {});
+    });
+
+    it("marketingOptIn omitted (default false) creates no newsletter row — enquiry consent stays enquiry-only", async () => {
+      const email = `bulk-no-marketing-${Date.now()}@example.com`;
+      const response = await postBulkOrder(
+        new Request("http://localhost/api/bulk-orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            organization: "Test Clinic",
+            contactPerson: "Dr No Opt In",
+            email,
+            phone: "9876543210",
+            consentGiven: true,
+          }),
+        }),
+      );
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as { id: string };
+
+      const subscriber = await db.newsletterSubscriber.findUnique({ where: { email } });
+      assert.equal(subscriber, null, "consentGiven (enquiry consent) alone must never create a marketing opt-in");
+
+      await db.bulkOrderLead.delete({ where: { id: body.id } });
+    });
   });
 
   describe("Shopify orders webhook", () => {
