@@ -10,6 +10,17 @@ import bcrypt from "bcryptjs";
 
 const prisma = createPrismaClient();
 
+/**
+ * F-223 / F-232: internal one-time markers, stored as ordinary SiteSetting
+ * rows keyed under a "seed." namespace that never appears in
+ * SettingValueMap (src/lib/settings/index.ts) — getSetting()/setSetting()
+ * and /admin/site-controls only ever read/write the fixed keys declared
+ * there, so these rows are invisible to the admin UI and safe to share the
+ * table with real settings.
+ */
+const CONTENT_SEED_MARKER_KEY = "seed.contentSeededAt";
+const LEGACY_ACCOUNTS_SEED_MARKER_KEY = "seed.legacyAccountsHandledAt";
+
 const defaultHomepageSections = [
   {
     key: "announcement",
@@ -246,10 +257,49 @@ async function main() {
     });
   }
 
-  for (const legacyEmail of ["admin@daakyka.com", "viewer@daakyka.com"]) {
-    await prisma.user.updateMany({
-      where: { email: legacyEmail },
-      data: { active: false },
+  // F-232: this used to deactivate these two known-compromised default
+  // accounts (see docs/ADMIN_CREDENTIALS.md) unconditionally on *every*
+  // deploy. That collided with ADMIN_SEED_EMAIL=admin@daakyka.com — the
+  // upsert above creates that very account, and this loop would deactivate
+  // it in the same run, right after "creating" it — and it silently undid
+  // a SUPER_ADMIN's later manual reactivation the moment the next deploy
+  // ran, with no warning. Fix: never touch an address that's actively
+  // configured as a seed email, and do the rest at most once per database
+  // (marker below), so a reactivation sticks across future deploys.
+  const configuredSeedEmails = new Set(
+    [email, viewerEmail?.toLowerCase()].filter((value): value is string => Boolean(value)),
+  );
+  const legacyAccountsHandled = await prisma.siteSetting.findUnique({
+    where: { key: LEGACY_ACCOUNTS_SEED_MARKER_KEY },
+  });
+  if (!legacyAccountsHandled) {
+    for (const legacyEmail of ["admin@daakyka.com", "viewer@daakyka.com"]) {
+      if (configuredSeedEmails.has(legacyEmail)) continue;
+      const legacyUser = await prisma.user.findUnique({ where: { email: legacyEmail } });
+      if (!legacyUser || !legacyUser.active) continue;
+      if (legacyUser.role === "SUPER_ADMIN") {
+        const activeSuperAdmins = await prisma.user.count({
+          where: { role: "SUPER_ADMIN", active: true },
+        });
+        if (activeSuperAdmins <= 1) {
+          console.warn(
+            `[seed] Not deactivating legacy account ${legacyEmail} — it is the only active SUPER_ADMIN.`,
+          );
+          continue;
+        }
+      }
+      // Matches the "deactivate" path in src/app/api/admin/users/[id]/route.ts:
+      // bump sessionVersion too, so any existing session for this account
+      // is revoked immediately rather than staying valid until it expires.
+      await prisma.user.update({
+        where: { id: legacyUser.id },
+        data: { active: false, sessionVersion: { increment: 1 } },
+      });
+    }
+    await prisma.siteSetting.upsert({
+      where: { key: LEGACY_ACCOUNTS_SEED_MARKER_KEY },
+      update: {},
+      create: { key: LEGACY_ACCOUNTS_SEED_MARKER_KEY, value: new Date().toISOString() },
     });
   }
 
@@ -375,6 +425,48 @@ async function main() {
     },
   });
 
+  for (const provider of ["SHOPIFY", "BREVO", "WATI", "HERMES"] as const) {
+    await prisma.integrationSetting.upsert({
+      where: { provider },
+      update: {},
+      create: { provider, enabled: false, config: "{}" },
+    });
+  }
+
+  // SiteSetting rows are also create-only: an admin's change in
+  // /admin/site-controls must survive every re-seed/redeploy. Each key
+  // gets its documented default (src/lib/settings) only if no row exists.
+  // Unlike seedContent() below, this (like the two loops above and the
+  // homepage sections/hero slides above them) runs on every deploy — a
+  // setting or integration provider added after the initial deploy still
+  // needs its default row created on an already-content-seeded database,
+  // and none of these rows has a delete path for a re-seed to protect
+  // against resurrecting.
+  for (const [key, value] of Object.entries(settingDefaults)) {
+    await prisma.siteSetting.upsert({
+      where: { key },
+      update: {},
+      create: { key, value: value as Prisma.InputJsonValue },
+    });
+  }
+
+  await ensureContentSeeded();
+
+  console.log("Database seeded successfully.");
+}
+
+/**
+ * F-223: everything seeded here is real, editable /admin content — blog
+ * posts, segments, message templates, a campaign, customer journeys and
+ * their steps, Hermes drafts, SEO records, offers and market snapshots.
+ * Unlike the bootstrap items in main() above, every one of these *can* be
+ * deleted or renamed by an admin, and each is only create-only *by key*:
+ * a `findFirst`/`upsert` stops re-seeding from clobbering an edit, but not
+ * from resurrecting something the owner deliberately removed. This must
+ * therefore run at most once per database — see ensureContentSeeded(),
+ * the only caller.
+ */
+async function seedContent(): Promise<void> {
   for (const post of seedBlogPosts) {
     await prisma.blogPostRecord.upsert({
       where: { slug: post.slug },
@@ -614,14 +706,6 @@ async function main() {
     }
   }
 
-  for (const provider of ["SHOPIFY", "BREVO", "WATI", "HERMES"] as const) {
-    await prisma.integrationSetting.upsert({
-      where: { provider },
-      update: {},
-      create: { provider, enabled: false, config: "{}" },
-    });
-  }
-
   const seoTask = await prisma.hermesTask.upsert({
     where: { id: "seed-hermes-seo-scan" },
     update: {},
@@ -699,17 +783,6 @@ async function main() {
     }
   }
 
-  // SiteSetting rows are also create-only: an admin's change in
-  // /admin/site-controls must survive every re-seed/redeploy. Each key
-  // gets its documented default (src/lib/settings) only if no row exists.
-  for (const [key, value] of Object.entries(settingDefaults)) {
-    await prisma.siteSetting.upsert({
-      where: { key },
-      update: {},
-      create: { key, value: value as Prisma.InputJsonValue },
-    });
-  }
-
   const marketSnapshots = [
     { competitor: "Knyamed", category: "Fabric Tech", observation: "Strong ecoflex™ and 4-way stretch category navigation — opportunity for deeper science content hub." },
     { competitor: "GetNovora", category: "Positioning", observation: "Color-led shopping and WhatsApp access — match with premium UX and institutional bulk flows." },
@@ -724,8 +797,60 @@ async function main() {
       await prisma.marketSnapshot.create({ data: snap });
     }
   }
+}
 
-  console.log("Database seeded successfully.");
+/**
+ * Decides whether seedContent() should run, then makes sure it never runs
+ * again for this database.
+ *
+ * - `SEED_CONTENT=1` always forces it — for local/dev use: refilling
+ *   fixtures after wiping a table, or deliberately content-seeding a
+ *   database that predates the marker.
+ * - Otherwise it runs exactly once: the first time this database has no
+ *   marker *and* no content rows already exist (a genuinely fresh
+ *   database — this is what `testdb.mjs setup` and a first-ever production
+ *   deploy both hit).
+ * - A database with no marker but existing content (every database seeded
+ *   before this fix shipped, including production — see F-223) just gets
+ *   the marker written, without calling seedContent() — seeding it again
+ *   would recreate anything the owner already deleted.
+ */
+async function ensureContentSeeded(): Promise<void> {
+  const marker = await prisma.siteSetting.findUnique({ where: { key: CONTENT_SEED_MARKER_KEY } });
+  const forced = process.env.SEED_CONTENT === "1" || process.env.SEED_CONTENT === "true";
+
+  if (marker && !forced) return;
+
+  let shouldSeed = forced || !marker;
+  if (!marker && !forced) {
+    const [blogCount, offerCount, seoCount, segmentCount] = await Promise.all([
+      prisma.blogPostRecord.count(),
+      prisma.offerRecommendation.count(),
+      prisma.seoPageRecord.count(),
+      prisma.customerSegment.count(),
+    ]);
+    if (blogCount > 0 || offerCount > 0 || seoCount > 0 || segmentCount > 0) {
+      shouldSeed = false;
+      console.log(
+        "[seed] Content already exists with no seed marker (a database seeded before this " +
+          "fix shipped) — recording the marker without re-seeding, so nothing the owner already " +
+          "deleted comes back.",
+      );
+    }
+  }
+
+  if (shouldSeed) {
+    await seedContent();
+    console.log("Seeded content (blog posts, SEO records, segments, templates, journeys, offers).");
+  }
+
+  if (!marker) {
+    await prisma.siteSetting.upsert({
+      where: { key: CONTENT_SEED_MARKER_KEY },
+      update: {},
+      create: { key: CONTENT_SEED_MARKER_KEY, value: new Date().toISOString() },
+    });
+  }
 }
 
 main()

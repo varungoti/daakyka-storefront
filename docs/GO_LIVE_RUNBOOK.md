@@ -47,10 +47,13 @@ the same one production uses.
    below (do **not** just copy `.env.staging.example` blindly; it lists optional integrations too).
 3. Deploy the preview/staging branch. The build command (`vercel.json` → `node scripts/vercel-build.mjs`)
    always runs `prisma generate` then `next build`. It only runs `prisma migrate deploy` (retried on
-   advisory-lock timeouts) and the idempotent `prisma/seed.ts` (create-only — safe to run on every
-   deploy, and it refuses to run at all on Vercel without a real, non-default `ADMIN_SEED_PASSWORD`)
-   when `VERCEL_ENV === "production"` **or** `RUN_DB_MIGRATIONS=1` is set on this environment — set
-   the latter on Preview if this staging database should track new migrations automatically.
+   advisory-lock timeouts) and `prisma/seed.ts` (safe to run on every deploy: admin/viewer users,
+   homepage sections and settings are create-only, and real `/admin` content — blog posts, SEO
+   records, segments, templates, journeys, offers — is only ever seeded once per database, so a
+   deleted record never comes back on the next deploy; it also refuses to run at all on Vercel
+   without a real, non-default `ADMIN_SEED_PASSWORD`) when `VERCEL_ENV === "production"` **or**
+   `RUN_DB_MIGRATIONS=1` is set on this environment — set the latter on Preview if this staging
+   database should track new migrations automatically.
 
 ```bash
 # After deploy — from storefront/
@@ -99,9 +102,10 @@ Steps:
    `npm run dev`/`npm test` (which loads `.env` and always uses `DATABASE_URL`) can never point at
    production by accident. **Never copy that value into `.env`'s own `DATABASE_URL`.**
 4. Production has already been migrated and seeded once using this connection string — a fresh
-   **production** deploy (`VERCEL_ENV === "production"`) just re-runs the same idempotent
-   `migrate deploy` + `seed.ts` from A2, which is safe. A Preview/branch deploy does not touch
-   this database at all — see A1.
+   **production** deploy (`VERCEL_ENV === "production"`) just re-runs the same `migrate deploy` +
+   `seed.ts` from A2, which is safe (see the note there: real content seeds at most once per
+   database, so it won't resurrect anything already deleted from `/admin`). A Preview/branch deploy
+   does not touch this database at all — see A1.
 
 ---
 

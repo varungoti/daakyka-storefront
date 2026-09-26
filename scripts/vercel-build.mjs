@@ -61,9 +61,13 @@ async function main() {
     console.log("\n▶ prisma migrate deploy (with retry)");
     await migrateWithRetry();
 
-    // prisma/seed.ts is create-only (an existing row's data is never
-    // overwritten), so running it on every deploy is safe: it only ever
-    // bootstraps the admin user and default content the first time. On
+    // prisma/seed.ts is safe to run on every deploy: the admin/viewer
+    // users, homepage sections, integration settings and site-setting
+    // defaults are create-only (an existing row is never overwritten), and
+    // real /admin content (blog posts, SEO records, segments, templates,
+    // journeys, offers) is only ever (re-)seeded once per database — see
+    // ensureContentSeeded() in prisma/seed.ts (F-223) — so an admin's
+    // deletion of seeded content is never undone by a later deploy. On
     // Vercel it also refuses to run at all without a real, non-default
     // ADMIN_SEED_PASSWORD — see prisma/seed.ts's resolveAdminSeedPassword.
     console.log("\n▶ prisma seed");

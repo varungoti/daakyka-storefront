@@ -67,4 +67,10 @@ an account and re-invite.
   `ADMIN_SEED_PASSWORD`, as a second line of defense
 
 Legacy seed users (`admin@daakyka.com`, `viewer@daakyka.com`) are
-deactivated automatically on every re-seed.
+deactivated automatically, but **only once** per database (the first
+deploy that finds them still active), and never if that address is the one
+currently configured via `ADMIN_SEED_EMAIL`/`VIEWER_SEED_EMAIL` — so
+setting `ADMIN_SEED_EMAIL=admin@daakyka.com` no longer creates the account
+and immediately locks it out again. A SUPER_ADMIN who later reactivates one
+of these accounts from `/admin/users` stays active across future deploys;
+the seed does not touch it a second time.
