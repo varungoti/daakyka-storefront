@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { formatInrExact } from "@/lib/currency/admin-money";
+import { createLoadGuard, debounce, normalizeSearchTerm } from "@/lib/admin/list-query";
 
 interface CustomerListItem {
   id: string;
@@ -34,24 +35,47 @@ export function CustomersTable() {
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
 
+  // F-341 fix: `searchInput` is what the text field shows (updates every
+  // keystroke); `search` is what's actually queried, 300ms after the admin
+  // stops typing — same split as OrdersTable
+  // (src/components/admin/orders-table.tsx), which this mirrors.
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [active, setActive] = useState("");
 
+  // Lazy `useState` initializers, not `useRef` — `react-hooks/refs`
+  // forbids reading `.current` during render, which a `useRef(...).current`
+  // one-liner does; see the matching comment in orders-table.tsx.
+  const [debouncedSetSearch] = useState(() => debounce((value: string) => setSearch(value), 300));
+  useEffect(() => () => debouncedSetSearch.cancel(), [debouncedSetSearch]);
+
+  // F-341 fix: drops a response for a request that's no longer the latest
+  // one in flight (a slower, earlier search/filter resolving after a
+  // faster, later one already has) instead of applying it.
+  const [loadGuard] = useState(createLoadGuard);
+
   const load = useCallback(async () => {
+    const requestId = loadGuard.start();
     setLoading(true);
     const params = new URLSearchParams({ page: String(page) });
-    if (search.trim()) params.set("search", search.trim());
+    // F-341 fix: below MIN_SEARCH_CHARS, behaves as if the search box were
+    // empty rather than querying the server on a 1-character prefix.
+    const term = normalizeSearchTerm(search);
+    if (term) params.set("search", term);
     if (active) params.set("active", active);
 
     const response = await fetch(`/api/admin/customers?${params}`);
     if (response.ok) {
       const body = await response.json();
+      if (!loadGuard.isCurrent(requestId)) return;
       setItems(body.items);
       setTotal(body.total);
       setTotalPages(body.totalPages);
+      setLoading(false);
+    } else if (loadGuard.isCurrent(requestId)) {
+      setLoading(false);
     }
-    setLoading(false);
-  }, [page, search, active]);
+  }, [page, search, active, loadGuard]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -67,8 +91,12 @@ export function CustomersTable() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={searchInput}
+          onChange={(e) => {
+            const value = e.target.value;
+            setSearchInput(value);
+            debouncedSetSearch(value);
+          }}
           placeholder="Search by name, email, or phone…"
           className="w-72 rounded-xl border border-border p-2 text-sm"
         />
@@ -79,11 +107,13 @@ export function CustomersTable() {
         </select>
       </div>
 
-      {/* F-05 (docs/audit-2026-09-19/admin-ux.md): desktop table unchanged,
-          `lg` and up only — see the matching comment in products-table.tsx
-          for why `lg` (matching the sidebar's own hamburger breakpoint) was
-          chosen over the more common `sm`. */}
-      <div className="hidden overflow-x-auto rounded-2xl border border-border lg:block">
+      {/* F-332 fix: was `lg` (1024px) — at 1024–1279px (an iPad in
+          landscape, or any 1024x768 touch viewport) this table's
+          min-w-[840px] pushed Status and the row action off-screen behind
+          an easy-to-miss horizontal scrollbar. `xl` (1280px) is the first
+          width the table actually has room for every column beside the
+          sidebar — see the matching comment in products-table.tsx. */}
+      <div className="hidden overflow-x-auto rounded-2xl border border-border xl:block">
         <table className="w-full min-w-[840px] text-sm">
           <thead className="bg-surface-muted text-left text-xs font-semibold text-muted">
             <tr>
@@ -146,8 +176,9 @@ export function CustomersTable() {
         </table>
       </div>
 
-      {/* Mobile/tablet stacked-card layout (below `lg`). */}
-      <div className="space-y-3 lg:hidden">
+      {/* Mobile/tablet stacked-card layout (below `xl` — see the F-332 fix
+          comment above). */}
+      <div className="space-y-3 xl:hidden">
         {loading ? (
           <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">Loading…</p>
         ) : items.length === 0 ? (

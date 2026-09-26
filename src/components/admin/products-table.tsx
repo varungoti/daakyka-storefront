@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { createLoadGuard, debounce, normalizeSearchTerm } from "@/lib/admin/list-query";
 
 interface ProductListItem {
   id: string;
@@ -48,6 +49,11 @@ export function ProductsTable({
   const [loading, setLoading] = useState(true);
 
   const initialParams = useSearchParams();
+  // F-341 fix: `searchInput` is what the text field shows (updates every
+  // keystroke); `search` is what's actually queried, 300ms after the admin
+  // stops typing — same split as OrdersTable
+  // (src/components/admin/orders-table.tsx), which this mirrors.
+  const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   // F-177: the filter's <option> values are category ids (categoryOptions
   // only ever carries id/name/section — there's no slug to use instead),
@@ -69,10 +75,25 @@ export function ProductsTable({
   // in red, which a success message must not.
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
+  // Lazy `useState` initializers, not `useRef` — `react-hooks/refs`
+  // forbids reading `.current` during render, which a `useRef(...).current`
+  // one-liner does; see the matching comment in orders-table.tsx.
+  const [debouncedSetSearch] = useState(() => debounce((value: string) => setSearch(value), 300));
+  useEffect(() => () => debouncedSetSearch.cancel(), [debouncedSetSearch]);
+
+  // F-341 fix: drops a response for a request that's no longer the latest
+  // one in flight (a slower, earlier search/filter resolving after a
+  // faster, later one already has) instead of applying it.
+  const [loadGuard] = useState(createLoadGuard);
+
   const load = useCallback(async () => {
+    const requestId = loadGuard.start();
     setLoading(true);
     const params = new URLSearchParams({ page: String(page), sort });
-    if (search.trim()) params.set("search", search.trim());
+    // F-341 fix: below MIN_SEARCH_CHARS, behaves as if the search box were
+    // empty rather than querying the server on a 1-character prefix.
+    const term = normalizeSearchTerm(search);
+    if (term) params.set("search", term);
     if (categoryId) params.set("categoryId", categoryId);
     if (status) params.set("status", status);
     if (stockFilter !== "all") params.set("stockFilter", stockFilter);
@@ -80,12 +101,15 @@ export function ProductsTable({
     const response = await fetch(`/api/admin/products?${params}`);
     if (response.ok) {
       const body = await response.json();
+      if (!loadGuard.isCurrent(requestId)) return;
       setItems(body.items);
       setTotal(body.total);
       setTotalPages(body.totalPages);
+      setLoading(false);
+    } else if (loadGuard.isCurrent(requestId)) {
+      setLoading(false);
     }
-    setLoading(false);
-  }, [page, sort, search, categoryId, status, stockFilter]);
+  }, [page, sort, search, categoryId, status, stockFilter, loadGuard]);
 
   useEffect(() => {
     // Fetch-on-filter-change effect (react.dev/reference/react/useEffect#fetching-data-with-effects):
@@ -156,8 +180,12 @@ export function ProductsTable({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          value={searchInput}
+          onChange={(e) => {
+            const value = e.target.value;
+            setSearchInput(value);
+            debouncedSetSearch(value);
+          }}
           placeholder="Search by name, slug, or tag…"
           className="w-64 rounded-xl border border-border p-2 text-sm"
         />
@@ -298,13 +326,19 @@ export function ProductsTable({
       {notice ? <p className="text-xs text-red-600">{notice}</p> : null}
       {successNotice ? <p className="text-xs font-medium text-green-700">{successNotice}</p> : null}
 
-      {/* F-05 (docs/audit-2026-09-19/admin-ux.md): the desktop table below
-          is unchanged and still renders at `lg` (1024px) and up — the same
-          breakpoint the sidebar itself collapses to a hamburger at (see
-          admin-shell.tsx), so a stacked card layout takes over for exactly
-          the range where the persistent sidebar is already gone, covering
-          both audited widths (390×844 and 768×1024). */}
-      <div className="hidden overflow-x-auto rounded-2xl border border-border lg:block">
+      {/* F-05 (docs/audit-2026-09-19/admin-ux.md) originally put this
+          switch at `lg` (1024px) — the same breakpoint the sidebar itself
+          collapses to a hamburger at (see admin-shell.tsx) — reasoning that
+          a stacked card layout should take over for exactly the range
+          where the persistent sidebar is already gone. That covered the
+          audited phone/tablet-portrait widths (390×844 and 768×1024), but
+          missed tablet *landscape*: at 1024–1279px (an iPad in landscape,
+          or any 1024x768 touch viewport) the sidebar is already gone, yet
+          this table's min-w-[900px] still didn't fit the remaining width,
+          pushing Stock, Status and Edit off-screen behind an
+          easy-to-miss horizontal scrollbar (F-332). `xl` (1280px) is the
+          first width this table actually has room for every column at. */}
+      <div className="hidden overflow-x-auto rounded-2xl border border-border xl:block">
         <table className="w-full min-w-[900px] text-sm">
           <thead className="bg-surface-muted text-left text-xs font-semibold text-muted">
             <tr>
@@ -389,10 +423,11 @@ export function ProductsTable({
         </table>
       </div>
 
-      {/* Mobile/tablet stacked-card layout (below `lg`) — mirrors the
-          table's own columns and every action (checkbox select, Edit link)
-          so nothing needs horizontal scrolling to reach. */}
-      <div className="space-y-3 lg:hidden">
+      {/* Mobile/tablet stacked-card layout (below `xl` — see the F-332 fix
+          comment above) — mirrors the table's own columns and every action
+          (checkbox select, Edit link) so nothing needs horizontal
+          scrolling to reach. */}
+      <div className="space-y-3 xl:hidden">
         {loading ? (
           <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">Loading…</p>
         ) : items.length === 0 ? (

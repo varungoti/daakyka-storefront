@@ -3,7 +3,8 @@ import { z } from "zod";
 import { logAuditEvent } from "@/lib/auth/audit";
 import { db } from "@/lib/db";
 import { CATEGORIES_CACHE_TAG, PRODUCTS_CACHE_TAG, productCacheTag } from "@/lib/products";
-import type { Prisma, Product, ProductGender, ProductStatus } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
+import type { Product, ProductGender, ProductStatus } from "@/generated/prisma/client";
 import { slugify } from "@/lib/catalog/category-validation";
 import { assertUniqueVariants, generateSku } from "@/lib/catalog/product-validation";
 import { prepareDescriptionForStorage } from "@/lib/catalog/description-html";
@@ -984,29 +985,123 @@ export interface ListProductsForAdminResult {
   totalPages: number;
 }
 
-export async function listProductsForAdmin(options: ListProductsForAdminOptions = {}): Promise<ListProductsForAdminResult> {
-  const where: Prisma.ProductWhereInput = {};
-  if (options.status) where.status = options.status;
-  if (options.categoryId) {
-    where.categoryId = { in: await getSelfAndDescendantCategoryIds(options.categoryId) };
+/**
+ * F-341 fix (release-hardening admin-table-mobile-and-pagination-perf):
+ * this used to load *every* product matching status/category into JS
+ * (no `take`), then filter by stock, sort and slice a page out of that
+ * in-memory array — the same anti-pattern F-224 fixed for orders. On every
+ * admin keystroke that meant transferring and re-serializing the whole
+ * catalogue just to show 24 rows. `total_stock` (the sum of a product's
+ * variant stock, used by both the low/out-of-stock filter and the
+ * stock-asc sort) can't be expressed as a plain Prisma `where`/`orderBy`
+ * without Prisma's relation-aggregate `orderBy`, which this generated
+ * client doesn't support for a `_sum` — so filtering, sorting, counting
+ * and paging all happen in one raw query against a per-product stock
+ * subquery, and only the resulting page's ids are ever pulled back from
+ * the DB in full via `db.product.findMany` below.
+ */
+function buildProductListWhereSql(options: {
+  status?: ProductStatus;
+  categoryIds?: string[];
+  categorySlug?: string;
+  search?: string;
+  stockFilter?: "all" | "low" | "out";
+}): Prisma.Sql {
+  const conditions: Prisma.Sql[] = [];
+  if (options.status) conditions.push(Prisma.sql`p.status = ${options.status}::"ProductStatus"`);
+  if (options.categoryIds) {
+    conditions.push(Prisma.sql`p."categoryId" IN (${Prisma.join(options.categoryIds)})`);
   } else if (options.categorySlug) {
-    where.category = { slug: options.categorySlug };
+    conditions.push(Prisma.sql`c.slug = ${options.categorySlug}`);
   }
-  if (options.search && options.search.trim()) {
-    const term = options.search.trim();
-    where.OR = [
-      { name: { contains: term, mode: "insensitive" } },
-      { slug: { contains: term, mode: "insensitive" } },
-      { tags: { has: term } },
-      // F-192: an admin who has a SKU in hand (from an order, a pick list,
-      // a barcode) had no way to find the product it belongs to — search
-      // only ever matched name/slug/an exact tag.
-      { variants: { some: { sku: { contains: term, mode: "insensitive" } } } },
-    ];
+  if (options.search) {
+    const like = `%${options.search}%`;
+    conditions.push(Prisma.sql`(
+      p.name ILIKE ${like}
+      OR p.slug ILIKE ${like}
+      OR ${options.search} = ANY(p.tags)
+      OR EXISTS (
+        SELECT 1 FROM "ProductVariant" pv WHERE pv."productId" = p.id AND pv.sku ILIKE ${like}
+      )
+    )`);
+  }
+  if (options.stockFilter === "low") {
+    conditions.push(Prisma.sql`COALESCE(s.total_stock, 0) > 0 AND COALESCE(s.total_stock, 0) < ${LOW_STOCK_THRESHOLD}`);
+  } else if (options.stockFilter === "out") {
+    conditions.push(Prisma.sql`COALESCE(s.total_stock, 0) = 0`);
+  }
+  return conditions.length > 0 ? Prisma.sql`WHERE ${Prisma.join(conditions, " AND ")}` : Prisma.empty;
+}
+
+function buildProductOrderBySql(sort: NonNullable<ListProductsForAdminOptions["sort"]>): Prisma.Sql {
+  switch (sort) {
+    case "name-asc":
+      return Prisma.sql`p.name ASC, p.id ASC`;
+    case "name-desc":
+      return Prisma.sql`p.name DESC, p.id DESC`;
+    case "price-asc":
+      return Prisma.sql`p.price ASC, p.id ASC`;
+    case "price-desc":
+      return Prisma.sql`p.price DESC, p.id DESC`;
+    case "stock-asc":
+      return Prisma.sql`COALESCE(s.total_stock, 0) ASC, p.id ASC`;
+    case "updated-desc":
+    default:
+      return Prisma.sql`p."updatedAt" DESC, p.id DESC`;
+  }
+}
+
+// Shared by both the count and the page-of-ids query below — `s` (each
+// product's summed variant stock) is what the stock filter/sort and the
+// WHERE clause's `COALESCE(s.total_stock, ...)` references.
+const PRODUCT_LIST_FROM_SQL = Prisma.sql`
+  FROM "Product" p
+  JOIN "Category" c ON c.id = p."categoryId"
+  LEFT JOIN (
+    SELECT "productId", COALESCE(SUM(stock), 0) AS total_stock
+    FROM "ProductVariant"
+    GROUP BY "productId"
+  ) s ON s."productId" = p.id
+`;
+
+export async function listProductsForAdmin(options: ListProductsForAdminOptions = {}): Promise<ListProductsForAdminResult> {
+  const categoryIds = options.categoryId ? await getSelfAndDescendantCategoryIds(options.categoryId) : undefined;
+  const search = options.search && options.search.trim() ? options.search.trim() : undefined;
+  const whereSql = buildProductListWhereSql({
+    status: options.status,
+    categoryIds,
+    categorySlug: options.categorySlug,
+    search,
+    stockFilter: options.stockFilter,
+  });
+
+  const countRows = await db.$queryRaw<{ count: number }[]>(Prisma.sql`
+    SELECT COUNT(*)::int AS count
+    ${PRODUCT_LIST_FROM_SQL}
+    ${whereSql}
+  `);
+  const total = countRows[0]?.count ?? 0;
+
+  const pageSize = Math.min(Math.max(options.pageSize ?? 24, 1), 100);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(options.page ?? 1, 1), totalPages);
+  const skip = (page - 1) * pageSize;
+
+  const sort = options.sort ?? "updated-desc";
+  const pageRows = await db.$queryRaw<{ id: string }[]>(Prisma.sql`
+    SELECT p.id
+    ${PRODUCT_LIST_FROM_SQL}
+    ${whereSql}
+    ORDER BY ${buildProductOrderBySql(sort)}
+    LIMIT ${pageSize} OFFSET ${skip}
+  `);
+  const ids = pageRows.map((r) => r.id);
+  if (ids.length === 0) {
+    return { items: [], total, page, pageSize, totalPages };
   }
 
   const rows = await db.product.findMany({
-    where,
+    where: { id: { in: ids } },
     include: {
       category: { select: { id: true, name: true, slug: true } },
       variants: { select: { stock: true } },
@@ -1019,61 +1114,36 @@ export async function listProductsForAdmin(options: ListProductsForAdminOptions 
   const aiImageProductIds = new Set(
     (
       await db.productImage.findMany({
-        where: { productId: { in: rows.map((r) => r.id) }, media: { source: "AI" } },
+        where: { productId: { in: ids }, media: { source: "AI" } },
         select: { productId: true },
       })
     ).map((r) => r.productId),
   );
 
-  let items: AdminProductListItem[] = rows.map((row) => ({
-    id: row.id,
-    slug: row.slug,
-    name: row.name,
-    categoryId: row.category.id,
-    categoryName: row.category.name,
-    categorySlug: row.category.slug,
-    price: Number(row.price),
-    compareAtPrice: row.compareAtPrice ? Number(row.compareAtPrice) : null,
-    totalStock: row.variants.reduce((sum, v) => sum + v.stock, 0),
-    status: row.status,
-    hasAiImage: aiImageProductIds.has(row.id),
-    thumbnailUrl: row.images[0]?.media.url ?? null,
-    updatedAt: row.updatedAt,
-  }));
+  // Rehydrated via a plain `id IN (...)` findMany, which doesn't preserve
+  // the raw query's own ORDER BY — re-applied here against just this one
+  // page's rows (at most `pageSize`, never the whole table).
+  const rowById = new Map(rows.map((row) => [row.id, row]));
+  const items: AdminProductListItem[] = ids
+    .map((id) => rowById.get(id))
+    .filter((row): row is (typeof rows)[number] => row !== undefined)
+    .map((row) => ({
+      id: row.id,
+      slug: row.slug,
+      name: row.name,
+      categoryId: row.category.id,
+      categoryName: row.category.name,
+      categorySlug: row.category.slug,
+      price: Number(row.price),
+      compareAtPrice: row.compareAtPrice ? Number(row.compareAtPrice) : null,
+      totalStock: row.variants.reduce((sum, v) => sum + v.stock, 0),
+      status: row.status,
+      hasAiImage: aiImageProductIds.has(row.id),
+      thumbnailUrl: row.images[0]?.media.url ?? null,
+      updatedAt: row.updatedAt,
+    }));
 
-  if (options.stockFilter === "low") {
-    items = items.filter((p) => p.totalStock > 0 && p.totalStock < LOW_STOCK_THRESHOLD);
-  } else if (options.stockFilter === "out") {
-    items = items.filter((p) => p.totalStock === 0);
-  }
-
-  const sort = options.sort ?? "updated-desc";
-  items.sort((a, b) => {
-    switch (sort) {
-      case "name-asc":
-        return a.name.localeCompare(b.name);
-      case "name-desc":
-        return b.name.localeCompare(a.name);
-      case "price-asc":
-        return a.price - b.price;
-      case "price-desc":
-        return b.price - a.price;
-      case "stock-asc":
-        return a.totalStock - b.totalStock;
-      case "updated-desc":
-      default:
-        return b.updatedAt.getTime() - a.updatedAt.getTime();
-    }
-  });
-
-  const total = items.length;
-  const pageSize = Math.min(Math.max(options.pageSize ?? 24, 1), 100);
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const page = Math.min(Math.max(options.page ?? 1, 1), totalPages);
-  const start = (page - 1) * pageSize;
-  const paged = items.slice(start, start + pageSize);
-
-  return { items: paged, total, page, pageSize, totalPages };
+  return { items, total, page, pageSize, totalPages };
 }
 
 export interface AdminProductDetail {

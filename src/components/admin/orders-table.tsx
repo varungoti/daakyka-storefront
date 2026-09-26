@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { formatInrExact } from "@/lib/currency/admin-money";
+import { createLoadGuard, debounce, normalizeSearchTerm } from "@/lib/admin/list-query";
 
 interface OrderListItem {
   id: string;
@@ -115,23 +116,30 @@ export function OrdersTable() {
   const [dateTo, setDateTo] = useState(initialFilters.dateTo);
   const [sort, setSort] = useState(initialFilters.sort);
 
-  // Skips the debounce's own first run (mount) — `searchInput` starts equal
-  // to `search` already, and without this guard the 300ms timer would
-  // still fire once after mount and reset `page` to 1, throwing away a
-  // page number this component just read from the URL (e.g. after Back
-  // from an order on page 3).
-  const isFirstSearchRender = useRef(true);
-  useEffect(() => {
-    if (isFirstSearchRender.current) {
-      isFirstSearchRender.current = false;
-      return;
-    }
-    const timer = setTimeout(() => {
-      setSearch(searchInput);
+  // F-341 fix: debounced straight from the input's onChange below, rather
+  // than a `useEffect` keyed on `searchInput` — nothing schedules a call
+  // until the admin actually types, so mount never needs a "skip the first
+  // run" guard the way this used to (that guard existed only to stop the
+  // debounce's own post-mount fire from resetting `page` back to 1, which
+  // would have thrown away a page number just read from the URL, e.g.
+  // after Back from an order on page 3). A lazy `useState` initializer,
+  // not `useRef` — the same "run once, keep across renders" pattern
+  // `initialFilters` above uses; `react-hooks/refs` forbids reading
+  // `.current` during render, which a `useRef(...).current` one-liner does.
+  const [debouncedSetSearch] = useState(() =>
+    debounce((value: string) => {
+      setSearch(value);
       setPage(1);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [searchInput]);
+    }, 300),
+  );
+  useEffect(() => () => debouncedSetSearch.cancel(), [debouncedSetSearch]);
+
+  // F-341 fix: each load() records the request id it started with and
+  // only applies its response while still current — a slower, earlier
+  // request (e.g. a shorter search prefix) resolving after a faster, later
+  // one already has is dropped instead of overwriting the table with
+  // stale data.
+  const [loadGuard] = useState(createLoadGuard);
 
   /** Resets to page 1 whenever a filter (not the debounced search input,
    * which resets its own page above once it actually takes effect) changes
@@ -145,7 +153,11 @@ export function OrdersTable() {
 
   const buildParams = useCallback(() => {
     const params = new URLSearchParams({ page: String(page), sort });
-    if (search.trim()) params.set("q", search.trim());
+    // F-341 fix: a 1-character prefix matches a large share of the table
+    // (see the finding's repro) — below MIN_SEARCH_CHARS, this behaves as
+    // if the search box were empty rather than querying on it.
+    const term = normalizeSearchTerm(search);
+    if (term) params.set("q", term);
     if (status) params.set("status", status);
     if (paymentMethod) params.set("paymentMethod", paymentMethod);
     if (dateFrom) params.set("dateFrom", dateFrom);
@@ -154,20 +166,26 @@ export function OrdersTable() {
   }, [page, sort, search, status, paymentMethod, dateFrom, dateTo]);
 
   const load = useCallback(async () => {
+    const requestId = loadGuard.start();
     setLoading(true);
     const apiParams = new URLSearchParams(buildParams());
     const searchTerm = apiParams.get("q");
     apiParams.delete("q");
     if (searchTerm) apiParams.set("search", searchTerm);
     const response = await fetch(`/api/admin/orders?${apiParams}`);
+    // F-341 fix: a response for a request that's no longer the latest one
+    // in flight is dropped rather than applied — see loadGuard above.
     if (response.ok) {
       const body = await response.json();
+      if (!loadGuard.isCurrent(requestId)) return;
       setItems(body.items);
       setTotal(body.total);
       setTotalPages(body.totalPages);
+      setLoading(false);
+    } else if (loadGuard.isCurrent(requestId)) {
+      setLoading(false);
     }
-    setLoading(false);
-  }, [buildParams]);
+  }, [buildParams, loadGuard]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -197,7 +215,11 @@ export function OrdersTable() {
       <div className="flex flex-wrap items-center gap-3">
         <input
           value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
+          onChange={(e) => {
+            const value = e.target.value;
+            setSearchInput(value);
+            debouncedSetSearch(value);
+          }}
           placeholder="Search order #, name, email or phone…"
           className="w-64 rounded-xl border border-border p-2 text-sm"
         />
@@ -257,11 +279,14 @@ export function OrdersTable() {
         </a>
       </div>
 
-      {/* F-05 (docs/audit-2026-09-19/admin-ux.md): desktop table unchanged,
-          `lg` and up only — see the matching comment in products-table.tsx
-          for why `lg` (matching the sidebar's own hamburger breakpoint) was
-          chosen over the more common `sm`. */}
-      <div className="hidden overflow-x-auto rounded-2xl border border-border lg:block">
+      {/* F-332 fix: was `lg` (1024px) — at 1024–1279px (an iPad in
+          landscape, or any 1024x768 touch viewport) this table's
+          min-w-[900px] pushed Status, Payment and the View link off-screen
+          behind an easy-to-miss horizontal scrollbar, with nothing on
+          screen signalling there was more to see. `xl` (1280px) is the
+          first width the table actually has room for every column beside
+          the sidebar — see the matching comment in products-table.tsx. */}
+      <div className="hidden overflow-x-auto rounded-2xl border border-border xl:block">
         <table className="w-full min-w-[900px] text-sm">
           <thead className="bg-surface-muted text-left text-xs font-semibold text-muted">
             <tr>
@@ -321,8 +346,9 @@ export function OrdersTable() {
         </table>
       </div>
 
-      {/* Mobile/tablet stacked-card layout (below `lg`). */}
-      <div className="space-y-3 lg:hidden">
+      {/* Mobile/tablet stacked-card layout (below `xl` — see the F-332 fix
+          comment above). */}
+      <div className="space-y-3 xl:hidden">
         {loading ? (
           <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">Loading…</p>
         ) : items.length === 0 ? (

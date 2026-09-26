@@ -585,6 +585,60 @@ describe("products admin service (Phase B1)", () => {
     assert.equal(out.items.length, 0);
   });
 
+  // F-341 (release-hardening admin-table-mobile-and-pagination-perf):
+  // listProductsForAdmin used to load every matching product into JS and
+  // sort/paginate there — now the sort, the page slice and the count all
+  // happen in the DB query itself (see products.ts's buildProductListWhereSql
+  // / buildProductOrderBySql), with only the resulting page's rows ever
+  // pulled back in full. These assert that refactor kept the same
+  // observable sort/pagination/count behavior.
+  it("listProductsForAdmin sorts and paginates at the DB level", async () => {
+    const unique = randomUUID().slice(0, 8);
+    // Created deliberately out of alphabetical order.
+    const charlie = await createProduct({ name: `Page Sort ${unique} Charlie`, categoryId, price: 100 }, adminId);
+    const alpha = await createProduct({ name: `Page Sort ${unique} Alpha`, categoryId, price: 100 }, adminId);
+    const bravo = await createProduct({ name: `Page Sort ${unique} Bravo`, categoryId, price: 100 }, adminId);
+    createdProductIds.push(charlie.id, alpha.id, bravo.id);
+
+    const all = await listProductsForAdmin({ search: `Page Sort ${unique}`, sort: "name-asc", pageSize: 100 });
+    assert.equal(all.total, 3);
+    assert.deepEqual(
+      all.items.map((p) => p.id),
+      [alpha.id, bravo.id, charlie.id],
+    );
+
+    const pageOne = await listProductsForAdmin({ search: `Page Sort ${unique}`, sort: "name-asc", pageSize: 2, page: 1 });
+    assert.equal(pageOne.total, 3, "total reflects every matching row, not just the page that was fetched");
+    assert.equal(pageOne.totalPages, 2);
+    assert.deepEqual(
+      pageOne.items.map((p) => p.id),
+      [alpha.id, bravo.id],
+    );
+
+    const pageTwo = await listProductsForAdmin({ search: `Page Sort ${unique}`, sort: "name-asc", pageSize: 2, page: 2 });
+    assert.deepEqual(
+      pageTwo.items.map((p) => p.id),
+      [charlie.id],
+    );
+  });
+
+  it("listProductsForAdmin's stock-asc sort orders by each product's total variant stock, not just an in-page JS sort", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const high = await createProduct({ name: `Stock Sort ${unique} High`, categoryId, price: 100 }, adminId);
+    const low = await createProduct({ name: `Stock Sort ${unique} Low`, categoryId, price: 100 }, adminId);
+    createdProductIds.push(high.id, low.id);
+    // Created in an order (high, then low) that would defeat a sort
+    // computed only within one already-fetched page in the old total-order.
+    await replaceVariants(high.id, [{ size: "S", color: "Navy", sku: `DK-SORT-${unique}-HIGH`, stock: 50, active: true }], adminId);
+    await replaceVariants(low.id, [{ size: "S", color: "Navy", sku: `DK-SORT-${unique}-LOW`, stock: 1, active: true }], adminId);
+
+    const sorted = await listProductsForAdmin({ search: `Stock Sort ${unique}`, sort: "stock-asc" });
+    assert.deepEqual(
+      sorted.items.map((p) => p.id),
+      [low.id, high.id],
+    );
+  });
+
   // F-192
   it("listProductsForAdmin's search also matches a variant SKU, case-insensitively", async () => {
     const unique = randomUUID().slice(0, 8);
