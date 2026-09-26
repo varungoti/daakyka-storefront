@@ -81,8 +81,12 @@ describe("API integration", () => {
         }),
       );
       assert.equal(response.status, 200);
-      const body = (await response.json()) as { id: string };
-      assert.ok(body.id);
+      const body = (await response.json()) as { ok: boolean; id?: string };
+      // F-050 fix: the response no longer echoes the subscriber's id or
+      // varies its message by subscription state — see
+      // src/app/api/newsletter/subscribe/route.ts.
+      assert.equal(body.ok, true);
+      assert.equal(body.id, undefined);
     });
   });
 
@@ -129,6 +133,34 @@ describe("API integration", () => {
         }),
       );
       assert.equal(response.status, 200);
+    });
+
+    // F-112: a non-slug handle (or a wildly oversized name) used to be
+    // stored verbatim and could be pushed straight into the admin Product
+    // Intelligence page's "Most Viewed Products" list.
+    it("rejects a productHandle that isn't a slug", async () => {
+      const response = await postProductView(
+        new Request("http://localhost/api/analytics/product-view", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ productHandle: "audit-pdp-nonexistent-handle!!" }),
+        }),
+      );
+      assert.equal(response.status, 400);
+    });
+
+    it("rejects a productName far past any real product name's length", async () => {
+      const response = await postProductView(
+        new Request("http://localhost/api/analytics/product-view", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            productHandle: "v-neck-top-lilac",
+            productName: "x".repeat(20_010),
+          }),
+        }),
+      );
+      assert.equal(response.status, 400);
     });
   });
 

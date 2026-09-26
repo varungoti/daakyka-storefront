@@ -24,14 +24,17 @@ export default async function AdminIntelligencePage() {
     take: 8,
   });
 
-  const topViewed = viewCounts.map((row) => {
-    const product = products.find((p) => p.handle === row.productHandle);
-    return {
-      handle: row.productHandle,
-      name: product?.name ?? row.productHandle,
-      views: row._count.productHandle,
-    };
-  });
+  // F-112 fix: a productHandle with no matching catalog product is never a
+  // real view (the beacon only fires from an actual PDP) — it's either
+  // stale data from before the write-side validation existed, or spam from
+  // a direct POST. Drop it instead of rendering it verbatim, so this list
+  // can never be used to inject arbitrary text into the admin UI.
+  const topViewed = viewCounts
+    .map((row) => {
+      const product = products.find((p) => p.handle === row.productHandle);
+      return product ? { handle: row.productHandle, name: product.name, views: row._count.productHandle } : null;
+    })
+    .filter((row): row is { handle: string; name: string; views: number } => row !== null);
 
   return (
     <div className="space-y-8">

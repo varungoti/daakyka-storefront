@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import { subscribeToNewsletter, confirmNewsletterSubscriber } from "@/lib/engagement/newsletter";
+import { POST as postNewsletterSubscribe } from "@/app/api/newsletter/subscribe/route";
 import { unsubscribeByToken, isValidUnsubscribeToken } from "@/lib/engagement/unsubscribe";
 import { resolveSegmentRecipients } from "@/lib/engagement/segment-resolver";
 import { claimCampaignForSending, dispatchCampaign } from "@/lib/engagement/campaign-dispatcher";
@@ -110,6 +111,76 @@ describe("engagement compliance", () => {
       });
       assert.equal(enrollments.length, 1);
       assert.ok(refetched?.confirmedAt);
+    });
+
+    // F-050: an unsubscribed address used to be silently reactivated by a
+    // bare POST to /api/newsletter/subscribe, with no fresh consent and no
+    // confirmation email — see subscribeToNewsletter's doc comment.
+    it("resubscribing an unsubscribed address requires a fresh confirmation click, not just a POST", async () => {
+      const email = testEmail("resubscribe-after-unsub");
+      await subscribeToNewsletter({ email, source: "test" });
+      const subscriber = await db.newsletterSubscriber.findUnique({ where: { email } });
+      await confirmNewsletterSubscriber(subscriber!.confirmToken!);
+
+      const confirmed = await db.newsletterSubscriber.findUnique({ where: { email } });
+      await unsubscribeByToken(confirmed!.unsubscribeToken);
+
+      const unsubscribed = await db.newsletterSubscriber.findUnique({ where: { email } });
+      assert.ok(unsubscribed?.unsubscribedAt, "expected the address to be unsubscribed");
+
+      // A third party (or the same shopper) POSTs the address again, with
+      // no proof of ownership beyond knowing the email.
+      const resubscribe = await subscribeToNewsletter({ email, source: "audit-3rdparty" });
+      assert.equal(resubscribe.alreadyConfirmed, false, "must not be treated as a no-op reactivation");
+
+      const afterResubscribe = await db.newsletterSubscriber.findUnique({ where: { email } });
+      assert.ok(afterResubscribe?.unsubscribedAt, "unsubscribedAt must stay set until the new link is clicked");
+      assert.ok(afterResubscribe?.confirmToken, "a fresh confirmToken must be issued");
+      assert.notEqual(afterResubscribe?.confirmToken, subscriber?.confirmToken, "the token must be new, not reused");
+
+      // Only clicking the fresh confirmation link actually reactivates it,
+      // and it must not replay the welcome journey a second time.
+      const reconfirm = await confirmNewsletterSubscriber(afterResubscribe!.confirmToken!);
+      assert.equal(reconfirm.ok, true);
+
+      const reactivated = await db.newsletterSubscriber.findUnique({ where: { email } });
+      assert.equal(reactivated?.unsubscribedAt, null);
+      assert.ok(reactivated?.confirmedAt);
+
+      const enrollments = await db.journeyEnrollment.findMany({
+        where: { email, journey: { slug: "welcome-series" } },
+      });
+      assert.equal(enrollments.length, 1, "resubscribing must not re-enroll in the welcome series");
+    });
+
+    // F-050: the API response used to differ ("You're already subscribed."
+    // vs "Check your inbox…") and echo back the subscriber's stable id,
+    // letting anyone probe whether an address is a confirmed subscriber.
+    it("POST /api/newsletter/subscribe returns an identical body for a new and an already-subscribed address", async () => {
+      const newEmail = testEmail("oracle-new");
+      const existingEmail = testEmail("oracle-existing");
+      await subscribeToNewsletter({ email: existingEmail, source: "test" });
+      const existingSubscriber = await db.newsletterSubscriber.findUnique({ where: { email: existingEmail } });
+      await confirmNewsletterSubscriber(existingSubscriber!.confirmToken!);
+
+      function request(email: string) {
+        return new Request("http://localhost/api/newsletter/subscribe", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email, consentGiven: true, source: "test" }),
+        });
+      }
+
+      const newResponse = await postNewsletterSubscribe(request(newEmail));
+      const existingResponse = await postNewsletterSubscribe(request(existingEmail));
+
+      assert.equal(newResponse.status, 200);
+      assert.equal(existingResponse.status, 200);
+      const newBody = (await newResponse.json()) as Record<string, unknown>;
+      const existingBody = (await existingResponse.json()) as Record<string, unknown>;
+
+      assert.deepEqual(newBody, existingBody, "response body must not reveal subscription state");
+      assert.equal(newBody.id, undefined, "response must not echo a subscriber id");
     });
   });
 

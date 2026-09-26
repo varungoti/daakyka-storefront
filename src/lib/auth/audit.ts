@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { db } from "@/lib/db";
+import type { Prisma } from "@/generated/prisma/client";
 import { getClientIp } from "@/lib/security/rate-limit";
 import { getSession } from "@/lib/auth/session";
 
@@ -36,6 +37,13 @@ export interface AuditEventContext {
  * return null, which this treats as "no context available" rather than a
  * failure: the audit row is still written, just without those fields. An
  * explicit `context` always wins over the best-effort lookup.
+ *
+ * F-290 fix: `client` lets a caller that's already inside a
+ * `db.$transaction((tx) => ...)` — e.g. a webhook committing a payment
+ * transition and its audit row atomically — pass `tx` instead of the
+ * global `db`, so the audit row commits (or rolls back) together with the
+ * state change it's recording. Defaults to the global `db` for every
+ * existing call site outside a transaction.
  */
 export async function logAuditEvent(input: {
   userId?: string;
@@ -44,6 +52,7 @@ export async function logAuditEvent(input: {
   entityId?: string;
   metadata?: Record<string, unknown>;
   context?: AuditEventContext;
+  client?: Pick<Prisma.TransactionClient, "auditLog"> | typeof db;
 }) {
   let actorEmail = input.context?.actorEmail ?? null;
   let actorRole = input.context?.actorRole ?? null;
@@ -77,7 +86,8 @@ export async function logAuditEvent(input: {
     }
   }
 
-  await db.auditLog.create({
+  const client = input.client ?? db;
+  await client.auditLog.create({
     data: {
       userId: input.userId,
       action: input.action,

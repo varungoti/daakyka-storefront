@@ -120,6 +120,22 @@ describe("customers admin service (Phase D4)", () => {
     assert.equal(reactivated.sessionVersion, 1);
   });
 
+  // F-197: setCustomerActive used to return the raw Prisma `Customer` row,
+  // and the PATCH route forwarded it unchanged as `{ customer }` — every
+  // Deactivate/Reactivate click sent the bcrypt passwordHash and the
+  // login-lockout counters to the browser. This is the actual value the
+  // route serializes, so asserting on it here covers the route's response
+  // shape without needing a mocked admin session (see the route-handler
+  // tests below, which can only exercise the no-session path in this
+  // harness).
+  it("never returns passwordHash or login-lockout fields", async () => {
+    const adminId = await findAnyAdminId();
+    const result = await setCustomerActive(customerId, true, adminId);
+    for (const forbidden of ["passwordHash", "failedLoginCount", "lockedUntil", "lastFailedLoginAt"]) {
+      assert.equal(forbidden in result, false, `unexpected "${forbidden}" in setCustomerActive's result`);
+    }
+  });
+
   it("throws CustomerNotFoundError for a missing customer id", async () => {
     await assert.rejects(() => getCustomerForAdmin("does-not-exist"), CustomerNotFoundError);
     const adminId = await findAnyAdminId();

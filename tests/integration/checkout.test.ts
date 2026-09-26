@@ -637,6 +637,37 @@ describe("POST /api/checkout/verify (Phase D3)", () => {
     // despite two verify calls.
     assert.equal(updatedVariant?.stock, 4);
   });
+
+  // F-290: a system-driven PAID transition used to leave no AuditLog row
+  // at all — only an admin changing an order's status did.
+  it("records a system audit-log row for the PAID transition", async () => {
+    const { order, razorpayOrderId } = await createPendingRazorpayOrder(5);
+    const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+    const validSignature = createHmac("sha256", TEST_KEY_SECRET)
+      .update(`${razorpayOrderId}|${paymentId}`)
+      .digest("hex");
+
+    await withEnv({ RAZORPAY_KEY_SECRET: TEST_KEY_SECRET }, async () => {
+      const response = await verifyRoute(
+        jsonRequest("http://localhost/api/checkout/verify", {
+          orderNumber: order.number,
+          razorpayPaymentId: paymentId,
+          razorpayOrderId,
+          razorpaySignature: validSignature,
+        }),
+      );
+      assert.equal(response.status, 200);
+    });
+
+    const rows = await db.auditLog.findMany({
+      where: { entity: "order", entityId: order.id, action: "update" },
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.userId, null, "a system transition has no admin actor");
+    const metadata = JSON.parse(rows[0]!.metadata ?? "{}");
+    assert.equal(metadata.source, "checkout-verify");
+    assert.equal(metadata.toStatus, "PAID");
+  });
 });
 
 describe("POST /api/webhooks/razorpay (Phase D3)", () => {
@@ -695,6 +726,18 @@ describe("POST /api/webhooks/razorpay (Phase D3)", () => {
     // Started at 5, ordered 2 — decremented exactly once across both
     // webhook deliveries.
     assert.equal(updatedVariant?.stock, 3);
+
+    // F-290: exactly one audit row for the PAID transition, even though
+    // the webhook was delivered (and processed) twice — the second
+    // delivery loses the CAS and must not log a phantom transition.
+    const rows = await db.auditLog.findMany({
+      where: { entity: "order", entityId: order.id, action: "update" },
+    });
+    assert.equal(rows.length, 1);
+    const metadata = JSON.parse(rows[0]!.metadata ?? "{}");
+    assert.equal(metadata.source, "razorpay-webhook");
+    assert.equal(metadata.event, "payment.captured");
+    assert.equal(metadata.toStatus, "PAID");
   });
 
   // F-284 fix: the webhook never sees a raw capability token (only
@@ -1008,6 +1051,14 @@ describe("F-039: payment.failed and refund.processed no longer overwrite status 
 
     const dbOrder = await db.order.findUniqueOrThrow({ where: { id: order.id } });
     assert.equal(dbOrder.status, "CANCELLED", "payment.failed must still cancel a genuinely unpaid order");
+
+    // F-290: a system-driven CANCELLED transition must be audit-logged too.
+    const rows = await db.auditLog.findMany({ where: { entity: "order", entityId: order.id, action: "update" } });
+    assert.equal(rows.length, 1);
+    const metadata = JSON.parse(rows[0]!.metadata ?? "{}");
+    assert.equal(metadata.source, "razorpay-webhook");
+    assert.equal(metadata.event, "payment.failed");
+    assert.equal(metadata.toStatus, "CANCELLED");
   });
 
   it("a partial refund does not mark the order REFUNDED — it stays PAID with a note", async () => {
@@ -1049,6 +1100,12 @@ describe("F-039: payment.failed and refund.processed no longer overwrite status 
 
     const updatedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
     assert.equal(updatedVariant?.stock, 4, "a partial refund must not restock — the order hasn't been cancelled");
+
+    // F-290: only the PAID transition (from /verify) is logged — a partial
+    // refund makes no status change, so it must not add a second row.
+    const rows = await db.auditLog.findMany({ where: { entity: "order", entityId: order.id, action: "update" } });
+    assert.equal(rows.length, 1);
+    assert.equal(JSON.parse(rows[0]!.metadata ?? "{}").toStatus, "PAID");
   });
 
   it("a full refund marks the order REFUNDED and restocks it", async () => {
@@ -1089,6 +1146,19 @@ describe("F-039: payment.failed and refund.processed no longer overwrite status 
 
     const updatedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
     assert.equal(updatedVariant?.stock, 5, "a full refund must restock the order (F-036)");
+
+    // F-290: two system-driven transitions on this order — PAID (verify),
+    // then REFUNDED (the full-refund webhook) — must both be logged.
+    const rows = await db.auditLog.findMany({
+      where: { entity: "order", entityId: order.id, action: "update" },
+      orderBy: { createdAt: "asc" },
+    });
+    assert.equal(rows.length, 2);
+    assert.equal(JSON.parse(rows[0]!.metadata ?? "{}").toStatus, "PAID");
+    const refundMetadata = JSON.parse(rows[1]!.metadata ?? "{}");
+    assert.equal(refundMetadata.toStatus, "REFUNDED");
+    assert.equal(refundMetadata.source, "razorpay-webhook");
+    assert.equal(refundMetadata.event, "refund.processed");
   });
 });
 
@@ -1251,6 +1321,22 @@ describe("POST /api/cron/cancel-stale-orders (Phase D3)", () => {
     assert.equal((await db.order.findUnique({ where: { id: staleOrder.id } }))?.status, "CANCELLED");
     assert.equal((await db.order.findUnique({ where: { id: freshOrder.id } }))?.status, "PENDING_PAYMENT");
     assert.equal((await db.order.findUnique({ where: { id: orderRequestOrder.id } }))?.status, "PROCESSING");
+
+    // F-290: the auto-cancellation is a system-driven status change and
+    // must leave an audit trail — only the order the cron actually
+    // cancelled gets one.
+    const staleRows = await db.auditLog.findMany({
+      where: { entity: "order", entityId: staleOrder.id, action: "update" },
+    });
+    assert.equal(staleRows.length, 1);
+    const staleMetadata = JSON.parse(staleRows[0]!.metadata ?? "{}");
+    assert.equal(staleMetadata.source, "cron:cancel-stale-orders");
+    assert.equal(staleMetadata.toStatus, "CANCELLED");
+
+    const freshRows = await db.auditLog.findMany({
+      where: { entity: "order", entityId: freshOrder.id, action: "update" },
+    });
+    assert.equal(freshRows.length, 0, "an untouched order must not be logged");
   });
 
   // F-225 fix: a stale PENDING_PAYMENT order whose payment Razorpay
@@ -1299,6 +1385,14 @@ describe("POST /api/cron/cancel-stale-orders (Phase D3)", () => {
 
     const updatedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
     assert.equal(updatedVariant?.stock, 4, "recovering the order must decrement stock exactly once");
+
+    // F-290: recovering an order is still a system-driven PAID transition
+    // and must be logged the same as any other one.
+    const rows = await db.auditLog.findMany({ where: { entity: "order", entityId: order.id, action: "update" } });
+    assert.equal(rows.length, 1);
+    const metadata = JSON.parse(rows[0]!.metadata ?? "{}");
+    assert.equal(metadata.source, "cron:cancel-stale-orders");
+    assert.equal(metadata.toStatus, "PAID");
   });
 
   it("skips (does not cancel) an order whose Razorpay check fails, leaving it for the next run", async () => {

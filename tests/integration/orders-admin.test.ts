@@ -807,3 +807,42 @@ describe("orders admin routes without a session", () => {
     assert.ok(response.status === 401 || response.status === 403);
   });
 });
+
+/**
+ * F-290: the orders CSV export (every row includes the customer's email
+ * and phone) used to leave no audit trail at all. The route now calls
+ * `logAuditEvent({ action: "export", entity: "order", ... })` before
+ * streaming the CSV back — same harness constraint as every other route
+ * test in this file (no real admin session outside an actual Next.js
+ * request), so this exercises the exact call the route makes rather than
+ * going through GET /api/admin/orders/export itself.
+ */
+describe("orders export audit trail (F-290)", () => {
+  it("an unauthenticated export request never writes an audit row", async () => {
+    const before = new Date();
+    const response = await exportOrders(new Request("http://localhost/api/admin/orders/export"));
+    assert.ok(response.status === 401 || response.status === 403);
+
+    const rows = await db.auditLog.findMany({
+      where: { action: "export", entity: "order", createdAt: { gte: before } },
+    });
+    assert.equal(rows.length, 0, "a rejected (no-session) export must not be logged");
+  });
+
+  it("logging an export writes a row an owner can trace back to the requesting admin and filters used", async () => {
+    const adminId = await findAnyAdminId();
+    const { logAuditEvent } = await import("@/lib/auth/audit");
+    const filters = { search: "example.com", status: "PAID" };
+
+    await logAuditEvent({ userId: adminId, action: "export", entity: "order", metadata: { filters } });
+
+    const rows = await db.auditLog.findMany({
+      where: { userId: adminId, action: "export", entity: "order" },
+      orderBy: { createdAt: "desc" },
+      take: 1,
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.userId, adminId);
+    assert.deepEqual(JSON.parse(rows[0]!.metadata ?? "{}"), { filters });
+  });
+});

@@ -13,8 +13,16 @@ export async function POST(request: Request) {
     const bodyResult = await readJsonBody(request);
     if (!bodyResult.ok) return bodyResult.response;
 
+    // F-050 fix: this response body is now identical for every address in
+    // every state (new, already-subscribed, previously-unsubscribed) — it
+    // used to vary the message and echo back the subscriber's stable `id`,
+    // which let anyone probe whether a given address is a confirmed
+    // subscriber. See subscribeToNewsletter's doc comment for the matching
+    // consent fix.
+    const CONFIRMATION_RESPONSE = { ok: true, message: "Check your inbox to confirm your subscription." } as const;
+
     if (isHoneypotTripped(bodyResult.data)) {
-      return NextResponse.json({ id: "ok", message: "Subscribed successfully" });
+      return NextResponse.json(CONFIRMATION_RESPONSE);
     }
 
     const parsed = newsletterSchema.safeParse(bodyResult.data);
@@ -27,17 +35,12 @@ export async function POST(request: Request) {
     // unconfirmed subscriber and sends a confirmation email; it does NOT
     // enroll in any journey. Enrollment happens in
     // GET /api/newsletter/confirm once the link is actually clicked.
-    const { id, alreadyConfirmed } = await subscribeToNewsletter({
+    await subscribeToNewsletter({
       email: parsed.data.email,
       source: parsed.data.source,
     });
 
-    return NextResponse.json({
-      id,
-      message: alreadyConfirmed
-        ? "You're already subscribed."
-        : "Check your inbox to confirm your subscription.",
-    });
+    return NextResponse.json(CONFIRMATION_RESPONSE);
   } catch {
     return NextResponse.json({ error: "Subscription failed" }, { status: 500 });
   }

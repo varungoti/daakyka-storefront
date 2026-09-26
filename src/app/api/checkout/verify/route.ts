@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { logAuditEvent } from "@/lib/auth/audit";
 import { hashOrderAccessToken } from "@/lib/orders/access-token";
 import { extractGuestName } from "@/lib/orders/admin-orders";
 import { notifyNewOrder } from "@/lib/orders/notify";
@@ -95,6 +96,16 @@ export async function POST(request: Request) {
     // and skip the notification below so the customer isn't emailed twice.
     return NextResponse.json({ ok: true, orderNumber: order.number });
   }
+
+  // F-290 fix: same system-driven audit trail as the Razorpay webhook's
+  // payment.captured handler — see its matching comment. Best-effort,
+  // never blocks the response for an already-captured payment.
+  await logAuditEvent({
+    action: "update",
+    entity: "order",
+    entityId: order.id,
+    metadata: { source: "checkout-verify", paymentId: razorpayPaymentId, fromStatus: order.status, toStatus: "PAID" },
+  }).catch(() => undefined);
 
   // release-hardening audit F-017: won the CAS above, so this call actually
   // decremented stock for `order.items` — without this, the PDP/listing

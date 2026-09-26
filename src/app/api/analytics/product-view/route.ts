@@ -4,10 +4,21 @@ import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { z } from "zod";
 
+// F-112 fix: matches src/lib/catalog/csv.ts's SLUG_PATTERN — a real product
+// handle is always a slug shape. Before this, `productHandle` accepted any
+// non-empty string and `productName` was unbounded, so an unauthenticated
+// caller could POST an arbitrary handle plus a many-KB name and have it
+// stored verbatim; the admin Product Intelligence page then rendered it
+// straight into "Most Viewed Products". `productName` and `sessionId` are
+// also bounded now so a single event row can't blow past a sane size — see
+// intelligence/page.tsx for the matching read-side guard (unknown handles
+// are dropped from the display rather than shown verbatim).
+const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 const schema = z.object({
-  productHandle: z.string().min(1),
-  productName: z.string().optional(),
-  sessionId: z.string().optional(),
+  productHandle: z.string().trim().min(1).max(160).regex(SLUG_PATTERN),
+  productName: z.string().trim().max(200).optional(),
+  sessionId: z.string().trim().max(64).optional(),
 });
 
 export async function POST(request: Request) {

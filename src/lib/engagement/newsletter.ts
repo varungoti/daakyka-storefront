@@ -67,11 +67,17 @@ export interface SubscribeResult {
  * confirmNewsletterSubscriber(), once the link is actually clicked (see
  * that function for why).
  *
- * A resubscribe of an already-confirmed, non-unsubscribed email is a
- * cheap no-op (just refreshes `source`); a resubscribe of an
- * already-confirmed but previously-unsubscribed email reactivates it
- * (clears `unsubscribedAt`) without re-sending the confirmation or
- * re-enrolling, since they already proved ownership of the address once.
+ * A resubscribe of an already-confirmed, non-unsubscribed email is a true
+ * no-op (just refreshes `source`) — no new email, nothing re-triggered.
+ *
+ * F-050 fix: a resubscribe of a *previously-unsubscribed* email — confirmed
+ * or not — is NOT reactivated here. An old confirmation only proves someone
+ * once owned the address; it doesn't prove the current caller does, so
+ * anyone who knew the address could otherwise undo the unsubscribe with no
+ * consent check. Instead this issues a fresh confirmToken and (re)sends the
+ * confirmation, exactly like a brand-new subscribe — `unsubscribedAt` stays
+ * set until confirmNewsletterSubscriber actually clears it via that new
+ * token.
  */
 export async function subscribeToNewsletter(input: SubscribeInput): Promise<SubscribeResult> {
   const email = input.email.toLowerCase();
@@ -79,19 +85,25 @@ export async function subscribeToNewsletter(input: SubscribeInput): Promise<Subs
 
   const existing = await db.newsletterSubscriber.findUnique({ where: { email } });
 
-  if (existing?.confirmedAt) {
+  if (existing?.confirmedAt && !existing.unsubscribedAt) {
+    // Already an active, confirmed subscriber — refresh `source` only.
+    // Never touch confirmedAt/unsubscribedAt/confirmToken on this path.
     await db.newsletterSubscriber.update({
       where: { id: existing.id },
-      data: { source, consentGiven: true, unsubscribedAt: null },
+      data: { source },
     });
     return { id: existing.id, alreadyConfirmed: true };
   }
 
+  // Every other case — brand new, still-unconfirmed, or previously
+  // unsubscribed — is treated as a fresh subscribe request: issue a new
+  // confirmToken and send a confirmation. `unsubscribedAt` is deliberately
+  // left as-is here; only a click on the new confirmation link clears it.
   const confirmToken = generateConfirmToken();
   const subscriber = existing
     ? await db.newsletterSubscriber.update({
         where: { id: existing.id },
-        data: { source, consentGiven: true, confirmToken, unsubscribedAt: null },
+        data: { source, consentGiven: true, confirmToken },
       })
     : await db.newsletterSubscriber.create({
         data: { email, source, consentGiven: true, confirmToken },
@@ -113,12 +125,18 @@ function looksLikeConfirmToken(token: unknown): token is string {
 
 /**
  * Shared by GET /api/newsletter/confirm (what the emailed link points at).
- * Sets `confirmedAt`, invalidates the single-use token, and — only now,
- * never on raw subscribe — triggers the "newsletter_signup" journey, so a
- * welcome sequence never fires for an address that hasn't actually
- * confirmed it wants mail. Idempotent: confirming an already-confirmed
- * token (e.g. an email client prefetching the link, or the link clicked
- * twice) succeeds without re-triggering the journey a second time.
+ * Sets `confirmedAt`, invalidates the single-use token, and — only for a
+ * never-before-confirmed subscriber, never on raw subscribe — triggers the
+ * "newsletter_signup" journey, so a welcome sequence never fires for an
+ * address that hasn't actually confirmed it wants mail. Idempotent:
+ * confirming an already-confirmed token (e.g. an email client prefetching
+ * the link, or the link clicked twice) succeeds without re-triggering the
+ * journey a second time.
+ *
+ * F-050 fix: also clears `unsubscribedAt` here — and only here — so a
+ * resubscribe of a previously-unsubscribed address only reactivates it once
+ * the fresh confirmation link `subscribeToNewsletter` issued is actually
+ * clicked, never just by POSTing the address again.
  */
 export async function confirmNewsletterSubscriber(token: string): Promise<ConfirmResult> {
   if (!looksLikeConfirmToken(token)) {
@@ -132,12 +150,17 @@ export async function confirmNewsletterSubscriber(token: string): Promise<Confir
     return { ok: false, error: "Invalid or expired confirmation link" };
   }
 
-  if (!subscriber.confirmedAt) {
+  if (!subscriber.confirmedAt || subscriber.unsubscribedAt) {
+    const neverConfirmedBefore = !subscriber.confirmedAt;
     await db.newsletterSubscriber.update({
       where: { id: subscriber.id },
-      data: { confirmedAt: new Date(), confirmToken: null },
+      data: { confirmedAt: new Date(), unsubscribedAt: null, confirmToken: null },
     });
-    await triggerJourneys("newsletter_signup", { email: subscriber.email });
+    // Only enroll in the welcome series the first time an address is ever
+    // confirmed — a resubscribe-after-unsubscribe must not replay it.
+    if (neverConfirmedBefore) {
+      await triggerJourneys("newsletter_signup", { email: subscriber.email });
+    }
   }
 
   return { ok: true };

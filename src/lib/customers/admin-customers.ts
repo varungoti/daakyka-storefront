@@ -374,8 +374,35 @@ export async function getCustomerForAdmin(id: string): Promise<AdminCustomerDeta
 // Update (active/inactive)
 // ---------------------------------------------------------------------------
 
-export async function setCustomerActive(id: string, active: boolean, userId: string): Promise<Customer> {
-  const existing = await db.customer.findUnique({ where: { id } });
+/** F-197 fix: the narrow, safe shape `setCustomerActive` returns — never
+ * the full Prisma `Customer` row, which also carries `passwordHash` and
+ * the login-lockout fields (`failedLoginCount`, `lockedUntil`,
+ * `lastFailedLoginAt`). Every field the PATCH route or its only caller
+ * (customer-active-toggle.tsx, which doesn't even read the body) could
+ * plausibly need, and nothing more. */
+export type AdminCustomerActiveResult = Pick<
+  Customer,
+  "id" | "email" | "name" | "active" | "sessionVersion" | "updatedAt"
+>;
+
+const CUSTOMER_ACTIVE_SELECT = {
+  id: true,
+  email: true,
+  name: true,
+  active: true,
+  sessionVersion: true,
+  updatedAt: true,
+} satisfies Prisma.CustomerSelect;
+
+export async function setCustomerActive(
+  id: string,
+  active: boolean,
+  userId: string,
+): Promise<AdminCustomerActiveResult> {
+  // F-197 fix: select only `{ id: true }` here too, so the full row
+  // (passwordHash included) is never loaded into memory just to check
+  // existence.
+  const existing = await db.customer.findUnique({ where: { id }, select: { id: true } });
   if (!existing) throw new CustomerNotFoundError(id);
 
   const updated = await db.customer.update({
@@ -389,6 +416,7 @@ export async function setCustomerActive(id: string, active: boolean, userId: str
       // customer will simply need to log in again either way.
       ...(active === false ? { sessionVersion: { increment: 1 } } : {}),
     },
+    select: CUSTOMER_ACTIVE_SELECT,
   });
 
   await logAuditEvent({

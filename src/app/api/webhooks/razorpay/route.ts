@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { logAuditEvent } from "@/lib/auth/audit";
 import { extractGuestName } from "@/lib/orders/admin-orders";
 import { notifyNewOrder } from "@/lib/orders/notify";
 import { markRazorpayOrderPaid, releaseOrderInventory } from "@/lib/orders/payment-transitions";
@@ -100,6 +101,18 @@ async function handlePaymentCaptured(payment: { id?: string; order_id?: string }
     return;
   }
 
+  // F-290 fix: a system-driven PAID transition used to leave no trace in
+  // the audit log at all — only an admin-initiated status change did.
+  // Best-effort (never blocks this handler for an already-captured
+  // payment), same contract as every other post-transaction side effect
+  // below.
+  await logAuditEvent({
+    action: "update",
+    entity: "order",
+    entityId: order.id,
+    metadata: { source: "razorpay-webhook", event: "payment.captured", paymentId: payment.id, fromStatus: order.status, toStatus: "PAID" },
+  }).catch(() => undefined);
+
   // release-hardening audit F-017: won the CAS above, so this call actually
   // decremented stock for `order.items`. Best-effort — must never fail
   // this handler for an already-captured payment.
@@ -160,7 +173,7 @@ async function handlePaymentFailed(payment: { order_id?: string }) {
   const order = await db.order.findFirst({ where: { razorpayOrderId: payment.order_id } });
   if (!order) return;
 
-  await db.order.updateMany({
+  const transition = await db.order.updateMany({
     where: { id: order.id, status: "PENDING_PAYMENT", razorpayPaymentId: null },
     data: {
       status: "CANCELLED",
@@ -169,6 +182,18 @@ async function handlePaymentFailed(payment: { order_id?: string }) {
       adminNotes: [order.adminNotes, "Payment failed (Razorpay webhook)."].filter(Boolean).join("\n"),
     },
   });
+
+  // F-290 fix: only when this call actually cancelled the order (not a
+  // late/out-of-order event whose conditional updateMany above matched
+  // nothing) — see handlePaymentCaptured's matching comment.
+  if (transition.count === 1) {
+    await logAuditEvent({
+      action: "update",
+      entity: "order",
+      entityId: order.id,
+      metadata: { source: "razorpay-webhook", event: "payment.failed", fromStatus: order.status, toStatus: "CANCELLED" },
+    }).catch(() => undefined);
+  }
 }
 
 /**
@@ -232,10 +257,19 @@ async function handleRefundProcessed(
         // admin-cancelled paid order (src/lib/orders/admin-orders.ts).
         await releaseOrderInventory(tx, order);
         restocked = true;
+        // F-290 fix: recorded through `tx` so the audit row commits
+        // atomically with the REFUNDED transition itself.
+        await logAuditEvent({
+          action: "update",
+          entity: "order",
+          entityId: order.id,
+          metadata: { source: "razorpay-webhook", event: "refund.processed", refundId: refund.id, fromStatus: order.status, toStatus: "REFUNDED" },
+          client: tx,
+        });
         return;
       }
 
-      await tx.order.updateMany({
+      const postShipTransition = await tx.order.updateMany({
         where: { id: order.id, status: { in: ["SHIPPED", "DELIVERED"] } },
         data: {
           status: "REFUNDED",
@@ -244,6 +278,15 @@ async function handleRefundProcessed(
             .join("\n"),
         },
       });
+      if (postShipTransition.count === 1) {
+        await logAuditEvent({
+          action: "update",
+          entity: "order",
+          entityId: order.id,
+          metadata: { source: "razorpay-webhook", event: "refund.processed", refundId: refund.id, fromStatus: order.status, toStatus: "REFUNDED" },
+          client: tx,
+        });
+      }
     },
     // F-255 fix — see the identical comment in checkout/verify/route.ts.
     { timeout: 15_000, maxWait: 5_000 },

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { logAuditEvent } from "@/lib/auth/audit";
 import { authorizeCron } from "@/lib/cron/authorize";
 import { markRazorpayOrderPaid } from "@/lib/orders/payment-transitions";
 import { fetchCapturedPaymentId } from "@/lib/payments/razorpay";
@@ -81,7 +82,18 @@ export async function POST(request: Request) {
 
     if (capturedPaymentId) {
       const { won } = await db.$transaction((tx) => markRazorpayOrderPaid(tx, order, capturedPaymentId!));
-      if (won) recovered += 1;
+      if (won) {
+        recovered += 1;
+        // F-290 fix: a system-driven status change (this one recovering a
+        // stale order via a captured-but-unreconciled payment) used to
+        // leave no audit trail — see the matching webhook/verify comments.
+        await logAuditEvent({
+          action: "update",
+          entity: "order",
+          entityId: order.id,
+          metadata: { source: "cron:cancel-stale-orders", paymentId: capturedPaymentId, fromStatus: order.status, toStatus: "PAID" },
+        }).catch(() => undefined);
+      }
       continue;
     }
 
@@ -103,6 +115,14 @@ export async function POST(request: Request) {
       },
     });
     cancelled += result.count;
+    if (result.count === 1) {
+      await logAuditEvent({
+        action: "update",
+        entity: "order",
+        entityId: order.id,
+        metadata: { source: "cron:cancel-stale-orders", fromStatus: order.status, toStatus: "CANCELLED" },
+      }).catch(() => undefined);
+    }
   }
 
   return NextResponse.json({ ok: true, cancelled, recovered });

@@ -35,6 +35,7 @@ import {
   GET as getSizeChart,
   PATCH as patchSizeChart,
 } from "@/app/api/admin/size-charts/[id]/route";
+import { GET as exportProducts } from "@/app/api/admin/products/export/route";
 import { findAnyAdminId } from "../helpers/admin-user";
 
 /**
@@ -428,5 +429,46 @@ describe("categories/size-charts admin routes without a session", () => {
     const request = new Request("http://localhost/api/admin/size-charts/any-id", { method: "DELETE" });
     const response = await deleteSizeChartRoute(request, { params: idParams });
     assert.ok(response.status === 401 || response.status === 403);
+  });
+
+  it("GET /api/admin/products/export rejects with 401/403", async () => {
+    const response = await exportProducts(new Request("http://localhost/api/admin/products/export"));
+    assert.ok(response.status === 401 || response.status === 403);
+  });
+});
+
+/**
+ * F-290: GET /api/admin/products/export used to leave no audit trail —
+ * see the matching test/fix in tests/integration/orders-admin.test.ts's
+ * "orders export audit trail (F-290)" for why this exercises
+ * `logAuditEvent` directly rather than the route (no real admin session
+ * is obtainable outside an actual Next.js request in this harness).
+ */
+describe("products export audit trail (F-290)", () => {
+  it("an unauthenticated export request never writes an audit row", async () => {
+    const before = new Date();
+    const response = await exportProducts(new Request("http://localhost/api/admin/products/export"));
+    assert.ok(response.status === 401 || response.status === 403);
+
+    const rows = await db.auditLog.findMany({
+      where: { action: "export", entity: "product", createdAt: { gte: before } },
+    });
+    assert.equal(rows.length, 0, "a rejected (no-session) export must not be logged");
+  });
+
+  it("logging an export writes a row an owner can trace back to the requesting admin and filters used", async () => {
+    const adminId = await findAnyAdminId();
+    const { logAuditEvent } = await import("@/lib/auth/audit");
+    const filters = { categorySlug: "scrubs", status: "ACTIVE" };
+
+    await logAuditEvent({ userId: adminId, action: "export", entity: "product", metadata: { filters } });
+
+    const rows = await db.auditLog.findMany({
+      where: { userId: adminId, action: "export", entity: "product" },
+      orderBy: { createdAt: "desc" },
+      take: 1,
+    });
+    assert.equal(rows.length, 1);
+    assert.deepEqual(JSON.parse(rows[0]!.metadata ?? "{}"), { filters });
   });
 });

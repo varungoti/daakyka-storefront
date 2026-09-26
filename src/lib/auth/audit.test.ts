@@ -123,4 +123,28 @@ describe("logAuditEvent context capture (F-289)", () => {
     assert.equal(row!.actorRole, null);
     assert.equal(row!.ipAddress, null);
   });
+
+  // F-290: lets a caller already inside db.$transaction((tx) => ...) commit
+  // an audit row atomically with the state change it records (used by the
+  // Razorpay webhook's payment transitions) instead of only ever writing
+  // through the global `db`.
+  it("writes through an explicit `client` (e.g. a transaction client) instead of the global db", async () => {
+    const adminId = await findAnyAdminId();
+
+    await db.$transaction((tx) =>
+      logAuditEvent({
+        userId: adminId,
+        action: "test_action_tx_client",
+        entity: "test_entity",
+        client: tx,
+      }),
+    );
+
+    const row = await db.auditLog.findFirst({
+      where: { userId: adminId, action: "test_action_tx_client" },
+      orderBy: { createdAt: "desc" },
+    });
+    assert.ok(row, "expected the row to have been committed via the transaction client");
+    createdLogIds.push(row!.id);
+  });
 });
