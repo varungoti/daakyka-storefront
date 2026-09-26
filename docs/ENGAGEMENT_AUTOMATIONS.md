@@ -12,23 +12,36 @@ Production-ready outreach stack for DAAKYKA storefront.
 | Hermes executor | `src/lib/hermes/approval-executor.ts` | Applies approved blog/campaign drafts |
 | Integration gates | `src/lib/integrations/enabled.ts` | Env + admin toggle before send |
 
-## Cron schedule (Vercel)
+## Cron schedule (Vercel, `vercel.json`)
 
-| Path | Schedule | Action |
-|------|----------|--------|
-| `/api/cron/journeys` | `0 9 * * *` daily | Process due journey enrollments |
-| `/api/cron/hermes` | `0 6 * * *` daily | SEO/competitor scans → approval queue |
-| `/api/cron/reports` | `0 7 * * 1` weekly | Weekly growth report + Hermes task |
-| `/api/cron/campaigns` | `0 10 * * *` daily | Send `SCHEDULED` campaigns where `scheduledAt <= now` |
+All times are UTC, with the IST (UTC+5:30) equivalent alongside — the Vercel scheduler itself runs
+in UTC, and IST is the timezone the DAAKYKA (Hyderabad) team works in. `scheduledAt` values and
+journey step delays are rounded up to the next time one of these crons actually runs — a
+`*/15 * * * *` job can be up to ~15 minutes late, `0 6 * * *` up to ~24 hours late if the due time
+just passed.
 
-All crons require `Authorization: Bearer $CRON_SECRET`.
+| Path | Schedule (UTC) | IST | Action |
+|------|-----------------|-----|--------|
+| `/api/cron/journeys` | `*/15 * * * *` | every 15 min | Process due journey enrollments (cart reminder, post-purchase, etc.) |
+| `/api/cron/campaigns` | `*/15 * * * *` | every 15 min | Send `SCHEDULED` campaigns where `scheduledAt <= now` |
+| `/api/cron/cancel-stale-orders` | `*/15 * * * *` | every 15 min | Cancel Razorpay orders that never completed payment |
+| `/api/cron/drain-email-outbox` | `*/15 * * * *` | every 15 min | Retry queued transactional emails (order/verify/reset) |
+| `/api/cron/back-in-stock` | `*/15 * * * *` | every 15 min | Notify shoppers subscribed to a now-restocked variant |
+| `/api/cron/hermes` | `0 6 * * *` daily | 11:30 AM | SEO/competitor scans → approval queue |
+| `/api/cron/reports` | `0 7 * * 1` weekly (Monday) | Monday 12:30 PM | Weekly growth report + Hermes task |
+
+All crons require `Authorization: Bearer $CRON_SECRET`. Journeys and campaigns run every 15 minutes
+on every plan this project has used (Vercel's Hobby tier caps crons at once/day — this project's
+`*/15` schedules already require at least Pro).
 
 ## Campaign workflow
 
 1. Create campaign in **Admin → Campaign Planner** with segment + template.
 2. Move status to `PENDING_APPROVAL` → `APPROVED`.
 3. **Send now:** PATCH status `APPROVED` with `{ "sendNow": true }` or PATCH status `SENT`.
-4. **Schedule:** PATCH status `SCHEDULED` with `{ "scheduledAt": "2026-06-01T10:00:00.000Z" }` — campaigns cron dispatches automatically.
+4. **Schedule:** PATCH status `SCHEDULED` with `{ "scheduledAt": "2026-06-01T10:00:00.000Z" }` — the
+   `/api/cron/campaigns` job (every 15 minutes, see above) picks it up on its next run once
+   `scheduledAt` has passed; it isn't dispatched the instant `scheduledAt` arrives.
 
 Dispatch creates an admin notification with sent/stub/failed counts.
 
@@ -66,4 +79,6 @@ External Hermes runtime: set `HERMES_API_URL` + enable in Integrations.
 - [ ] `WATI_API_KEY` + approved templates + enable WATI
 - [ ] `CRON_SECRET` on Vercel
 - [ ] `HERMES_API_URL` (optional) + enable Hermes
-- [ ] Shopify webhooks for order-triggered journeys
+
+Order-triggered (`order_created`) journeys fire natively from every checkout path
+(`src/lib/orders/notify.ts`) — no Shopify webhook is needed for this.

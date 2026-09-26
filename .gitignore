@@ -55,6 +55,12 @@ yarn-error.log*
 # dogfood artifacts (screenshots, reports)
 /dogfood-output/
 
+# F-303: internal-only docs (security audit detail, etc.) that must never
+# be served from the public repo — see docs/internal/README.md. Keeping
+# this local-only is the relocation half of F-303; whether the whole repo
+# should be private too is a separate, owner-only decision.
+/docs/internal/
+
 # lighthouse-ci healthcheck/cache dir
 /.lighthouseci/
 

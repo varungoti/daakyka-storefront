@@ -126,11 +126,11 @@ Manual checklist: `docs/QA_CHECKLIST.md` — run after automated layers pass for
 | Cron auth in production | Integration |
 | Shopify webhook HMAC | Unit + integration |
 | Security headers | Smoke |
-| Cart local/degraded mode | Integration |
+| Cart always runs in local mode (never re-enabled by Shopify env vars) | Unit (`src/lib/cart/service.test.ts`) |
 
 ## What Is Not Tested Automatically
 
-- Live Shopify checkout (requires credentials)
+- Live Razorpay checkout (requires credentials — the order-request fallback without them is tested)
 - Brevo/WATI delivery (requires API keys)
 - Hermes NousResearch runtime (stub mode tested)
 - Cross-browser matrix (Playwright uses Chromium by default; extend config for Firefox/WebKit)

@@ -20,15 +20,18 @@ current admin UI and API (`src/app/admin/(panel)/products/**`, `src/components/a
    20–44, Linens) and/or type a custom size, then pick colours from the swatch grid (or add a
    custom name + hex) and click **Generate variants (N)**. This builds the full size × colour
    matrix via `generateVariantMatrix()` (`src/lib/catalog/product-validation.ts`), each row getting
-   an auto-generated SKU in the form `DK-{CATEGORYCODE}-{SLUG}-{SIZE}-{COLOR}` (e.g.
-   `DK-SCRSET-unisex-scrub-set-M-NAVY`). Generating again only adds rows for size/colour pairs not
-   already present — it won't duplicate or wipe out manual edits. Stock defaults to 0 per row; use
-   "Apply stock to all" to bulk-set it, or edit rows inline (stock, price override, active
-   checkbox, or regenerate the SKU). A duplicate (size, colour) pair is flagged inline before you
-   can save it.
-6. **Images** — only available once the product has been saved at least once (a brand-new product
-   has no id for a `ProductImage` to reference yet — the section shows "Save the product as a draft
-   first to add images" until then). Two ways to add images:
+   an auto-generated SKU in the form `DK-{CATCODE}-{NAMETOKEN}-{SIZE}-{COLOR}`, where `NAMETOKEN`
+   is up to 6 letters taken from the first two words of the slug plus a 4-character checksum (e.g.
+   `DK-SCRSET-UNISCR99I4-M-NAVY` for "unisex-scrub-set") — short and collision-safe rather than the
+   full slug. Generating again only adds rows for size/colour pairs not already present — it won't
+   duplicate or wipe out manual edits. Stock defaults to 0 per row; use "Apply stock to all" to
+   bulk-set it, or edit rows inline (stock, price override, active checkbox, or regenerate the
+   SKU). A duplicate (size, colour) pair is flagged inline before you can save it.
+6. **Images** — can be added **before the first save** too: a brand-new product on
+   `/admin/products/new` shows the same upload/AI-generate panel
+   (`StagedProductImageGallery`, `src/components/admin/staged-product-image-gallery.tsx`) as an
+   already-saved one — staged images are attached automatically the moment the product is created.
+   Two ways to add images:
    - **Upload images** — multipart upload to `POST /api/admin/media`, `image/png|jpeg|webp|avif`.
      Returns **503** with "Image storage isn't configured yet" if Cloudflare R2 credentials aren't
      set (see [IMAGES_AI.md](./IMAGES_AI.md)).

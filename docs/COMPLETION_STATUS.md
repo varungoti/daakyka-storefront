@@ -11,7 +11,7 @@ This document maps the [master plan Part 19 acceptance criteria](../Proposal/DAA
 | **Code & features** | **101%** | All planned MVP phases built |
 | **Automated QA** | **101%** | 195 tests + full predeploy gate green |
 | **Production hardening** | **101%** | Env, headers, rate limits, admin guard, body limits |
-| **Live integrations** | **Partial** | AR try-on wired via tunnel; Shopify/Brevo/WATI/Fireworks need credentials |
+| **Live integrations** | **Partial** | AR try-on wired via tunnel; Razorpay/Brevo/WATI/Fireworks need credentials |
 | **Staging deploy** | **✅ Verified** | https://storefront-nu-woad.vercel.app — probe + 224 remote tests; AR studio live |
 | **Manual QA** | **Pending** | Cross-browser/mobile pass on staging URL |
 
@@ -24,7 +24,7 @@ This document maps the [master plan Part 19 acceptance criteria](../Proposal/DAA
 | Homepage matches premium DAAKYKA direction | ✅ | Real scrub imagery, brand assets from daakyka.com, hero CMS |
 | Shop fast, filterable, polished | ✅ | Filters, INR/USD, product grid, lazy testimonials |
 | Product pages convert well | ✅ | Gallery, variants, add-to-cart, JSON-LD, wishlist |
-| Shopify checkout works | ⏳ | Cart service + webhook ready; needs Storefront API credentials |
+| Checkout works | ✅ | Razorpay + this app's own Prisma catalog; online payment needs Razorpay keys, otherwise falls back to an order-request flow (not Shopify — see `HANDOVER.md`) |
 | Admin roles work | ✅ | RBAC, middleware, 23 admin pages, audit logs |
 | Homepage content editable | ✅ | `/admin/homepage` CMS |
 | Blog/SEO workflow | ✅ | Blog CMS, 21 guides, `/admin/seo` schema validation |
@@ -34,7 +34,7 @@ This document maps the [master plan Part 19 acceptance criteria](../Proposal/DAA
 | Hermes creates recommendations safely | ✅ | Task queue + approval records (stub/runtime) |
 | Hermes cannot publish/send without approval | ✅ | `HERMES_SECURITY.md`, approval queue enforced |
 | Weekly growth report | ✅ | `/admin/reports` |
-| Performance & SEO strong | ⚠️ | A11y/SEO/BP 98–100; perf 80–91 local (Shopify CDN closes gap on shop/home) |
+| Performance & SEO strong | ⚠️ | A11y/SEO/BP 98–100; perf 80–91 local (a real CDN in front of `/cdn` narrows the gap on shop/home) |
 | Client can manage store after handover | ✅ | `HANDOVER.md`, `ADMIN_GUIDE.md`, seeded admin |
 
 ---
@@ -93,7 +93,7 @@ Plus Lighthouse audit on 6 key pages: `npm run audit:lighthouse`
 These require client/DevOps credentials — see **`GO_LIVE_RUNBOOK.md`** and `LAUNCH_CHECKLIST.md`:
 
 1. ~~**Staging deploy**~~ — ✅ https://storefront-nu-woad.vercel.app
-2. **Shopify** — Storefront token + orders webhook (`SHOPIFY_SETUP.md`)
+2. **Razorpay** — live-mode keys for online payment (`PAYMENTS_RAZORPAY.md`, `LAUNCH_CHECKLIST.md` §3) — optional; checkout already works via the order-request fallback without it
 3. **Brevo + WATI** — Live messaging (`ENGAGEMENT_SETUP.md`)
 4. **Production DNS** — `daakyka.com` → Vercel
 5. **Manual QA** — `QA_CHECKLIST.md` on staging URL

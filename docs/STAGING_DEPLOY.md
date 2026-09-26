@@ -56,18 +56,23 @@ npm run verify:101
 
 See also [HARDENING.md](./HARDENING.md) for security headers, rate limits, and `/api/health`.
 
-## Staging checklist (2026-05-29)
+## Staging checklist (2026-05-29, historical)
 
-**URL:** https://storefront-nu-woad.vercel.app
+`https://storefront-nu-woad.vercel.app` was staging when this checklist ran; it has since been
+promoted and **is now production** (see [LAUNCH_STATUS.md](./LAUNCH_STATUS.md)). Don't run a fresh
+staging checklist against it — this section is kept only as a record of what was verified before
+promotion. For a new staging deploy, use a separate Preview URL.
 
 - [x] Admin login works *(remote dogfood admin tour)*
 - [ ] Admin password changed from seed
 - [x] All 21 guide pages return 200 *(smoke + dogfood)*
-- [ ] Shopify test store connected (optional)
+- [ ] ~~Shopify test store connected (optional)~~ — not applicable; there is no Shopify cart/checkout integration (see [HANDOVER.md](./HANDOVER.md))
 - [ ] Webhook URL points to staging domain
 - [ ] Brevo/WATI use sandbox or test lists only
 - [x] `GET /api/health` returns `{ status: "ok" }`
-- [x] `robots.txt` disallows indexing
+- [x] `robots.txt` disallowed indexing *(correct for staging; on production, indexing must instead
+      be **allowed** — see `NEXT_PUBLIC_ALLOW_INDEXING` and `isIndexingAllowed()` in `src/lib/env.ts`,
+      and don't leave the staging-era env var set once promoted)*
 - [x] Automated QA on staging URL (`npm run verify:staging:full`)
 - [ ] Team completes manual items in `docs/QA_CHECKLIST.md`
 

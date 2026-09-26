@@ -1,6 +1,6 @@
 # Production Hardening Guide
 
-Hardening controls added for Phase 7 launch readiness. All items below work without live Shopify/Brevo/WATI credentials.
+Hardening controls added for Phase 7 launch readiness. All items below work without live Razorpay/Brevo/WATI credentials.
 
 ## Environment validation
 
@@ -70,15 +70,11 @@ Public write APIs parse JSON via `readJsonBody()` (`src/lib/security/parse-json-
 
 Applied to: login, contact, bulk-orders, newsletter, cart, cart abandon, product-view analytics, and **all** `/api/admin/*` write routes.
 
-## Cart degradation
+## Cart
 
-When Shopify Storefront is configured but the cart API fails, `/api/cart` returns:
-
-```json
-{ "mode": "degraded", "fallback": "local", "error": "..." }
-```
-
-The cart provider falls back to localStorage demo cart so demos and QA continue without a hard 500.
+The cart always runs against this app's own catalog (`src/lib/cart/service.ts`) — there is no
+Shopify-backed cart mode to degrade from, and no network call an outage could fail (`/api/cart`,
+the old Storefront-API cart route, no longer exists).
 
 ## Shopify webhook verification
 
@@ -135,7 +131,7 @@ npm run audit:lighthouse
 
 - Sentry DSN (optional — not wired yet)
 - Distributed rate limiting (Redis) for multi-instance production
-- Shopify live cart/checkout
+- Razorpay live-mode keys (checkout works today via the order-request fallback without them)
 - Brevo/WATI live sends
 - Hermes NousResearch runtime
 

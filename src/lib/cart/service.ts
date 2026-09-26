@@ -1,21 +1,23 @@
-import { isShopifyConfigured } from "@/lib/shopify/config";
 import type { Cart, CartLine } from "@/lib/types";
 
 // The Shopify Storefront-API cart functions that used to live here
 // (createShopifyCart/getShopifyCart/addToShopifyCart/updateShopifyCartLine/
 // removeFromShopifyCart) were removed as dead code (release-hardening,
 // audit finding F5): they spoke Shopify cart GIDs and were never wired to
-// the real Prisma catalog (products/variants use cuids), so
-// isShopifyCartMode() below would have broken immediately if ever enabled
-// against this app's DB-native checkout. `isShopifyConfigured()` is kept
-// because `isShopifyCartMode()` still has one real caller
-// (src/context/cart-provider.tsx, which must keep compiling against the
-// "shopify" | "local" mode union — see that file) — with the Storefront
-// API vars now undocumented, this always evaluates to false in practice,
-// so the app runs local-cart-only, same as today.
+// the real Prisma catalog (products/variants use cuids). This function
+// used to return `isShopifyConfigured()`, so setting the two
+// NEXT_PUBLIC_SHOPIFY_* vars alone (e.g. by following the old
+// SHOPIFY_SETUP.md) flipped every cart into "shopify" mode and POSTed to
+// `/api/cart`, which no longer exists — add-to-cart failed site-wide
+// (audit finding F-231). `/api/cart` (the Storefront-API cart route) is
+// gone for good, so this mode can never work again — hard-coded `false`,
+// not derived from env, so no future env var can re-enable it by
+// accident. `isShopifyCartMode()` is kept only because
+// src/context/cart-provider.tsx still compiles against the
+// "shopify" | "local" mode union.
 
 export function isShopifyCartMode(): boolean {
-  return isShopifyConfigured();
+  return false;
 }
 
 export function createLocalCartId(): string {

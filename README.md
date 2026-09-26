@@ -54,9 +54,9 @@ deploy will even build.
 | `npm run probe:deploy` | Post-deploy health + security probe |
 | `npm run audit:lighthouse` | Lighthouse scores for key pages |
 | `npm run lint` | Run ESLint |
-| `npm run db:migrate` | Apply database migrations |
+| `npm run db:migrate` | **Dev only** — `prisma migrate dev`; can reset the database. Never run against production (use `prisma migrate deploy`, e.g. via `db:setup` or `scripts/go-live.mjs`) |
 | `npm run db:seed` | Seed admin user, homepage sections, blog posts |
-| `npm run db:setup` | Migrate + seed in one step |
+| `npm run db:setup` | `prisma migrate deploy` + seed in one step — safe for production |
 
 ## Environment
 
@@ -118,7 +118,8 @@ Credential-blocked for production go-live: Brevo, WATI, Postgres deploy. See `do
 - **Phase 5** — Hermes agent on Vercel (inline runtime + Fireworks) ✅
 - **Part 10 SEO** — 21 guide pages + `/guides` hub + fabric-tech redirects ✅
 - **Phase 7 QA** — 194 automated tests, CI, dogfood, hardening, verify:101 ✅
-- **Next** — Staging deploy + live credentials + manual cross-browser QA
+- **Deployed** — Production live at https://storefront-nu-woad.vercel.app
+- **Next** — Razorpay/Brevo/WATI live credentials, `daakyka.com` DNS cutover, manual cross-browser QA (see `docs/LAUNCH_STATUS.md`)
 
 ### Hermes Agent (Vercel)
 

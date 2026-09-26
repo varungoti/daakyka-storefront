@@ -2,9 +2,10 @@
 
 Checkout is **Razorpay + this app's own Postgres/Prisma catalog, not Shopify** — see
 [GO_LIVE_RUNBOOK.md](./GO_LIVE_RUNBOOK.md) and [PAYMENTS_RAZORPAY.md](./PAYMENTS_RAZORPAY.md) for
-the full flow. The Shopify env vars below only switch on a legacy, disconnected cart mode that was
-never wired to the real catalog or order pipeline — they gate nothing required for launch and are
-slated for removal. Don't treat them as blocking.
+the full flow. The `NEXT_PUBLIC_SHOPIFY_*` cart-mode env vars below do nothing — the cart mode they
+used to switch on is hard-coded off (`src/lib/cart/service.ts`) because the route it needs
+(`/api/cart`) no longer exists. They gate nothing required for launch. Don't treat them as
+blocking.
 
 ## 1. Environment
 
@@ -18,13 +19,13 @@ Production values, one at a time:
 | `CRON_SECRET` | **Yes** | Protects `/api/cron/*` |
 | `ADMIN_SEED_PASSWORD` | **Yes** | ≥ 12 chars, not a known default |
 | `NEXT_PUBLIC_SITE_URL` | **Yes** | `https://daakyka.com` (or wherever DNS currently points) |
-| `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` / `RAZORPAY_WEBHOOK_SECRET` | For online payment | All three or none — can also be set later via `/admin/integrations` instead of a redeploy |
+| `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` / `RAZORPAY_WEBHOOK_SECRET` | For online payment | All three or none as env vars; or set all three later via `/admin/integrations` instead of a redeploy — don't split them between the two |
 | `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET` | For image upload/AI generation | `CLOUDFLARE_*` names also work — see `src/lib/storage/r2.ts` |
 | `R2_PUBLIC_BASE_URL` | **Leave unset** | The R2 bucket is private; media is served same-origin via `/cdn/[...key]`. Only set this if the bucket is ever made public. |
 | `OPENAI_API_KEY` / `AI_IMAGE_DAILY_LIMIT` | For AI image generation | Costs real money per image — see [IMAGES_AI.md](./IMAGES_AI.md). Default cap is 50/day site-wide. |
 | `BREVO_API_KEY` | For email journeys | Or set later via `/admin/integrations` |
 | `WATI_API_KEY` | For WhatsApp | |
-| `NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN` / `..._STOREFRONT_ACCESS_TOKEN` | Legacy cart mode only | Not needed for launch — see above |
+| `NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN` / `..._STOREFRONT_ACCESS_TOKEN` | No effect on the cart | Not needed for launch — see above |
 | `DB_POOL_MAX` | Optional | Defaults to 5; keep small with a connection pooler |
 | `HERMES_API_URL` / `HERMES_API_KEY` | Optional | Agent runtime |
 
@@ -68,15 +69,20 @@ online payment) when Razorpay isn't configured. To enable real online payment:
 
 1. Get live-mode API keys from the [Razorpay Dashboard](https://dashboard.razorpay.com/) (Settings
    → API Keys).
-2. Set `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` as env vars, **or** enter them at
-   `/admin/integrations` after deploy (encrypted at rest; no redeploy needed; a value entered there
-   always wins over the env var).
+2. Set `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` / `RAZORPAY_WEBHOOK_SECRET` as env vars, **or**
+   enter Key ID and Key Secret at `/admin/integrations` after deploy (encrypted at rest; no
+   redeploy needed; a value entered there always wins over the env var) — the webhook secret goes
+   in the same place once you have it, from step 3 below.
 3. Register a webhook (Settings → Webhooks) pointed at `https://daakyka.com/api/webhooks/razorpay`
    (only after §2's DNS cutover is live — see [PAYMENTS_RAZORPAY.md](./PAYMENTS_RAZORPAY.md) for
    what to use before then, and why a `*-projects.vercel.app` URL never works here), subscribed to
-   at least `payment.captured`, `payment.failed`, `refund.processed`. Copy its signing secret into
-   `RAZORPAY_WEBHOOK_SECRET` (env var — the webhook secret is not currently settable from
-   `/admin/integrations`, only the two API keys are).
+   at least `payment.captured`, `payment.failed`, `refund.processed`. Put its signing secret in the
+   same place as the two keys above: enter it as **Webhook Secret** at `/admin/integrations`, or
+   set `RAZORPAY_WEBHOOK_SECRET` as an env var alongside the other two. **Don't mix the two** — the
+   build/boot env check (`src/lib/env.ts`) only sees env vars, and setting 1 or 2 of the 3 Razorpay
+   env vars (e.g. keys via env, webhook secret via env, but not all three) fails the production
+   build with "must all be set together". All three via `/admin/integrations` with no Razorpay env
+   vars set is fine.
 4. Place a real test order — verify `/admin/orders` and the post-purchase journey enrollment.
 
 Full detail, including the stock-decrement/idempotency design: [PAYMENTS_RAZORPAY.md](./PAYMENTS_RAZORPAY.md).
@@ -95,9 +101,10 @@ Full detail, including the stock-decrement/idempotency design: [PAYMENTS_RAZORPA
 1. Add Brevo API key + verified sender domain (env var or `/admin/integrations`)
 2. Add WATI API key for WhatsApp templates
 3. Approve campaign templates in `/admin/templates`
-4. `CRON_SECRET` is set (required, not optional) — verify Vercel crons in `vercel.json`:
-   - Journeys: daily on Vercel Hobby (`0 9 * * *`); hourly on Pro (`0 * * * *`)
-   - Hermes: daily 06:00 UTC · Reports: weekly Monday 07:00 UTC · Cancel-stale-orders: every 15 min
+4. `CRON_SECRET` is set (required, not optional) — verify Vercel crons in `vercel.json` (full table
+   with IST times: [ENGAGEMENT_AUTOMATIONS.md](./ENGAGEMENT_AUTOMATIONS.md)):
+   - Journeys, campaigns, cancel-stale-orders, drain-email-outbox, back-in-stock: every 15 min
+   - Hermes: daily 06:00 UTC · Reports: weekly Monday 07:00 UTC
 5. Test the welcome journey via newsletter signup
 6. Test abandoned cart (requires an email captured in the cart session)
 
@@ -113,15 +120,15 @@ Full detail, including the stock-decrement/idempotency design: [PAYMENTS_RAZORPA
 
 Automated QA is **complete** — run `npm run verify:101` and confirm `dogfood-output/COMPLETION.json`.
 
-Complete remaining **manual** items in [QA_CHECKLIST.md](./QA_CHECKLIST.md) on the staging URL.
+Complete remaining **manual** items in [QA_CHECKLIST.md](./QA_CHECKLIST.md) on the production URL
+(see the note in that doc — there is no separate staging deployment).
 
-**Caching note:** a write that calls `revalidateTag(tag, "max")` (products, categories, settings,
-site images, size charts, credentials, reviews) serves **one stale response on the very next
-request** after the save, then is fresh from the request after that — that's Next 16's documented
-stale-while-revalidate behavior, not a bug. If a reload right after saving still looks stale,
-reload once more before filing it. (Homepage Hero/Trust-Stats/Announcement/Offers/Testimonials are
-a separate, real exception — they currently have no revalidation at all and need a redeploy to
-update; see `GO_LIVE_RUNBOOK.md`.)
+**Caching note:** a write that calls `revalidateTag(tag, "max")` — products, categories, settings,
+site images, size charts, credentials, reviews, and Homepage Hero/Trust-Stats/Announcement/Offers/
+Testimonials — serves **one stale response on the very next request** after the save, then is fresh
+from the request after that — that's Next 16's documented stale-while-revalidate behavior, not a
+bug. If a reload right after saving still looks stale, reload once more before filing it. None of
+these need a redeploy to reflect a save; see `GO_LIVE_RUNBOOK.md`.
 
 ## 8. Monitoring
 
@@ -132,8 +139,7 @@ update; see `GO_LIVE_RUNBOOK.md`.)
 ## 9. Go-Live
 
 - [ ] Announcement bar copy finalized
-- [ ] Homepage hero CMS updated for launch messaging (requires a redeploy to appear — see caching
-      note in §7)
+- [ ] Homepage hero CMS updated for launch messaging (no redeploy needed — see caching note in §7)
 - [ ] Team trained on admin panel
 
 ## Post-Launch (Week 1)

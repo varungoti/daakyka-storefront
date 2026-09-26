@@ -35,9 +35,12 @@ you left it unset). Login: `/admin/login`.
 ### Option A — New admin, then remove the old one
 
 1. Ask a current SUPER_ADMIN to invite the new admin from `/admin/users`
-   (or, until that flow exists, set `ADMIN_SEED_EMAIL` to the new address
-   and redeploy — this only *creates* the new user, it won't touch any
-   existing one).
+   (`user-invite-form.tsx`) — this creates the account and shows a
+   one-time temporary password on screen (never logged or emailed; copy it
+   to the new admin yourself). Setting `ADMIN_SEED_EMAIL` to the new
+   address and redeploying still works too — it only *creates* the new
+   user, it won't touch any existing one — but the invite form is the
+   normal path now.
 2. Log in as the new admin and deactivate the old account under
    `/admin/users`.
 

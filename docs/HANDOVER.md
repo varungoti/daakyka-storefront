@@ -4,7 +4,7 @@
 
 Headless medical commerce storefront for **DAAKYKA Apparels** (Babaji Enterprises, Hyderabad). Built with Next.js 16, React 19, Tailwind v4, Prisma 7 + PostgreSQL.
 
-**Staging (live):** https://storefront-nu-woad.vercel.app
+**Production (live):** https://storefront-nu-woad.vercel.app
 **Explicitly excluded:** AI Fit Scan
 
 ## Repository
@@ -45,11 +45,12 @@ production database (see below).
   no Razorpay keys configured, checkout automatically falls back to an order-request flow (manual
   follow-up, no online payment) — that's a supported mode, not an error. Full detail:
   [PAYMENTS_RAZORPAY.md](./PAYMENTS_RAZORPAY.md).
-- **Shopify** (`NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN`/`..._STOREFRONT_ACCESS_TOKEN`) only switches on a
-  **legacy, disconnected cart mode** (`src/lib/cart/service.ts`, `/api/cart`) that has never been
-  wired to the real catalog (Shopify GIDs vs. this app's own product ids) or the real order
-  pipeline above. It gates nothing required for launch and is slated for removal — don't configure
-  it thinking it's the payment path.
+- **Shopify** (`NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN`/`..._STOREFRONT_ACCESS_TOKEN`) does nothing on the
+  cart. `isShopifyCartMode()` (`src/lib/cart/service.ts`) is hard-coded `false` — the Storefront-API
+  cart route (`/api/cart`) it used to call was deleted (audit finding F5), so setting these two vars
+  can never re-enable it; the storefront always runs its own local cart regardless. There is no
+  Shopify cart mode to configure or avoid — don't set these vars thinking they do anything for
+  checkout.
 - **Payments/email credentials can be admin-managed**: Razorpay and Brevo keys can be entered at
   `/admin/integrations` after deploy — encrypted at rest (`src/lib/integrations/credential-store.ts`,
   root key `CREDENTIAL_ENCRYPTION_KEY`) — instead of only via env vars. A value set there always
@@ -66,12 +67,13 @@ production database (see below).
 - **Media**: Cloudflare R2, bucket `daakyka-media`, **not public**. Images are served same-origin
   through this app's own `/cdn/[...key]` route (`src/app/cdn/`), so `R2_PUBLIC_BASE_URL` is
   intentionally left unset.
-- **Caching**: writes that call `revalidateTag(tag, "max")` (products, categories, settings, site
-  images, size charts, credentials, reviews) serve one stale response on the next request, then are
-  fresh after that — Next 16's documented stale-while-revalidate behavior, not a bug. Don't
-  misread "still stale after one reload" as broken caching. (Homepage Hero/Trust-Stats/Announcement,
-  Offers, and homepage Testimonials are a separate, genuine exception with no revalidation wired up
-  yet — those need a redeploy to reflect an edit.)
+- **Caching**: writes that call `revalidateTag(tag, "max")` — products, categories, settings, site
+  images, size charts, credentials, reviews, and (as of this doc) Homepage Hero/Trust-Stats/
+  Announcement, Offers, and homepage Testimonials too (`src/lib/homepage/index.ts`,
+  `src/lib/offers/index.ts`, `src/lib/testimonials/index.ts`) — serve one stale response on the next
+  request, then are fresh after that. That's Next 16's documented stale-while-revalidate behavior,
+  not a bug; don't misread "still stale after one reload" as broken caching, and don't assume a save
+  needs a redeploy to appear.
 - **AI image generation**: `npm run images:generate` (`scripts/generate-images.ts`) — costs real
   OpenAI spend per image, capped by `AI_IMAGE_DAILY_LIMIT` (default 50/day, site-wide). Always run
   with `--dry-run` first to see the plan and estimated cost before spending anything with `--yes`.
@@ -90,7 +92,7 @@ production database (see below).
 | [LAUNCH_CHECKLIST.md](./LAUNCH_CHECKLIST.md) | Go-live steps |
 | [QA_CHECKLIST.md](./QA_CHECKLIST.md) | Pre-launch QA |
 | [PAYMENTS_RAZORPAY.md](./PAYMENTS_RAZORPAY.md) | Checkout flow, webhook, env vars |
-| [SHOPIFY_SETUP.md](./SHOPIFY_SETUP.md) | Legacy cart mode (not checkout) — see note above |
+| [SHOPIFY_SETUP.md](./SHOPIFY_SETUP.md) | Orders webhook only (no cart/checkout integration — see note above) |
 | [ENGAGEMENT_SETUP.md](./ENGAGEMENT_SETUP.md) | Brevo + WATI + journeys |
 | [IMAGES_AI.md](./IMAGES_AI.md) | AI image generation, cost cap, R2 storage |
 | [HERMES_SETUP.md](./HERMES_SETUP.md) | Agent runtime |
@@ -138,7 +140,7 @@ npm run go-live:check -- --production   # Env checklist before promote — check
 | Hermes approval queue | ✅ — runtime optional |
 | Weekly growth report | ✅ `/admin/reports` |
 | Production hardening + automated test suite | ✅ |
-| Staging deploy verified | ✅ https://storefront-nu-woad.vercel.app |
+| Production deploy verified | ✅ https://storefront-nu-woad.vercel.app |
 | Checkout (Razorpay, DB-native) | ✅ — works today; online payment needs Razorpay keys (env var or `/admin/integrations`), otherwise falls back to order-request |
 | Live email/WhatsApp | ⏳ Needs Brevo (env var or `/admin/integrations`) / WATI |
 | Production DNS | ⏳ `daakyka.com` resolves and answers `200` today, but from the old Hostinger-hosted site, not this app — it isn't attached to this Vercel project yet (see `src/data/media/catalog.ts`'s doc comment and `GO_LIVE_RUNBOOK.md`'s Domain & DNS phase) |

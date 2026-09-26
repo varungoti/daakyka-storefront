@@ -1,23 +1,12 @@
 # Shopify Setup Guide
 
-## Storefront API (Catalog + Cart)
-
-1. In Shopify Admin → **Settings → Apps and sales channels → Develop apps**
-2. Create an app → configure **Storefront API** scopes:
-   - `unauthenticated_read_product_listings`
-   - `unauthenticated_read_product_inventory`
-   - `unauthenticated_write_checkouts`
-   - `unauthenticated_read_checkouts`
-3. Install the app and copy the **Storefront access token**
-4. Set environment variables:
-
-```env
-NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN=your-store.myshopify.com
-NEXT_PUBLIC_SHOPIFY_STOREFRONT_ACCESS_TOKEN=shpat_...
-SHOPIFY_API_VERSION=2025-01
-```
-
-5. Restart the app — cart mode switches from local demo to Shopify checkout automatically.
+There is **no Shopify cart or checkout integration** in this app — checkout is Razorpay + this
+app's own Prisma/Postgres catalog (see [HANDOVER.md](./HANDOVER.md) and
+[PAYMENTS_RAZORPAY.md](./PAYMENTS_RAZORPAY.md)). The only thing Shopify-related left is an optional
+**orders webhook**, for a business that also runs (or used to run) an existing Shopify store and
+wants those orders reported into this app's `/admin/orders` and post-purchase journeys. If that
+doesn't describe DAAKYKA's setup, skip this document entirely — nothing below is required for
+launch.
 
 ## Orders Webhook (Post-Purchase Journeys)
 
@@ -27,16 +16,16 @@ SHOPIFY_API_VERSION=2025-01
    - URL: `https://your-domain.com/api/webhooks/shopify/orders`
    - Format: JSON
 3. Copy the **webhook signing secret** → `SHOPIFY_WEBHOOK_SECRET`
-4. Place a test order — confirm:
+4. Optionally set `NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN` to that Shopify store's domain — if set, the
+   webhook handler (`src/app/api/webhooks/shopify/orders/route.ts`) rejects any request whose
+   `x-shopify-shop-domain` header doesn't match it. Leave it unset to accept from any domain that
+   knows `SHOPIFY_WEBHOOK_SECRET`.
+5. Place a test order on the Shopify store — confirm:
    - Row appears in `/admin/orders`
    - Post-purchase journey enrollment in `/admin/journeys`
    - Admin notification created
 
-## Local Development
-
-Without Shopify credentials the storefront uses the **seed catalog** and **localStorage cart**. Checkout redirects to `/checkout` (demo mode).
-
-To test webhooks locally, use ngrok or Shopify CLI tunnel:
+To test webhooks locally, use ngrok or the Shopify CLI tunnel:
 
 ```bash
 ngrok http 3000
@@ -47,7 +36,13 @@ ngrok http 3000
 
 | Issue | Fix |
 |---|---|
-| Empty shop page | Check store domain and token; verify products published to Online Store |
-| Checkout fails | Confirm Storefront API checkout scopes |
 | Webhook 401 | Set `SHOPIFY_WEBHOOK_SECRET`; HMAC must match |
 | Webhook 200 but no order | Check server logs; duplicate `externalId` is deduplicated |
+| Webhook rejected (domain mismatch) | Confirm `NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN` matches the sending store exactly |
+
+## What NOT to do
+
+Do not set `NEXT_PUBLIC_SHOPIFY_STOREFRONT_ACCESS_TOKEN` expecting it to enable a Shopify-backed
+cart, product catalog, or checkout — there is nothing left in this app that reads a Storefront API
+token, and setting it has no effect. `isShopifyCartMode()` (`src/lib/cart/service.ts`) is
+hard-coded `false`: the cart always runs against this app's own catalog.

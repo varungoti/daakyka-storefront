@@ -38,7 +38,7 @@ Report: `dogfood-output/lighthouse/summary.md`
 - Self-host hero image on CDN with explicit `width`/`height`
 - Replace remaining Framer Motion `whileInView` sections with CSS `animation-timeline: view()`
 - Add `@next/bundle-analyzer` for bundle regression checks in CI
-- Connect Shopify CDN product images (smaller, WebP) when live catalog is wired
+- Put a real CDN in front of `/cdn/[...key]` (Cloudflare R2's own CDN, or a Vercel/Cloudflare edge cache) for smaller, WebP-served product images
 
 ## Lighthouse CI gate (Phase G)
 

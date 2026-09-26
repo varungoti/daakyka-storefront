@@ -52,7 +52,8 @@ npm run verify:101   # lint + unit + integration + build + smoke + e2e + dogfood
 | Dogfood E2E | 51 | ✅ |
 | Lighthouse | 6 pages | ✅ (see `dogfood-output/lighthouse/summary.md`) |
 
-**Staging URL:** https://storefront-nu-woad.vercel.app
+**Production URL:** https://storefront-nu-woad.vercel.app — this is the live store, not a separate
+staging environment; QA against it is QA against production.
 
 ```bash
 npm run verify:101              # local full gate
@@ -62,7 +63,7 @@ npm run verify:staging:full     # live staging probe + smoke + e2e + dogfood
 ## Performance (manual)
 
 - [x] Lighthouse audit run — see `dogfood-output/lighthouse/summary.md`
-- [ ] Lighthouse mobile perf ≥ 90 on homepage/shop *(currently 78–81 local; Shopify CDN expected to close gap)*
+- [ ] Lighthouse mobile perf ≥ 90 on homepage/shop *(currently 78–81 local; a real CDN in front of `/cdn` expected to close gap — see `PERFORMANCE.md`)*
 - [ ] LCP < 2.5s on homepage and product page *(measure on staging)*
 - [ ] No layout shift on hero/product images *(visual check on staging)*
 

@@ -40,10 +40,9 @@ WATI_API_URL=https://live-server.wati.io
 | Trigger | Source |
 |---|---|
 | `newsletter_signup` | Footer newsletter form |
-| `bulk_order_submitted` | `/api/bulk-orders` |
-| `institutional_contact` | Contact form (institutional type) |
+| `bulk_lead_created` | `/api/bulk-orders`, and `/api/contact` for a `BULK_ORDER` or `INSTITUTIONAL` enquiry |
 | `cart_abandoned` | `/api/cart/abandon` (requires email) |
-| `order_created` | Shopify webhook `/api/webhooks/shopify/orders` |
+| `order_created` | Every checkout path (`src/lib/orders/notify.ts`), plus the Shopify orders webhook (`/api/webhooks/shopify/orders`) if that's ever wired up |
 
 ## Cron (Required in Production)
 
@@ -51,7 +50,9 @@ WATI_API_URL=https://live-server.wati.io
 CRON_SECRET=long-random-secret
 ```
 
-- **Hourly** — `/api/cron/journeys` processes due journey steps
+- **Every 15 minutes** — `/api/cron/journeys` processes due journey steps (see
+  [ENGAGEMENT_AUTOMATIONS.md](./ENGAGEMENT_AUTOMATIONS.md) for the full cron table with UTC/IST
+  times)
 - Verify in Vercel → Cron Jobs (see `vercel.json`)
 
 ## Testing Without Live Send

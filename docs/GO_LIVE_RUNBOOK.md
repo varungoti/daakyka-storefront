@@ -17,11 +17,11 @@ Without any Razorpay keys set, checkout doesn't fail — it falls back to an **o
 (order created as `PROCESSING`, no online payment, the team follows up manually). That fallback is
 a normal, supported mode, not a broken state.
 
-`NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN`/`NEXT_PUBLIC_SHOPIFY_STOREFRONT_ACCESS_TOKEN` only switch on a
-**legacy, disconnected cart mode** (`src/lib/cart/service.ts`, `/api/cart`) that was never wired to
-this app's real Prisma catalog (Shopify product GIDs vs. this app's own product ids) or to the real
-order pipeline above. It is not part of checkout, not required for launch, and is slated for
-removal — do not set these to "unblock" a launch.
+`NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN`/`NEXT_PUBLIC_SHOPIFY_STOREFRONT_ACCESS_TOKEN` do nothing to the
+cart. `isShopifyCartMode()` (`src/lib/cart/service.ts`) is hard-coded `false` — the Storefront-API
+cart route it used to call (`/api/cart`) was deleted, so there is no cart mode left for these vars
+to switch on. They are not part of checkout, not required for launch, and setting them has no
+effect — don't set these to "unblock" a launch.
 
 ## Phase A — Staging (1–2 hours)
 
@@ -42,7 +42,8 @@ the same one production uses.
 
 ### A2. Vercel project
 
-1. Import the repo; set **Root Directory** = `storefront`.
+1. Import the repo; leave **Root Directory** = `.` — the repo root *is* this app (there is no
+   nested `storefront/` folder to point at inside the Vercel project's own checkout).
 2. Add env vars — see [Environment variables](#environment-variables-what-is-actually-required)
    below (do **not** just copy `.env.staging.example` blindly; it lists optional integrations too).
 3. Deploy the preview/staging branch. The build command (`vercel.json` → `node scripts/vercel-build.mjs`)
@@ -265,7 +266,7 @@ else these are warnings) and `.env.local.example`/`.env.staging.example`.
 | `OPENAI_IMAGE_MODEL` | Defaults to the current model in `src/lib/ai/image-generation.ts` |
 | `AI_IMAGE_DAILY_LIMIT` | Defaults to 50 generations/day, site-wide — see [IMAGES_AI.md](./IMAGES_AI.md) |
 | `DB_POOL_MAX` | Defaults to 5 — kept deliberately small per serverless-function instance; raise only if you also move off a connection pooler |
-| `NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN` / `NEXT_PUBLIC_SHOPIFY_STOREFRONT_ACCESS_TOKEN` / `SHOPIFY_WEBHOOK_SECRET` | Legacy cart mode only — see above. Leave unset. |
+| `NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN` / `NEXT_PUBLIC_SHOPIFY_STOREFRONT_ACCESS_TOKEN` / `SHOPIFY_WEBHOOK_SECRET` | No effect on the cart — see above. Leave unset. |
 | `WATI_API_KEY` / `WATI_API_URL` | WhatsApp journeys stay disabled |
 | `HERMES_*` / `FIREWORKS_API_KEY` | Hermes agent runtime stays disabled |
 | `NEXT_PUBLIC_ALLOW_INDEXING` | Staging-only; forces `noindex` regardless of environment |
@@ -281,10 +282,10 @@ regenerating in the background — true freshness lands on the request *after th
 reload right after saving still shows the old value, reload once more before assuming the cache is
 broken; that single-stale-request behavior is expected, not a defect.
 
-Also note: as of this writing, **Homepage Hero/Trust-Stats/Announcement, Offers, and Testimonials
-have no revalidation call at all** (`src/lib/homepage/index.ts`, `src/lib/offers/index.ts`,
-`src/lib/testimonials/index.ts`) and sit behind a fully static homepage — an edit to those
-specifically needs a redeploy today, which is a real gap, not the SWR behavior described above.
+Homepage Hero/Trust-Stats/Announcement, Offers, and Testimonials (`src/lib/homepage/index.ts`,
+`src/lib/offers/index.ts`, `src/lib/testimonials/index.ts`) now follow the same `revalidateTag(tag,
+"max")` pattern — an edit to those shows up the same way (one stale response, then fresh), and does
+**not** need a redeploy.
 
 ---
 
