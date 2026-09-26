@@ -1,5 +1,7 @@
 import { db } from "@/lib/db";
-import { EMAIL_KIND, sendTransactionalEmail } from "@/lib/engagement/outbox";
+import type { PaymentMethod } from "@/generated/prisma/client";
+import { EMAIL_KIND, sendTransactionalEmail, type EmailKind } from "@/lib/engagement/outbox";
+import { getCourierTrackingUrl } from "@/lib/orders/courier-tracking";
 import { getSetting } from "@/lib/settings";
 
 /**
@@ -147,5 +149,97 @@ export async function notifyNewOrder(input: NotifyNewOrderInput): Promise<void> 
     });
   } catch (error) {
     console.log(`[orders/notify] admin notification create failed for ${orderNumber}:`, error);
+  }
+}
+
+/**
+ * F-067 fix (release-hardening seo-canonical-notify-and-deploy-security):
+ * notifyNewOrder above only ever covers "order placed"/"payment received" —
+ * nothing told a customer their order later shipped or was cancelled, even
+ * though the payment email promises "we'll let you know as soon as it
+ * ships" (see the RAZORPAY branch above). Called from updateOrderAdmin
+ * (src/lib/orders/admin-orders.ts) whenever an admin actually changes the
+ * order's status to one of these three.
+ *
+ * Best-effort like notifyNewOrder: every failure is logged and swallowed,
+ * never thrown, so a mail problem can never fail the admin's save or roll
+ * back the status change/restock that already committed.
+ */
+export interface NotifyOrderStatusChangeInput {
+  orderNumber: string;
+  email: string;
+  toStatus: "SHIPPED" | "CANCELLED" | "REFUNDED";
+  /** Order.trackingNumber/courier — admin free text (see admin-orders.ts's
+   * orderUpdateSchema), HTML-escaped below before it goes near the email. */
+  trackingNumber?: string | null;
+  courier?: string | null;
+  paymentMethod: PaymentMethod;
+  /**
+   * Mirrors getOrderTimeline's `hasCapturedPayment` (src/lib/orders/
+   * timeline.ts) — only meaningful when paymentMethod is RAZORPAY. Default
+   * true (a payment was captured) so a caller that doesn't know better
+   * gets the safer "you may have been charged" wording rather than
+   * wrongly telling a charged customer nothing was taken.
+   */
+  hasCapturedPayment?: boolean;
+}
+
+/** Matches the small `escapeHtmlValue` helper duplicated in
+ * src/lib/engagement/template.ts — trackingNumber/courier here are
+ * admin-typed free text, not app-controlled strings, so they must never
+ * reach the email HTML unescaped. */
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+export async function notifyOrderStatusChange(input: NotifyOrderStatusChangeInput): Promise<void> {
+  const { orderNumber, email, toStatus, trackingNumber, courier, paymentMethod, hasCapturedPayment = true } = input;
+
+  let kind: EmailKind;
+  let subject: string;
+  let html: string;
+
+  if (toStatus === "SHIPPED") {
+    kind = EMAIL_KIND.ORDER_SHIPPED_CUSTOMER;
+    subject = `Your order ${orderNumber} has shipped`;
+    const safeTrackingNumber = trackingNumber ? escapeHtml(trackingNumber) : null;
+    const safeCourier = courier ? escapeHtml(courier) : null;
+    const trackingUrl = getCourierTrackingUrl(courier, trackingNumber);
+    const courierSuffix = safeCourier ? ` via ${safeCourier}` : "";
+    const trackingLine = safeTrackingNumber
+      ? `<p>Tracking number${courierSuffix}: ${
+          trackingUrl
+            ? `<a href="${trackingUrl}">${safeTrackingNumber}</a>`
+            : `<strong>${safeTrackingNumber}</strong>`
+        }</p>`
+      : "";
+    html = `<p>Good news — your order <strong>${orderNumber}</strong> has shipped.</p>${trackingLine}`;
+  } else if (toStatus === "CANCELLED") {
+    kind = EMAIL_KIND.ORDER_CANCELLED_CUSTOMER;
+    subject = `Your order ${orderNumber} was cancelled`;
+    // Same "don't claim what isn't verifiable" rule as getOrderTimeline's
+    // CANCELLED case (src/lib/orders/timeline.ts) — only a RAZORPAY order
+    // that never captured a payment is known for certain to have taken no
+    // money; every other cancelled order (including ORDER_REQUEST, which
+    // is never charged online either way) gets the same neutral hedge.
+    const neverPaid = paymentMethod === "RAZORPAY" && !hasCapturedPayment;
+    html = neverPaid
+      ? `<p>Your order <strong>${orderNumber}</strong> has been cancelled. Payment was not completed, so no charge was made — you can place a new order any time.</p>`
+      : `<p>Your order <strong>${orderNumber}</strong> has been cancelled. If you were charged, any eligible refund will be issued to your original payment method.</p>`;
+  } else {
+    kind = EMAIL_KIND.ORDER_REFUNDED_CUSTOMER;
+    subject = `Your order ${orderNumber} was refunded`;
+    html = `<p>Your order <strong>${orderNumber}</strong> has been refunded. Please allow a few business days for the amount to reflect in your original payment method.</p>`;
+  }
+
+  try {
+    const result = await sendTransactionalEmail({ to: email, subject, html }, kind);
+    if (!result.ok) {
+      console.log(
+        `[orders/notify] status-change email not sent for ${orderNumber} (${toStatus}) (provider=${result.provider}, outboxId=${result.outboxId}): ${result.error ?? "unknown reason"}`,
+      );
+    }
+  } catch (error) {
+    console.log(`[orders/notify] status-change email threw for ${orderNumber} (${toStatus}):`, error);
   }
 }

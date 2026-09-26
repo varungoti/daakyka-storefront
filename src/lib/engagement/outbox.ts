@@ -29,6 +29,14 @@ import { RESET_TOKEN_TTL_MS, VERIFY_TOKEN_TTL_MS } from "@/lib/customer-auth/tok
 export const EMAIL_KIND = {
   ORDER_CONFIRMATION_CUSTOMER: "order_confirmation_customer",
   ORDER_CONFIRMATION_ADMIN: "order_confirmation_admin",
+  // F-067 fix: the payment-received email promises "we'll let you know as
+  // soon as it ships" (src/lib/orders/notify.ts) — these are what actually
+  // keeps that promise. Queued by notifyOrderStatusChange (notify.ts)
+  // whenever updateOrderAdmin (src/lib/orders/admin-orders.ts) moves an
+  // order into one of these states.
+  ORDER_SHIPPED_CUSTOMER: "order_shipped_customer",
+  ORDER_CANCELLED_CUSTOMER: "order_cancelled_customer",
+  ORDER_REFUNDED_CUSTOMER: "order_refunded_customer",
   CUSTOMER_VERIFY_EMAIL: "customer_verify_email",
   CUSTOMER_RESET_PASSWORD: "customer_reset_password",
   // Shopify-parity gap: back-in-stock "Notify me" restock email — see

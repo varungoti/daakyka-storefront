@@ -36,11 +36,17 @@ yarn-error.log*
 # env files — the *.example templates are meant to be committed so a
 # fresh clone can `cp .env.local.example .env`; only real env files with
 # actual secrets are ignored.
-.env
-.env.local
-.env.*.local
-.env.staging
-.env.production
+#
+# F-228 fix: this used to enumerate each real filename (.env, .env.local,
+# .env.*.local, .env.staging, .env.production) with the !.env*.example
+# negation last — but a second, broader `.env*` rule further down this
+# file (with no negation after it) came later in file order and silently
+# overrode that negation for git's "last matching line wins" rule, so any
+# *new* .env*.example template would have been gitignored on `git add`
+# instead of committed. One broad rule with the negation immediately after
+# it removes that trap and still covers every .env variant, present or
+# future.
+.env*
 !.env*.example
 
 # vercel
@@ -65,10 +71,6 @@ __pycache__/
 
 # local tunnel binary (scripts download on demand)
 /bin/cloudflared.exe
-
-
-.vercel
-.env*
 
 # Personal Claude Code settings (not shared with the team)
 .claude/settings.local.json

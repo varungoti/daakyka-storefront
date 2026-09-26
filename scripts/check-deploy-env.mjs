@@ -2,22 +2,29 @@
  * Validate staging/production env before deploy.
  * Usage: node scripts/check-deploy-env.mjs [--production]
  */
+import { createHash } from "node:crypto";
+
 const isProduction = process.argv.includes("--production");
 
-// Kept in sync with src/lib/auth/seed-defaults.ts's INSECURE_SEED_PASSWORDS
+// Kept in sync with src/lib/auth/seed-defaults.ts's deny-list
 // (duplicated rather than imported: this script runs via plain `node`,
 // before any TypeScript loader is available).
-const INSECURE_SEED_PASSWORDS = new Set([
-  "Daakyka@2026",
-  "Daakyka@Viewer2026",
-  "password",
-  "changeme",
-  "admin",
-  "admin123",
+const INSECURE_SEED_PASSWORDS = new Set(["password", "changeme", "admin", "admin123"]);
+
+// F-301: these project's real, once-published SUPER_ADMIN/VIEWER seed
+// defaults are deny-listed by SHA-256 digest, not by value, so the leaked
+// plaintext is never reintroduced here. See src/lib/auth/seed-defaults.ts.
+const LEAKED_SEED_PASSWORD_DIGESTS = new Set([
+  "c60122eef0f379572315898a19084a6b36ff05333fc6adf0c648e9777f5e6adb",
+  "1c7da5b5e8f47830852c97475be97424745f5ffe6bb2e04e5736bb8a6ab2233e",
 ]);
 
 function isInsecureSeedPassword(password) {
-  return password.length < 12 || INSECURE_SEED_PASSWORDS.has(password);
+  return (
+    password.length < 12 ||
+    INSECURE_SEED_PASSWORDS.has(password) ||
+    LEAKED_SEED_PASSWORD_DIGESTS.has(createHash("sha256").update(password, "utf8").digest("hex"))
+  );
 }
 
 const required = [
@@ -54,6 +61,22 @@ for (const key of required) {
 
 if (!isProduction && process.env.NEXT_PUBLIC_ALLOW_INDEXING !== "false") {
   errors.push("Set NEXT_PUBLIC_ALLOW_INDEXING=false on staging");
+}
+
+// F-054 fix: this is the flip side of the staging check above — a value
+// left over from when a URL used to be staging (or copy-pasted into
+// Production by mistake) silently blocks all search indexing there, with
+// nothing else in the deploy path checking for it. NEXT_PUBLIC_ALLOW_INDEXING
+// is a legitimate soft-launch switch (src/lib/env.ts's isIndexingAllowed),
+// so this only fails the explicit, operator-run `npm run check:deploy-env`
+// gate — never the build/boot path (src/lib/env.ts's validateEnv only
+// warns there) — an operator who really wants a noindexed production
+// deployment can still ship one by not running this check.
+if (isProduction && process.env.NEXT_PUBLIC_ALLOW_INDEXING === "false") {
+  errors.push(
+    "NEXT_PUBLIC_ALLOW_INDEXING=false blocks all search indexing in production — remove it " +
+      "unless this is a deliberate soft launch",
+  );
 }
 
 const shopifyConfigured =

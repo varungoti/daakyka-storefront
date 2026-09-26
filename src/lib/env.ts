@@ -32,10 +32,65 @@ export function isIndexingAllowed(): boolean {
 }
 
 /**
+ * F-054 fix: NEXT_PUBLIC_ALLOW_INDEXING is a legitimate staging-only kill
+ * switch (see isIndexingAllowed above) — it must keep working when an
+ * owner deliberately soft-launches a noindexed production deployment, so
+ * validateEnv() below never throws on it. What actually shipped this
+ * finding was that same var being left set on *Production* from when this
+ * URL used to be staging, silently blocking all search indexing with
+ * nothing surfacing it — go-live.mjs's own smoke check only asserted a 200
+ * response. This just makes that state loud (a boot-time console.warn) so
+ * a leftover var can't slip by unnoticed again; scripts/go-live.mjs's
+ * smoke stage additionally fails a would-be silent success after deploy.
+ */
+function warnIfProductionBlocksIndexing(): void {
+  if (isVercelProduction() && process.env.NEXT_PUBLIC_ALLOW_INDEXING === "false") {
+    console.warn(
+      "[env] NEXT_PUBLIC_ALLOW_INDEXING=false is set on Vercel PRODUCTION — this blocks all " +
+        "search-engine indexing (robots.txt disallows /, every page is noindex). If this isn't " +
+        "a deliberate soft launch, remove the variable from the Production scope and redeploy.",
+    );
+  }
+}
+
+/**
+ * F-007 fix: NEXT_PUBLIC_SITE_URL feeds canonical/OG/sitemap URLs and every
+ * emailed order/unsubscribe/back-in-stock link (see src/lib/seo/json-ld.ts,
+ * src/lib/orders/notify.ts, src/lib/engagement/unsubscribe.ts,
+ * src/lib/back-in-stock/index.ts). Vercel's team-scoped default alias
+ * (`<project>-<team>-projects.vercel.app`) carries Deployment Protection
+ * (an SSO wall) by default, unlike the project's own public
+ * `<project>-<hash>.vercel.app` alias — pointing this var at the protected
+ * one sends crawlers and customers alike to a Vercel login page instead of
+ * the site. Warn only: a false positive here (a legitimately protected
+ * custom setup) must never block a build.
+ */
+function warnIfSiteUrlLooksProtected(): void {
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+  if (!siteUrl) return;
+  try {
+    if (new URL(siteUrl).hostname.endsWith("-projects.vercel.app")) {
+      console.warn(
+        `[env] NEXT_PUBLIC_SITE_URL (${siteUrl}) looks like a Vercel team-scoped alias, which ` +
+          "has Deployment Protection (SSO) enabled by default. Canonical links, the sitemap and " +
+          "every emailed order/unsubscribe link would point anonymous visitors at a Vercel login " +
+          "page. Set it to the project's public alias or the custom domain instead.",
+      );
+    }
+  } catch {
+    // Malformed URL — the https:// check below already throws in strict
+    // mode for that; nothing more to warn about here.
+  }
+}
+
+/**
  * Validates required environment variables at startup/build.
  * Strict failures only on Vercel production; CI/local builds warn instead.
  */
 export function validateEnv(): void {
+  warnIfProductionBlocksIndexing();
+  warnIfSiteUrlLooksProtected();
+
   const authSecret = process.env.AUTH_SECRET;
   const enforceStrict =
     isVercelProduction() || process.env.ENFORCE_PRODUCTION_ENV === "1";

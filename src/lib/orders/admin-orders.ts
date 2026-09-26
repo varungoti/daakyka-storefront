@@ -6,6 +6,8 @@ import { logAuditEvent } from "@/lib/auth/audit";
 import { assertValidOrderStatusTransition, orderStatusTimestampField } from "@/lib/orders/status-transitions";
 import { buildOrdersCsv, type OrderCsvRow } from "@/lib/orders/csv";
 import { applyPaidSideEffects, releaseOrderInventory } from "@/lib/orders/payment-transitions";
+import { revalidateProductStockForVariants } from "@/lib/products";
+import { notifyOrderStatusChange } from "@/lib/orders/notify";
 
 /**
  * Phase D4: admin order listing, detail, status-transition and CSV-export
@@ -564,6 +566,20 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
     { timeout: 15_000, maxWait: 5_000 },
   );
 
+  // release-hardening audit F-017: a manual PENDING_PAYMENT -> PAID
+  // decrements stock, and a cancel/refund restocks it — without this, the
+  // PDP/listing cache keeps serving the pre-mutation stock/availability
+  // until an unrelated admin catalog edit happens to revalidate the same
+  // tags. The two branches above are mutually exclusive (a status can only
+  // transition one way at a time), so at most one of these ever has ids.
+  // Best-effort — must never fail an update that already committed.
+  const stockMutatedVariantIds = isManualPaidTransition
+    ? existing.items.map((item) => item.variantId).filter((v): v is string => v !== null)
+    : (restockItems?.map((item) => item.variantId) ?? []);
+  if (stockMutatedVariantIds.length > 0) {
+    await revalidateProductStockForVariants(stockMutatedVariantIds);
+  }
+
   await logAuditEvent({
     userId,
     action: "update",
@@ -578,6 +594,30 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
       ...(restockedUnits > 0 ? { restockedUnits } : {}),
     },
   });
+
+  // F-067 fix: the payment-received email promises "we'll let you know as
+  // soon as it ships" (src/lib/orders/notify.ts) — this is what actually
+  // keeps that promise for the transitions that matter to a shopper. Fired
+  // only on an actual status change (not a tracking/notes-only edit), and
+  // after the transaction above has already committed, so a notification
+  // failure can never roll back the status change or the restock.
+  // notifyOrderStatusChange is itself fully best-effort (never throws),
+  // same contract as notifyNewOrder.
+  if (
+    input.status !== undefined &&
+    input.status !== existing.status &&
+    (updated.status === "SHIPPED" || updated.status === "CANCELLED" || updated.status === "REFUNDED")
+  ) {
+    await notifyOrderStatusChange({
+      orderNumber: updated.number,
+      email: updated.email,
+      toStatus: updated.status,
+      trackingNumber: updated.trackingNumber,
+      courier: updated.courier,
+      paymentMethod: existing.paymentMethod,
+      hasCapturedPayment: existing.razorpayPaymentId !== null,
+    });
+  }
 
   return updated;
 }

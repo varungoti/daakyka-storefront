@@ -1,0 +1,22 @@
+# F-228 fix: the Vercel CLI does NOT read .gitignore — it only reads this
+# file (and .nowignore), and its own built-in default list only excludes
+# .env.local / .env.*.local. Without this file, `vercel --prod` (run from
+# scripts/go-live.mjs) uploaded the developer's real `.env` — production DB
+# URL, Supabase secret key, Cloudflare/R2 keys, OpenAI key, admin seed
+# password, all of it — into the deployment's source, every time.
+#
+# scripts/go-live.mjs refuses to deploy if this file goes missing or stops
+# covering the .env family (see scripts/lib/deploy-checks.mjs's
+# vercelIgnoreCoversEnvSecrets, unit-tested in deploy-checks.test.ts).
+.env
+.env.*
+!.env*.example
+
+# Dev-only artifacts that were also found inside the current production
+# deployment's source (see F-228's evidence) — none of them are needed to
+# build or run the app.
+.claude/
+bin/cloudflared.exe
+dogfood-output/
+.lighthouseci/
+*.tsbuildinfo

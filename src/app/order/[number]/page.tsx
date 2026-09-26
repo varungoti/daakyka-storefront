@@ -1,8 +1,12 @@
+import { OrderTimelineView } from "@/components/account/order-timeline";
+import { OrderTrackingCard } from "@/components/account/order-tracking-card";
 import { getCustomerSession } from "@/lib/customer-auth/session";
+import type { OrderStatus } from "@/generated/prisma/client";
 import { checkOrderPageRateLimit, getAuthorizedOrder } from "@/lib/orders/get-order";
+import { getOrderTimeline } from "@/lib/orders/timeline";
 import { getClientIp } from "@/lib/security/rate-limit";
 import type { ShippingAddressInput } from "@/lib/validation/schemas";
-import { CheckCircle2, Loader2, Truck } from "lucide-react";
+import { CheckCircle2, Loader2, RotateCcw, Truck, XCircle } from "lucide-react";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
@@ -29,6 +33,27 @@ const STATUS_LABELS: Record<string, string> = {
   CANCELLED: "Cancelled",
   REFUNDED: "Refunded",
 };
+
+/**
+ * F-067 fix: this heading used to be a hard-coded "Order confirmed" with a
+ * check icon for every status, including CANCELLED and REFUNDED — actively
+ * misleading, not just a missing feature. Mirrors getOrderTimeline's own
+ * per-status framing (src/lib/orders/timeline.ts) at the top of the page.
+ */
+function getStatusHero(status: OrderStatus): { Icon: typeof CheckCircle2; label: string } {
+  switch (status) {
+    case "SHIPPED":
+      return { Icon: Truck, label: "Order shipped" };
+    case "DELIVERED":
+      return { Icon: CheckCircle2, label: "Order delivered" };
+    case "CANCELLED":
+      return { Icon: XCircle, label: "Order cancelled" };
+    case "REFUNDED":
+      return { Icon: RotateCcw, label: "Order refunded" };
+    default:
+      return { Icon: CheckCircle2, label: "Order confirmed" };
+  }
+}
 
 export default async function OrderConfirmationPage({
   params,
@@ -78,13 +103,17 @@ export default async function OrderConfirmationPage({
   // inviting the shopper to pay again for a charge that already went
   // through.
   const isConfirmingPayment = order.status === "PENDING_PAYMENT" && payment === "confirming";
+  const hero = getStatusHero(order.status);
+  // F-141 fix precedent (src/lib/orders/timeline.ts): only matters for a
+  // RAZORPAY order's CANCELLED wording — see that function's doc comment.
+  const timeline = getOrderTimeline(order.status, order.paymentMethod, order.razorpayPaymentId !== null);
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-16 lg:px-8">
       <div className="flex items-center gap-3 text-brand">
-        {isConfirmingPayment ? <Loader2 size={32} className="animate-spin" /> : <CheckCircle2 size={32} />}
+        {isConfirmingPayment ? <Loader2 size={32} className="animate-spin" /> : <hero.Icon size={32} />}
         <h1 className="font-display text-3xl font-bold text-ink">
-          {isConfirmingPayment ? "Payment received — confirming" : "Order confirmed"}
+          {isConfirmingPayment ? "Payment received — confirming" : hero.label}
         </h1>
       </div>
       <p className="mt-2 text-muted">
@@ -105,10 +134,16 @@ export default async function OrderConfirmationPage({
         </div>
       )}
 
-      {!isConfirmingPayment && order.paymentMethod === "ORDER_REQUEST" && (
-        <div className="mt-6 flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/10 p-4 text-sm text-ink">
-          <Truck size={20} className="mt-0.5 shrink-0" />
-          <p>Our team will contact you shortly to confirm payment and delivery for this order.</p>
+      {!isConfirmingPayment && (
+        <section className="mt-8 rounded-2xl border border-border bg-surface p-5">
+          <h2 className="mb-4 font-display text-lg font-bold text-ink">Order status</h2>
+          <OrderTimelineView timeline={timeline} />
+        </section>
+      )}
+
+      {!isConfirmingPayment && order.trackingNumber && (
+        <div className="mt-6">
+          <OrderTrackingCard trackingNumber={order.trackingNumber} courier={order.courier} />
         </div>
       )}
 

@@ -224,6 +224,52 @@ describe("orders admin service (Phase D4)", () => {
     assert.equal(shipped.courier, "Bluedart");
   });
 
+  it("F-067: queues a customer email with the tracking number when an order moves to SHIPPED", async () => {
+    const adminId = await findAnyAdminId();
+    const email = `f067-shipped-${randomUUID().slice(0, 8)}@example.com`;
+    const processing = await db.order.create({ data: baseOrderData({ status: "PROCESSING", email }) });
+    createdOrderIds.push(processing.id);
+
+    const shipped = await updateOrderAdmin(
+      processing.id,
+      { status: "SHIPPED", trackingNumber: "F067TRK", courier: "Bluedart" },
+      adminId,
+    );
+    assert.equal(shipped.status, "SHIPPED");
+
+    const rows = await db.emailOutbox.findMany({ where: { to: email } });
+    assert.equal(rows.length, 1, "exactly one outbox row should be queued for the ship notification");
+    assert.equal(rows[0]?.kind, "order_shipped_customer");
+    assert.match(rows[0]?.html ?? "", /F067TRK/);
+  });
+
+  it("F-067: queues a customer email when an order moves to CANCELLED", async () => {
+    const adminId = await findAnyAdminId();
+    const email = `f067-cancelled-${randomUUID().slice(0, 8)}@example.com`;
+    const processing = await db.order.create({ data: baseOrderData({ status: "PROCESSING", email }) });
+    createdOrderIds.push(processing.id);
+
+    const cancelled = await updateOrderAdmin(processing.id, { status: "CANCELLED" }, adminId);
+    assert.equal(cancelled.status, "CANCELLED");
+
+    const rows = await db.emailOutbox.findMany({ where: { to: email } });
+    assert.equal(rows.length, 1, "exactly one outbox row should be queued for the cancellation notice");
+    assert.equal(rows[0]?.kind, "order_cancelled_customer");
+  });
+
+  it("F-067: a notes-only or tracking-only edit does not queue a status-change email", async () => {
+    const adminId = await findAnyAdminId();
+    const email = `f067-notes-${randomUUID().slice(0, 8)}@example.com`;
+    const processing = await db.order.create({ data: baseOrderData({ status: "PROCESSING", email }) });
+    createdOrderIds.push(processing.id);
+
+    await updateOrderAdmin(processing.id, { adminNotes: "Called the customer." }, adminId);
+    await updateOrderAdmin(processing.id, { trackingNumber: "PRETRK", courier: "Bluedart" }, adminId);
+
+    const rows = await db.emailOutbox.count({ where: { to: email } });
+    assert.equal(rows, 0, "no status changed, so no status-change email should be queued");
+  });
+
   it("updates adminNotes independently of status", async () => {
     const adminId = await findAnyAdminId();
     const updated = await updateOrderAdmin(orderA, { adminNotes: "Called customer to confirm address." }, adminId);

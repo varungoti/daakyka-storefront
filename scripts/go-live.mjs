@@ -22,7 +22,16 @@
  * never printed, logged, or written to disk by this script.
  */
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { readEnvFile } from "./lib/read-env-file.mjs";
+import {
+  homepageHasNoindexMeta,
+  extractCanonicalHref,
+  isLikelyProtectedVercelAlias,
+  robotsTxtBlocksAll,
+  robotsTxtHasSitemap,
+  vercelIgnoreCoversEnvSecrets,
+} from "./lib/deploy-checks.mjs";
 
 const APPLY = process.argv.includes("--yes");
 const SKIP_ENV = process.argv.includes("--skip-env");
@@ -104,6 +113,31 @@ const keyBytes = /^[0-9a-fA-F]{64}$/.test(encryptionKey)
 if (keyBytes !== 32) die(`CREDENTIAL_ENCRYPTION_KEY decodes to ${keyBytes} bytes, needs 32.`);
 console.log(`  CREDENTIAL_ENCRYPTION_KEY    -> 32 bytes, ok`);
 
+// F-228 fix: this script deploys with `npx vercel --prod` below, which
+// uploads the working tree as-is. The Vercel CLI does not read .gitignore
+// — only .vercelignore/.nowignore, and its own default ignore list only
+// covers .env.local/.env.*.local — so without a .vercelignore that also
+// excludes .env, every CLI deploy uploaded this exact .env (production DB
+// URL, API keys, everything checked above) straight into the deployment's
+// source. Refuse to even reach the deploy stage until that's fixed.
+let vercelIgnoreText;
+try {
+  vercelIgnoreText = readFileSync(".vercelignore", "utf8");
+} catch {
+  die(
+    ".vercelignore is missing. The Vercel CLI does not read .gitignore, so `vercel --prod` " +
+      "would upload .env (production secrets) into the deployment source. Add a .vercelignore " +
+      "that excludes .env/.env.* (keeping !.env*.example) — see F-228.",
+  );
+}
+if (!vercelIgnoreCoversEnvSecrets(vercelIgnoreText)) {
+  die(
+    ".vercelignore does not fully exclude the .env family, or wrongly excludes the " +
+      ".env*.example templates — fix it before going live. See F-228.",
+  );
+}
+console.log(`  .vercelignore                -> covers .env*, ok`);
+
 if (!APPLY) {
   console.log(
     "\nDry run — nothing was changed.\n\n" +
@@ -171,16 +205,62 @@ if (!deployedUrl) {
 }
 
 console.log(`  GET ${deployedUrl}`);
+let homepageHtml = "";
 try {
   const response = await fetch(deployedUrl, { redirect: "follow" });
-  const body = await response.text();
+  homepageHtml = await response.text();
   const ok = response.status === 200;
-  console.log(`  -> ${response.status} ${response.statusText}, ${body.length} bytes`);
+  console.log(`  -> ${response.status} ${response.statusText}, ${homepageHtml.length} bytes`);
   if (!ok) die(`the deployed site answered ${response.status}.`);
-  if (!/DAAKYKA/i.test(body)) {
+  if (!/DAAKYKA/i.test(homepageHtml)) {
     console.log("  WARNING: response did not contain 'DAAKYKA' — check the page manually.");
   }
-  console.log(`\nLive: ${deployedUrl}`);
 } catch (error) {
   die(`could not reach the deployed site: ${error.message}`);
 }
+
+// F-054 fix: a bare 200 + a text match (above) would not have caught the
+// leftover NEXT_PUBLIC_ALLOW_INDEXING=false that silently blocked all
+// search indexing — this must never report a silent success again. Never
+// aborts: NEXT_PUBLIC_ALLOW_INDEXING is a legitimate soft-launch switch
+// (src/lib/env.ts's isIndexingAllowed), so the operator decides, loudly.
+if (homepageHasNoindexMeta(homepageHtml)) {
+  console.log(
+    '  WARNING: the deployed homepage has <meta name="robots" content="noindex...">. If this ' +
+      "isn't a deliberate soft launch, remove NEXT_PUBLIC_ALLOW_INDEXING from the Vercel " +
+      "Production env and redeploy — see F-054.",
+  );
+}
+
+console.log(`  GET ${deployedUrl}/robots.txt`);
+try {
+  const robotsResponse = await fetch(`${deployedUrl}/robots.txt`);
+  const robotsBody = await robotsResponse.text();
+  if (robotsTxtBlocksAll(robotsBody)) {
+    console.log(
+      '  WARNING: robots.txt disallows the whole site ("Disallow: /" with no Allow rule). If ' +
+        "this isn't a deliberate soft launch, remove NEXT_PUBLIC_ALLOW_INDEXING from the Vercel " +
+        "Production env and redeploy — see F-054.",
+    );
+  } else if (!robotsTxtHasSitemap(robotsBody)) {
+    console.log("  WARNING: robots.txt has no Sitemap: line.");
+  }
+} catch (error) {
+  console.log(`  WARNING: could not fetch robots.txt: ${error.message}`);
+}
+
+// F-007 fix: canonical/OG/sitemap and every emailed order/unsubscribe/
+// back-in-stock link are built from NEXT_PUBLIC_SITE_URL — if it's a
+// Vercel team-scoped alias, all of those hit an SSO login wall instead of
+// the site. The rendered canonical is the cheapest live signal of what
+// that variable actually resolved to in this build.
+const canonicalHref = extractCanonicalHref(homepageHtml);
+if (canonicalHref && isLikelyProtectedVercelAlias(canonicalHref)) {
+  console.log(
+    `  WARNING: canonical URL ${canonicalHref} looks like an SSO-protected Vercel alias ` +
+      '(ends in "-projects.vercel.app"). Set NEXT_PUBLIC_SITE_URL to the public origin (this ' +
+      "deployment's own alias, or the custom domain) and redeploy — see F-007.",
+  );
+}
+
+console.log(`\nLive: ${deployedUrl}`);
