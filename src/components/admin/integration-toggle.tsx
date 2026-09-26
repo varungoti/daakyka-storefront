@@ -20,6 +20,20 @@ export function IntegrationToggle({
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [isEnabled, setIsEnabled] = useState(enabled);
+  // F-267: this local state used to only ever read `enabled` on first
+  // mount, so it went stale as soon as the server value changed out from
+  // under it — e.g. saving a Brevo credential pair auto-enables the
+  // provider server-side and calls router.refresh(), but a Server
+  // Component re-render doesn't remount this Client Component, so the
+  // toggle kept showing "Disabled" until a full page reload. Track the
+  // last `enabled` prop seen and resync during render (React's documented
+  // "adjusting state when a prop changes" pattern) instead of an effect,
+  // which would set state a frame late and trigger an extra render.
+  const [prevEnabled, setPrevEnabled] = useState(enabled);
+  if (enabled !== prevEnabled) {
+    setPrevEnabled(enabled);
+    setIsEnabled(enabled);
+  }
 
   const toggle = async () => {
     setLoading(true);

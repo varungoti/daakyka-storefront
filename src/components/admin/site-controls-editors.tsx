@@ -167,6 +167,126 @@ export function ContactEditor({
   );
 }
 
+export function LegalComplianceEditor({
+  initial,
+}: {
+  initial: {
+    grievanceName: string;
+    grievanceDesignation: string;
+    grievancePhone: string;
+    grievanceEmail: string;
+    gstin: string;
+    stateCode: string;
+    returnsWindowDays: number;
+  };
+}) {
+  const router = useRouter();
+  const [values, setValues] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const onSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSaving(true);
+    setErrorMessage(null);
+    const results = await Promise.all([
+      saveSetting("grievance.name", values.grievanceName),
+      saveSetting("grievance.designation", values.grievanceDesignation),
+      saveSetting("grievance.phone", values.grievancePhone),
+      saveSetting("grievance.email", values.grievanceEmail),
+      saveSetting("legal.gstin", values.gstin),
+      saveSetting("legal.stateCode", values.stateCode),
+      saveSetting("returns.windowDays", values.returnsWindowDays),
+    ]);
+    setSaving(false);
+    const failed = results.find((r) => !r.ok);
+    if (!failed) {
+      setSaved(true);
+      router.refresh();
+    } else {
+      setErrorMessage(failed.error ?? "Couldn't save one or more fields — check the values.");
+    }
+  };
+
+  return (
+    <form onSubmit={onSubmit} className="rounded-2xl border border-border bg-surface p-4">
+      <p className="text-sm font-semibold text-ink">Legal &amp; compliance</p>
+      <p className="mt-1 text-xs text-muted">
+        F-150/F-195/F-026: a named Grievance Officer, GST registration details, and the return
+        window shown across /contact, the legal pages and the storefront. Every field below is
+        blank by default and stays hidden on the site until you fill it in — nothing here is
+        invented.
+      </p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <Field
+          label="Grievance officer name"
+          value={values.grievanceName}
+          onChange={(v) => {
+            setValues((s) => ({ ...s, grievanceName: v }));
+            setSaved(false);
+          }}
+        />
+        <Field
+          label="Grievance officer designation"
+          value={values.grievanceDesignation}
+          onChange={(v) => {
+            setValues((s) => ({ ...s, grievanceDesignation: v }));
+            setSaved(false);
+          }}
+        />
+        <Field
+          label="Grievance officer phone"
+          value={values.grievancePhone}
+          onChange={(v) => {
+            setValues((s) => ({ ...s, grievancePhone: v }));
+            setSaved(false);
+          }}
+        />
+        <Field
+          label="Grievance officer email"
+          value={values.grievanceEmail}
+          onChange={(v) => {
+            setValues((s) => ({ ...s, grievanceEmail: v }));
+            setSaved(false);
+          }}
+        />
+        <Field
+          label="GSTIN"
+          value={values.gstin}
+          onChange={(v) => {
+            setValues((s) => ({ ...s, gstin: v }));
+            setSaved(false);
+          }}
+        />
+        <Field
+          label="GST state code"
+          value={values.stateCode}
+          onChange={(v) => {
+            setValues((s) => ({ ...s, stateCode: v }));
+            setSaved(false);
+          }}
+        />
+        <Field
+          label="Returns window (days)"
+          type="number"
+          value={String(values.returnsWindowDays)}
+          onChange={(v) => {
+            setValues((s) => ({ ...s, returnsWindowDays: Number(v) || 0 }));
+            setSaved(false);
+          }}
+        />
+      </div>
+      <div className="mt-2">
+        <FormErrorBanner message={errorMessage} />
+      </div>
+      <div className="mt-3">
+        <SaveButton saving={saving} saved={saved} />
+      </div>
+    </form>
+  );
+}
+
 export function ShippingEditor({
   initial,
 }: {

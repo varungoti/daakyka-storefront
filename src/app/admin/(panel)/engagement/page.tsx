@@ -2,6 +2,7 @@ import { CampaignStatusSelect } from "@/components/admin/campaign-status-select"
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
+import { getSubscriberCounts } from "@/lib/dashboard/subscriber-metrics";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 
@@ -11,8 +12,12 @@ export default async function EngagementPage() {
     redirect("/admin/dashboard");
   }
 
-  const [subscribers, segments, templates, campaigns] = await Promise.all([
-    db.newsletterSubscriber.count(),
+  const [subscriberCounts, segments, templates, campaigns] = await Promise.all([
+    // F-153/F-270: this used to be a bare, unfiltered
+    // db.newsletterSubscriber.count(), which included every double-opt-in
+    // row that never confirmed and anyone who unsubscribed — the same fix
+    // already applied to the dashboard tile (src/lib/dashboard/subscriber-metrics.ts).
+    getSubscriberCounts(),
     db.customerSegment.count(),
     db.messageTemplate.count(),
     db.campaign.findMany({
@@ -34,7 +39,17 @@ export default async function EngagementPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
-        <StatCard label="Newsletter Subscribers" value={String(subscribers)} />
+        <Link href="/admin/engagement/subscribers" className="block rounded-2xl transition hover:opacity-90">
+          <StatCard
+            label="Newsletter Subscribers"
+            value={String(subscriberCounts.active)}
+            hint={
+              subscriberCounts.pending > 0
+                ? `${subscriberCounts.pending} awaiting confirmation`
+                : "Confirmed, active"
+            }
+          />
+        </Link>
         <StatCard label="Customer Segments" value={String(segments)} />
         <StatCard label="Message Templates" value={String(templates)} />
         <StatCard label="Pending Approval" value={String(pendingCampaigns)} hint="Campaigns awaiting review" />

@@ -3,6 +3,7 @@ import { SiteSettingToggle } from "@/components/admin/site-setting-toggle";
 import {
   AnnouncementEditor,
   ContactEditor,
+  LegalComplianceEditor,
   ShippingEditor,
 } from "@/components/admin/site-controls-editors";
 import { hasPermission } from "@/lib/auth/rbac";
@@ -39,10 +40,32 @@ export default async function SiteControlsPage() {
         getSetting("contact.whatsapp"),
         getSetting("contact.email"),
         getSetting("contact.address"),
+        getSetting("grievance.name"),
+        getSetting("grievance.designation"),
+        getSetting("grievance.phone"),
+        getSetting("grievance.email"),
+        getSetting("legal.gstin"),
+        getSetting("legal.stateCode"),
+        getSetting("returns.windowDays"),
       ])
     : null;
-  const [fabricTechEnabled, mixMatchEnabled, flatRate, freeAbove, phone, whatsapp, email, address] =
-    storeOnlySettings ?? [false, false, 0, 0, "", "", "", ""];
+  const [
+    fabricTechEnabled,
+    mixMatchEnabled,
+    flatRate,
+    freeAbove,
+    phone,
+    whatsapp,
+    email,
+    address,
+    grievanceName,
+    grievanceDesignation,
+    grievancePhone,
+    grievanceEmail,
+    gstin,
+    stateCode,
+    returnsWindowDays,
+  ] = storeOnlySettings ?? [false, false, 0, 0, "", "", "", "", "", "", "", "", "", "36", 30];
 
   return (
     <div className="space-y-8">
@@ -89,6 +112,17 @@ export default async function SiteControlsPage() {
             <>
               <ContactEditor initial={{ phone, whatsapp, email, address }} />
               <ShippingEditor initial={{ flatRate, freeAbove }} />
+              <LegalComplianceEditor
+                initial={{
+                  grievanceName,
+                  grievanceDesignation,
+                  grievancePhone,
+                  grievanceEmail,
+                  gstin,
+                  stateCode,
+                  returnsWindowDays,
+                }}
+              />
             </>
           ) : null}
         </div>

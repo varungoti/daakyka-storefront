@@ -4,6 +4,7 @@ import {
   type CredentialFieldState,
 } from "@/components/admin/integration-credential-form";
 import { IntegrationToggle } from "@/components/admin/integration-toggle";
+import { BrevoTestSend } from "@/components/admin/brevo-test-send";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
@@ -53,6 +54,15 @@ export default async function AdminIntegrationsPage() {
     buildFieldStates("BREVO"),
   ]);
   const settingsMap = Object.fromEntries(dbSettings.map((s) => [s.provider, s]));
+  // F-267: the auto-enable-on-save logic (maybeAutoEnableBrevo) only fires
+  // from the credentials POST route, so a Brevo key set purely via
+  // environment variables, or only one of API_KEY/FROM_EMAIL saved so far,
+  // can leave the provider "configured" while still disabled — silently
+  // stubbing every email. Surface that state explicitly instead of relying
+  // on the admin to notice the toggle pill above the form.
+  const brevoStatus = envStatuses.find((item) => item.provider === "BREVO");
+  const brevoConfiguredButDisabled =
+    brevoStatus?.status === "configured" && !(settingsMap.BREVO?.enabled ?? false);
   const credentialFieldsByProvider: Record<CredentialProvider, CredentialFieldState[]> = {
     RAZORPAY: razorpayFields,
     BREVO: brevoFields,
@@ -123,6 +133,17 @@ export default async function AdminIntegrationsPage() {
           <div>
             <h3 className="mb-2 text-sm font-semibold text-ink">Brevo</h3>
             <IntegrationCredentialForm provider="BREVO" fields={credentialFieldsByProvider.BREVO} />
+            {brevoConfiguredButDisabled ? (
+              <div className="mt-3 space-y-2 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-900">
+                <p className="font-semibold">Your key is saved, but email sending is OFF.</p>
+                <p>
+                  Brevo shows as configured, but the provider toggle above is still disabled, so every
+                  email is still queued in stub mode. Turn it on above, or confirm it actually works
+                  first:
+                </p>
+                <BrevoTestSend />
+              </div>
+            ) : null}
           </div>
         </div>
       </section>
