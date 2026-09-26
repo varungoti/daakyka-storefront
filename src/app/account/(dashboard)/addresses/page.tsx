@@ -26,6 +26,7 @@ export default async function AccountAddressesPage() {
       initialAddresses={addresses.map((address) => ({
         id: address.id,
         label: address.label,
+        recipientName: address.recipientName,
         line1: address.line1,
         line2: address.line2,
         city: address.city,

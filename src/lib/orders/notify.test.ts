@@ -41,6 +41,7 @@ describe("notifyNewOrder (F-073: order_created journey trigger)", () => {
 
     const email = `notify-order-created-${suffix}@example.com`;
     await notifyNewOrder({
+      orderId: `test-order-id-${suffix}`,
       orderNumber: `TEST-${suffix.slice(0, 8)}`,
       email,
       total: 999,
@@ -61,6 +62,7 @@ describe("notifyNewOrder (F-073: order_created journey trigger)", () => {
     // journeys just resolves with `{ triggered: 0, enrollments: [] }|`.
     await assert.doesNotReject(() =>
       notifyNewOrder({
+        orderId: `test-order-id-${randomUUID()}`,
         orderNumber: `TEST-${randomUUID().slice(0, 8)}`,
         email: `notify-order-created-noop-${randomUUID()}@example.com`,
         total: 100,

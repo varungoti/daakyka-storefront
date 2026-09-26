@@ -20,6 +20,11 @@ export interface CustomerInfo {
 export interface AddressInfo {
   id: string;
   label: string | null;
+  /** F-134: who the shipment is addressed to — can differ from the
+   * account holder (a hospital's procurement office ordering for a named
+   * ward, a school registrar ordering for a staff member). Nullable:
+   * addresses saved before this field existed have no value. */
+  recipientName: string | null;
   line1: string;
   line2: string | null;
   city: string;
@@ -98,6 +103,7 @@ export function AddressesTab({ initialAddresses }: { initialAddresses: AddressIn
               </span>
             )}
             {address.label && <p className="text-sm font-semibold text-ink">{address.label}</p>}
+            {address.recipientName && <p className="text-sm text-ink">{address.recipientName}</p>}
             <p className="text-sm text-muted">
               {address.line1}
               {address.line2 ? `, ${address.line2}` : ""}
@@ -168,6 +174,7 @@ function AddressForm({
     const form = new FormData(formElement);
     const rawPhone = ((form.get("phone") as string) || "").trim();
     const rawPostalCode = ((form.get("postalCode") as string) || "").trim();
+    const rawRecipientName = ((form.get("recipientName") as string) || "").trim();
 
     // Client-side format check first (same rule as the server —
     // src/lib/validation/schemas.ts — which is authoritative and re-checks
@@ -178,6 +185,7 @@ function AddressForm({
     const nextFieldErrors: Record<string, string> = {};
     if (rawPhone && !normalizedPhone) nextFieldErrors.phone = INDIAN_PHONE_HINT;
     if (!normalizedPostalCode) nextFieldErrors.postalCode = INDIAN_PINCODE_HINT;
+    if (rawRecipientName.length < 2) nextFieldErrors.recipientName = "Enter the recipient's full name";
     if (Object.keys(nextFieldErrors).length > 0) {
       setStatus("error");
       setFieldErrors(nextFieldErrors);
@@ -189,6 +197,7 @@ function AddressForm({
 
     const payload = {
       label: form.get("label") || undefined,
+      recipientName: rawRecipientName,
       line1: form.get("line1"),
       line2: form.get("line2") || undefined,
       city: form.get("city"),
@@ -233,8 +242,16 @@ function AddressForm({
     <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl border border-border p-6">
       <div className="grid gap-4 md:grid-cols-2">
         <TextField label="Label" name="label" defaultValue={address?.label ?? ""} />
-        <TextField label="Phone" name="phone" defaultValue={address?.phone ?? ""} error={fieldErrors.phone} />
+        <TextField
+          label="Recipient's Full Name *"
+          name="recipientName"
+          required
+          minLength={2}
+          defaultValue={address?.recipientName ?? ""}
+          error={fieldErrors.recipientName}
+        />
       </div>
+      <TextField label="Phone" name="phone" type="tel" defaultValue={address?.phone ?? ""} error={fieldErrors.phone} />
       <TextField label="Address Line 1 *" name="line1" required defaultValue={address?.line1 ?? ""} />
       <TextField label="Address Line 2" name="line2" defaultValue={address?.line2 ?? ""} />
       <div className="grid gap-4 md:grid-cols-3">
@@ -273,16 +290,24 @@ function AddressForm({
 function TextField({
   label,
   name,
+  type = "text",
   required,
+  minLength,
   defaultValue,
+  hint,
   error,
 }: {
   label: string;
   name: string;
+  type?: string;
   required?: boolean;
+  minLength?: number;
   defaultValue?: string;
+  hint?: string;
   error?: string;
 }) {
+  const hintId = hint ? `${name}-hint` : undefined;
+  const errorId = error ? `${name}-error` : undefined;
   return (
     <div>
       <label htmlFor={name} className="mb-2 block text-sm font-semibold text-ink">
@@ -291,17 +316,24 @@ function TextField({
       <input
         id={name}
         name={name}
+        type={type}
         required={required}
+        minLength={minLength}
         defaultValue={defaultValue}
         aria-invalid={Boolean(error)}
-        aria-describedby={error ? `${name}-error` : undefined}
+        aria-describedby={[hintId, errorId].filter(Boolean).join(" ") || undefined}
         className={cn(
           "w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand/20",
           error ? "border-red-400 focus:border-red-500" : "border-border focus:border-brand",
         )}
       />
+      {hint && (
+        <p id={hintId} className="mt-1 text-xs text-muted">
+          {hint}
+        </p>
+      )}
       {error && (
-        <p id={`${name}-error`} className="mt-1 text-xs text-red-600">
+        <p id={errorId} className="mt-1 text-xs text-red-600">
           {error}
         </p>
       )}
@@ -420,6 +452,7 @@ export function ProfileTab({ customer }: { customer: CustomerInfo }) {
   const router = useRouter();
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "saved">("idle");
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [passwordStatus, setPasswordStatus] = useState<"idle" | "loading" | "error" | "saved">("idle");
   const [passwordError, setPasswordError] = useState("");
 
@@ -428,20 +461,48 @@ export function ProfileTab({ customer }: { customer: CustomerInfo }) {
     const formElement = event.currentTarget;
     setStatus("loading");
     setError("");
+    setFieldErrors({});
 
     const form = new FormData(formElement);
+    const rawPhone = ((form.get("phone") as string) || "").trim();
+
+    // F-132: same client-side format check the address/checkout forms
+    // already run — the server (customerProfileUpdateSchema) re-checks
+    // regardless. A blank phone is sent as `null` (not `undefined`, which
+    // the API treats as "leave unchanged") so a customer can actually
+    // clear a previously-saved number.
+    const normalizedPhone = rawPhone ? normalizeIndianPhone(rawPhone) : null;
+    if (rawPhone && !normalizedPhone) {
+      setStatus("error");
+      setFieldErrors({ phone: INDIAN_PHONE_HINT });
+      setError("Please fix the highlighted field(s) below.");
+      return;
+    }
+
     try {
       const response = await fetch("/api/account/profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: form.get("name"),
-          phone: form.get("phone") || undefined,
+          phone: normalizedPhone,
         }),
       });
       if (!response.ok) {
         const data = await response.json().catch(() => null);
         setStatus("error");
+        // F-132: surface the real per-field message (e.g. a bad phone
+        // number) instead of only ever showing "Validation failed".
+        const details = data?.details?.fieldErrors as Record<string, string[]> | undefined;
+        if (details) {
+          const flattened: Record<string, string> = {};
+          for (const [key, messages] of Object.entries(details)) {
+            if (messages?.[0]) flattened[key] = messages[0];
+          }
+          setFieldErrors(flattened);
+          setError("Please fix the highlighted field(s) below.");
+          return;
+        }
         setError(data?.error ?? "Could not update your profile.");
         return;
       }
@@ -501,9 +562,27 @@ export function ProfileTab({ customer }: { customer: CustomerInfo }) {
         {!customer.emailVerified && (
           <ResendVerificationButton email={customer.email} className="-mt-2" />
         )}
-        <TextField label="Full Name *" name="name" required defaultValue={customer.name} />
-        <TextField label="Phone" name="phone" defaultValue={customer.phone ?? ""} />
-        {status === "error" && <p className="text-sm text-red-600">{error}</p>}
+        <TextField
+          label="Full Name *"
+          name="name"
+          required
+          minLength={2}
+          defaultValue={customer.name}
+          error={fieldErrors.name}
+        />
+        <TextField
+          label="Phone"
+          name="phone"
+          type="tel"
+          defaultValue={customer.phone ?? ""}
+          hint={INDIAN_PHONE_HINT}
+          error={fieldErrors.phone}
+        />
+        {status === "error" && (
+          <p className="text-sm text-red-600" role="alert">
+            {error}
+          </p>
+        )}
         {status === "saved" && <p className="text-sm text-trust">Profile updated.</p>}
         <Button type="submit" disabled={status === "loading"}>
           {status === "loading" ? "Saving..." : "Save Changes"}

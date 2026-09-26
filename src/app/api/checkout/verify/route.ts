@@ -142,6 +142,7 @@ export async function POST(request: Request) {
       : undefined;
 
   await notifyNewOrder({
+    orderId: order.id,
     orderNumber: order.number,
     email: order.email,
     total: Number(order.total),

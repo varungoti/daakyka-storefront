@@ -2,7 +2,7 @@ import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
-import { hashOrderAccessToken } from "@/lib/orders/access-token";
+import { hashOrderAccessToken, signOrderLink } from "@/lib/orders/access-token";
 import { createOrderFromCart } from "@/lib/orders/create-order";
 import { checkOrderPageRateLimit, getAuthorizedOrder } from "@/lib/orders/get-order";
 import { resetRateLimits } from "@/lib/security/rate-limit";
@@ -192,6 +192,40 @@ describe("order access authorization (Phase G / F2 fix)", () => {
     const ownResult = await getAuthorizedOrder({ number: orderA.number, token: orderA.accessToken, customerId: null });
     assert.ok(ownResult);
     assert.equal(ownResult!.id, orderA.id);
+  });
+
+  // F-284 fix: the Razorpay webhook never sees a raw capability token (only
+  // Order.accessTokenHash is ever persisted — see access-token.ts's header
+  // comment), so when it — not /api/checkout/verify — is the one that
+  // confirms payment, the "Payment received" email used to have no link at
+  // all. signOrderLink gives it a stateless alternative.
+  it("lets a guest view their order with a correctly signed link (`sig`), with no token at all", async () => {
+    const order = await createTestOrder();
+    const sig = signOrderLink(order.id, order.number);
+
+    const result = await getAuthorizedOrder({ number: order.number, token: null, sig, customerId: null });
+    assert.ok(result, "a correctly signed link should authorize the guest");
+    assert.equal(result!.id, order.id);
+  });
+
+  it("returns null (404) for a `sig` that doesn't match this order", async () => {
+    const orderA = await createTestOrder();
+    const orderB = await createTestOrder();
+    const sigForA = signOrderLink(orderA.id, orderA.number);
+
+    const result = await getAuthorizedOrder({
+      number: orderB.number,
+      token: null,
+      sig: sigForA,
+      customerId: null,
+    });
+    assert.equal(result, null, "order A's signed link must not unlock order B");
+  });
+
+  it("returns null (404) for a garbage `sig`", async () => {
+    const order = await createTestOrder();
+    const result = await getAuthorizedOrder({ number: order.number, token: null, sig: "not-a-real-signature", customerId: null });
+    assert.equal(result, null);
   });
 
   it("a guest order's token is not accepted as ownership for an unrelated logged-in customer id", async () => {

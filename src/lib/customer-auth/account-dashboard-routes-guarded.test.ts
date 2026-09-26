@@ -32,7 +32,17 @@ describe("/account/(dashboard) page routes are guarded consistently (release-har
   it("the (dashboard) layout exists and gates every nested route with getCustomerSession + redirect", () => {
     const contents = readFileSync(join(dashboardDir, "layout.tsx"), "utf8");
     assert.match(contents, /getCustomerSession\s*\(/, "the dashboard layout must call getCustomerSession()");
-    assert.match(contents, /if\s*\(\s*!session\s*\)\s*\{?\s*redirect\(/, "the dashboard layout must redirect when there is no session");
+    // F-131 fix: the no-session branch now also computes a returnTo from
+    // the request's real path (via the `x-pathname` header src/proxy.ts
+    // sets) before calling redirect(), instead of jumping to a fixed
+    // string — so this only checks that a redirect() call appears
+    // somewhere inside the `if (!session)` block, not immediately after
+    // its opening brace.
+    assert.match(
+      contents,
+      /if\s*\(\s*!session\s*\)\s*\{[\s\S]{0,1000}?redirect\(/,
+      "the dashboard layout must redirect when there is no session",
+    );
     assert.match(contents, /redirect\(\s*["'`]\/account\/login/, "should redirect to /account/login, not somewhere unguarded");
   });
 

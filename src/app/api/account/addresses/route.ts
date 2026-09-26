@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createAddressForCustomer } from "@/lib/customer-auth/addresses";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import { db } from "@/lib/db";
 import { readJsonBody } from "@/lib/security/parse-json-body";
@@ -36,18 +37,11 @@ export async function POST(request: Request) {
       );
     }
 
-    if (parsed.data.isDefault) {
-      await db.customerAddress.updateMany({
-        where: { customerId: session.id },
-        data: { isDefault: false },
-      });
-    }
-
     // customerId always comes from the session, never the request body —
-    // a client cannot create an address under someone else's account.
-    const address = await db.customerAddress.create({
-      data: { ...parsed.data, customerId: session.id },
-    });
+    // a client cannot create an address under someone else's account. See
+    // createAddressForCustomer's doc comment (F-134) for why the first
+    // address always becomes default.
+    const address = await createAddressForCustomer(session.id, parsed.data);
 
     return NextResponse.json({ address }, { status: 201 });
   } catch {

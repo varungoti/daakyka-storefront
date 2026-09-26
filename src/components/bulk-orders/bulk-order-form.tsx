@@ -24,6 +24,7 @@ const CATEGORY_INTEREST_OPTIONS = [
 export function BulkOrderForm() {
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -31,6 +32,7 @@ export function BulkOrderForm() {
     const formElement = event.currentTarget;
     setStatus("loading");
     setError("");
+    setFieldErrors({});
 
     const form = new FormData(formElement);
     const categoryInterest = form.getAll("categoryInterest").map(String);
@@ -63,7 +65,23 @@ export function BulkOrderForm() {
 
       if (!response.ok) {
         setStatus("error");
-        setError("Please check all required fields and try again.");
+        // F-152: the form used to show this same fixed sentence for every
+        // failure, with no field marked, even though the API already
+        // returns per-field messages (bulkOrderSchema's fieldErrors).
+        const data = await response.json().catch(() => null);
+        const details = data?.details?.fieldErrors as Record<string, string[]> | undefined;
+        if (details) {
+          const flattened: Record<string, string> = {};
+          for (const [key, messages] of Object.entries(details)) {
+            if (messages?.[0]) flattened[key] = messages[0];
+          }
+          setFieldErrors(flattened);
+          setError("Please fix the highlighted field(s) below.");
+        } else if (response.status === 429) {
+          setError("Too many attempts, please wait a minute and try again.");
+        } else {
+          setError("Please check all required fields and try again.");
+        }
         return;
       }
 
@@ -92,15 +110,38 @@ export function BulkOrderForm() {
   return (
     <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-border bg-surface p-8">
       <HoneypotField />
-      <FormField label="Hospital / Clinic Name *" name="organization" required />
-      <FormField label="Contact Person *" name="contactPerson" required />
+      <FormField
+        label="Hospital / Clinic Name *"
+        name="organization"
+        required
+        minLength={2}
+        maxLength={200}
+        error={fieldErrors.organization}
+      />
+      <FormField
+        label="Contact Person *"
+        name="contactPerson"
+        required
+        minLength={2}
+        maxLength={120}
+        error={fieldErrors.contactPerson}
+      />
       <div className="grid gap-4 md:grid-cols-2">
-        <FormField label="Email *" name="email" type="email" required />
-        <FormField label="Phone / WhatsApp *" name="phone" type="tel" required />
+        <FormField label="Email *" name="email" type="email" required error={fieldErrors.email} />
+        <FormField
+          label="Phone / WhatsApp *"
+          name="phone"
+          type="tel"
+          required
+          minLength={8}
+          maxLength={32}
+          inputMode="tel"
+          error={fieldErrors.phone}
+        />
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         <FormField label="City" name="city" />
-        <FormField label="Number of Staff" name="staffCount" type="number" />
+        <FormField label="Number of Staff" name="staffCount" type="number" min={1} step={1} error={fieldErrors.staffCount} />
       </div>
       <div>
         <label htmlFor="organizationType" className="mb-2 block text-sm font-semibold text-ink">
@@ -154,6 +195,7 @@ export function BulkOrderForm() {
           id="notes"
           name="notes"
           rows={4}
+          maxLength={2000}
           className="w-full rounded-2xl border border-border px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
           placeholder="Department breakdown, branding guidelines, special requirements..."
         />
@@ -177,7 +219,11 @@ export function BulkOrderForm() {
         />
         Also send me offers, new arrivals and updates from DAAKYKA by email.
       </label>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && (
+        <p className="text-sm text-red-600" role="alert">
+          {error}
+        </p>
+      )}
       <Button type="submit" className="w-full" disabled={status === "loading"}>
         {status === "loading" ? "Submitting..." : "Submit Enquiry"}
       </Button>
@@ -191,13 +237,26 @@ function FormField({
   type = "text",
   required,
   placeholder,
+  minLength,
+  maxLength,
+  min,
+  step,
+  inputMode,
+  error,
 }: {
   label: string;
   name: string;
   type?: string;
   required?: boolean;
   placeholder?: string;
+  minLength?: number;
+  maxLength?: number;
+  min?: number;
+  step?: number;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
+  error?: string;
 }) {
+  const errorId = error ? `${name}-error` : undefined;
   return (
     <div>
       <label htmlFor={name} className="mb-2 block text-sm font-semibold text-ink">
@@ -209,8 +268,22 @@ function FormField({
         type={type}
         required={required}
         placeholder={placeholder}
-        className="w-full rounded-2xl border border-border px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
+        minLength={minLength}
+        maxLength={maxLength}
+        min={min}
+        step={step}
+        inputMode={inputMode}
+        aria-invalid={Boolean(error)}
+        aria-describedby={errorId}
+        className={`w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand/20 ${
+          error ? "border-red-400 focus:border-red-500" : "border-border focus:border-brand"
+        }`}
       />
+      {error && (
+        <p id={errorId} className="mt-1 text-xs text-red-600">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

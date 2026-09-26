@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
-import { hashOrderAccessToken } from "@/lib/orders/access-token";
+import { hashOrderAccessToken, verifyOrderLinkSignature } from "@/lib/orders/access-token";
 import { checkRateLimit } from "@/lib/security/rate-limit";
 import { safeEquals } from "@/lib/security/timing-safe-equal";
 
@@ -43,6 +43,14 @@ export interface GetAuthorizedOrderInput {
   /** Raw access token from the confirmation URL's `?token=` query string,
    * if present. */
   token?: string | null;
+  /**
+   * F-284 fix: the confirmation URL's `?sig=` query string, if present —
+   * see signOrderLink's doc comment (src/lib/orders/access-token.ts) for
+   * why this exists alongside `token`. Checked only when `token` didn't
+   * already authorize the request, so a caller that has a real capability
+   * token never needs this at all.
+   */
+  sig?: string | null;
   /** id of the currently logged-in customer, already resolved by the
    * caller (e.g. `(await getCustomerSession())?.id`), or null/undefined
    * for a guest / no session. */
@@ -52,6 +60,7 @@ export interface GetAuthorizedOrderInput {
 export async function getAuthorizedOrder({
   number,
   token,
+  sig,
   customerId,
 }: GetAuthorizedOrderInput): Promise<OrderWithItems | null> {
   const order = await db.order.findUnique({ where: { number }, include: ORDER_WITH_ITEMS });
@@ -66,6 +75,10 @@ export async function getAuthorizedOrder({
     if (safeEquals(presentedHash, order.accessTokenHash)) {
       return order;
     }
+  }
+
+  if (sig && verifyOrderLinkSignature(order.id, order.number, sig)) {
+    return order;
   }
 
   return null;

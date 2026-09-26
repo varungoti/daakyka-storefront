@@ -110,8 +110,20 @@ export class EmptyCartError extends Error {
 }
 
 export class InvalidVariantError extends Error {
-  constructor(public readonly variantId: string) {
-    super(`Product variant ${variantId} is no longer available`);
+  constructor(
+    public readonly variantId: string,
+    /** F-121: the product's real name, when the variant row itself still
+     * exists (unpublished/archived product, or a deactivated variant) —
+     * lets the checkout UI and email show "<Name> is no longer available"
+     * instead of the internal cuid. Left undefined only when the variant
+     * id doesn't resolve to a row at all (deleted, or never existed). */
+    public readonly productName?: string,
+  ) {
+    super(
+      productName
+        ? `${productName} is no longer available — please remove it from your cart`
+        : "An item in your cart is no longer available",
+    );
     this.name = "InvalidVariantError";
   }
 }
@@ -169,7 +181,7 @@ export async function repriceLines(items: CreateOrderItemInput[]): Promise<Repri
   for (const [variantId, quantity] of quantityByVariant) {
     const variant = variantById.get(variantId);
     if (!variant || !variant.active || variant.product.status !== "ACTIVE") {
-      throw new InvalidVariantError(variantId);
+      throw new InvalidVariantError(variantId, variant?.product.name);
     }
     if (variant.stock < quantity) {
       throw new OutOfStockError(variantId, variant.product.name, quantity, variant.stock);

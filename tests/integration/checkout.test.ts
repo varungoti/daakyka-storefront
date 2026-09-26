@@ -696,6 +696,57 @@ describe("POST /api/webhooks/razorpay (Phase D3)", () => {
     // webhook deliveries.
     assert.equal(updatedVariant?.stock, 3);
   });
+
+  // F-284 fix: the webhook never sees a raw capability token (only
+  // Order.accessTokenHash is ever persisted — see access-token.ts), so
+  // when it alone confirms payment (the shopper's tab closed before
+  // /api/checkout/verify ran, or the webhook simply lands first), the
+  // "Payment received" email used to have no order link at all.
+  it("links the customer email to the order even when only the webhook (never /verify) confirms payment", async () => {
+    const { variant } = await createActiveProductWithVariant({ stock: 5 });
+    const email = `webhook-only-link-${randomUUID().slice(0, 8)}@example.com`;
+    const order = await createOrderFromCart({
+      items: [{ variantId: variant.id, quantity: 1 }],
+      email,
+      shippingAddress: {
+        name: "Buyer",
+        line1: "1 Test Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        pincode: "500032",
+        country: "IN",
+      },
+      paymentMethod: "RAZORPAY",
+    });
+    createdOrderIds.push(order.id);
+
+    const razorpayOrderId = `order_${randomUUID().slice(0, 12)}`;
+    await db.order.update({ where: { id: order.id }, data: { razorpayOrderId } });
+
+    const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+    const rawBody = JSON.stringify({
+      event: "payment.captured",
+      payload: { payment: { entity: { id: paymentId, order_id: razorpayOrderId, status: "captured" } } },
+    });
+
+    await withEnv({ RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {
+      const signature = createHmac("sha256", TEST_WEBHOOK_SECRET).update(rawBody, "utf8").digest("hex");
+      const response = await webhookRoute(
+        rawRequest("http://localhost/api/webhooks/razorpay", rawBody, { "x-razorpay-signature": signature }),
+      );
+      assert.equal(response.status, 200);
+    });
+
+    const customerEmail = await db.emailOutbox.findFirst({
+      where: { to: email, kind: "order_confirmation_customer" },
+      orderBy: { createdAt: "desc" },
+    });
+    assert.ok(customerEmail, "expected a customer confirmation email to be queued");
+    assert.ok(
+      customerEmail!.html.includes(`/order/${order.number}?sig=`),
+      `expected a signed order link in the email, got: ${customerEmail!.html}`,
+    );
+  });
 });
 
 describe("verify + webhook concurrency (F3 fix)", () => {

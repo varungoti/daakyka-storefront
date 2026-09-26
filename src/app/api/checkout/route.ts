@@ -126,6 +126,7 @@ export async function POST(request: Request) {
     if (!razorpayReady) {
       // No online payment step for this order — notify now, not at /verify.
       await notifyNewOrder({
+        orderId: order.id,
         orderNumber: order.number,
         email: order.email,
         total: order.total,
@@ -176,8 +177,10 @@ export async function POST(request: Request) {
     }
     if (error instanceof OutOfStockError) {
       await releaseOrderRequestThrottle(consumedThrottleKeys);
+      // F-121: `available` lets the checkout summary offer "Update qty"
+      // for the flagged line instead of only a banner naming it.
       return NextResponse.json(
-        { error: error.message, variantId: error.variantId },
+        { error: error.message, variantId: error.variantId, available: error.available },
         { status: 409 },
       );
     }

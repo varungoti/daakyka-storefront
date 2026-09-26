@@ -20,9 +20,34 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type RefObject } from "react";
 
+/** F-134: a signed-in customer's saved address, as sent by
+ * checkout/page.tsx's CheckoutSavedAddress — same shape, kept as a local
+ * type since this is a client component. */
+interface CheckoutSavedAddress {
+  id: string;
+  label: string | null;
+  recipientName: string | null;
+  line1: string;
+  line2: string | null;
+  city: string;
+  state: string;
+  pincode: string;
+  country: string;
+  phone: string | null;
+  isDefault: boolean;
+}
+
 interface CheckoutCustomerHint {
   email?: string;
   name?: string;
+  /** F-134: the account holder's saved phone, prefilled the same way as
+   * name/email — still just a display convenience, re-validated on
+   * submit like everything else here. */
+  phone?: string;
+  /** F-134: default address first (checkout/page.tsx's own query orders
+   * it that way) — used both to seed the form's initial state and to
+   * populate the "Saved addresses" picker below. */
+  addresses?: CheckoutSavedAddress[];
 }
 
 /** F-040: accepted so a caller (checkout/page.tsx today, the saved-address
@@ -67,6 +92,9 @@ interface CheckoutApiError {
    * — see src/app/api/checkout/route.ts — so the offending Order Summary
    * line can be flagged instead of just showing a banner (F-034). */
   variantId?: string;
+  /** F-121: real current stock, carried on a 409 so the flagged line can
+   * offer "Update qty to N" instead of only Remove. */
+  available?: number;
 }
 
 interface CheckoutFieldErrors {
@@ -108,6 +136,8 @@ interface CheckoutQuote {
 interface CheckoutQuoteError {
   error: string;
   variantId?: string;
+  /** F-121: see CheckoutApiError.available's doc comment. */
+  available?: number;
 }
 
 function clearLocalCart(): void {
@@ -193,25 +223,63 @@ export function CheckoutPageContent({
   prefillAddress?: CheckoutAddressPrefill;
   shipping?: CheckoutShippingSettings;
 }) {
-  const { cart, mode } = useCart();
+  const { cart, mode, updateQuantity, removeLine } = useCart();
   const { formatPrice, currency } = useCurrency();
   const router = useRouter();
   const shopifyReady = isShopifyConfigured();
 
-  const [name, setName] = useState(customerHint.name ?? "");
+  // F-134: default address first (see checkout/page.tsx's query), used to
+  // seed the form below and to offer the rest in a picker.
+  const savedAddresses = customerHint.addresses ?? [];
+  const defaultAddress = savedAddresses.find((address) => address.isDefault) ?? savedAddresses[0];
+
+  const [name, setName] = useState(defaultAddress?.recipientName ?? customerHint.name ?? "");
   const [email, setEmail] = useState(customerHint.email ?? "");
-  const [phone, setPhone] = useState("");
-  const [line1, setLine1] = useState(prefillAddress?.line1 ?? "");
-  const [line2, setLine2] = useState(prefillAddress?.line2 ?? "");
-  const [city, setCity] = useState(prefillAddress?.city ?? "");
-  const [stateName, setStateName] = useState(prefillAddress?.state ?? "");
-  const [pincode, setPincode] = useState(prefillAddress?.pincode ?? "");
+  const [phone, setPhone] = useState(defaultAddress?.phone ?? customerHint.phone ?? "");
+  const [line1, setLine1] = useState(defaultAddress?.line1 ?? prefillAddress?.line1 ?? "");
+  const [line2, setLine2] = useState(defaultAddress?.line2 ?? prefillAddress?.line2 ?? "");
+  const [city, setCity] = useState(defaultAddress?.city ?? prefillAddress?.city ?? "");
+  const [stateName, setStateName] = useState(defaultAddress?.state ?? prefillAddress?.state ?? "");
+  const [pincode, setPincode] = useState(defaultAddress?.pincode ?? prefillAddress?.pincode ?? "");
   const [country] = useState("IN");
+  const [selectedAddressId, setSelectedAddressId] = useState(defaultAddress?.id ?? "new");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [errorNonce, setErrorNonce] = useState(0);
   const [fieldErrors, setFieldErrors] = useState<CheckoutFieldErrors>({});
   const [problemVariantId, setProblemVariantId] = useState<string | null>(null);
+  // F-121: real current stock for problemVariantId, when the block is
+  // "still exists but not enough stock" rather than "gone entirely" — lets
+  // the flagged Order Summary line offer "Update qty to N", not just
+  // Remove.
+  const [problemAvailable, setProblemAvailable] = useState<number | null>(null);
+
+  // F-134: switching the picker seeds every address field from the chosen
+  // saved address (or clears them for "Enter a new address"). Plain
+  // setters, not a single "address" object, because that's how every
+  // field below is already wired — keeps this consistent with manual
+  // edits to the same fields.
+  function handleAddressSelect(addressId: string) {
+    setSelectedAddressId(addressId);
+    if (addressId === "new") {
+      setLine1("");
+      setLine2("");
+      setCity("");
+      setStateName("");
+      setPincode("");
+      return;
+    }
+    const address = savedAddresses.find((candidate) => candidate.id === addressId);
+    if (!address) return;
+    if (address.recipientName) setName(address.recipientName);
+    if (address.phone) setPhone(address.phone);
+    setLine1(address.line1);
+    setLine2(address.line2 ?? "");
+    setCity(address.city);
+    setStateName(address.state);
+    setPincode(address.pincode);
+    setFieldErrors({});
+  }
 
   // F-034: the error banner and the phone/pincode fields render far above
   // the fold on mobile — nothing moved focus or scrolled it into view, so
@@ -265,6 +333,9 @@ export function CheckoutPageContent({
   // re-validates everything from scratch, same as before this existed.
   const [quote, setQuote] = useState<CheckoutQuote | null>(null);
   const [quoteUnavailableVariantId, setQuoteUnavailableVariantId] = useState<string | null>(null);
+  // F-121: see problemAvailable's doc comment — same idea, for the
+  // background quote check rather than a submit attempt.
+  const [quoteUnavailableAvailable, setQuoteUnavailableAvailable] = useState<number | null>(null);
   const cartItemsKey = cart.lines.map((line) => `${line.variantId}:${line.quantity}`).sort().join("|");
 
   useEffect(() => {
@@ -288,10 +359,14 @@ export function CheckoutPageContent({
           if (!response.ok || "error" in data) {
             setQuote(null);
             setQuoteUnavailableVariantId("variantId" in data ? (data.variantId ?? null) : null);
+            setQuoteUnavailableAvailable(
+              "available" in data && typeof data.available === "number" ? data.available : null,
+            );
             return;
           }
           setQuote(data);
           setQuoteUnavailableVariantId(null);
+          setQuoteUnavailableAvailable(null);
         })
         .catch(() => {
           // Network hiccup, or the endpoint is rate-limited — this is a
@@ -529,6 +604,7 @@ export function CheckoutPageContent({
     setError(null);
     setFieldErrors({});
     setProblemVariantId(null);
+    setProblemAvailable(null);
 
     // Client-side format check first, so a bad phone/pincode gets an
     // immediate, specific inline message next to the field instead of a
@@ -622,6 +698,7 @@ export function CheckoutPageContent({
         // of leaving the shopper to guess which item the banner means.
         if ("variantId" in data && data.variantId) {
           setProblemVariantId(data.variantId);
+          setProblemAvailable("available" in data && typeof data.available === "number" ? data.available : null);
         }
         showError("error" in data ? data.error : "Could not process checkout. Please try again.", focusTarget);
         setSubmitting(false);
@@ -745,6 +822,28 @@ export function CheckoutPageContent({
 
           <fieldset className="space-y-4 rounded-2xl border border-border bg-surface p-4">
             <legend className="px-1 font-display text-lg font-bold text-ink">Shipping address</legend>
+            {/* F-134: a signed-in customer's saved addresses used to be
+                completely unused at checkout — this lets one be picked
+                straight into the fields below, which stay the source of
+                truth the server validates on submit either way. */}
+            {savedAddresses.length > 1 && (
+              <label className="block text-sm text-muted">
+                Saved addresses
+                <select
+                  value={selectedAddressId}
+                  onChange={(e) => handleAddressSelect(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-border bg-white px-3 py-2 text-ink"
+                >
+                  {savedAddresses.map((address) => (
+                    <option key={address.id} value={address.id}>
+                      {[address.label, address.isDefault ? "Default" : null].filter(Boolean).join(" — ") ||
+                        `${address.line1}, ${address.city}`}
+                    </option>
+                  ))}
+                  <option value="new">Enter a new address</option>
+                </select>
+              </label>
+            )}
             <div className="grid gap-4 sm:grid-cols-2">
               <label className="text-sm text-muted sm:col-span-2">
                 Address line 1
@@ -844,16 +943,34 @@ export function CheckoutPageContent({
 
           <h2 className="font-display text-lg font-bold text-ink">Order Summary</h2>
           {cart.lines.map((line) => {
-            const isUnavailable = problemVariantId === line.variantId || quoteUnavailableVariantId === line.variantId;
+            const isBlocked = problemVariantId === line.variantId || quoteUnavailableVariantId === line.variantId;
+            // F-121: whichever check flagged this line (a failed submit
+            // wins over the background quote, since it's the more recent,
+            // authoritative one) — used to offer "Update qty to N" instead
+            // of only Remove when the item still exists but is short on
+            // stock.
+            const blockedAvailable =
+              problemVariantId === line.variantId ? problemAvailable : quoteUnavailableAvailable;
             const quotedLine = quote?.lines.find((q) => q.variantId === line.variantId);
             const unitPrice = quotedLine?.unitPrice ?? line.price;
             const priceChanged = quotedLine !== undefined && quotedLine.unitPrice !== line.price;
+
+            function clearBlock() {
+              if (problemVariantId === line.variantId) {
+                setProblemVariantId(null);
+                setProblemAvailable(null);
+              }
+              if (quoteUnavailableVariantId === line.variantId) {
+                setQuoteUnavailableVariantId(null);
+                setQuoteUnavailableAvailable(null);
+              }
+            }
 
             return (
               <article
                 key={line.id}
                 className={`flex gap-4 rounded-2xl border p-4 ${
-                  isUnavailable ? "border-red-400 bg-red-50" : "border-border bg-surface"
+                  isBlocked ? "border-red-400 bg-red-50" : "border-border bg-surface"
                 }`}
               >
                 <div className="relative h-20 w-16 shrink-0 overflow-hidden rounded-xl bg-lilac/30">
@@ -869,14 +986,36 @@ export function CheckoutPageContent({
                       {renderInrPrice(line.price * line.quantity)})
                     </p>
                   )}
-                  {isUnavailable && (
-                    <p className="mt-1 text-xs font-semibold text-red-600">
-                      No longer available at this quantity —{" "}
-                      <Link href="/cart" className="underline underline-offset-2">
-                        update your cart
-                      </Link>
-                      .
-                    </p>
+                  {isBlocked && (
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-red-600">
+                      <span>
+                        {blockedAvailable === null
+                          ? "No longer available"
+                          : `Only ${blockedAvailable} left`}
+                      </span>
+                      {blockedAvailable !== null && blockedAvailable > 0 && (
+                        <button
+                          type="button"
+                          className="underline underline-offset-2"
+                          onClick={() => {
+                            updateQuantity(line.id, blockedAvailable);
+                            clearBlock();
+                          }}
+                        >
+                          Update qty to {blockedAvailable}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="underline underline-offset-2"
+                        onClick={() => {
+                          removeLine(line.id);
+                          clearBlock();
+                        }}
+                      >
+                        Remove
+                      </button>
+                    </div>
                   )}
                 </div>
               </article>

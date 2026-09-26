@@ -132,6 +132,7 @@ async function handlePaymentCaptured(payment: { id?: string; order_id?: string }
   }
 
   await notifyNewOrder({
+    orderId: order.id,
     orderNumber: order.number,
     email: order.email,
     total: Number(order.total),

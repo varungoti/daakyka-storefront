@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { jwtVerify } from "jose";
 import { ADMIN_SESSION_COOKIE } from "@/lib/auth/constants";
+import { CUSTOMER_SESSION_COOKIE } from "@/lib/customer-auth/constants";
 
 /**
  * F7 (docs/audit-2026-09-19/security.md): coarse, DB-free admin gate —
@@ -70,6 +71,21 @@ async function verifyAdminToken(request: NextRequest): Promise<boolean> {
   }
 }
 
+// F-131: the pages nested under src/app/account/(dashboard) are siblings
+// of these five, which must stay reachable while signed out (a logged-out
+// visitor has to be able to reach /account/login in the first place).
+const ACCOUNT_PUBLIC_PATHS = [
+  "/account/login",
+  "/account/register",
+  "/account/forgot-password",
+  "/account/reset-password",
+  "/account/verify-email",
+];
+
+function isPublicAccountPath(pathname: string): boolean {
+  return ACCOUNT_PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -93,9 +109,38 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
+  // F-131 fix: every protected /account/* page used to redirect a
+  // signed-out visitor to the fixed `/account/login?returnTo=/account`
+  // (src/app/account/(dashboard)/layout.tsx), so signing in from a deep
+  // link (a bookmarked order, an addresses page) always bounced back to
+  // /account instead of where they were headed. Doing the redirect here
+  // instead means it's a real 307 that carries the full original path —
+  // this is only a cheap, DB-free cookie-*presence* check (mirroring
+  // verifyAdminToken's own "coarse pre-filter, not the authorization"
+  // doc comment above), never the authorization decision itself. The
+  // layout's own `getCustomerSession()` call remains the authoritative
+  // gate for an expired/invalid/revoked session that still carries a
+  // cookie — this only ever short-circuits the common case of no cookie
+  // at all, and it still needs the request's real path in that case too,
+  // hence `x-pathname` below regardless of which branch runs.
+  if (pathname.startsWith("/account")) {
+    const headers = new Headers(request.headers);
+    headers.set("x-pathname", `${pathname}${request.nextUrl.search}`);
+
+    if (!isPublicAccountPath(pathname)) {
+      const hasSessionCookie = Boolean(request.cookies.get(CUSTOMER_SESSION_COOKIE)?.value);
+      if (!hasSessionCookie) {
+        const returnTo = encodeURIComponent(`${pathname}${request.nextUrl.search}`);
+        return NextResponse.redirect(new URL(`/account/login?returnTo=${returnTo}`, request.url));
+      }
+    }
+
+    return NextResponse.next({ request: { headers } });
+  }
+
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/admin/:path*", "/api/admin/:path*"],
+  matcher: ["/admin/:path*", "/api/admin/:path*", "/account/:path*"],
 };

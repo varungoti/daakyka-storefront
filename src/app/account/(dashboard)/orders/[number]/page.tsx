@@ -45,10 +45,14 @@ export default async function AccountOrderDetailPage({
 }: {
   params: Promise<{ number: string }>;
 }) {
-  const session = await getCustomerSession();
-  if (!session) redirect("/account/login?returnTo=/account/orders");
-
   const { number } = await params;
+
+  const session = await getCustomerSession();
+  // F-131: src/proxy.ts already redirects a signed-out request straight
+  // here before this ever renders — this per-page redirect only matters
+  // for a cookie that exists but no longer verifies, and must carry the
+  // order number the shopper actually asked for, not the bare list.
+  if (!session) redirect(`/account/login?returnTo=${encodeURIComponent(`/account/orders/${number}`)}`);
 
   const requestHeaders = await headers();
   const ip = getClientIp({ headers: requestHeaders } as unknown as Request);

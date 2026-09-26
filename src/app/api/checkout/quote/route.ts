@@ -69,7 +69,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 400 });
     }
     if (error instanceof OutOfStockError) {
-      return NextResponse.json({ error: error.message, variantId: error.variantId }, { status: 409 });
+      // F-121: `available` lets the cart drawer/checkout summary offer an
+      // "Update qty to N" action instead of only naming the problem line.
+      return NextResponse.json(
+        { error: error.message, variantId: error.variantId, available: error.available },
+        { status: 409 },
+      );
     }
     if (error instanceof InvalidVariantError) {
       return NextResponse.json({ error: error.message, variantId: error.variantId }, { status: 400 });

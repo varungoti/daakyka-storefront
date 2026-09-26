@@ -137,7 +137,7 @@ describe("POST /api/checkout/quote", () => {
     assert.equal(quote.total, order.total);
   });
 
-  it("returns 409 with the offending variantId when a line is out of stock, and does not touch stock", async () => {
+  it("returns 409 with the offending variantId and real available stock when a line is out of stock, and does not touch stock", async () => {
     const { variant } = await createActiveProductWithVariant({ stock: 2 });
 
     const response = await quoteRoute(
@@ -147,15 +147,18 @@ describe("POST /api/checkout/quote", () => {
     );
 
     assert.equal(response.status, 409);
-    const data = (await response.json()) as { error: string; variantId: string };
+    const data = (await response.json()) as { error: string; variantId: string; available: number };
     assert.equal(data.variantId, variant.id);
+    // F-121: lets the cart drawer/checkout summary offer "Update qty to N"
+    // instead of only naming the problem line.
+    assert.equal(data.available, 2);
 
     const untouched = await db.productVariant.findUnique({ where: { id: variant.id } });
     assert.equal(untouched?.stock, 2, "the quote must never write to stock");
   });
 
-  it("returns 400 with the offending variantId for an inactive variant", async () => {
-    const { variant } = await createActiveProductWithVariant({ stock: 5 });
+  it("returns 400 naming the product (not its internal id) for an inactive variant", async () => {
+    const { product, variant } = await createActiveProductWithVariant({ stock: 5 });
     await db.productVariant.update({ where: { id: variant.id }, data: { active: false } });
 
     const response = await quoteRoute(
@@ -167,6 +170,23 @@ describe("POST /api/checkout/quote", () => {
     assert.equal(response.status, 400);
     const data = (await response.json()) as { error: string; variantId: string };
     assert.equal(data.variantId, variant.id);
+    // F-121: the shopper used to see "Product variant <cuid> is no longer
+    // available" — a cryptic internal id, not the product's real name.
+    assert.ok(data.error.includes(product.name), `expected the product name in "${data.error}"`);
+    assert.ok(!data.error.includes(variant.id), `must not leak the internal variant id in "${data.error}"`);
+  });
+
+  it("returns 400 with a generic message (no internal id) when the variant id doesn't exist at all", async () => {
+    const response = await quoteRoute(
+      jsonRequest("http://localhost/api/checkout/quote", {
+        items: [{ variantId: "not-a-real-variant-id", quantity: 1 }],
+      }),
+    );
+
+    assert.equal(response.status, 400);
+    const data = (await response.json()) as { error: string; variantId: string };
+    assert.equal(data.variantId, "not-a-real-variant-id");
+    assert.ok(!data.error.includes("not-a-real-variant-id"), `must not leak the internal id in "${data.error}"`);
   });
 
   it("rejects an empty items array with 400 and creates no side effects", async () => {

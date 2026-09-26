@@ -62,10 +62,15 @@ export default async function OrderConfirmationPage({
   searchParams,
 }: {
   params: Promise<{ number: string }>;
-  searchParams: Promise<{ token?: string; payment?: string }>;
+  searchParams: Promise<{ token?: string; sig?: string; payment?: string }>;
 }) {
   const { number } = await params;
-  const { token, payment } = await searchParams;
+  // F-284 fix: `sig` is the stateless fallback the Razorpay webhook's
+  // email links to when it (not /api/checkout/verify) is the one that
+  // confirms payment — see signOrderLink's doc comment
+  // (src/lib/orders/access-token.ts). Accepted alongside `token`;
+  // getAuthorizedOrder tries both.
+  const { token, sig, payment } = await searchParams;
 
   // Rate-limited before anything else touches the DB: an unauthenticated,
   // guessable-by-design URL (see get-order.ts's doc comment on finding F2)
@@ -91,7 +96,12 @@ export default async function OrderConfirmationPage({
   }
 
   const session = await getCustomerSession();
-  const order = await getAuthorizedOrder({ number, token: token ?? null, customerId: session?.id ?? null });
+  const order = await getAuthorizedOrder({
+    number,
+    token: token ?? null,
+    sig: sig ?? null,
+    customerId: session?.id ?? null,
+  });
   if (!order) notFound();
 
   const address = order.shippingAddress as unknown as ShippingAddressInput;

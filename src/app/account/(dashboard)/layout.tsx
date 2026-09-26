@@ -3,6 +3,7 @@ import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 export const metadata: Metadata = {
@@ -55,7 +56,18 @@ export const metadata: Metadata = {
 export default async function AccountDashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await getCustomerSession();
   if (!session) {
-    redirect("/account/login?returnTo=/account");
+    // F-131: src/proxy.ts already 307-redirects the common case (no
+    // session cookie at all) straight to the real deep link, before this
+    // layout ever runs — this only covers the rarer case of a cookie that
+    // exists but no longer verifies (expired, revoked by "log out
+    // everywhere", or a stale JWT). `x-pathname` is the same header the
+    // proxy sets on every /account/* request, so this still returns the
+    // customer to the exact page they asked for instead of the fixed
+    // `/account` fallback.
+    const requestHeaders = await headers();
+    const currentPath = requestHeaders.get("x-pathname");
+    const returnTo = encodeURIComponent(currentPath || "/account");
+    redirect(`/account/login?returnTo=${returnTo}`);
   }
 
   return (

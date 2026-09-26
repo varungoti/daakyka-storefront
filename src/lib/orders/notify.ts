@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import type { PaymentMethod } from "@/generated/prisma/client";
 import { EMAIL_KIND, sendTransactionalEmail, type EmailKind } from "@/lib/engagement/outbox";
 import { triggerJourneys } from "@/lib/engagement/journey-triggers";
+import { signOrderLink } from "@/lib/orders/access-token";
 import { getCourierTrackingUrl } from "@/lib/orders/courier-tracking";
 import { getSetting } from "@/lib/settings";
 
@@ -29,6 +30,11 @@ import { getSetting } from "@/lib/settings";
  */
 
 export interface NotifyNewOrderInput {
+  /** F-284 fix: needed to build a signed fallback link (signOrderLink)
+   * whenever the caller has no raw `orderToken` — see that field's own
+   * doc comment. Every current caller has the order row in hand already,
+   * so this is never a new DB read. */
+  orderId: string;
   orderNumber: string;
   email: string;
   total: number;
@@ -42,9 +48,13 @@ export interface NotifyNewOrderInput {
    * order creation always does; POST /api/checkout/verify forwards and
    * re-verifies one from the client. Used to link the customer email
    * straight to their tokenised /order/[number] confirmation page.
-   * Omitted (e.g. from the Razorpay webhook, which never sees the raw
-   * token — only its hash is ever persisted) just means the email has no
-   * direct link, same as before this field existed.
+   *
+   * F-284 fix: omitted (e.g. from the Razorpay webhook, which never sees
+   * the raw token — only its hash is ever persisted) used to mean the
+   * email had no link at all. It now falls back to a stateless signed
+   * link (signOrderLink) built from `orderId` instead, so every customer
+   * email links somewhere, whichever path (verify or webhook) confirmed
+   * the order.
    */
   orderToken?: string;
   /**
@@ -86,15 +96,24 @@ function siteUrl(): string {
   return (process.env.NEXT_PUBLIC_SITE_URL ?? "https://daakyka.com").replace(/\/$/, "");
 }
 
-function buildOrderConfirmationUrl(orderNumber: string, orderToken: string): string {
-  return `${siteUrl()}/order/${encodeURIComponent(orderNumber)}?token=${encodeURIComponent(orderToken)}`;
+function buildOrderConfirmationUrl(orderNumber: string, auth: { token: string } | { sig: string }): string {
+  const query = "token" in auth ? `token=${encodeURIComponent(auth.token)}` : `sig=${encodeURIComponent(auth.sig)}`;
+  return `${siteUrl()}/order/${encodeURIComponent(orderNumber)}?${query}`;
 }
 
 export async function notifyNewOrder(input: NotifyNewOrderInput): Promise<void> {
-  const { orderNumber, email, total, currency, fallback, orderToken, stockConflict, phone, firstName } = input;
+  const { orderId, orderNumber, email, total, currency, fallback, orderToken, stockConflict, phone, firstName } =
+    input;
   const amount = formatAmount(total, currency);
-  const orderLink = orderToken ? buildOrderConfirmationUrl(orderNumber, orderToken) : null;
-  const orderLinkHtml = orderLink ? `<p><a href="${orderLink}">View your order</a></p>` : "";
+  // F-284 fix: always resolves to a working link now — a real capability
+  // token when the caller has one, otherwise the stateless signed
+  // fallback (see signOrderLink's doc comment). getAuthorizedOrder
+  // (src/lib/orders/get-order.ts) accepts either.
+  const orderLink = buildOrderConfirmationUrl(
+    orderNumber,
+    orderToken ? { token: orderToken } : { sig: signOrderLink(orderId, orderNumber) },
+  );
+  const orderLinkHtml = `<p><a href="${orderLink}">View your order</a></p>`;
   // F-125: no page/email in the money path stated whether prices include
   // tax, or named the seller/GSTIN. GSTIN is left out entirely (not a
   // placeholder) until the owner has actually registered and entered one.

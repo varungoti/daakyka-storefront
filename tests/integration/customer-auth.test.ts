@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { resetRateLimits } from "@/lib/security/rate-limit";
 import { hashPassword, verifyPassword } from "@/lib/customer-auth/password";
 import { hashToken, invalidateOutstandingTokens, issueCustomerToken } from "@/lib/customer-auth/tokens";
-import { loadOwnAddress } from "@/lib/customer-auth/addresses";
+import { createAddressForCustomer, deleteAddressAndPromoteDefault, loadOwnAddress } from "@/lib/customer-auth/addresses";
 import { AccountLockedError, recordFailedLogin, resetLoginFailures } from "@/lib/customer-auth/lockout";
 
 import { POST as postRegister } from "@/app/api/account/register/route";
@@ -733,6 +733,123 @@ describe("customer accounts (Phase D1)", () => {
 
       const unknownIdResult = await loadOwnAddress("not-a-real-address-id", customerA.id);
       assert.equal(unknownIdResult, null);
+    });
+
+    // F-134: "Set as default address" used to only ever come true when the
+    // shopper explicitly ticked it — a first-time saver's only address
+    // stayed isDefault:false forever, so checkout had nothing to prefill
+    // from even though there was exactly one obvious choice.
+    it("createAddressForCustomer makes a customer's first address default automatically", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: { email: `addr-first-${unique}@example.com`, name: "Customer", passwordHash: "x" },
+      });
+      createdCustomerIds.push(customer.id);
+
+      const first = await createAddressForCustomer(customer.id, {
+        line1: "1 First Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        postalCode: "500001",
+      });
+      assert.equal(first.isDefault, true, "the very first saved address must become default");
+
+      const second = await createAddressForCustomer(customer.id, {
+        line1: "2 Second Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        postalCode: "500002",
+      });
+      assert.equal(second.isDefault, false, "a second address must not become default unless requested");
+
+      const refreshedFirst = await db.customerAddress.findUnique({ where: { id: first.id } });
+      assert.equal(refreshedFirst?.isDefault, true, "the original default must be unaffected by adding a second address");
+    });
+
+    it("createAddressForCustomer clears the previous default when a new address explicitly asks to be default", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: { email: `addr-swap-${unique}@example.com`, name: "Customer", passwordHash: "x" },
+      });
+      createdCustomerIds.push(customer.id);
+
+      const first = await createAddressForCustomer(customer.id, {
+        line1: "1 First Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        postalCode: "500001",
+      });
+      assert.equal(first.isDefault, true);
+
+      const second = await createAddressForCustomer(customer.id, {
+        line1: "2 Second Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        postalCode: "500002",
+        isDefault: true,
+      });
+      assert.equal(second.isDefault, true);
+
+      const refreshedFirst = await db.customerAddress.findUnique({ where: { id: first.id } });
+      assert.equal(refreshedFirst?.isDefault, false, "only one address may be default at a time");
+    });
+
+    // F-134: deleting the default used to promote nothing, so "default
+    // address" silently stopped meaning anything the moment it was removed.
+    it("deleteAddressAndPromoteDefault promotes the oldest remaining address when the default is deleted", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: { email: `addr-promote-${unique}@example.com`, name: "Customer", passwordHash: "x" },
+      });
+      createdCustomerIds.push(customer.id);
+
+      const first = await createAddressForCustomer(customer.id, {
+        line1: "1 First Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        postalCode: "500001",
+      });
+      const second = await createAddressForCustomer(customer.id, {
+        line1: "2 Second Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        postalCode: "500002",
+      });
+      assert.equal(first.isDefault, true);
+
+      await deleteAddressAndPromoteDefault(first.id, customer.id, true);
+
+      const refreshedSecond = await db.customerAddress.findUnique({ where: { id: second.id } });
+      assert.equal(refreshedSecond?.isDefault, true, "the oldest remaining address must be promoted");
+
+      const deletedFirst = await db.customerAddress.findUnique({ where: { id: first.id } });
+      assert.equal(deletedFirst, null);
+    });
+
+    it("deleteAddressAndPromoteDefault leaves the default untouched when a non-default address is deleted", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: { email: `addr-nondefault-${unique}@example.com`, name: "Customer", passwordHash: "x" },
+      });
+      createdCustomerIds.push(customer.id);
+
+      const first = await createAddressForCustomer(customer.id, {
+        line1: "1 First Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        postalCode: "500001",
+      });
+      const second = await createAddressForCustomer(customer.id, {
+        line1: "2 Second Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        postalCode: "500002",
+      });
+
+      await deleteAddressAndPromoteDefault(second.id, customer.id, false);
+
+      const refreshedFirst = await db.customerAddress.findUnique({ where: { id: first.id } });
+      assert.equal(refreshedFirst?.isDefault, true, "the existing default must be unaffected");
     });
   });
 

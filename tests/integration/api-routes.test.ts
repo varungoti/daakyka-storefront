@@ -189,6 +189,12 @@ describe("API integration", () => {
         }),
       );
       assert.equal(response.status, 400);
+      // F-152: the form used to render only "Validation failed" for this —
+      // a real per-field message (not just a generic 400) is what lets it
+      // show something useful next to the Message field instead.
+      const body = (await response.json()) as { error: string; details?: { fieldErrors?: Record<string, string[]> } };
+      assert.equal(body.error, "Validation failed");
+      assert.ok(body.details?.fieldErrors?.message?.[0], "expected a message-field error");
     });
 
     it("accepts valid enquiry", async () => {

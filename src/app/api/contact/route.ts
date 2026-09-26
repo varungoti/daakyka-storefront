@@ -9,12 +9,12 @@ import { isHoneypotTripped } from "@/lib/validation/honeypot";
 import { z } from "zod";
 
 const contactSchema = z.object({
-  name: z.string().min(2).max(120),
-  email: z.string().email().max(254),
+  name: z.string().min(2, "Please enter your full name").max(120),
+  email: z.string().email("Enter a valid email address").max(254),
   phone: z.string().max(32).optional(),
   organization: z.string().max(200).optional(),
   type: z.enum(["GENERAL", "BULK_ORDER", "INSTITUTIONAL", "SUPPORT"]).default("GENERAL"),
-  message: z.string().min(10).max(5000),
+  message: z.string().min(10, "Please add a few more details (at least 10 characters)").max(5000),
 });
 
 export async function POST(request: Request) {
@@ -33,7 +33,14 @@ export async function POST(request: Request) {
     const parsed = contactSchema.safeParse(bodyResult.data);
 
     if (!parsed.success) {
-      return NextResponse.json({ error: "Validation failed" }, { status: 400 });
+      // F-152: surface per-field messages the same way /api/bulk-orders
+      // already does — the form used to render only "Validation failed"
+      // for e.g. a 9-character message, indistinguishable from a server
+      // fault.
+      return NextResponse.json(
+        { error: "Validation failed", details: parsed.error.flatten() },
+        { status: 400 },
+      );
     }
 
     // F-318: best-effort attribution (query params / Referer header) — see

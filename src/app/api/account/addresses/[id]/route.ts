@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { loadOwnAddress } from "@/lib/customer-auth/addresses";
+import { deleteAddressAndPromoteDefault, loadOwnAddress } from "@/lib/customer-auth/addresses";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import { db } from "@/lib/db";
 import { readJsonBody } from "@/lib/security/parse-json-body";
@@ -33,16 +33,22 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       );
     }
 
-    if (parsed.data.isDefault) {
-      await db.customerAddress.updateMany({
-        where: { customerId: session.id, id: { not: id } },
-        data: { isDefault: false },
-      });
-    }
+    // F-134: clearing every other default and setting this one happen in
+    // the same transaction as the update itself, so a request that races
+    // another PATCH/POST for this customer can never leave two addresses
+    // marked default at once.
+    const address = await db.$transaction(async (tx) => {
+      if (parsed.data.isDefault) {
+        await tx.customerAddress.updateMany({
+          where: { customerId: session.id, id: { not: id } },
+          data: { isDefault: false },
+        });
+      }
 
-    const address = await db.customerAddress.update({
-      where: { id },
-      data: parsed.data,
+      return tx.customerAddress.update({
+        where: { id },
+        data: parsed.data,
+      });
     });
 
     return NextResponse.json({ address });
@@ -63,6 +69,10 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "Address not found" }, { status: 404 });
   }
 
-  await db.customerAddress.delete({ where: { id } });
+  // See deleteAddressAndPromoteDefault's doc comment (F-134): deleting the
+  // default used to promote nothing, so "default address" silently
+  // stopped meaning anything once it was removed.
+  await deleteAddressAndPromoteDefault(id, session.id, existing.isDefault);
+
   return NextResponse.json({ ok: true });
 }
