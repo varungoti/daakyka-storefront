@@ -1,9 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { db } from "@/lib/db";
 import {
   CREDENTIAL_FIELDS,
   decrypt,
   encrypt,
+  getCredential,
   isCredentialKey,
 } from "@/lib/integrations/credential-store";
 import { withEnv } from "../../../tests/helpers/env";
@@ -88,5 +90,41 @@ describe("CREDENTIAL_FIELDS / isCredentialKey", () => {
     assert.equal(isCredentialKey("RAZORPAY", "API_KEY"), false);
     assert.equal(isCredentialKey("BREVO", "FROM_EMAIL"), true);
     assert.equal(isCredentialKey("BREVO", "WEBHOOK_SECRET"), false);
+  });
+});
+
+// F-222: a DB (or decrypt) error used to be caught *inside* the function
+// unstable_cache wraps, so the resulting `null` got cached as "not set in
+// the DB" for up to a year — which can silently turn Razorpay off
+// (isRazorpayConfigured() sees null with no env fallback) or freeze a
+// stale Brevo key. It's now caught only outside the cache boundary, so a
+// failed read never poisons the cache. As in settings/index.test.ts, this
+// can't reach the real unstable_cache path under plain `tsx --test` (no
+// Next request/build store) — getCredential's own uncached fallback branch
+// is what runs here — but it proves the read never throws to the caller
+// and never leaves a poisoned result behind for the next read.
+describe("getCredential resilience to a transient DB error", () => {
+  it("falls back to null without throwing, then reflects the DB again once it recovers", async () => {
+    const original = db.integrationCredential.findUnique;
+    let calls = 0;
+    // @ts-expect-error - stubbing a Prisma delegate method for the test only.
+    db.integrationCredential.findUnique = async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new Error("simulated transient DB error (connection terminated unexpectedly)");
+      }
+      return null;
+    };
+
+    try {
+      const duringOutage = await getCredential("RAZORPAY", "KEY_ID");
+      assert.equal(duringOutage, null);
+
+      const afterRecovery = await getCredential("RAZORPAY", "KEY_ID");
+      assert.equal(afterRecovery, null);
+      assert.equal(calls, 2, "the second read must hit the DB again, not repeat a cached failure");
+    } finally {
+      db.integrationCredential.findUnique = original;
+    }
   });
 });

@@ -66,25 +66,29 @@ export function isSettingKey(key: string): key is SettingKey {
   return (settingKeys as string[]).includes(key);
 }
 
-async function readSettingFromDb<K extends SettingKey>(key: K): Promise<SettingValueMap[K]> {
-  const fallback = settingDefaults[key];
-  try {
-    const row = await db.siteSetting.findUnique({ where: { key } });
-    if (!row) return fallback;
-    const parsed = settingSchemas[key].safeParse(row.value);
-    if (!parsed.success) return fallback;
-    return parsed.data;
-  } catch {
-    // DB unavailable (e.g. at build time, or a local script without a
-    // running Postgres) — fall back to the default so callers never crash.
-    return fallback;
-  }
+// F-222: this is the function unstable_cache wraps below, so it must let a
+// DB error (pool exhausted, connection reset, etc.) propagate rather than
+// swallow it. unstable_cache only ever stores a *resolved* value — a
+// rejection is never cached — so if this function caught the error and
+// returned the fallback itself, that fallback would get cached as if it
+// were real data, for up to a year, until an admin happened to save a
+// setting. Returning the default is still correct for a genuinely missing
+// row or a value that fails its schema, since those are deterministic and
+// safe to cache. getSetting() below applies the fallback for a failed read
+// *outside* the cache boundary instead, so a transient failure only ever
+// affects the one call that hit it.
+async function fetchSettingFromDb<K extends SettingKey>(key: K): Promise<SettingValueMap[K]> {
+  const row = await db.siteSetting.findUnique({ where: { key } });
+  if (!row) return settingDefaults[key];
+  const parsed = settingSchemas[key].safeParse(row.value);
+  if (!parsed.success) return settingDefaults[key];
+  return parsed.data;
 }
 
 // Cached per-key with Next's data cache, tagged "settings" so setSetting()
 // can invalidate every cached key at once via revalidateTag.
 const cachedReadSetting = unstable_cache(
-  async (key: SettingKey) => readSettingFromDb(key),
+  async (key: SettingKey) => fetchSettingFromDb(key),
   ["site-setting"],
   { tags: [SETTINGS_CACHE_TAG] },
 );
@@ -93,10 +97,17 @@ export async function getSetting<K extends SettingKey>(key: K): Promise<SettingV
   try {
     return (await cachedReadSetting(key)) as SettingValueMap[K];
   } catch {
-    // unstable_cache needs Next's incremental cache / request store, which
-    // isn't present outside an actual Next server (unit tests, scripts,
-    // etc). Fall back to an uncached read rather than throwing.
-    return readSettingFromDb(key);
+    // Two different situations land here, and both are handled the same
+    // way: either unstable_cache's incremental cache / request store isn't
+    // present (unit tests, scripts, outside an actual Next server), or the
+    // DB read itself failed. Retry once, uncached, and fall back to the
+    // hard-coded default for *this call only* on any further failure —
+    // never cache a failure as if it were real data.
+    try {
+      return await fetchSettingFromDb(key);
+    } catch {
+      return settingDefaults[key];
+    }
   }
 }
 

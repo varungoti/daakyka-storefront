@@ -94,30 +94,35 @@ export function decrypt(payload: string): string {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
 }
 
-async function readCredentialFromDb(
+// F-222: this is the function unstable_cache wraps below, so — like
+// settings/index.ts's fetchSettingFromDb — it must let a DB error, or a
+// decrypt failure (CREDENTIAL_ENCRYPTION_KEY missing/rotated out from under
+// an existing row), propagate rather than swallow it. unstable_cache only
+// ever caches a *resolved* value, so catching the error here and returning
+// null used to get that null cached as "not set in the DB" for up to a
+// year — which can silently turn Razorpay off (isRazorpayConfigured() sees
+// null with no env fallback) or freeze the Brevo key. Returning null is
+// still correct, and safe to cache, for a genuinely missing row.
+// getCredential() below applies the "not set" fallback for a failed read
+// *outside* the cache boundary instead, so a transient failure only ever
+// affects the one call that hit it — every caller already falls back to
+// process.env exactly as before.
+async function fetchCredentialFromDb(
   provider: CredentialProvider,
   key: string,
 ): Promise<string | null> {
-  try {
-    const row = await db.integrationCredential.findUnique({
-      where: { provider_key: { provider, key } },
-    });
-    if (!row) return null;
-    return decrypt(row.valueEncrypted);
-  } catch {
-    // DB unavailable, or CREDENTIAL_ENCRYPTION_KEY missing/rotated out from
-    // under an existing row — callers all already fall back to
-    // process.env, so degrade to "not set in the DB" rather than crashing
-    // a payment or email flow.
-    return null;
-  }
+  const row = await db.integrationCredential.findUnique({
+    where: { provider_key: { provider, key } },
+  });
+  if (!row) return null;
+  return decrypt(row.valueEncrypted);
 }
 
 // Cached per (provider, key) with Next's data cache, tagged so setCredential/
 // clearCredential can invalidate every cached credential at once via
 // revalidateTag — mirrors src/lib/settings/index.ts's cachedReadSetting.
 const cachedReadCredential = unstable_cache(
-  async (provider: CredentialProvider, key: string) => readCredentialFromDb(provider, key),
+  async (provider: CredentialProvider, key: string) => fetchCredentialFromDb(provider, key),
   ["integration-credential"],
   { tags: [CREDENTIALS_CACHE_TAG] },
 );
@@ -129,10 +134,17 @@ export async function getCredential(
   try {
     return await cachedReadCredential(provider, key);
   } catch {
-    // unstable_cache needs Next's incremental cache / request store, which
-    // isn't present outside an actual Next server (unit tests, scripts,
-    // etc). Fall back to an uncached read rather than throwing.
-    return readCredentialFromDb(provider, key);
+    // Two different situations land here, and both are handled the same
+    // way: either unstable_cache's incremental cache / request store isn't
+    // present (unit tests, scripts, outside an actual Next server), or the
+    // read itself failed. Retry once, uncached, and degrade to "not set in
+    // the DB" on any further failure — never cache a failure as if it were
+    // a real answer.
+    try {
+      return await fetchCredentialFromDb(provider, key);
+    } catch {
+      return null;
+    }
   }
 }
 

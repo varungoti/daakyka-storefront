@@ -38,6 +38,40 @@ function sinceDate(days: number) {
   return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 }
 
+// Orders that represent an actual or in-progress sale. PROCESSING is
+// included because ORDER_REQUEST orders (this store's checkout fallback
+// whenever Razorpay isn't configured — see create-order.ts) go straight to
+// PROCESSING without ever being paid online; they're still real bookings
+// the owner needs to see. PENDING_PAYMENT (abandoned before capture),
+// CANCELLED and REFUNDED are excluded — none of those is a sale. Mirrors
+// admin-customers.ts's SPENT_STATUSES.
+const REPORTABLE_ORDER_STATUSES = ["PAID", "PROCESSING", "SHIPPED", "DELIVERED"] as const;
+
+export interface CommerceStats {
+  orders: number;
+  revenueInr: number;
+}
+
+// F-058: split out so it can be unit-tested by stubbing just this one
+// query, instead of every db call buildWeeklyGrowthReport's Promise.all
+// makes. Reads the native Order table — the old code read the legacy
+// Shopify-webhook OrderEvent table, which this store's native checkout
+// never writes to, so it always showed 0 orders / ₹0 revenue.
+export async function getCommerceStats(since: Date): Promise<CommerceStats> {
+  const agg = await db.order.aggregate({
+    where: { createdAt: { gte: since }, status: { in: [...REPORTABLE_ORDER_STATUSES] } },
+    _count: { _all: true },
+    _sum: { total: true },
+  });
+
+  return {
+    orders: agg._count._all,
+    // Order.total is a Prisma Decimal(10,2) — convert explicitly rather
+    // than treating it as a number, which would concatenate or NaN.
+    revenueInr: Number(agg._sum.total ?? 0),
+  };
+}
+
 function buildRecommendations(input: {
   orders: number;
   cartAbandonments: number;
@@ -50,7 +84,7 @@ function buildRecommendations(input: {
   const items: string[] = [];
 
   if (input.cartAbandonments > 0 && input.orders === 0) {
-    items.push("Cart abandonments recorded but no orders — verify Shopify webhook and checkout flow.");
+    items.push("Cart abandonments recorded but no orders — test the checkout flow and check Razorpay settings.");
   }
   if (input.pendingCampaigns > 0) {
     items.push(`Approve ${input.pendingCampaigns} pending campaign(s) in Engagement.`);
@@ -78,7 +112,7 @@ export async function buildWeeklyGrowthReport(periodDays = 7): Promise<WeeklyGro
   const since = sinceDate(periodDays);
 
   const [
-    orders,
+    commerceStats,
     cartAbandonments,
     productViewCount,
     productViewGroups,
@@ -93,7 +127,7 @@ export async function buildWeeklyGrowthReport(periodDays = 7): Promise<WeeklyGro
     publishedBlogPosts,
     products,
   ] = await Promise.all([
-    db.orderEvent.findMany({ where: { createdAt: { gte: since } } }),
+    getCommerceStats(since),
     db.cartAbandonmentEvent.count({ where: { createdAt: { gte: since } } }),
     db.productViewEvent.count({ where: { createdAt: { gte: since } } }),
     db.productViewEvent.groupBy({
@@ -115,7 +149,6 @@ export async function buildWeeklyGrowthReport(periodDays = 7): Promise<WeeklyGro
     getProducts(),
   ]);
 
-  const revenueInr = orders.reduce((sum, order) => sum + (order.total ?? 0), 0);
   const insights = buildProductInsights(products);
   const insightSummary = summarizeInsights(insights);
   const seoSummary = summarizeSeoAudits(await getStaticSeoAudits());
@@ -128,7 +161,7 @@ export async function buildWeeklyGrowthReport(periodDays = 7): Promise<WeeklyGro
   }));
 
   const recommendations = buildRecommendations({
-    orders: orders.length,
+    orders: commerceStats.orders,
     cartAbandonments,
     pendingCampaigns,
     seoNeedsMeta: seoSummary.needsMeta,
@@ -141,8 +174,8 @@ export async function buildWeeklyGrowthReport(periodDays = 7): Promise<WeeklyGro
     periodDays,
     generatedAt: new Date().toISOString(),
     commerce: {
-      orders: orders.length,
-      revenueInr,
+      orders: commerceStats.orders,
+      revenueInr: commerceStats.revenueInr,
       cartAbandonments,
       productViews: productViewCount,
     },
