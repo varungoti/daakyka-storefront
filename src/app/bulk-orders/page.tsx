@@ -2,7 +2,9 @@ import { BulkOrderForm } from "@/components/bulk-orders/bulk-order-form";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { brand } from "@/data/brand";
+import { whatsappHref } from "@/lib/contact/whatsapp";
 import { getSiteImage } from "@/lib/media/get-site-image";
+import { getSetting } from "@/lib/settings";
 import { Building2, MessageCircle, ShieldCheck, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -13,7 +15,10 @@ export const metadata: Metadata = {
 };
 
 export default async function BulkOrdersPage() {
-  const heroImage = await getSiteImage("bulk-orders.hero");
+  const [heroImage, contactWhatsapp] = await Promise.all([
+    getSiteImage("bulk-orders.hero"),
+    getSetting("contact.whatsapp"),
+  ]);
 
   return (
     <>
@@ -50,7 +55,7 @@ export default async function BulkOrdersPage() {
                 Prefer to chat? Reach our bulk orders team directly on WhatsApp.
               </p>
               <Link
-                href={`https://wa.me/?text=${encodeURIComponent(brand.web.whatsappMessage)}`}
+                href={whatsappHref(contactWhatsapp, brand.web.whatsappMessage)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-4 inline-flex items-center gap-2 rounded-md bg-trust px-4 py-3 text-sm font-semibold text-white hover:opacity-90"

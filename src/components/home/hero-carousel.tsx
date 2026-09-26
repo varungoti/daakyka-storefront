@@ -76,12 +76,19 @@ interface HeroCarouselProps {
  * than relying on `loading="lazy"`, which wouldn't reliably defer an
  * off-screen-opacity (but on-screen-position) stacked slide's image at all.
  *
- * Zero CLS across slides of differing copy length: every slide's text
- * panel is absolutely stacked (`inset-0`) inside one fixed-min-height box,
- * and each text field is additionally `line-clamp`-capped, so no single
- * slide can ever change that box's height. The image collage reuses the
- * hero's existing fixed `aspect-[4/5]` frame, which was already
- * CLS-immune per-slide for the same reason.
+ * Zero CLS across slides of differing copy length: every slide's text panel
+ * is stacked in one CSS grid cell (`grid` + `col-start-1 row-start-1` on
+ * each slide, not `absolute inset-0`), so the box's height is the tallest
+ * slide's real rendered height, not a guessed fixed min-height — the
+ * previous fixed-height approach (F-001) let a slide's CTAs wrap onto a
+ * second row and spill under the carousel controls at common desktop
+ * widths. Every slide's text is rendered unconditionally (unlike the image
+ * collage below) so the grid is sized correctly from first paint — gating
+ * it behind `visited` would let the box grow the first time auto-advance
+ * reaches a taller slide, which is exactly the layout shift this avoids.
+ * The image collage reuses the hero's existing fixed `aspect-[4/5]` frame,
+ * which stays CLS-immune per-slide for the same `line-clamp` reason as
+ * before.
  */
 export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, ratingLabel }: HeroCarouselProps) {
   const [activeIndex, setActiveIndex] = useState(0);
@@ -145,7 +152,12 @@ export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, rating
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(138,52,125,0.1),transparent_32%),radial-gradient(circle_at_85%_10%,rgba(93,0,163,0.08),transparent_28%)]" />
       </div>
 
-      <div className="pointer-events-none absolute left-4 top-1/2 hidden -translate-y-1/2 lg:block xl:left-8">
+      {/* F-001: only shown from 2xl (1536px) up. Below that, the content
+          column's left edge (max-w-[1320px] + lg:px-8) sits at x<=32-47px
+          in the common 1280-1350px range, which is exactly where this hint
+          used to be drawn (left-4/xl:left-8), overlapping the headline. At
+          1536px+ the column's left edge is well clear (x>=140px). */}
+      <div className="pointer-events-none absolute left-8 top-1/2 hidden -translate-y-1/2 2xl:block">
         <p className="rotate-180 text-[10px] font-bold uppercase tracking-[0.35em] text-muted [writing-mode:vertical-rl]">
           Scroll to Explore
         </p>
@@ -163,7 +175,13 @@ export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, rating
 
       <div className="relative mx-auto grid max-w-[1320px] items-center gap-10 px-4 py-12 lg:grid-cols-[1.05fr_0.95fr_0.55fr] lg:gap-8 lg:px-8 md:py-16">
         <div className="animate-fade-up lg:pr-4">
-          <div className="relative min-h-[660px] sm:min-h-[560px] lg:min-h-[520px] xl:min-h-[460px]">
+          {/* F-001: `grid` instead of `relative` + a guessed min-height.
+              Every slide below is stacked in the same grid cell
+              (`col-start-1 row-start-1`), so this box's height is always
+              the tallest slide's real content height — it can never be
+              shorter than what's actually rendered, which is what let the
+              carousel controls end up on top of a wrapped CTA row before. */}
+          <div className="grid">
             {slides.map((slide, index) => (
               <div
                 key={slide.id}
@@ -173,60 +191,59 @@ export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, rating
                 aria-hidden={index !== activeIndex}
                 inert={index !== activeIndex}
                 className={cn(
-                  "absolute inset-0 space-y-7 transition-opacity duration-700 ease-out",
+                  "col-start-1 row-start-1 self-start space-y-7 transition-opacity duration-700 ease-out",
                   index === activeIndex ? "opacity-100" : "pointer-events-none opacity-0",
                 )}
               >
-                {/* A not-yet-visited slide's text/CTAs aren't mounted at
-                    all (same `visited` gate as the images below) — the
-                    box's height is governed by the fixed min-height above,
-                    never by any individual slide's content, so this costs
-                    nothing CLS-wise. It does meaningfully cut initial DOM
-                    size and hydration work: on first paint only the active
-                    slide (index 0) renders its full text+CTA subtree,
-                    instead of every slide's markup being parsed/hydrated
-                    up front for content that starts out invisible anyway.
-                    See docs/PERFORMANCE.md's finding that this page's LCP
-                    bottleneck is main-thread script evaluation, not a
-                    render-blocking resource. */}
-                {visited.has(index) && (
-                  <>
-                    <span className="inline-flex max-w-full truncate rounded-full bg-brand px-4 py-1.5 text-[11px] font-bold uppercase tracking-[0.2em] text-white">
-                      {slide.eyebrow}
-                    </span>
+                {/* Unlike the image collage below, text is rendered for
+                    every slide unconditionally (not gated on `visited`) so
+                    the grid above is sized correctly from first paint —
+                    see the component doc comment for why gating this would
+                    reintroduce the layout shift F-001 fixed. It's a small
+                    amount of extra text DOM, not the image weight that
+                    `visited` exists to defer. Only slide 0 renders an
+                    `<h1>`; the rest render the same styling as `<h2>` so
+                    the page keeps exactly one `<h1>`. */}
+                <span className="inline-flex max-w-full truncate rounded-full bg-brand px-4 py-1.5 text-[11px] font-bold uppercase tracking-[0.2em] text-white">
+                  {slide.eyebrow}
+                </span>
 
-                    <div className="space-y-4">
-                      <h1 className="line-clamp-3 font-display text-[2.75rem] font-bold leading-[1.02] tracking-tight text-ink md:text-5xl xl:text-[3.75rem]">
-                        {slide.headline}
-                      </h1>
-                      <p className="line-clamp-2 font-display text-xl font-medium text-ink/85 md:text-2xl">
-                        {slide.subheadline}
-                      </p>
-                      <p className="line-clamp-3 max-w-lg text-base leading-relaxed text-muted">
-                        {slide.description}
-                      </p>
-                    </div>
+                <div className="space-y-4">
+                  {index === 0 ? (
+                    <h1 className="line-clamp-3 font-display text-[2.75rem] font-bold leading-[1.02] tracking-tight text-ink md:text-5xl xl:text-[3.75rem]">
+                      {slide.headline}
+                    </h1>
+                  ) : (
+                    <h2 className="line-clamp-3 font-display text-[2.75rem] font-bold leading-[1.02] tracking-tight text-ink md:text-5xl xl:text-[3.75rem]">
+                      {slide.headline}
+                    </h2>
+                  )}
+                  <p className="line-clamp-2 font-display text-xl font-medium text-ink/85 md:text-2xl">
+                    {slide.subheadline}
+                  </p>
+                  <p className="line-clamp-3 max-w-lg text-base leading-relaxed text-muted">
+                    {slide.description}
+                  </p>
+                </div>
 
-                    <div className="flex flex-wrap gap-4">
-                      <Link href={slide.primaryCta.href} className={buttonClassNames({ size: "lg", className: "min-w-[170px]" })}>
-                        {slide.primaryCta.label}
-                        <ArrowRight size={18} aria-hidden="true" />
-                      </Link>
-                      <Link
-                        href={slide.secondaryCta.href}
-                        className={buttonClassNames({ variant: "outline", size: "lg", className: "min-w-[170px]" })}
-                      >
-                        {slide.secondaryCta.label}
-                      </Link>
-                    </div>
-                  </>
-                )}
+                <div className="flex flex-wrap gap-4">
+                  <Link href={slide.primaryCta.href} className={buttonClassNames({ size: "lg", className: "min-w-[170px]" })}>
+                    {slide.primaryCta.label}
+                    <ArrowRight size={18} aria-hidden="true" />
+                  </Link>
+                  <Link
+                    href={slide.secondaryCta.href}
+                    className={buttonClassNames({ variant: "outline", size: "lg", className: "min-w-[170px]" })}
+                  >
+                    {slide.secondaryCta.label}
+                  </Link>
+                </div>
               </div>
             ))}
           </div>
 
           {multiSlide && (
-            <div className="mt-2 flex flex-wrap items-center gap-4">
+            <div className="relative z-10 mt-2 flex flex-wrap items-center gap-4">
               <div className="flex items-center gap-2">
                 <button
                   type="button"

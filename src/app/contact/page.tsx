@@ -2,7 +2,9 @@ import { ContactForm } from "@/components/contact/contact-form";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { brand } from "@/data/brand";
+import { whatsappHref } from "@/lib/contact/whatsapp";
 import { getSiteImage } from "@/lib/media/get-site-image";
+import { getSetting } from "@/lib/settings";
 import { Clock, MapPin, MessageCircle } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -28,7 +30,10 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
   const defaultType =
     typeMap[params.type as keyof typeof typeMap] ??
     (params.intent === "checkout" ? "GENERAL" : "GENERAL");
-  const heroImage = await getSiteImage("contact.banner");
+  const [heroImage, contactWhatsapp] = await Promise.all([
+    getSiteImage("contact.banner"),
+    getSetting("contact.whatsapp"),
+  ]);
 
   return (
     <>
@@ -83,7 +88,7 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
                     Prefer messaging? Start a conversation with our team.
                   </p>
                   <Link
-                    href={`https://wa.me/?text=${encodeURIComponent(brand.web.whatsappMessage)}`}
+                    href={whatsappHref(contactWhatsapp, brand.web.whatsappMessage)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="mt-3 inline-flex text-sm font-semibold text-trust hover:underline"

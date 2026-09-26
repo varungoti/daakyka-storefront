@@ -2,7 +2,9 @@
 
 import { MessageCircle } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { usePathname } from "next/navigation";
 import { brand } from "@/data/brand";
+import { whatsappHref } from "@/lib/contact/whatsapp";
 import {
   getServerStickyAddToCartVisible,
   getStickyAddToCartVisible,
@@ -25,10 +27,21 @@ const FORM_FIELD_TAGS = new Set(["INPUT", "TEXTAREA", "SELECT"]);
  *  - While the sticky Add-to-Cart bar is on screen, the bubble moves up
  *    above it via the shared sticky-add-to-cart-store, instead of the two
  *    fixed elements stacking on the same corner.
+ *
+ * F-002/F-126: this used to hard-code `https://wa.me/?text=...` with no
+ * phone number at all, which opens WhatsApp's "choose a contact" picker
+ * instead of a chat with DAAKYKA — now it takes the real `contact.whatsapp`
+ * SiteSetting from the caller (SiteShell already reads it for the utility
+ * bar and footer) and builds the link with the shared `whatsappHref`
+ * helper. F-126 also found this bubble overlapping the mobile checkout
+ * page's Place Order button; the bubble is hidden on /checkout entirely
+ * (mirroring how the utility bar's WhatsApp link and the footer's are
+ * still reachable there), the same way Shopify hides chat widgets on its
+ * checkout.
  */
-export function WhatsAppFab() {
-  const message = encodeURIComponent(brand.web.whatsappMessage);
-  const href = `https://wa.me/?text=${message}`;
+export function WhatsAppFab({ whatsapp }: { whatsapp: string }) {
+  const pathname = usePathname();
+  const href = whatsappHref(whatsapp, brand.web.whatsappMessage);
 
   const stickyCartVisible = useSyncExternalStore(
     subscribeStickyAddToCartVisible,
@@ -53,6 +66,12 @@ export function WhatsAppFab() {
       document.removeEventListener("focusout", onFocusOut);
     };
   }, []);
+
+  // F-126: on mobile, this bubble's fixed bottom-right corner overlaps the
+  // full-width Place Order button on /checkout across part of the page's
+  // scroll range. The utility bar's WhatsApp link and the footer's stay
+  // reachable there, so hiding this one costs nothing.
+  if (pathname?.startsWith("/checkout")) return null;
 
   return (
     <a

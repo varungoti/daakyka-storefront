@@ -83,7 +83,7 @@ export function SiteShell({
         contactEmail={contactEmail}
         contactAddress={contactAddress}
       />
-      <WhatsAppFab />
+      <WhatsAppFab whatsapp={contactWhatsapp} />
       <CartDrawer />
       <CartAbandonTracker />
       <WishlistDrawer />
