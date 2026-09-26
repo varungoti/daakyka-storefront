@@ -3,6 +3,7 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 
 export default async function AdminJourneysPage() {
   const session = await getSession();
@@ -33,8 +34,9 @@ export default async function AdminJourneysPage() {
       <div>
         <h1 className="font-display text-3xl font-bold text-ink">Customer Journeys</h1>
         <p className="text-muted">
-          Automated email and WhatsApp sequences — journeys never auto-send without provider
-          connection and campaign approval.
+          Automated email and WhatsApp sequences. An ACTIVE journey sends automatically — no
+          per-message approval — as soon as its channel (Brevo for email, WATI for WhatsApp) is
+          enabled in Integrations. Set a journey to Draft or Paused to stop it from sending.
         </p>
       </div>
 
@@ -69,7 +71,17 @@ export default async function AdminJourneysPage() {
                     <p className="text-xs text-muted">
                       {step.channel.replace("_", " ")}
                       {step.delayHours > 0 && ` · +${step.delayHours}h`}
-                      {step.template && ` · Template: ${step.template.name}`}
+                      {step.template && (
+                        <>
+                          {" · Template: "}
+                          <Link
+                            href={`/admin/templates/${step.template.id}`}
+                            className="text-brand underline-offset-2 hover:underline"
+                          >
+                            {step.template.name}
+                          </Link>
+                        </>
+                      )}
                     </p>
                   </div>
                 </li>

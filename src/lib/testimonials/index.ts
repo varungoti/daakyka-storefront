@@ -1,6 +1,5 @@
 import { revalidateTag, unstable_cache } from "next/cache";
 import { db } from "@/lib/db";
-import { testimonials as seedTestimonials } from "@/data/testimonials";
 import type { Testimonial } from "@/lib/types";
 import { logAuditEvent } from "@/lib/auth/audit";
 import type { TestimonialRecord } from "@/generated/prisma/client";
@@ -35,17 +34,20 @@ function mapRecord(record: {
   };
 }
 
+// F-005: no hardcoded fallback. Zero active rows means zero testimonials
+// — TestimonialsSection already renders nothing for an empty list — so
+// hiding or deleting every testimonial in /admin/testimonials actually
+// results in an empty homepage section, not a return of fabricated
+// reviews. Errors are deliberately NOT swallowed here: this function is
+// wrapped by unstable_cache below, and catching inside it would cache a
+// transient DB error's fallback value under the "testimonials" tag until
+// the next revalidation. getTestimonials() catches instead.
 async function readTestimonialsFromDb(): Promise<Testimonial[]> {
-  try {
-    const records = await db.testimonialRecord.findMany({
-      where: { active: true },
-      orderBy: [{ featured: "desc" }, { sortOrder: "asc" }, { createdAt: "desc" }],
-    });
-    if (records.length === 0) return seedTestimonials;
-    return records.map((r) => mapRecord(r));
-  } catch {
-    return seedTestimonials;
-  }
+  const records = await db.testimonialRecord.findMany({
+    where: { active: true },
+    orderBy: [{ featured: "desc" }, { sortOrder: "asc" }, { createdAt: "desc" }],
+  });
+  return records.map((r) => mapRecord(r));
 }
 
 // Cached with Next's data cache, tagged "testimonials" so the admin CRUD
@@ -62,11 +64,19 @@ const cachedGetTestimonials = unstable_cache(
 export async function getTestimonials(): Promise<Testimonial[]> {
   try {
     return await cachedGetTestimonials();
-  } catch {
-    // unstable_cache needs Next's incremental cache / request store, which
-    // isn't present outside an actual Next server (unit tests, scripts,
-    // etc). Fall back to an uncached read rather than throwing.
-    return readTestimonialsFromDb();
+  } catch (error) {
+    // Two different failures land here, both handled the same way:
+    // (1) unstable_cache needs Next's incremental cache / request store,
+    // which isn't present outside an actual Next server (unit tests,
+    // scripts, etc) — fall back to an uncached read; (2) readTestimonialsFromDb
+    // itself threw (a real DB error). Either way, never show fabricated
+    // testimonials (F-005) — an empty list just hides the section.
+    try {
+      return await readTestimonialsFromDb();
+    } catch (dbError) {
+      console.error("[testimonials] failed to load testimonials", dbError ?? error);
+      return [];
+    }
   }
 }
 

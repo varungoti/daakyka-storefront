@@ -45,7 +45,7 @@ const ALL_SECTIONS: MarketingHubSection[] = [
     key: "journeys",
     label: "Journeys",
     description:
-      "Automated email and WhatsApp sequences — journeys never auto-send without a provider connection and campaign approval.",
+      "Automated email and WhatsApp sequences — an ACTIVE journey sends automatically, with no per-message approval, once its channel is enabled.",
     href: "/admin/journeys",
     icon: GitBranch,
   },

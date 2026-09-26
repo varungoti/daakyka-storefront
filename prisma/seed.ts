@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { randomBytes } from "node:crypto";
-import { blogMedia, testimonialAvatars } from "../src/data/media/catalog";
+import { blogMedia } from "../src/data/media/catalog";
 import { createPrismaClient } from "../src/lib/create-prisma-client";
 import { DEFAULT_ADMIN_SEED_EMAIL, isInsecureSeedPassword } from "../src/lib/auth/seed-defaults";
 import { isVercel } from "../src/lib/env";
@@ -112,24 +112,46 @@ const seedBlogPosts = [
 ];
 
 /**
+ * True when `databaseUrl` points at a local Postgres — the only case
+ * where a weak/default ADMIN_SEED_PASSWORD is tolerated. Matches what
+ * .env.local.example, docker-compose.yml and this repo's CI and
+ * testdb.mjs all actually use (localhost/127.0.0.1/::1); anything else —
+ * including a Supabase or Neon host reached by running the seed directly
+ * against a copied-out DATABASE_URL — is treated as remote.
+ */
+function isLocalDatabaseUrl(databaseUrl: string | undefined): boolean {
+  if (!databaseUrl) return false;
+  try {
+    const host = new URL(databaseUrl).hostname.toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Resolves the password to seed the SUPER_ADMIN account with.
  *
- * On Vercel (preview or production), ADMIN_SEED_PASSWORD must be set to
- * a real, non-default password — the build fails loudly rather than
- * silently falling back to a value that's ever appeared in docs, git
- * history, or another deploy's logs. Locally, an unset password is
- * generated at random instead of reusing a fixed default, so
- * "forgetting" to set one can't quietly leave a known password behind.
+ * Against any non-local database — Vercel (preview or production), or a
+ * remote DATABASE_URL run some other way — ADMIN_SEED_PASSWORD must be
+ * set to a real, non-default password: the seed fails loudly rather than
+ * silently falling back to, or quietly accepting, a value that's ever
+ * appeared in docs, git history, or another deploy's logs (F-301). This
+ * is what caught the off-Vercel run that left production's SUPER_ADMIN
+ * un-rotated. Locally, an unset password is generated at random instead
+ * of reusing a fixed default, so "forgetting" to set one can't quietly
+ * leave a known password behind.
  */
 function resolveAdminSeedPassword(): string {
   const explicit = process.env.ADMIN_SEED_PASSWORD;
+  const remote = isVercel() || !isLocalDatabaseUrl(process.env.DATABASE_URL);
 
-  if (isVercel()) {
+  if (remote) {
     if (!explicit) {
       throw new Error(
-        "ADMIN_SEED_PASSWORD must be set in this Vercel project's environment variables " +
-          "before deploying — see docs/GO_LIVE_RUNBOOK.md. Generate one with " +
-          "`openssl rand -base64 18`.",
+        "ADMIN_SEED_PASSWORD must be set before seeding a non-local database " +
+          "(this DATABASE_URL is not localhost) — see docs/GO_LIVE_RUNBOOK.md. Generate one " +
+          "with `openssl rand -base64 18`.",
       );
     }
     if (isInsecureSeedPassword(explicit)) {
@@ -157,6 +179,7 @@ function resolveAdminSeedPassword(): string {
 async function main() {
   const email = (process.env.ADMIN_SEED_EMAIL ?? DEFAULT_ADMIN_SEED_EMAIL).toLowerCase();
   const password = resolveAdminSeedPassword();
+  const isRemoteDatabase = isVercel() || !isLocalDatabaseUrl(process.env.DATABASE_URL);
   const existingAdmin = await prisma.user.findUnique({ where: { email } });
 
   // Create-only: an existing user's password, role, and active status are
@@ -175,22 +198,38 @@ async function main() {
 
   if (!existingAdmin) {
     console.log("Created admin user.");
-    if (!isVercel()) {
-      // Only useful to print for a fresh local create — an existing
-      // account's real password is whatever it was already set to, and
-      // printing this value in Vercel's build log would leak it there.
+    if (!isRemoteDatabase) {
+      // Only useful to print for a fresh local create against a local DB
+      // — an existing account's real password is whatever it was already
+      // set to, and printing this value against any remote database
+      // (Vercel's build log, or a stray local run pointed at a remote
+      // DATABASE_URL — see F-301) would leak it there.
       console.log(`Admin login: ${email}`);
       console.log(`Admin password: ${password}`);
     }
   } else {
     console.log(`Admin user already exists: ${email} (password unchanged).`);
+    // F-301: the seed is create-only, so a configured ADMIN_SEED_PASSWORD
+    // never actually rotates an existing account — warn (never log either
+    // value) when the two have drifted, so an operator doesn't assume
+    // setting the env var did anything.
+    if (process.env.ADMIN_SEED_PASSWORD && existingAdmin.passwordHash) {
+      const matches = await bcrypt.compare(process.env.ADMIN_SEED_PASSWORD, existingAdmin.passwordHash);
+      if (!matches) {
+        console.warn(
+          "[seed] ADMIN_SEED_PASSWORD does not match the existing admin's password — the seed " +
+            "did not change it (create-only). Rotate the account's password via /admin/users " +
+            "if that was intended.",
+        );
+      }
+    }
   }
 
   const viewerEmail = process.env.VIEWER_SEED_EMAIL;
   const viewerPassword = process.env.VIEWER_SEED_PASSWORD;
 
   if (viewerEmail && viewerPassword) {
-    if (isVercel() && isInsecureSeedPassword(viewerPassword)) {
+    if (isRemoteDatabase && isInsecureSeedPassword(viewerPassword)) {
       throw new Error(
         "VIEWER_SEED_PASSWORD is too short or matches a known default/leaked password.",
       );
@@ -347,57 +386,14 @@ async function main() {
     });
   }
 
-  const seedTestimonials = [
-    {
-      quote:
-        "The softest, most comfortable scrubs I've ever worn. The 4-way stretch is a game changer during 12 hour shifts!",
-      name: "Dr. Amanda Lee",
-      title: "Emergency Physician",
-      rating: 5,
-      avatar: testimonialAvatars.amanda,
-      featured: true,
-      sortOrder: 0,
-    },
-    {
-      quote:
-        "Finally scrubs that look professional and feel premium. The liquid repellent fabric has saved me more than once.",
-      name: "Nurse Priya Sharma",
-      title: "ICU Nurse",
-      rating: 5,
-      avatar: testimonialAvatars.priya,
-      featured: false,
-      sortOrder: 1,
-    },
-    {
-      quote:
-        "Our hospital ordered bespoke sets for the entire surgical team. The quality and fit consistency were outstanding.",
-      name: "Dr. Marcus Chen",
-      title: "Chief of Surgery",
-      rating: 5,
-      avatar: testimonialAvatars.marcus,
-      featured: false,
-      sortOrder: 2,
-    },
-    {
-      quote:
-        "I love the mix and match builder — being able to customize my set with embroidery makes it truly mine.",
-      name: "Dr. Sarah Okonkwo",
-      title: "Pediatrician",
-      rating: 5,
-      avatar: testimonialAvatars.sarah,
-      featured: false,
-      sortOrder: 3,
-    },
-  ];
-
-  for (const testimonial of seedTestimonials) {
-    const existing = await prisma.testimonialRecord.findFirst({
-      where: { name: testimonial.name },
-    });
-    if (!existing) {
-      await prisma.testimonialRecord.create({ data: testimonial });
-    }
-  }
+  // F-005: no seeded testimonials. These used to be four invented
+  // clinicians (with Pexels stock-photo avatars) that a fresh deploy would
+  // create and the storefront would show as genuine customer reviews, with
+  // no way for the owner to remove them (the runtime fallback in
+  // src/lib/testimonials/index.ts used to re-serve the same hardcoded list
+  // whenever the DB had zero active rows). Real testimonials are entered
+  // by the owner from /admin/testimonials; with none, the section hides
+  // itself (see TestimonialsSection).
 
   const segments = [
     {
@@ -433,10 +429,12 @@ async function main() {
     update: {},
     create: {
       id: "seed-welcome-email",
-      name: "Welcome — 10% Off First Order",
+      name: "Welcome Email",
       channel: "EMAIL",
-      subject: "Welcome to DAAKYKA — Your 10% Hero Discount",
-      body: "Hi {{first_name}},\n\nWelcome to DAAKYKA Apparels. Use code HERO10 for 10% off your first scrub set.\n\nShop best sellers: {{shop_url}}",
+      // F-070: no HERO10 — that code was never a real Discount row, so it
+      // failed at checkout for every subscriber who tried it.
+      subject: "Welcome to DAAKYKA Apparels",
+      body: "Hi {{first_name}},\n\nWelcome to DAAKYKA Apparels. Explore our medical scrubs and uniforms, designed for long shifts.\n\nShop now: {{shop_url}}",
       variables: JSON.stringify(["first_name", "shop_url"]),
     },
   });
@@ -446,9 +444,23 @@ async function main() {
     update: {},
     create: {
       id: "seed-bulk-followup-wa",
-      name: "Bulk Order Follow-up",
+      name: "Bulk Order Acknowledgement",
       channel: "WHATSAPP",
       body: "Hi {{contact_name}}, thank you for your bulk uniform enquiry at {{organization}}. Our team will share a custom quote within 1–2 business days.",
+      variables: JSON.stringify(["contact_name", "organization"]),
+    },
+  });
+
+  // F-070: a distinct step 2 template — the seed used to re-send this same
+  // acknowledgement 48h later, verbatim, as the "quote follow-up".
+  await prisma.messageTemplate.upsert({
+    where: { id: "seed-bulk-followup-quote-wa" },
+    update: {},
+    create: {
+      id: "seed-bulk-followup-quote-wa",
+      name: "Bulk Order Quote Follow-up",
+      channel: "WHATSAPP",
+      body: "Hi {{contact_name}}, just checking in on {{organization}}'s uniform quote — let us know if you have any questions or would like to adjust quantities or sizes before we finalize it.",
       variables: JSON.stringify(["contact_name", "organization"]),
     },
   });
@@ -477,12 +489,24 @@ async function main() {
     create: {
       name: "Welcome Journey",
       slug: "welcome-series",
-      description: "Day 0 welcome, Day 2 best sellers, Day 5 fabric science, Day 7 offer.",
+      // F-070: seeded DRAFT (not ACTIVE) — an ACTIVE journey sends
+      // automatically the moment Brevo is enabled, with no approval step,
+      // so the owner should review it first. See docs/ADMIN_CREDENTIALS.md
+      // sibling doc comments in this file for why the seed can only set
+      // this on a fresh journey (it's create-only).
+      description: "Single welcome email on newsletter confirmation. Review, then set to Active.",
       trigger: "newsletter_signup",
-      status: "ACTIVE",
+      status: "DRAFT",
     },
   });
 
+  // Kept ACTIVE, unlike the other three journeys below: this is the only
+  // path that creates the AdminNotification a bulk/institutional lead
+  // needs (see the "Admin notification" step), it's WhatsApp/admin-only
+  // (no consumer marketing email), and
+  // tests/integration/engagement-compliance.test.ts's bulk-lead coverage
+  // and src/app/api/bulk-orders/route.ts / api/contact/route.ts both
+  // expect a lead to actually notify the owner today.
   const bulkJourney = await prisma.customerJourney.upsert({
     where: { slug: "bulk-order-followup" },
     update: {},
@@ -499,6 +523,10 @@ async function main() {
     where: { id: "seed-bulk-followup-wa" },
   });
 
+  const waQuoteFollowUpTemplate = await prisma.messageTemplate.findUnique({
+    where: { id: "seed-bulk-followup-quote-wa" },
+  });
+
   await prisma.messageTemplate.upsert({
     where: { id: "seed-cart-abandon-email" },
     update: {},
@@ -507,7 +535,8 @@ async function main() {
       name: "Abandoned Cart Reminder",
       channel: "EMAIL",
       subject: "You left something in your cart — {{first_name}}",
-      body: "Hi {{first_name}},\n\nYour DAAKYKA scrub set is waiting. Complete your order: {{shop_url}}/shop\n\nUse code HERO10 on your first purchase.",
+      // F-070: no HERO10 (see the welcome template above).
+      body: "Hi {{first_name}},\n\nYour DAAKYKA scrub set is still waiting for you. Complete your order: {{shop_url}}/shop",
       variables: JSON.stringify(["first_name", "shop_url"]),
     },
   });
@@ -522,9 +551,10 @@ async function main() {
     create: {
       name: "Abandoned Cart Journey",
       slug: "abandoned-cart",
-      description: "1h reminder, 24h benefit nudge, 48h offer (when email known).",
+      // F-070: seeded DRAFT — see welcomeJourney above.
+      description: "Single reminder when email is known. Review, then set to Active.",
       trigger: "cart_abandoned",
-      status: "ACTIVE",
+      status: "DRAFT",
     },
   });
 
@@ -551,28 +581,28 @@ async function main() {
     create: {
       name: "Post-Purchase Journey",
       slug: "post-purchase",
-      description: "Thank you, care tips, review request, cross-sell, repeat reminder.",
+      // F-070: seeded DRAFT — see welcomeJourney above. Also collapsed to
+      // a single thank-you step: it used to re-send the Welcome/HERO10
+      // template at +168h/+720h, pitching a "first order" offer to
+      // someone who had just bought.
+      description: "Single thank-you email after purchase. Review, then set to Active.",
       trigger: "order_created",
-      status: "ACTIVE",
+      status: "DRAFT",
     },
   });
 
+  // F-070: each journey below is one step, not several steps that all
+  // reused the same template (the same email/message was going out 3-4
+  // times per journey). bulk-order-followup keeps its 3 steps — they're
+  // genuinely distinct content (ack, internal admin notification, quote
+  // follow-up).
   const journeySteps = [
     { journeyId: welcomeJourney.id, sortOrder: 0, name: "Welcome email", delayHours: 0, channel: "EMAIL" as const, templateId: emailTemplate.id },
-    { journeyId: welcomeJourney.id, sortOrder: 1, name: "Best sellers spotlight", delayHours: 48, channel: "EMAIL" as const, templateId: emailTemplate.id },
-    { journeyId: welcomeJourney.id, sortOrder: 2, name: "Fabric science guide", delayHours: 120, channel: "EMAIL" as const, templateId: emailTemplate.id },
-    { journeyId: welcomeJourney.id, sortOrder: 3, name: "First purchase offer", delayHours: 168, channel: "EMAIL" as const, templateId: emailTemplate.id },
     { journeyId: bulkJourney.id, sortOrder: 0, name: "Lead acknowledgement", delayHours: 0, channel: "WHATSAPP" as const, templateId: waTemplate?.id },
     { journeyId: bulkJourney.id, sortOrder: 1, name: "Admin notification", delayHours: 0, channel: "ADMIN_NOTIFICATION" as const, notes: "Notify bulk order manager" },
-    { journeyId: bulkJourney.id, sortOrder: 2, name: "Quote follow-up", delayHours: 48, channel: "WHATSAPP" as const, templateId: waTemplate?.id },
+    { journeyId: bulkJourney.id, sortOrder: 2, name: "Quote follow-up", delayHours: 48, channel: "WHATSAPP" as const, templateId: waQuoteFollowUpTemplate?.id },
     { journeyId: cartJourney.id, sortOrder: 0, name: "Cart reminder", delayHours: 1, channel: "EMAIL" as const, templateId: cartAbandonTemplate?.id },
-    { journeyId: cartJourney.id, sortOrder: 1, name: "Benefit-led nudge", delayHours: 24, channel: "EMAIL" as const, templateId: cartAbandonTemplate?.id },
-    { journeyId: cartJourney.id, sortOrder: 2, name: "Offer reminder", delayHours: 48, channel: "EMAIL" as const, templateId: cartAbandonTemplate?.id },
     { journeyId: postPurchaseJourney.id, sortOrder: 0, name: "Thank you email", delayHours: 0, channel: "EMAIL" as const, templateId: postPurchaseTemplate?.id },
-    { journeyId: postPurchaseJourney.id, sortOrder: 1, name: "Care instructions", delayHours: 24, channel: "EMAIL" as const, templateId: postPurchaseTemplate?.id },
-    { journeyId: postPurchaseJourney.id, sortOrder: 2, name: "Review request", delayHours: 72, channel: "EMAIL" as const, templateId: postPurchaseTemplate?.id },
-    { journeyId: postPurchaseJourney.id, sortOrder: 3, name: "Cross-sell spotlight", delayHours: 168, channel: "EMAIL" as const, templateId: emailTemplate.id },
-    { journeyId: postPurchaseJourney.id, sortOrder: 4, name: "Repeat purchase reminder", delayHours: 720, channel: "EMAIL" as const, templateId: emailTemplate.id },
   ];
 
   for (const step of journeySteps) {
@@ -649,10 +679,13 @@ async function main() {
     });
   }
 
+  // F-070 / release-hardening business decision: no HERO10 offer claim —
+  // it was never backed by a real Discount row, so it failed at checkout
+  // for every shopper who tried it (see the seed-welcome-email /
+  // seed-cart-abandon-email templates above).
   const offers = [
     { name: "Top + Bottom Bundle", type: "bundle", description: "Save 10% when buying a scrub top and bottom together.", config: { discount: "10%", minItems: 2 } },
     { name: "Free Shipping Threshold", type: "free_shipping", description: "Free shipping on retail orders over ₹8,299.", config: { thresholdInr: 8299 }, active: true },
-    { name: "First Purchase — HERO10", type: "first_purchase", description: "10% off first order for newsletter subscribers.", config: { code: "HERO10" }, active: true },
     { name: "Institutional Bulk Pricing", type: "bulk", description: "Volume discounts for hospitals, schools, and corporate teams.", config: { minStaff: 25 }, active: true },
     { name: "Festival Scrubs Spotlight", type: "festival", description: "Seasonal campaign offer — requires campaign approval before send.", config: { season: "monsoon" }, active: false },
   ];

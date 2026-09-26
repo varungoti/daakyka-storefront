@@ -16,6 +16,7 @@
  * logged, or written anywhere by this script.
  */
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readEnvFile } from "./lib/read-env-file.mjs";
 
 const APPLY = process.argv.includes("--apply");
@@ -40,19 +41,22 @@ const MAPPING = [
   { prod: "R2_SECRET_ACCESS_KEY", from: "CLOUDFLARE_SECRET_ACCESS_KEY" },
 ];
 
+// F-301: these project's real, once-published SUPER_ADMIN/VIEWER seed
+// defaults are deny-listed by SHA-256 digest, not by value, so the leaked
+// plaintext is never reintroduced here. See src/lib/auth/seed-defaults.ts.
+const LEAKED_SEED_PASSWORD_DIGESTS = new Set([
+  "c60122eef0f379572315898a19084a6b36ff05333fc6adf0c648e9777f5e6adb",
+  "1c7da5b5e8f47830852c97475be97424745f5ffe6bb2e04e5736bb8a6ab2233e",
+]);
+
 /** Sanity checks that would otherwise only surface as a failed build. */
 function validate(prod, value) {
   if (prod === "ADMIN_SEED_PASSWORD") {
-    const blocked = new Set([
-      "Daakyka@2026",
-      "Daakyka@Viewer2026",
-      "password",
-      "changeme",
-      "admin",
-      "admin123",
-    ]);
+    const blocked = new Set(["password", "changeme", "admin", "admin123"]);
     if (value.length < 12) return `too short (${value.length} chars, needs >= 12)`;
     if (blocked.has(value)) return "matches a known default password";
+    if (LEAKED_SEED_PASSWORD_DIGESTS.has(createHash("sha256").update(value, "utf8").digest("hex")))
+      return "matches a known leaked/default password";
   }
   if (prod === "DATABASE_URL") {
     if (!value.startsWith("postgres")) return "is not a postgres:// URL";

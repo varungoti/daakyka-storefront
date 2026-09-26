@@ -10,10 +10,11 @@ or the admin's own account settings, not by redeploying.
 
 - `ADMIN_SEED_EMAIL` — the admin's login email (defaults to
   `admin@example.com` if unset; not a secret, just an identifier).
-- `ADMIN_SEED_PASSWORD` — **required**. On Vercel (staging or production),
-  the build fails outright if this is unset or matches a known
-  default/weak password — see `src/lib/auth/seed-defaults.ts`'s
-  `INSECURE_SEED_PASSWORDS`. Generate one with `openssl rand -base64 18`.
+- `ADMIN_SEED_PASSWORD` — **required** against any non-local database
+  (Vercel staging/production, or a local run pointed at a remote
+  `DATABASE_URL`). The seed refuses to run if this is unset or matches a
+  known default/weak/leaked password — see `isInsecureSeedPassword()` in
+  `src/lib/auth/seed-defaults.ts`. Generate one with `openssl rand -base64 18`.
 - `VIEWER_SEED_EMAIL` / `VIEWER_SEED_PASSWORD` — optional; the read-only
   VIEWER account is only created when **both** are set.
 

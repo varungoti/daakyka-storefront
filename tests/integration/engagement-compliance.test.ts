@@ -1,4 +1,4 @@
-import { describe, it, after } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
@@ -18,6 +18,29 @@ function testEmail(label: string): string {
 }
 
 describe("engagement compliance", () => {
+  let welcomeJourneyOriginalStatus: string | undefined;
+
+  before(async () => {
+    // F-070: welcome-series is now seeded DRAFT, not ACTIVE (an ACTIVE
+    // journey sends automatically once Brevo is enabled, so it should be
+    // reviewed first) — this suite's double opt-in tests below depend on
+    // it actually enrolling a confirmed subscriber, so force it ACTIVE for
+    // the duration of this suite and restore whatever it was afterward.
+    const journey = await db.customerJourney.findUnique({ where: { slug: "welcome-series" } });
+    welcomeJourneyOriginalStatus = journey?.status;
+    if (journey && journey.status !== "ACTIVE") {
+      await db.customerJourney.update({ where: { slug: "welcome-series" }, data: { status: "ACTIVE" } });
+    }
+  });
+
+  after(async () => {
+    if (welcomeJourneyOriginalStatus && welcomeJourneyOriginalStatus !== "ACTIVE") {
+      await db.customerJourney
+        .update({ where: { slug: "welcome-series" }, data: { status: welcomeJourneyOriginalStatus as never } })
+        .catch(() => {});
+    }
+  });
+
   after(async () => {
     if (testEmails.length > 0) {
       await db.journeyEvent.deleteMany({
@@ -97,6 +120,43 @@ describe("engagement compliance", () => {
       const subscriber = await db.newsletterSubscriber.findUnique({ where: { email } });
       await confirmNewsletterSubscriber(subscriber!.confirmToken!);
 
+      // F-070: welcome-series now seeds a single, immediate (delayHours: 0)
+      // step, so its own enrollment for this email completes the instant
+      // it's created — there's nothing left pending to cancel. Add a
+      // throwaway journey with a future step so there's a genuinely ACTIVE
+      // enrollment to exercise unsubscribeByToken's documented contract
+      // ("cancels every currently-ACTIVE JourneyEnrollment for that
+      // email") against, independent of any particular seeded journey's
+      // step count.
+      const testJourney = await db.customerJourney.create({
+        data: {
+          name: `Test Unsubscribe Journey ${randomUUID().slice(0, 8)}`,
+          slug: `test-unsubscribe-journey-${randomUUID().slice(0, 8)}`,
+          trigger: "test_unsubscribe_trigger",
+          status: "ACTIVE",
+        },
+      });
+      await db.journeyStep.create({
+        data: {
+          journeyId: testJourney.id,
+          sortOrder: 0,
+          name: "Future step",
+          delayHours: 24,
+          channel: "EMAIL",
+        },
+      });
+      await db.journeyEnrollment.create({
+        data: {
+          journeyId: testJourney.id,
+          email,
+          currentStep: 0,
+          context: "{}",
+          trigger: testJourney.trigger,
+          nextRunAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          status: "ACTIVE",
+        },
+      });
+
       const activeBefore = await db.journeyEnrollment.findFirst({
         where: { email, status: "ACTIVE" },
       });
@@ -122,6 +182,10 @@ describe("engagement compliance", () => {
       const second = await unsubscribeByToken(confirmedSubscriber!.unsubscribeToken);
       assert.equal(second.ok, true);
       if (second.ok) assert.equal(second.alreadyUnsubscribed, true);
+
+      await db.journeyEnrollment.deleteMany({ where: { journeyId: testJourney.id } });
+      await db.journeyStep.deleteMany({ where: { journeyId: testJourney.id } });
+      await db.customerJourney.delete({ where: { id: testJourney.id } });
     });
 
     it("rejects a malformed token without hitting the database", async () => {

@@ -93,4 +93,26 @@ describe("testimonials cache round trip", () => {
       "deleted testimonial should no longer appear in getTestimonials()",
     );
   });
+
+  // F-005: hiding/deleting every real testimonial used to bring back four
+  // hardcoded, invented clinicians (src/data/testimonials.ts, deleted) —
+  // readTestimonialsFromDb() returned that fallback array whenever there
+  // were 0 active rows. Assert those exact fabricated identities can never
+  // come back from getTestimonials(), regardless of how many real
+  // testimonials happen to be active when this runs.
+  it("never falls back to the old hardcoded fake testimonials", async () => {
+    const visible = await getTestimonials();
+    const formerlyHardcodedNames = [
+      "Dr. Amanda Lee",
+      "Nurse Priya Sharma",
+      "Dr. Marcus Chen",
+      "Dr. Sarah Okonkwo",
+    ];
+    for (const name of formerlyHardcodedNames) {
+      assert.ok(
+        !visible.some((t) => t.name === name),
+        `getTestimonials() should never return the old hardcoded fallback "${name}"`,
+      );
+    }
+  });
 });
