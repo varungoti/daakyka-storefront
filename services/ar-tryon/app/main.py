@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
+import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Literal
@@ -14,6 +16,8 @@ from app.compositor import (
     compose_tryon_from_urls,
     warmup_pose_model,
 )
+
+logger = logging.getLogger(__name__)
 
 CACHE: dict[str, str] = {}
 MAX_CACHE_ENTRIES = 128
@@ -34,16 +38,22 @@ app = FastAPI(
 
 
 def require_api_key(authorization: str | None = Header(default=None)) -> None:
-    """Optional bearer auth: enforced only when AR_TRYON_API_KEY is set,
-    so local `docker compose up -d ar-tryon` keeps working unauthenticated
-    behind a private network. Set it before exposing this service
-    publicly (e.g. a Railway deployment)."""
+    """Bearer auth is mandatory whenever this service is reachable — it has
+    no other network boundary of its own once deployed (Railway/Render).
+    Set AR_TRYON_ALLOW_UNAUTH=1 to run unauthenticated for local
+    `docker compose up -d ar-tryon` behind a private network only; never
+    set it on a public deployment."""
     expected = os.environ.get("AR_TRYON_API_KEY")
     if not expected:
-        return
+        if os.environ.get("AR_TRYON_ALLOW_UNAUTH") == "1":
+            return
+        raise HTTPException(status_code=401, detail="Unauthorized")
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    if authorization.removeprefix("Bearer ") != expected:
+    provided = authorization.removeprefix("Bearer ")
+    # Constant-time compare: a `!=` string compare leaks timing
+    # information proportional to the matching prefix length.
+    if not hmac.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
@@ -117,9 +127,15 @@ async def predict(payload: PredictRequest) -> PredictResponse:
             bottom_garment_url=str(payload.bottom_garment_url) if payload.bottom_garment_url else None,
         )
     except (UntrustedImageHostError, ImageTooLargeError) as exc:
+        # These messages are already generic (no URLs or decoder detail —
+        # see compositor.py), so it's safe to surface them to the caller.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        # Never leak decoder/httpx exception text (URLs, host info, stack
+        # detail) to callers — log it server-side and return a generic
+        # message instead.
+        logger.exception("AR try-on request failed")
+        raise HTTPException(status_code=422, detail="Image processing failed") from exc
 
     # Bound the in-memory cache — it has no eviction otherwise and this
     # process never restarts on its own.

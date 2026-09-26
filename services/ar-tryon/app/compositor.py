@@ -16,19 +16,32 @@ from PIL import Image
 _POSE: mp.solutions.pose.Pose | None = None
 
 # Kept in sync with storefront/src/lib/security/image-hosts.ts's
-# TRUSTED_IMAGE_HOSTS. The Next.js route already rejects an
-# untrusted topImageUrl/bottomImageUrl before it ever reaches this
-# service, but this service can also be called directly (it has no
-# auth requirement when AR_TRYON_API_KEY is unset), so it enforces the
-# same allowlist itself rather than trusting the caller.
+# TRUSTED_IMAGE_HOSTS (daakyka.com was dropped from that list on
+# 2026-09-20 — see the doc comment there — and removed from here to
+# match; cdn.shopify.com stays, since the storefront keeps it for when
+# live SKU photography moves there). The Next.js route already rejects
+# an untrusted topImageUrl/bottomImageUrl before it ever reaches this
+# service, but this service can also be called directly, so it enforces
+# the same allowlist itself rather than trusting the caller.
 ALLOWED_IMAGE_HOSTS = {
     "images.unsplash.com",
     "images.pexels.com",
-    "daakyka.com",
     "cdn.shopify.com",
 }
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+
+# Decoded-pixel cap, checked from the image header before the full pixel
+# buffer is ever allocated/decoded — the byte cap above only bounds the
+# compressed download; a small, highly-compressed image can still
+# decompress to gigabytes of raw BGR (a decompression bomb). ~25 MP is
+# comfortably above any garment/avatar photo this app handles (product
+# photography and Unsplash/Pexels portraits both top out well under
+# 6000x4000). Also set as Image.MAX_IMAGE_PIXELS so PIL enforces the same
+# cap (and raises Image.DecompressionBombError) if a probed image is ever
+# fully loaded elsewhere.
+MAX_IMAGE_PIXELS = 25_000_000
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
 
 
 class UntrustedImageHostError(ValueError):
@@ -42,7 +55,9 @@ class ImageTooLargeError(ValueError):
 def validate_image_url(url: str) -> None:
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.hostname not in ALLOWED_IMAGE_HOSTS:
-        raise UntrustedImageHostError(f"Image host is not allowed: {url}")
+        # No URL in the message — it can carry query params or internal
+        # hostnames a caller shouldn't get echoed back to them.
+        raise UntrustedImageHostError("Image host is not allowed")
 
 
 def get_pose_detector() -> mp.solutions.pose.Pose:
@@ -92,6 +107,26 @@ class TorsoBounds:
         return float(np.linalg.norm(np.array(self.shoulders_center) - np.array(self.hips_center)))
 
 
+def check_image_pixel_count(raw: bytes) -> None:
+    """Reject an image whose *decoded* size would exceed MAX_IMAGE_PIXELS,
+    checked from the header via PIL (which reads dimensions lazily,
+    without allocating the full pixel buffer) before cv2.imdecode ever
+    runs. Bounds a decompression-bomb style small-file/huge-buffer
+    attack that the byte cap in fetch_image_bgr doesn't cover."""
+    try:
+        with Image.open(io.BytesIO(raw)) as probe:
+            width, height = probe.size
+    except Image.DecompressionBombError as exc:
+        # PIL's own check (Image.MAX_IMAGE_PIXELS, set above) fires here
+        # for most oversized images before we even get to compare
+        # width*height ourselves.
+        raise ImageTooLargeError(f"Image dimensions exceed {MAX_IMAGE_PIXELS} pixels") from exc
+    except Exception as exc:
+        raise ValueError("Could not decode image") from exc
+    if width * height > MAX_IMAGE_PIXELS:
+        raise ImageTooLargeError(f"Image dimensions exceed {MAX_IMAGE_PIXELS} pixels")
+
+
 def fetch_image_bgr(url: str, timeout: float = 10.0) -> np.ndarray:
     validate_image_url(url)
     # follow_redirects=False: a redirect to an untrusted or internal host
@@ -101,20 +136,22 @@ def fetch_image_bgr(url: str, timeout: float = 10.0) -> np.ndarray:
             response.raise_for_status()
             content_length = response.headers.get("content-length")
             if content_length is not None and int(content_length) > MAX_IMAGE_BYTES:
-                raise ImageTooLargeError(f"Image exceeds {MAX_IMAGE_BYTES} bytes: {url}")
+                raise ImageTooLargeError(f"Image exceeds {MAX_IMAGE_BYTES} bytes")
 
             chunks: list[bytes] = []
             total = 0
             for chunk in response.iter_bytes():
                 total += len(chunk)
                 if total > MAX_IMAGE_BYTES:
-                    raise ImageTooLargeError(f"Image exceeds {MAX_IMAGE_BYTES} bytes: {url}")
+                    raise ImageTooLargeError(f"Image exceeds {MAX_IMAGE_BYTES} bytes")
                 chunks.append(chunk)
 
-        data = np.frombuffer(b"".join(chunks), dtype=np.uint8)
+        raw = b"".join(chunks)
+        check_image_pixel_count(raw)
+        data = np.frombuffer(raw, dtype=np.uint8)
         image = cv2.imdecode(data, cv2.IMREAD_COLOR)
         if image is None:
-            raise ValueError(f"Could not decode image from {url}")
+            raise ValueError("Could not decode image")
         return image
 
 

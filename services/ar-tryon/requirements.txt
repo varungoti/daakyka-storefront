@@ -1,8 +1,21 @@
-fastapi==0.115.6
+# fastapi/starlette/pydantic bumped together (F-305): fastapi 0.115.6
+# capped starlette below 0.42, missing fixes for CVE-2025-54121,
+# CVE-2025-62727 and CVE-2026-48710. Verified against this service's
+# actual usage (Depends/Header/HTTPException/BaseModel/HttpUrl) before
+# bumping.
+fastapi==0.141.1
 uvicorn[standard]==0.34.0
 httpx==0.28.1
-pydantic==2.10.4
+pydantic==2.13.5
 opencv-python-headless==4.10.0.84
+# mediapipe stays pinned here (still caps protobuf<5, CVE-2026-0994):
+# every 0.10.x release that lifts the protobuf cap (0.10.30+) also drops
+# the `mp.solutions.pose` API this service is built on — verified by
+# installing 0.10.32, which raises AttributeError on `mp.solutions`.
+# Bumping needs a rewrite onto MediaPipe's newer Tasks API, out of scope
+# for this hardening pass.
 mediapipe==0.10.14
 numpy>=1.26,<2
-Pillow==11.1.0
+# Pillow 11.1.0 had 12 advisories, incl. CVE-2026-25990 and
+# CVE-2026-59199 (F-305) — bumped to the current patched release.
+Pillow==12.3.0

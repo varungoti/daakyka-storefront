@@ -1,6 +1,6 @@
 # Local Hermes Agent
 
-Self-hosted marketing agent for DAAKYKA — **no external Hermes API key**. Uses Fireworks for LLM inference.
+Self-hosted marketing agent for DAAKYKA. Uses Fireworks for LLM inference.
 
 > **Production:** Prefer [HERMES_VERCEL.md](./HERMES_VERCEL.md) — Hermes runs inline on Vercel with `HERMES_RUNTIME_INLINE=1`.
 
@@ -8,21 +8,29 @@ Self-hosted marketing agent for DAAKYKA — **no external Hermes API key**. Uses
 
 ```bash
 cd services/hermes
-cp ../../.env.local .env   # must include FIREWORKS_API_KEY
+cp ../../.env.local .env   # must include FIREWORKS_API_KEY and HERMES_API_KEY
 npm install
 npm run dev
 ```
 
+`POST /tasks` requires `Authorization: Bearer $HERMES_API_KEY` — set the same
+value here and in the storefront's own env (it's what the storefront already
+sends as `HERMES_API_KEY` when calling out to `HERMES_LOCAL_URL`). Without it,
+every request gets a 401, including from the storefront itself. The server
+also binds to `127.0.0.1` by default (override with `HERMES_HOST` only if you
+specifically need it reachable from elsewhere).
+
 Or via Docker Compose from storefront root:
 
 ```bash
-FIREWORKS_API_KEY=fw_... docker compose up -d hermes
+FIREWORKS_API_KEY=fw_... HERMES_API_KEY=... docker compose up -d hermes
 ```
 
 ## Storefront config
 
 ```env
 HERMES_LOCAL_URL=http://localhost:8787
+HERMES_API_KEY=...   # must match the value the hermes service was started with
 HERMES_DEFAULT_MODE=SUGGEST_ONLY
 ```
 

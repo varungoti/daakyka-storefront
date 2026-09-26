@@ -1,12 +1,18 @@
+# Local dev only. Every published port below is bound to the host's
+# loopback interface (127.0.0.1:<port>:<port>, not the bare "<port>:<port>"
+# short form, which Docker publishes on 0.0.0.0 — every interface,
+# including the LAN) so these never become reachable from outside this
+# machine (F-306). Change a binding back to 0.0.0.0 only if a specific
+# workflow needs LAN access, and prefer scoping it to that one service.
 services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: daakyka
-      POSTGRES_PASSWORD: daakyka
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-daakyka}
       POSTGRES_DB: daakyka_dev
     volumes:
       - daakyka_pg_data:/var/lib/postgresql/data
@@ -15,16 +21,22 @@ services:
     build: ./services/hermes
     restart: unless-stopped
     ports:
-      - "8787:8787"
+      - "127.0.0.1:8787:8787"
     environment:
       HERMES_PORT: 8787
+      # 0.0.0.0 here is the container's own network namespace, not the
+      # host — Docker's port publishing (above) forwards to the
+      # container's interface, which a loopback-only bind inside the
+      # container wouldn't receive.
+      HERMES_HOST: 0.0.0.0
+      HERMES_API_KEY: ${HERMES_API_KEY:-}
       FIREWORKS_API_KEY: ${FIREWORKS_API_KEY:-}
 
   ar-tryon:
     build: ./services/ar-tryon
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       PORT: 8080
       AR_TRYON_API_KEY: ${AR_TRYON_API_KEY:-}
