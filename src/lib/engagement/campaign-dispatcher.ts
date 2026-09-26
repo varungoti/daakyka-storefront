@@ -197,8 +197,15 @@ export async function dispatchCampaign(campaignId: string): Promise<CampaignDisp
     where: { campaignId },
     select: { status: true },
   });
+  // F-212: a run that delivered to nobody — an empty segment, or every
+  // recipient lacking the channel's contact field — used to be marked
+  // SENT anyway (`allDeliveries.length === 0` counted as success). That
+  // hid the problem: the admin UI and the AdminNotification both reported
+  // it as a normal completed send. Report it as FAILED instead so it's
+  // visible and, for a SCHEDULED campaign, the cron's `status: SCHEDULED`
+  // filter stops re-selecting it once the true final status lands here.
   const everSent = allDeliveries.some((d) => d.status === "sent");
-  const finalStatus = allDeliveries.length === 0 || everSent ? "SENT" : "FAILED";
+  const finalStatus = everSent ? "SENT" : "FAILED";
 
   await db.adminNotification.create({
     data: {

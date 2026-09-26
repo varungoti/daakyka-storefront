@@ -2,6 +2,7 @@
 
 import type { CampaignStatus } from "@/generated/prisma/client";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 
 const nextStatuses: Record<CampaignStatus, CampaignStatus[]> = {
   DRAFT: ["PENDING_APPROVAL", "CANCELLED"],
@@ -18,6 +19,14 @@ const nextStatuses: Record<CampaignStatus, CampaignStatus[]> = {
   CANCELLED: ["DRAFT"],
 };
 
+interface CampaignPreview {
+  ready: boolean;
+  reason?: string;
+  recipientCount?: number;
+  channel?: string;
+  segmentName?: string | null;
+}
+
 export function CampaignStatusSelect({
   campaignId,
   currentStatus,
@@ -26,28 +35,109 @@ export function CampaignStatusSelect({
   currentStatus: CampaignStatus;
 }) {
   const router = useRouter();
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState<{ text: string; tone: "error" | "info" } | null>(null);
   const options = [currentStatus, ...nextStatuses[currentStatus]];
 
   const updateStatus = async (status: CampaignStatus) => {
-    await fetch(`/api/admin/campaigns/${campaignId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
-    router.refresh();
+    setPending(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/admin/campaigns/${campaignId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        // F-212: this used to be dropped on the floor, so a failed send
+        // (missing template, already-sending, etc.) looked identical to a
+        // successful one — the select just snapped back with no message.
+        setMessage({ text: data?.error ?? "Couldn't update this campaign.", tone: "error" });
+        return;
+      }
+      // F-212: report what dispatch actually did instead of leaving the
+      // admin to guess. route.ts only attaches `dispatch` on the SENT path.
+      const dispatch = data?.dispatch as
+        | { sent: number; failed: number; stub: number; skipped: number; total: number }
+        | undefined;
+      if (dispatch) {
+        setMessage({
+          text: `Sent: ${dispatch.sent} delivered, ${dispatch.failed} failed, ${dispatch.stub} stub, ${dispatch.skipped} skipped (${dispatch.total} recipients).`,
+          tone: dispatch.sent > 0 ? "info" : "error",
+        });
+      }
+      router.refresh();
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const handleChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const next = event.target.value as CampaignStatus;
+
+    if (next === "SENT") {
+      // F-212: sending is irreversible and reaches real customers, so this
+      // is the one transition that needs a confirmation with a real
+      // recipient count in front of it, not an instant dispatch on select.
+      setMessage(null);
+      let preview: CampaignPreview | null = null;
+      try {
+        const res = await fetch(`/api/admin/campaigns/${campaignId}/preview`);
+        preview = await res.json();
+      } catch {
+        preview = null;
+      }
+
+      if (!preview || !preview.ready) {
+        event.target.value = currentStatus;
+        setMessage({ text: preview?.reason ?? "Couldn't check recipients for this campaign.", tone: "error" });
+        return;
+      }
+
+      if (!preview.recipientCount) {
+        event.target.value = currentStatus;
+        setMessage({
+          text: `"${preview.segmentName ?? "This segment"}" has no eligible recipients to send to.`,
+          tone: "error",
+        });
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `Send this campaign now to ${preview.recipientCount} recipient${preview.recipientCount === 1 ? "" : "s"} via ${preview.channel}? This cannot be undone.`,
+      );
+      if (!confirmed) {
+        event.target.value = currentStatus;
+        return;
+      }
+    }
+
+    await updateStatus(next);
   };
 
   return (
-    <select
-      value={currentStatus}
-      onChange={(e) => updateStatus(e.target.value as CampaignStatus)}
-      className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold uppercase outline-none focus:border-brand"
-    >
-      {options.map((status) => (
-        <option key={status} value={status}>
-          {status.replace("_", " ")}
-        </option>
-      ))}
-    </select>
+    <div>
+      <select
+        value={currentStatus}
+        onChange={handleChange}
+        disabled={pending}
+        className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold uppercase outline-none focus:border-brand disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        {options.map((status) => (
+          <option key={status} value={status}>
+            {status.replace("_", " ")}
+          </option>
+        ))}
+      </select>
+      {message && (
+        <p
+          role="alert"
+          className={`mt-1 max-w-xs text-xs ${message.tone === "error" ? "text-red-600" : "text-muted"}`}
+        >
+          {message.text}
+        </p>
+      )}
+    </div>
   );
 }

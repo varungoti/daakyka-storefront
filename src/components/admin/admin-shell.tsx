@@ -189,6 +189,32 @@ function NavLinks({
   );
 }
 
+/** F-160: the Sign Out control and role label, shared between the desktop
+ * sidebar and the mobile drawer so a phone/tablet admin (below `lg`, where
+ * the sidebar is `display:none`) has the same way out of a 7-day session
+ * that desktop always had. */
+function AdminAccountFooter({
+  role,
+  onLogout,
+}: {
+  role: SessionUser["role"];
+  onLogout: () => void;
+}) {
+  return (
+    <div>
+      <p className="px-3 text-xs text-muted">{formatRole(role)}</p>
+      <button
+        type="button"
+        onClick={onLogout}
+        className="mt-2 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted hover:bg-red-50 hover:text-red-600"
+      >
+        <LogOut size={18} />
+        Sign Out
+      </button>
+    </div>
+  );
+}
+
 /** Full-screen mobile nav drawer (shown below `lg`, where the sidebar is
  * hidden). Traps focus while open, closes on Escape, and returns focus to
  * the hamburger trigger on close. */
@@ -198,12 +224,16 @@ function MobileNavDrawer({
   groups,
   pathname,
   unreadNotifications,
+  role,
+  onLogout,
 }: {
   open: boolean;
   onClose: () => void;
   groups: NavGroup[];
   pathname: string;
   unreadNotifications: number;
+  role: SessionUser["role"];
+  onLogout: () => void;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -269,6 +299,9 @@ function MobileNavDrawer({
           </button>
         </div>
         <NavLinks groups={groups} pathname={pathname} onNavigate={onClose} unreadNotifications={unreadNotifications} />
+        <div className="mt-8 border-t border-border pt-4">
+          <AdminAccountFooter role={role} onLogout={onLogout} />
+        </div>
       </div>
     </div>
   );
@@ -293,7 +326,13 @@ export function AdminShell({
     // needs protecting from too — it's not a <Link>, so it isn't covered
     // by GuardedLink's onNavigate check.
     if (!confirmLeave()) return;
-    await fetch("/api/auth/logout", { method: "POST" });
+    // F-160: close the drawer once the sign-out is actually proceeding (not
+    // before confirmLeave, so a cancelled prompt leaves the drawer open) —
+    // its cleanup restores document.body's scroll lock, and it keeps the
+    // drawer from lingering, half-visible, during the redirect.
+    setDrawerOpen(false);
+    const res = await fetch("/api/auth/logout", { method: "POST" });
+    if (!res.ok) return;
     router.push("/admin/login");
     router.refresh();
   };
@@ -312,18 +351,15 @@ export function AdminShell({
           <GuardedLink href="/admin/dashboard" className="font-display text-xl font-extrabold text-brand">
             DAAKYKA Admin
           </GuardedLink>
-          <p className="mt-1 text-xs text-muted">{formatRole(user.role)}</p>
 
+          {/* F-160: role label moved into AdminAccountFooter below, next to
+              Sign Out, so it isn't duplicated once the mobile drawer shows
+              the same footer. */}
           <NavLinks groups={visibleGroups} pathname={pathname} unreadNotifications={unreadNotifications} />
 
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="mt-8 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted hover:bg-red-50 hover:text-red-600"
-          >
-            <LogOut size={18} />
-            Sign Out
-          </button>
+          <div className="mt-8">
+            <AdminAccountFooter role={user.role} onLogout={handleLogout} />
+          </div>
         </aside>
 
         <MobileNavDrawer
@@ -332,6 +368,8 @@ export function AdminShell({
           groups={visibleGroups}
           pathname={pathname}
           unreadNotifications={unreadNotifications}
+          role={user.role}
+          onLogout={handleLogout}
         />
 
         {/* F-05 (docs/audit-2026-09-19/admin-ux.md): `min-w-0` is required

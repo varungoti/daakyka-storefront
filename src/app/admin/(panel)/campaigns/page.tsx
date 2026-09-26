@@ -20,7 +20,12 @@ export default async function CampaignsPage() {
       <div>
         <h1 className="font-display text-3xl font-bold text-ink">Campaign Planner</h1>
         <p className="text-muted">
-          Draft campaigns require approval before send — no messages are dispatched automatically yet.
+          {/* F-212: this used to claim nothing sends automatically, but
+              picking SENT here dispatches immediately, and the daily cron
+              sends anything SCHEDULED. */}
+          Draft campaigns require approval before they can send. Picking SENT below dispatches to the
+          segment right away — you&apos;ll be asked to confirm the recipient count first. Scheduled
+          campaigns send automatically at their scheduled time.
         </p>
       </div>
 

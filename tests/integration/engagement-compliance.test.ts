@@ -5,8 +5,9 @@ import { db } from "@/lib/db";
 import { subscribeToNewsletter, confirmNewsletterSubscriber } from "@/lib/engagement/newsletter";
 import { unsubscribeByToken, isValidUnsubscribeToken } from "@/lib/engagement/unsubscribe";
 import { resolveSegmentRecipients } from "@/lib/engagement/segment-resolver";
-import { claimCampaignForSending } from "@/lib/engagement/campaign-dispatcher";
+import { claimCampaignForSending, dispatchCampaign } from "@/lib/engagement/campaign-dispatcher";
 import { claimCronRun } from "@/lib/cron/idempotency";
+import { GET as getCampaignPreview } from "@/app/api/admin/campaigns/[id]/preview/route";
 
 const testEmails: string[] = [];
 
@@ -284,6 +285,72 @@ describe("engagement compliance", () => {
       await db.campaign.delete({ where: { id: campaign.id } });
       await db.messageTemplate.delete({ where: { id: template.id } });
       await db.customerSegment.delete({ where: { id: segment.id } });
+    });
+  });
+
+  describe("campaign dispatch reporting (F-212)", () => {
+    it("a send with no eligible recipients is reported FAILED, not silently marked SENT", async () => {
+      const segment = await db.customerSegment.create({
+        data: {
+          name: "Test Empty Segment",
+          slug: `test-marketing-seg-empty-${randomUUID().slice(0, 8)}`,
+          // {} matches none of resolveSegmentRecipients' branches, so this
+          // always resolves to zero recipients regardless of seeded data.
+          criteria: JSON.stringify({}),
+        },
+      });
+      const template = await db.messageTemplate.create({
+        data: { name: "Test Empty Segment Template", channel: "EMAIL", subject: "Test", body: "Hi" },
+      });
+      const campaign = await db.campaign.create({
+        data: {
+          name: `Test Empty Segment Campaign ${randomUUID().slice(0, 8)}`,
+          channel: "EMAIL",
+          status: "APPROVED",
+          segmentId: segment.id,
+          templateId: template.id,
+        },
+      });
+
+      const result = await dispatchCampaign(campaign.id);
+      assert.equal(result.total, 0);
+      assert.equal(result.sent, 0);
+
+      // Before this fix, a zero-recipient run left the campaign SENT —
+      // indistinguishable from a real, successful send.
+      const reloaded = await db.campaign.findUnique({ where: { id: campaign.id } });
+      assert.equal(reloaded?.status, "FAILED");
+
+      const deliveries = await db.campaignDelivery.findMany({ where: { campaignId: campaign.id } });
+      assert.equal(deliveries.length, 0);
+
+      const notification = await db.adminNotification.findFirst({
+        where: { type: "campaign_dispatch", title: { contains: campaign.name } },
+        orderBy: { createdAt: "desc" },
+      });
+      assert.ok(notification, "expected a campaign_dispatch AdminNotification");
+      assert.match(notification!.title, /failed/i);
+
+      if (notification) await db.adminNotification.delete({ where: { id: notification.id } });
+      await db.campaign.delete({ where: { id: campaign.id } });
+      await db.messageTemplate.delete({ where: { id: template.id } });
+      await db.customerSegment.delete({ where: { id: segment.id } });
+    });
+  });
+
+  describe("GET /api/admin/campaigns/[id]/preview without a session", () => {
+    it("rejects with 401 when the route handler is called directly with no session", async () => {
+      // Same "mock nothing" auth-less check as tests/integration/site-settings.test.ts —
+      // calling the handler directly outside a real Next.js request means
+      // requireAdminPermission's getSession() fails closed.
+      const request = new Request("http://localhost/api/admin/campaigns/does-not-matter/preview");
+      const response = await getCampaignPreview(request, {
+        params: Promise.resolve({ id: "does-not-matter" }),
+      });
+      assert.ok(
+        response.status === 401 || response.status === 403,
+        `expected 401 or 403, got ${response.status}`,
+      );
     });
   });
 

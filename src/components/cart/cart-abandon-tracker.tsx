@@ -19,7 +19,15 @@ export function CartAbandonTracker() {
       if (current.totalQuantity === 0) return;
 
       const fingerprint = `${current.id}-${current.totalQuantity}-${current.subtotal}`;
-      if (sessionStorage.getItem(ABANDON_KEY) === fingerprint) return;
+      // F-104: this runs in a visibilitychange handler, so a thrown
+      // SecurityError (storage blocked) can't reach a React error boundary
+      // — but it would still spam the console and skip the beacon.
+      try {
+        if (sessionStorage.getItem(ABANDON_KEY) === fingerprint) return;
+      } catch {
+        // Storage blocked — fall through and send; we just lose the
+        // once-per-fingerprint dedupe for this session.
+      }
 
       const payload = JSON.stringify({
         cartId: current.id,
@@ -31,8 +39,14 @@ export function CartAbandonTracker() {
         })),
       });
 
-      navigator.sendBeacon("/api/cart/abandon", new Blob([payload], { type: "application/json" }));
-      sessionStorage.setItem(ABANDON_KEY, fingerprint);
+      if (typeof navigator.sendBeacon === "function") {
+        navigator.sendBeacon("/api/cart/abandon", new Blob([payload], { type: "application/json" }));
+      }
+      try {
+        sessionStorage.setItem(ABANDON_KEY, fingerprint);
+      } catch {
+        // Ignore — see the read above.
+      }
     };
 
     const onVisibility = () => {

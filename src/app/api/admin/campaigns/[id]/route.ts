@@ -51,12 +51,15 @@ export async function PATCH(request: Request, { params }: RouteParams) {
         entityId: id,
         metadata: { ...dispatchResult },
       });
-      return NextResponse.json(
-        await db.campaign.findUnique({
-          where: { id },
-          include: { segment: true, template: true },
-        }),
-      );
+      const campaign = await db.campaign.findUnique({
+        where: { id },
+        include: { segment: true, template: true },
+      });
+      // F-212: the client needs the dispatch counts (delivered/failed/
+      // skipped/stub) to show the admin what actually happened — it used
+      // to get only the campaign row back and had no way to report a
+      // result.
+      return NextResponse.json({ ...campaign, dispatch: dispatchResult });
     } catch (dispatchError) {
       return NextResponse.json(
         {
