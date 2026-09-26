@@ -188,6 +188,52 @@ describe("validation schemas", () => {
     assert.equal(result.success, false);
   });
 
+  // F-081: bcrypt truncates at 72 *bytes*. A password made of multi-byte
+  // characters can exceed that well under 72 or even 200 characters, so
+  // password-setting fields must check byte length, not just .max().
+  it("accepts a 72-byte ASCII password (exactly at the bcrypt truncation point)", () => {
+    const result = customerRegisterSchema.safeParse({
+      name: "Priya Sharma",
+      email: "priya@example.com",
+      password: "a".repeat(72),
+      consentGiven: true,
+    });
+    assert.equal(result.success, true);
+  });
+
+  it("rejects a password over 72 bytes even when under the character max", () => {
+    const result = customerRegisterSchema.safeParse({
+      name: "Priya Sharma",
+      email: "priya@example.com",
+      password: "a".repeat(73),
+      consentGiven: true,
+    });
+    assert.equal(result.success, false);
+  });
+
+  it("rejects a multi-byte password that exceeds 72 bytes despite fewer than 72 characters", () => {
+    // Each "😀" is 4 UTF-8 bytes; 20 of them is 80 bytes but only 20 chars
+    // (well under the 8-char minimum concern and far under any char cap).
+    const result = customerRegisterSchema.safeParse({
+      name: "Priya Sharma",
+      email: "priya@example.com",
+      password: "\u{1F600}".repeat(20),
+      consentGiven: true,
+    });
+    assert.equal(result.success, false);
+  });
+
+  it("still allows an existing account with a long password to log in (loginSchema is not byte-capped)", () => {
+    // loginSchema checks a password against an existing hash rather than
+    // setting one, so it must not reject an account whose password
+    // predates the 72-byte cap.
+    const result = loginSchema.safeParse({
+      email: "varungoti@gmail.com",
+      password: "a".repeat(150),
+    });
+    assert.equal(result.success, true);
+  });
+
   it("accepts a bare email for forgot-password", () => {
     const result = customerForgotPasswordSchema.safeParse({ email: "priya@example.com" });
     assert.equal(result.success, true);

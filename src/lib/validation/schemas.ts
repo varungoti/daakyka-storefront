@@ -32,6 +32,26 @@ function indianPhoneField(message: string = INDIAN_PHONE_HINT) {
     });
 }
 
+/**
+ * F-081: bcrypt silently truncates its input at 72 *bytes*, not
+ * characters — a password with multi-byte characters (emoji, most non-Latin
+ * scripts) can hit that limit well under 72 characters, so a plain
+ * `.max(72)` on the string's length isn't the right check. Used only on
+ * fields that actually set/change a password (register, reset, profile
+ * change); `loginSchema.password` deliberately keeps its wider max(200) so
+ * an existing account whose password predates this cap can still log in —
+ * bcrypt itself still only ever compares the first 72 bytes either way.
+ */
+function newPasswordField(message: string = "Password must be at least 8 characters") {
+  return z
+    .string()
+    .min(8, message)
+    .max(200)
+    .refine((value) => Buffer.byteLength(value, "utf8") <= 72, {
+      message: "Password must be at most 72 bytes (bcrypt truncates beyond that)",
+    });
+}
+
 function indianPincodeField(message: string = INDIAN_PINCODE_HINT) {
   return z
     .string()
@@ -142,9 +162,14 @@ export type BulkOrderInput = z.infer<typeof bulkOrderSchema>;
 
 export const loginSchema = z.object({
   email: z.string().email().max(254),
-  // bcrypt silently truncates input past 72 bytes; capping well under
-  // that (and under a reasonable password-manager-generated length)
-  // also blocks a trivial large-payload DoS against the hashing step.
+  // F-081: this checks a password against an *existing* hash, not sets
+  // one, so it deliberately does NOT byte-cap at bcrypt's 72-byte
+  // truncation point the way newPasswordField() does below — an account
+  // whose password predates that cap (or has multi-byte characters
+  // pushing it past 72 bytes at fewer than 72 characters) must still be
+  // able to log in. bcrypt itself only ever compares the first 72 bytes
+  // regardless of what's sent; max(200) here just blocks a large-payload
+  // DoS against the hashing step.
   password: z.string().min(8).max(200),
 });
 
@@ -307,10 +332,10 @@ const customerPhoneSchema = indianPhoneField();
 export const customerRegisterSchema = z.object({
   name: customerNameSchema,
   email: z.string().email().max(254),
-  // Matches loginSchema's bounds: >=8 for a real password rule, <=200 to
-  // stay well under bcrypt's 72-byte truncation point and block a
-  // large-payload DoS against the hashing step.
-  password: z.string().min(8, "Password must be at least 8 characters").max(200),
+  // See newPasswordField's doc comment: this actually sets the account's
+  // password, so it's byte-capped at bcrypt's 72-byte truncation point
+  // (loginSchema.password is not, so existing accounts can still log in).
+  password: newPasswordField(),
   phone: customerPhoneSchema.optional(),
   consentGiven: z
     .boolean()
@@ -323,7 +348,7 @@ export const customerForgotPasswordSchema = z.object({
 
 export const customerResetPasswordSchema = z.object({
   token: z.string().min(16).max(512),
-  newPassword: z.string().min(8, "Password must be at least 8 characters").max(200),
+  newPassword: newPasswordField(),
 });
 
 export const customerVerifyEmailSchema = z.object({
@@ -337,9 +362,11 @@ export const customerProfileUpdateSchema = z
     // Optional password-change sub-form on the Profile tab, reusing the
     // same bounds as customerResetPasswordSchema's newPassword. Changing
     // the password this way (while already logged in) requires the
-    // current password rather than a reset token.
+    // current password rather than a reset token. currentPassword is
+    // checked against the existing hash, not set as a new one, so it
+    // keeps the wider max(200) rather than the 72-byte cap.
     currentPassword: z.string().min(1).max(200).optional(),
-    newPassword: z.string().min(8, "Password must be at least 8 characters").max(200).optional(),
+    newPassword: newPasswordField().optional(),
   })
   .refine((data) => !data.newPassword || !!data.currentPassword, {
     message: "Current password is required to set a new password",
