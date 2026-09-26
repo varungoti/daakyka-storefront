@@ -213,7 +213,7 @@ describe("F-01: guest checkout never mints a fabricated Customer", () => {
 });
 
 describe("F-01: claiming prior guest orders on registration", () => {
-  it("linkGuestOrdersToCustomer attaches a PROCESSING guest order so it counts toward spend and verifiedPurchase", async () => {
+  it("linkGuestOrdersToCustomer attaches a PROCESSING guest order so it counts toward orderCount and verifiedPurchase", async () => {
     const { product, variant } = await createActiveProductWithVariant();
     const unique = randomUUID().slice(0, 8);
     const email = `claim-flow-${unique}@example.com`;
@@ -221,8 +221,11 @@ describe("F-01: claiming prior guest orders on registration", () => {
 
     // Placed as a guest, before any account existed — ORDER_REQUEST orders
     // go straight to PROCESSING (see create-order.ts), which already
-    // counts as "purchased" for both spend (admin-customers.ts) and
-    // verifiedPurchase (reviews/eligibility.ts).
+    // counts as "purchased" for both orderCount (admin-customers.ts) and
+    // verifiedPurchase (reviews/eligibility.ts). It does NOT yet count
+    // toward totalSpent — F-198 fixed admin-customers.ts so an
+    // ORDER_REQUEST order only becomes revenue once it has actually
+    // SHIPPED or DELIVERED (see the totalSpent assertion below).
     const guestOrder = await createOrderFromCart({
       items: [{ variantId: variant.id, quantity: 1 }],
       email,
@@ -251,7 +254,16 @@ describe("F-01: claiming prior guest orders on registration", () => {
 
     const detail = await getCustomerForAdmin(customer.id);
     assert.equal(detail.orderCount, 1);
-    assert.equal(detail.totalSpent, Number(guestOrder.total));
+    // F-198 fix (release-hardening admin-rbac-integrations): "Total spent"
+    // used to count a PROCESSING order as revenue for every order, but a
+    // PROCESSING *ORDER_REQUEST* order is unpaid (see create-order.ts) —
+    // that was the exact bug F-198 fixed. isRevenueOrder now only counts
+    // an ORDER_REQUEST order once it has actually SHIPPED or DELIVERED, so
+    // this still-PROCESSING claimed guest order correctly contributes 0,
+    // even though it does still count toward orderCount above. This
+    // assertion used to read `Number(guestOrder.total)`, asserting the
+    // exact pre-fix behaviour.
+    assert.equal(detail.totalSpent, 0);
 
     const review = await createReview({
       customerId: customer.id,
@@ -387,7 +399,10 @@ describe("F-01/F-037: the routes that claim guest orders only do so once the ema
     // And it lands where a shopper or admin would actually look for it.
     const detail = await getCustomerForAdmin(customer!.id);
     assert.equal(detail.orderCount, 1);
-    assert.equal(detail.totalSpent, Number(guestOrder.total));
+    // F-198 fix: see the matching comment above — a still-PROCESSING
+    // ORDER_REQUEST order isn't revenue yet, so totalSpent is 0 even
+    // though the order does count toward orderCount.
+    assert.equal(detail.totalSpent, 0);
   });
 
   it("POST /api/account/login claims a guest order placed after the account already existed, once verified", async () => {
