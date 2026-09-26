@@ -171,6 +171,22 @@ describe("catalog (Phase B3 + E1) integration", () => {
       assert.ok(corporate, "expected the hidden corporate-uniforms category to still be in the tree");
       assert.equal(corporate!.showInMenu, false);
     });
+
+    // release-hardening audit F-097: Category.description is rendered
+    // verbatim as both the /category/corporate-uniforms hero copy and its
+    // <meta description> (see src/app/category/[slug]/page.tsx) — it used
+    // to be an admin instruction ("toggle on in site controls to list in
+    // the menu"), not customer-facing text.
+    it("corporate-uniforms' public description is customer-facing, not an internal admin note (F-097)", async () => {
+      const tree = await getCategoryTree();
+      const corporate = tree.find((c) => c.slug === "corporate-uniforms");
+      assert.ok(corporate, "expected the corporate-uniforms category to exist");
+      assert.ok(corporate!.description, "expected a non-empty description");
+      assert.ok(
+        !/toggle|site controls|admin/i.test(corporate!.description!),
+        `description still reads like an admin note: "${corporate!.description}"`,
+      );
+    });
   });
 
   describe("deactivating a parent category hides its still-active child (F-099)", () => {
