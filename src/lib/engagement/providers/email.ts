@@ -26,7 +26,13 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     return {
       ok: false,
       provider: "stub",
-      error: "Brevo not enabled or not configured — email queued in stub mode",
+      // F-264 fix: this used to say "queued in stub mode", which is only
+      // true for a caller that actually persists the attempt (see
+      // sendTransactionalEmail in outbox.ts). Callers that send directly
+      // (sendMarketingEmail, and the pre-fix newsletter confirmation email)
+      // queue nothing — nothing is retried, so the message must not claim
+      // otherwise.
+      error: "Brevo not enabled or not configured — email not sent",
     };
   }
 
@@ -53,6 +59,13 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
         textContent: input.text ?? input.html.replace(/<[^>]+>/g, ""),
         ...(input.headers ? { headers: input.headers } : {}),
       }),
+      // F-269 fix: an unbounded fetch here used to let a slow/hung Brevo
+      // endpoint hold checkout, payment-verify and registration responses
+      // open indefinitely (those routes await sendTransactionalEmail before
+      // responding). A timeout turns that into a normal PENDING outbox row
+      // (see sendTransactionalEmail in outbox.ts) instead of an indefinite
+      // hang.
+      signal: AbortSignal.timeout(8_000),
     });
 
     if (!response.ok) {

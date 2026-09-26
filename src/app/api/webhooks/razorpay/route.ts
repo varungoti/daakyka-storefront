@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { extractGuestName } from "@/lib/orders/admin-orders";
 import { notifyNewOrder } from "@/lib/orders/notify";
 import { markRazorpayOrderPaid, releaseOrderInventory } from "@/lib/orders/payment-transitions";
 import { verifyWebhookSignature } from "@/lib/payments/razorpay";
@@ -138,6 +139,10 @@ async function handlePaymentCaptured(payment: { id?: string; order_id?: string }
     fallback: false,
     // F-283 fix — see the identical comment in checkout/verify/route.ts.
     stockConflict: stockConflict || undefined,
+    // F-073 fix: lets notifyNewOrder enroll this order in the
+    // "order_created" post-purchase journey with a real phone/name.
+    phone: order.phone ?? undefined,
+    firstName: extractGuestName(order.shippingAddress)?.split(" ")[0],
   }).catch(() => undefined);
 }
 

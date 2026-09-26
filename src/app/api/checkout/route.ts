@@ -132,6 +132,10 @@ export async function POST(request: Request) {
         currency: order.currency,
         fallback: true,
         orderToken: order.accessToken,
+        // F-073 fix: lets notifyNewOrder enroll this order in the
+        // "order_created" post-purchase journey with a real phone/name.
+        phone,
+        firstName: shippingAddress.name.trim().split(" ")[0],
       }).catch(() => undefined);
 
       return NextResponse.json({ orderNumber: order.number, orderToken: order.accessToken, fallback: true });

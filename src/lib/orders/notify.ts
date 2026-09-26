@@ -1,6 +1,8 @@
+import { brand } from "@/data/brand";
 import { db } from "@/lib/db";
 import type { PaymentMethod } from "@/generated/prisma/client";
 import { EMAIL_KIND, sendTransactionalEmail, type EmailKind } from "@/lib/engagement/outbox";
+import { triggerJourneys } from "@/lib/engagement/journey-triggers";
 import { getCourierTrackingUrl } from "@/lib/orders/courier-tracking";
 import { getSetting } from "@/lib/settings";
 
@@ -58,6 +60,19 @@ export interface NotifyNewOrderInput {
    * hits this conflict in the first place.
    */
   stockConflict?: boolean;
+  /**
+   * F-073 fix: the order's contact phone and shopper name (from
+   * Order.phone / the shippingAddress the caller already has) — passed
+   * through so the seeded "Post-Purchase Journey" (trigger `order_created`)
+   * actually gets enrolled for this store's own orders, not only for the
+   * legacy Shopify order webhook (see src/app/api/webhooks/shopify/orders/
+   * route.ts, the only other `order_created` trigger site). Both optional:
+   * a caller that doesn't have them (there are none today, but a future
+   * one might) just means the journey enrolls with whatever it has, same
+   * as triggerJourneys already tolerates from its other call sites.
+   */
+  phone?: string;
+  firstName?: string;
 }
 
 function formatAmount(total: number, currency: string): string {
@@ -76,10 +91,15 @@ function buildOrderConfirmationUrl(orderNumber: string, orderToken: string): str
 }
 
 export async function notifyNewOrder(input: NotifyNewOrderInput): Promise<void> {
-  const { orderNumber, email, total, currency, fallback, orderToken, stockConflict } = input;
+  const { orderNumber, email, total, currency, fallback, orderToken, stockConflict, phone, firstName } = input;
   const amount = formatAmount(total, currency);
   const orderLink = orderToken ? buildOrderConfirmationUrl(orderNumber, orderToken) : null;
   const orderLinkHtml = orderLink ? `<p><a href="${orderLink}">View your order</a></p>` : "";
+  // F-125: no page/email in the money path stated whether prices include
+  // tax, or named the seller/GSTIN. GSTIN is left out entirely (not a
+  // placeholder) until the owner has actually registered and entered one.
+  const gstin = await getSetting("legal.gstin");
+  const taxFooterHtml = `<p style="color:#6b6475;font-size:12px;">Prices are inclusive of all taxes. Sold by ${brand.legalName}${gstin ? ` &middot; GSTIN ${gstin}` : ""}.</p>`;
 
   try {
     const result = await sendTransactionalEmail(
@@ -90,14 +110,16 @@ export async function notifyNewOrder(input: NotifyNewOrderInput): Promise<void> 
           : fallback
             ? `We received your order ${orderNumber}`
             : `Payment received — order ${orderNumber}`,
-        html: stockConflict
-          ? // F-283 fix: never claim "we'll let you know as soon as it
-            // ships" when a line actually lost the stock race — that's a
-            // real risk of promising something we can't fulfil.
-            `<p>Your payment for order <strong>${orderNumber}</strong> (${amount}) was received, but one or more items in this order sold out just before your payment completed. Our team will contact you shortly about a refund for the affected item(s) or a replacement.</p>${orderLinkHtml}`
-          : fallback
-            ? `<p>Thanks for your order <strong>${orderNumber}</strong> (${amount}). Our team will contact you shortly to confirm payment and delivery.</p>${orderLinkHtml}`
-            : `<p>Your payment for order <strong>${orderNumber}</strong> (${amount}) was received. We'll let you know as soon as it ships.</p>${orderLinkHtml}`,
+        html:
+          (stockConflict
+            ? // F-283 fix: never claim "we'll let you know as soon as it
+              // ships" when a line actually lost the stock race — that's a
+              // real risk of promising something we can't fulfil.
+              `<p>Your payment for order <strong>${orderNumber}</strong> (${amount}) was received, but one or more items in this order sold out just before your payment completed. Our team will contact you shortly about a refund for the affected item(s) or a replacement.</p>${orderLinkHtml}`
+            : fallback
+              ? `<p>Thanks for your order <strong>${orderNumber}</strong> (${amount}). Our team will contact you shortly to confirm payment and delivery.</p>${orderLinkHtml}`
+              : `<p>Your payment for order <strong>${orderNumber}</strong> (${amount}) was received. We'll let you know as soon as it ships.</p>${orderLinkHtml}`) +
+          taxFooterHtml,
       },
       EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER,
     );
@@ -149,6 +171,28 @@ export async function notifyNewOrder(input: NotifyNewOrderInput): Promise<void> 
     });
   } catch (error) {
     console.log(`[orders/notify] admin notification create failed for ${orderNumber}:`, error);
+  }
+
+  // F-073 fix: this used to be the one thing missing for this store's own
+  // orders — every triggerJourneys() call site was a form (newsletter,
+  // bulk-orders, contact, cart/abandon) or the legacy Shopify order
+  // webhook, so the seeded "Post-Purchase Journey" (trigger `order_created`,
+  // shown as ACTIVE in /admin/engagement and referenced by /admin/reputation
+  // and the launch docs) never actually enrolled a real customer. Own
+  // try/catch, like every other step in this function: a journey failure
+  // must never affect the checkout/verify/webhook response that already
+  // did the important work.
+  //
+  // enrollInJourney (journey-engine.ts) only dedupes by "no ACTIVE
+  // enrollment for this email in this journey", not by order number — a
+  // customer whose previous order's enrollment is still ACTIVE (this
+  // journey's last step is +720h) won't be re-enrolled for a second order
+  // placed within that window. Accepted trade-off (see F-073's own fix
+  // guidance) rather than a schema change to dedupe on order number.
+  try {
+    await triggerJourneys("order_created", { email, phone, firstName });
+  } catch (error) {
+    console.log(`[orders/notify] order_created journey trigger failed for ${orderNumber}:`, error);
   }
 }
 

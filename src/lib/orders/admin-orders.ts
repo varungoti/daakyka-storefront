@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
-import type { Order, OrderItem, OrderStatus, PaymentMethod } from "@/generated/prisma/client";
+import type { Order, OrderStatus, PaymentMethod } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
 import { assertValidOrderStatusTransition, orderStatusTimestampField } from "@/lib/orders/status-transitions";
 import { buildOrdersCsv, type OrderCsvRow } from "@/lib/orders/csv";
@@ -34,7 +34,7 @@ import { notifyOrderStatusChange } from "@/lib/orders/notify";
  * tell a real account from a guest). Written defensively against
  * malformed/legacy JSON — never throws, just falls back to `null`.
  */
-function extractGuestName(shippingAddress: unknown): string | null {
+export function extractGuestName(shippingAddress: unknown): string | null {
   if (!shippingAddress || typeof shippingAddress !== "object") return null;
   const name = (shippingAddress as { name?: unknown }).name;
   return typeof name === "string" && name.trim() ? name.trim() : null;
@@ -310,7 +310,19 @@ export async function exportOrdersCsv(
 
 const ORDER_DETAIL_INCLUDE = {
   customer: { select: { id: true, name: true, email: true } },
-  items: { orderBy: { createdAt: "asc" } },
+  items: {
+    orderBy: { createdAt: "asc" },
+    // release-hardening F-195: OrderItem itself has no HSN snapshot (that
+    // would need a schema migration this package can't make — see
+    // src/app/admin/(panel)/orders/[id]/invoice/page.tsx's own comment),
+    // so the invoice reads the *current* product's HSN through the
+    // variant it was ordered from. A best-effort join, not a historical
+    // snapshot: if the product's HSN is edited after this order shipped,
+    // an older invoice reprint shows the new code. Acceptable for a first
+    // pass — flagged as a follow-up once OrderItem gets a real tax
+    // snapshot.
+    include: { variant: { include: { product: { select: { hsnCode: true } } } } },
+  },
 } satisfies Prisma.OrderInclude;
 
 export type OrderDetailRow = Prisma.OrderGetPayload<{ include: typeof ORDER_DETAIL_INCLUDE }>;
@@ -323,6 +335,7 @@ export interface AdminOrderItemView {
   unitPrice: number;
   quantity: number;
   imageUrl: string | null;
+  hsnCode: string | null;
 }
 
 export interface AdminOrderDetail {
@@ -353,6 +366,10 @@ export interface AdminOrderDetail {
   items: AdminOrderItemView[];
   createdAt: Date;
   updatedAt: Date;
+  // release-hardening F-195: the GST invoice serial, assigned lazily (see
+  // src/lib/orders/invoice-number.ts) — null for an order that hasn't
+  // reached an invoice-eligible status yet.
+  invoiceNumber: string | null;
 }
 
 export function serializeOrderDetail(row: OrderDetailRow): AdminOrderDetail {
@@ -383,7 +400,7 @@ export function serializeOrderDetail(row: OrderDetailRow): AdminOrderDetail {
     courier: row.courier,
     notes: row.notes,
     adminNotes: row.adminNotes,
-    items: row.items.map((item: OrderItem) => ({
+    items: row.items.map((item) => ({
       id: item.id,
       productName: item.productName,
       variantLabel: item.variantLabel,
@@ -391,9 +408,11 @@ export function serializeOrderDetail(row: OrderDetailRow): AdminOrderDetail {
       unitPrice: Number(item.unitPrice),
       quantity: item.quantity,
       imageUrl: item.imageUrl,
+      hsnCode: item.variant?.product.hsnCode ?? null,
     })),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    invoiceNumber: row.invoiceNumber,
   };
 }
 

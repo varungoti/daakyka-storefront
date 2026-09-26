@@ -42,6 +42,13 @@ export const EMAIL_KIND = {
   // Shopify-parity gap: back-in-stock "Notify me" restock email — see
   // src/lib/back-in-stock/index.ts's sweepBackInStock.
   BACK_IN_STOCK: "back_in_stock",
+  // F-264 fix: the newsletter double opt-in confirmation email (see
+  // src/lib/engagement/newsletter.ts's sendConfirmationEmail) used to call
+  // providers/email.ts's sendEmail() directly — a stub or failed send was
+  // only ever console.logged, never retried, so a subscriber who signed up
+  // while Brevo was off (or during a transient Brevo error) never got a
+  // confirmation and stayed unconfirmed forever.
+  NEWSLETTER_CONFIRM: "newsletter_confirm",
 } as const;
 
 export type EmailKind = (typeof EMAIL_KIND)[keyof typeof EMAIL_KIND];
@@ -56,6 +63,11 @@ export type EmailKind = (typeof EMAIL_KIND)[keyof typeof EMAIL_KIND];
 const SUPERSEDING_KINDS: ReadonlySet<string> = new Set([
   EMAIL_KIND.CUSTOMER_VERIFY_EMAIL,
   EMAIL_KIND.CUSTOMER_RESET_PASSWORD,
+  // F-264 fix: a resubscribe while still unconfirmed rotates confirmToken
+  // (see subscribeToNewsletter in newsletter.ts) — same "only the newest
+  // link works" rule as verify/reset, otherwise an earlier still-PENDING
+  // confirmation could later go out carrying a dead token.
+  EMAIL_KIND.NEWSLETTER_CONFIRM,
 ]);
 
 /** F-044 fix: how long a still-PENDING row of this kind stays eligible to

@@ -1,7 +1,8 @@
 import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { sendMarketingEmail } from "@/lib/engagement/send-marketing-email";
-import { sendWhatsApp } from "@/lib/engagement/providers/whatsapp";
+import { sendWhatsApp, sendWhatsAppTemplate } from "@/lib/engagement/providers/whatsapp";
+import { hasWhatsAppMarketingConsent } from "@/lib/engagement/whatsapp-consent";
 import { buildEngagementVars, renderTemplate, type TemplateVars } from "@/lib/engagement/template";
 
 export interface JourneyContext extends TemplateVars {
@@ -27,16 +28,46 @@ type StepWithTemplate = {
 // process) shouldn't wedge an enrollment forever — after this long, treat
 // the lock as stale and let the next cron run reclaim it.
 const LOCK_STALE_AFTER_MS = 10 * 60 * 1000; // 10 minutes
-// Process due enrollments for up to this long per cron invocation, then
-// stop and let the next scheduled run pick up the rest — replaces a single
-// fixed-size `take: 50` batch, which (per the earlier audit note) could
-// build an ever-growing backlog if more than 50 enrollments ever came due
-// between runs.
-const PROCESS_TIME_BUDGET_MS = 50_000;
+// F-275 fix: this run budget used to be 50s while the platform allows up to
+// 300s (see vercel.json's functions block and the route's own maxDuration
+// for /api/cron/journeys) — every DB round trip to the production Supabase
+// pooler (ap-northeast-1) crosses the Pacific from the iad1 function
+// region, so at ~7 round trips/step the old budget capped real throughput
+// at roughly 30 steps per run. Kept comfortably under the route's 300s
+// maxDuration so the in-flight step and its enrollment update always finish
+// before the function itself is killed.
+const PROCESS_TIME_BUDGET_MS = 240_000;
 const BATCH_SIZE = 50;
+// F-079 fix: the minimum time between two steps actually being SENT for the
+// same enrollment, even when both are already overdue when a run picks them
+// up (a cron outage, a paused-then-resumed journey, or simply a step whose
+// delay landed inside a scheduling gap). Without this floor, a run that's
+// behind sends every remaining step back-to-back in the same pass.
+const MIN_STEP_GAP_HOURS = 1;
+// F-264 fix: how soon to retry a step whose provider came back "stub" (not
+// configured) rather than either advancing past it (losing the send for
+// good) or re-attempting it on every single cron tick (flooding
+// JourneyEvent while the integration stays off).
+const STUB_RETRY_DELAY_HOURS = 1;
 
 function scheduleAt(enrollmentCreatedAt: Date, delayHours: number): Date {
   return new Date(enrollmentCreatedAt.getTime() + delayHours * 60 * 60 * 1000);
+}
+
+function hoursFromNow(hours: number, now: Date = new Date()): Date {
+  return new Date(now.getTime() + hours * 60 * 60 * 1000);
+}
+
+/** F-266 fix: a real provider error (a live Brevo/WATI call that failed)
+ * must be recorded as "failed", not "stub" — "stub" is reserved for the
+ * provider genuinely not being configured, which is what
+ * /admin/notifications and the retry logic below both need to tell apart
+ * from a real, actionable delivery failure. */
+function toEventStatus(result: { ok: boolean; provider: string }): string {
+  if (result.ok) return "sent";
+  if (result.provider === "skipped") return "skipped";
+  if (result.provider === "stub") return "stub";
+  return "failed";
 }
 
 async function executeStep(
@@ -75,12 +106,46 @@ async function executeStep(
       html: `<p>${bodyHtml.replace(/\n/g, "<br/>")}</p>`,
       text: bodyText,
     });
-    status = result.ok ? "sent" : result.provider === "skipped" ? "skipped" : "stub";
+    status = toEventStatus(result);
     metadata = { ...metadata, provider: result.provider, error: result.error };
   } else if (step.channel === "WHATSAPP" && step.template && vars.phone) {
     const message = renderTemplate(step.template.body, vars);
-    const result = await sendWhatsApp({ phone: vars.phone, message });
-    status = result.ok ? "sent" : "stub";
+    // F-317 fix: the immediate (delayHours 0) step of a journey is the
+    // transactional acknowledgement of the shopper's/lead's own enquiry or
+    // order — covered by the consent they already gave for that enquiry.
+    // Any later step (a follow-up, a nudge) is business-initiated marketing
+    // and may only go to a phone with an explicit, un-opted-out
+    // WhatsAppOptIn row (see whatsapp-consent.ts).
+    if (step.delayHours > 0 && !(await hasWhatsAppMarketingConsent(vars.phone))) {
+      status = "skipped";
+      metadata = { ...metadata, reason: "no_whatsapp_opt_in" };
+      await db.journeyEvent.create({
+        data: {
+          journeyId,
+          stepId: step.id,
+          trigger,
+          channel: step.channel,
+          recipient: vars.phone,
+          status,
+          metadata: JSON.stringify(metadata),
+        },
+      });
+      return { status, metadata };
+    }
+    // F-266 fix: cold/marketing WhatsApp steps must use an approved
+    // template (sendWhatsApp's free-form session message is rejected by
+    // WhatsApp outside a 24h customer-initiated window) — mirrors
+    // campaign-dispatcher.ts's sendToRecipient so the two send paths can't
+    // drift apart on this again.
+    const useTemplate = process.env.WATI_USE_TEMPLATES === "true";
+    const result = useTemplate
+      ? await sendWhatsAppTemplate({
+          phone: vars.phone,
+          message,
+          parameters: [vars.first_name ?? "there", vars.organization ?? "your team"],
+        })
+      : await sendWhatsApp({ phone: vars.phone, message });
+    status = toEventStatus(result);
     metadata = { ...metadata, provider: result.provider, error: result.error };
   } else if (step.channel === "EMAIL" || step.channel === "WHATSAPP") {
     status = "stub";
@@ -136,13 +201,25 @@ async function enrollInJourney(
   const now = new Date();
   const firstStep = steps[0];
   let currentStep = 0;
+  // F-264 fix: a stub result (the provider isn't configured — see
+  // toEventStatus above) means the immediate step was never actually
+  // attempted. Advancing past it anyway (the old behaviour) permanently
+  // loses that send; instead the enrollment starts still on step 0 and
+  // retries it shortly, the same as a scheduled step does below.
+  let firstStepStub = false;
 
   if (firstStep.delayHours === 0) {
-    await executeStep(journey.id, firstStep, vars, journey.trigger);
-    currentStep = 1;
+    const { status: firstStepStatus } = await executeStep(journey.id, firstStep, vars, journey.trigger);
+    firstStepStub = firstStepStatus === "stub";
+    if (!firstStepStub) currentStep = 1;
   }
 
   const nextStep = steps[currentStep];
+  const nextRunAt = firstStepStub
+    ? hoursFromNow(STUB_RETRY_DELAY_HOURS, now)
+    : nextStep
+      ? scheduleAt(now, nextStep.delayHours)
+      : null;
 
   try {
     const enrollment = await db.journeyEnrollment.create({
@@ -153,7 +230,7 @@ async function enrollInJourney(
         currentStep,
         context: JSON.stringify(vars),
         trigger: journey.trigger,
-        nextRunAt: nextStep ? scheduleAt(now, nextStep.delayHours) : null,
+        nextRunAt,
         status: nextStep ? "ACTIVE" : "COMPLETED",
       },
     });
@@ -193,12 +270,26 @@ export async function triggerJourneys(
 /** Atomically claims a due enrollment for processing by this run — sets
  * `lockedAt` only if it's currently unlocked or its lock is stale, so an
  * overlapping cron run can't process (and double-send) the same
- * enrollment. Exported for tests. */
-async function claimEnrollment(enrollmentId: string, staleBefore: Date): Promise<boolean> {
+ * enrollment. Exported for tests.
+ *
+ * F-278 fix: also requires `currentStep` to still match the caller's
+ * snapshot. Without this, a second overlapping run holding a
+ * findMany-snapshot taken before a first run claimed, sent and advanced the
+ * same enrollment could still win this claim once the first run's lock is
+ * released (id/status/lockedAt alone don't rule that out), and would then
+ * re-send `steps[currentStep]` from its now-stale snapshot. Guarding on
+ * currentStep too means a claim against a stale snapshot affects 0 rows.
+ */
+export async function claimEnrollment(
+  enrollmentId: string,
+  expectedCurrentStep: number,
+  staleBefore: Date,
+): Promise<boolean> {
   const result = await db.journeyEnrollment.updateMany({
     where: {
       id: enrollmentId,
       status: "ACTIVE",
+      currentStep: expectedCurrentStep,
       OR: [{ lockedAt: null }, { lockedAt: { lt: staleBefore } }],
     },
     data: { lockedAt: new Date() },
@@ -227,16 +318,40 @@ async function processOneEnrollment(enrollment: {
   }
 
   const vars = JSON.parse(enrollment.context) as JourneyContext;
-  await executeStep(enrollment.journeyId, step, vars, enrollment.trigger);
+  const { status: stepStatus } = await executeStep(enrollment.journeyId, step, vars, enrollment.trigger);
+
+  if (stepStatus === "stub") {
+    // F-264 fix: the provider isn't configured, so this step was never
+    // actually attempted — retry the SAME step shortly rather than
+    // advancing past it (which would lose the send for good).
+    await db.journeyEnrollment.update({
+      where: { id: enrollment.id },
+      data: { nextRunAt: hoursFromNow(STUB_RETRY_DELAY_HOURS), lockedAt: null },
+    });
+    return;
+  }
 
   const nextIndex = enrollment.currentStep + 1;
   const nextStep = steps[nextIndex];
+
+  let nextRunAt: Date | null = null;
+  if (nextStep) {
+    // F-079 fix: nextRunAt used to be anchored purely to the enrollment's
+    // createdAt, so a run that fell behind (a daily cron, a paused-then-
+    // resumed journey, an outage) found every remaining step already
+    // overdue and sent them all back-to-back in the same pass. Flooring
+    // the next step at least MIN_STEP_GAP_HOURS after THIS step's actual
+    // send time spreads a backlog across runs instead of bursting it.
+    const anchored = scheduleAt(enrollment.createdAt, nextStep.delayHours);
+    const gapHours = Math.max(MIN_STEP_GAP_HOURS, nextStep.delayHours - step.delayHours);
+    nextRunAt = new Date(Math.max(anchored.getTime(), hoursFromNow(gapHours).getTime()));
+  }
 
   await db.journeyEnrollment.update({
     where: { id: enrollment.id },
     data: {
       currentStep: nextIndex,
-      nextRunAt: nextStep ? scheduleAt(enrollment.createdAt, nextStep.delayHours) : null,
+      nextRunAt,
       status: nextStep ? "ACTIVE" : "COMPLETED",
       lockedAt: null,
     },
@@ -272,6 +387,10 @@ export async function processDueEnrollments(): Promise<{ processed: number }> {
           include: { steps: { orderBy: { sortOrder: "asc" }, include: { template: true } } },
         },
       },
+      // F-275 fix: oldest-due-first, so a backlog is worked down in order
+      // instead of an arbitrary DB-ordering leaving some enrollments
+      // starved run after run.
+      orderBy: { nextRunAt: "asc" },
       take: BATCH_SIZE,
     });
 
@@ -280,8 +399,8 @@ export async function processDueEnrollments(): Promise<{ processed: number }> {
     for (const enrollment of due) {
       if (Date.now() - start >= PROCESS_TIME_BUDGET_MS) break;
 
-      const claimed = await claimEnrollment(enrollment.id, staleBefore);
-      if (!claimed) continue; // another run claimed it first
+      const claimed = await claimEnrollment(enrollment.id, enrollment.currentStep, staleBefore);
+      if (!claimed) continue; // another run claimed it first, or already advanced past this step
 
       await processOneEnrollment(enrollment);
       processed += 1;

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { hashOrderAccessToken } from "@/lib/orders/access-token";
+import { extractGuestName } from "@/lib/orders/admin-orders";
 import { notifyNewOrder } from "@/lib/orders/notify";
 import { markRazorpayOrderPaid } from "@/lib/orders/payment-transitions";
 import { verifyPaymentSignature } from "@/lib/payments/razorpay";
@@ -147,6 +148,10 @@ export async function POST(request: Request) {
     currency: order.currency,
     fallback: false,
     orderToken: confirmedOrderToken,
+    // F-073 fix: lets notifyNewOrder enroll this order in the
+    // "order_created" post-purchase journey with a real phone/name.
+    phone: order.phone ?? undefined,
+    firstName: extractGuestName(order.shippingAddress)?.split(" ")[0],
     // F-283 fix: a stock conflict here means the payment was captured for
     // an item that's no longer available — notifyNewOrder must not promise
     // "we'll let you know as soon as it ships" in that case (see its own

@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { buildEngagementVars, renderTemplate } from "@/lib/engagement/template";
+import { autoLinkUrls, buildEngagementVars, extractFirstName, renderTemplate } from "@/lib/engagement/template";
 
 describe("engagement template", () => {
   it("renders variable placeholders", () => {
@@ -21,6 +21,40 @@ describe("engagement template", () => {
     assert.equal(vars.contact_name, "Dr. Priya Rao");
     assert.equal(vars.organization, "City Hospital");
     assert.match(String(vars.shop_url), /^https?:\/\//);
+  });
+
+  describe("F-270: name fallback and link fixes", () => {
+    it("extractFirstName falls back to 'there', never to an email local part", () => {
+      assert.equal(extractFirstName(undefined), "there");
+      assert.equal(extractFirstName(""), "there");
+      assert.equal(extractFirstName("Dr. Priya Rao"), "Dr.");
+    });
+
+    it("buildEngagementVars defaults first_name to 'there' for a subscriber with no name on file — not their email local part", () => {
+      const vars = buildEngagementVars({ email: "dr.priya.k1987@example.com" });
+      assert.equal(vars.first_name, "there");
+    });
+
+    it("buildEngagementVars strips a trailing slash from the site URL, avoiding '//shop'", () => {
+      const vars = buildEngagementVars({ shopUrl: "https://shop.example.com/" });
+      assert.equal(vars.shop_url, "https://shop.example.com");
+      const rendered = renderTemplate("Shop now: {{shop_url}}/shop", vars);
+      assert.equal(rendered, "Shop now: https://shop.example.com/shop");
+    });
+
+    it("autoLinkUrls turns a bare http(s) URL into a clickable link", () => {
+      assert.equal(
+        autoLinkUrls("Complete your order: https://shop.example.com/cart/123"),
+        'Complete your order: <a href="https://shop.example.com/cart/123">https://shop.example.com/cart/123</a>',
+      );
+    });
+
+    it("autoLinkUrls does not swallow trailing punctuation into the link", () => {
+      assert.equal(
+        autoLinkUrls("See https://example.com/a, then https://example.com/b."),
+        'See <a href="https://example.com/a">https://example.com/a</a>, then <a href="https://example.com/b">https://example.com/b</a>.',
+      );
+    });
   });
 
   describe("HTML escaping (escapeHtml option)", () => {

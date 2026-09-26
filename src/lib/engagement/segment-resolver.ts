@@ -74,9 +74,14 @@ export async function resolveSegmentRecipients(
     const confirmedEmails = new Set(confirmedSubscribers.map((s) => s.email.toLowerCase()));
     if (confirmedEmails.size === 0) return [];
 
+    // F-337 fix: this used to cap at `take: 500`, silently truncating the
+    // audience for any list bigger than that — a scheduled/resumed campaign
+    // would still be marked SENT having reached only the newest 500 leads.
+    // dispatchCampaign now walks this whole list itself under its own time
+    // budget (see campaign-dispatcher.ts), so the resolver's job is just to
+    // report every eligible recipient, not to pre-truncate them.
     const leads = await db.bulkOrderLead.findMany({
       orderBy: { createdAt: "desc" },
-      take: 500,
     });
     const consented = leads.filter((lead) => confirmedEmails.has(lead.email.toLowerCase()));
     return dedupeRecipients(
@@ -91,15 +96,22 @@ export async function resolveSegmentRecipients(
   }
 
   if (criteria.source === "newsletter" || criteria.consent === true) {
+    // F-337 fix: `take: 1000` used to silently drop everyone past the
+    // newest 1,000 confirmed subscribers — with 5,000 eligible, 4,000 never
+    // got the campaign and it was still marked SENT. See the bulk-order
+    // branch above for why the cap is simply removed rather than kept as a
+    // smaller one.
     const subscribers = await db.newsletterSubscriber.findMany({
       where: marketingConsentFilter,
       orderBy: { createdAt: "desc" },
-      take: 1000,
     });
     return dedupeRecipients(
       subscribers.map((subscriber) => ({
         email: subscriber.email,
-        firstName: subscriber.email.split("@")[0],
+        // F-270 fix: no real name on file used to fall back to the email
+        // local part (e.g. "dr.priya.k1987"), which then filled a
+        // template's "Hi {{first_name}}" — leave it unset so
+        // buildEngagementVars' own fallback ("there") applies instead.
       })),
     );
   }
@@ -111,7 +123,6 @@ export async function resolveSegmentRecipients(
         source: { in: ["mix-match", "bespoke", "shop", "footer", "checkout"] },
       },
       orderBy: { createdAt: "desc" },
-      take: 500,
     });
 
     // engagement_compliance: this used to fall back to ContactEnquiry rows
@@ -123,10 +134,9 @@ export async function resolveSegmentRecipients(
     // empty consented-subscriber list now just means an empty recipient
     // list, not "substitute a different audience that never opted in".
     return dedupeRecipients(
-      subscribers.map((subscriber) => ({
-        email: subscriber.email,
-        firstName: subscriber.email.split("@")[0],
-      })),
+      // F-270 fix: same as the newsletter branch above — no real name on
+      // file, so leave firstName unset rather than the email local part.
+      subscribers.map((subscriber) => ({ email: subscriber.email })),
     );
   }
 

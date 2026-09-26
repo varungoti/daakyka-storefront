@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { db } from "@/lib/db";
-import { sendEmail } from "@/lib/engagement/providers/email";
+import { EMAIL_KIND, sendTransactionalEmail } from "@/lib/engagement/outbox";
 import { triggerJourneys } from "@/lib/engagement/journey-triggers";
 
 /** Random, unguessable, URL-safe — same shape/entropy as
@@ -16,20 +16,29 @@ function confirmUrlFor(token: string): string {
   return `${base}/api/newsletter/confirm?token=${encodeURIComponent(token)}`;
 }
 
-/** Sends (or, when Brevo isn't configured, logs) the double opt-in
- * confirmation email. Mirrors src/lib/customer-auth/mailer.ts's
- * sendOrLogAuthEmail: never throws, and always logs a "[dev]"-prefixed
- * link so the flow is testable/verifiable without Brevo configured. */
+/** Sends the double opt-in confirmation email through the transactional
+ * outbox (F-264 fix) — never only a console.log. A stub/failed attempt is
+ * persisted as a PENDING EmailOutbox row and retried by the drain-email-
+ * outbox cron once Brevo is actually reachable, the same guarantee every
+ * other transactional sender (order notify, customer-auth mailer) already
+ * has; see src/lib/engagement/outbox.ts's header comment. Still logs a
+ * "[dev]"-prefixed link on any non-ok result so the flow stays
+ * testable/verifiable without Brevo configured — that's now a convenience
+ * breadcrumb, not the only record of the send. Never throws.
+ */
 async function sendConfirmationEmail(email: string, token: string): Promise<void> {
   const confirmUrl = confirmUrlFor(token);
 
   try {
-    const result = await sendEmail({
-      to: email,
-      subject: "Confirm your DAAKYKA Apparels newsletter subscription",
-      html: `<p>Thanks for subscribing to DAAKYKA Apparels updates.</p><p><a href="${confirmUrl}">Confirm your subscription</a> to start receiving them.</p><p>If you didn't request this, you can ignore this email — you won't be subscribed unless you click the link.</p>`,
-      text: `Confirm your subscription: ${confirmUrl}`,
-    });
+    const result = await sendTransactionalEmail(
+      {
+        to: email,
+        subject: "Confirm your DAAKYKA Apparels newsletter subscription",
+        html: `<p>Thanks for subscribing to DAAKYKA Apparels updates.</p><p><a href="${confirmUrl}">Confirm your subscription</a> to start receiving them.</p><p>If you didn't request this, you can ignore this email — you won't be subscribed unless you click the link.</p>`,
+        text: `Confirm your subscription: ${confirmUrl}`,
+      },
+      EMAIL_KIND.NEWSLETTER_CONFIRM,
+    );
     if (!result.ok) {
       console.log(`[dev] newsletter confirm link for ${email}: ${confirmUrl}`);
     }
