@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { verifyPassword, DUMMY_PASSWORD_HASH } from "@/lib/customer-auth/password";
 import { createCustomerSession } from "@/lib/customer-auth/session";
-import { isLocked, recordFailedLogin, resetLoginFailures } from "@/lib/customer-auth/lockout";
+import {
+  AccountLockedError,
+  isLocked,
+  recordFailedLogin,
+  resetLoginFailures,
+} from "@/lib/customer-auth/lockout";
 import { db } from "@/lib/db";
 import { linkGuestOrdersToCustomer } from "@/lib/orders/claim-guest-orders";
 import { readJsonBody } from "@/lib/security/parse-json-body";
@@ -65,7 +70,22 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
     }
 
-    await resetLoginFailures(customer.id);
+    try {
+      await resetLoginFailures(customer.id);
+    } catch (err) {
+      // F-321: a concurrent failed attempt from elsewhere locked the
+      // account in the gap between the isLocked() check above and this
+      // password-verified reset — see resetLoginFailures's doc comment.
+      // No session is issued; report the same 423 an ordinary locked
+      // attempt gets instead of falling through to the generic 500 below.
+      if (err instanceof AccountLockedError) {
+        return NextResponse.json(
+          { error: "Account temporarily locked. Try again later." },
+          { status: LOCKED_STATUS },
+        );
+      }
+      throw err;
+    }
 
     // F-037: only claim guest orders placed under this email once the
     // account has proven it owns that address (emailVerifiedAt set) —

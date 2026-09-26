@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { logAuditEvent } from "@/lib/auth/audit";
-import { isLocked, recordFailedLogin, resetLoginFailures } from "@/lib/auth/lockout";
+import { AccountLockedError, isLocked, recordFailedLogin, resetLoginFailures } from "@/lib/auth/lockout";
 import { verifyPassword, DUMMY_PASSWORD_HASH } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
@@ -81,7 +81,30 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
     }
 
-    await resetLoginFailures(user.id);
+    try {
+      await resetLoginFailures(user.id);
+    } catch (err) {
+      // F-321: a concurrent failed attempt from elsewhere locked the
+      // account in the gap between the isLocked() check above and this
+      // password-verified reset — see resetLoginFailures's doc comment.
+      // No session is issued; audit-log it like the other lockout paths
+      // and report the same 423 instead of falling through to a generic
+      // 500 below.
+      if (err instanceof AccountLockedError) {
+        await logAuditEvent({
+          userId: user.id,
+          action: "login_locked",
+          entity: "user",
+          entityId: user.id,
+          metadata: { lockedUntil: user.lockedUntil, race: true },
+        });
+        return NextResponse.json(
+          { error: "Account temporarily locked. Try again later." },
+          { status: LOCKED_STATUS },
+        );
+      }
+      throw err;
+    }
 
     await createSession(
       {
