@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
-import { updateHomepageSection } from "@/lib/homepage";
+import {
+  HomepageSectionNotFoundError,
+  StaleHomepageSectionError,
+  updateHomepageSection,
+} from "@/lib/homepage";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { homepageSectionSchemas, isHomepageSectionKey } from "@/lib/validation/schemas";
 
@@ -32,6 +36,28 @@ export async function PUT(request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "Invalid request", issues: parsed.error.issues }, { status: 400 });
   }
 
-  const section = await updateHomepageSection(key, parsed.data, session.id);
-  return NextResponse.json(section);
+  // F-343: an editor that loaded this section can send back the
+  // `updatedAt` it was loaded with as a query param — the request body
+  // here *is* the section's content (validated above against its own
+  // schema), so there's no spare body field to carry it. As a query param
+  // it's optional: an editor that hasn't been updated to send it yet keeps
+  // writing unconditionally, same as before this fix.
+  const updatedAtParam = new URL(request.url).searchParams.get("updatedAt");
+  const expectedUpdatedAt = updatedAtParam ? new Date(updatedAtParam) : undefined;
+  if (expectedUpdatedAt && Number.isNaN(expectedUpdatedAt.getTime())) {
+    return NextResponse.json({ error: "Invalid updatedAt" }, { status: 400 });
+  }
+
+  try {
+    const section = await updateHomepageSection(key, parsed.data, session.id, expectedUpdatedAt);
+    return NextResponse.json(section);
+  } catch (err) {
+    if (err instanceof HomepageSectionNotFoundError) {
+      return NextResponse.json({ error: err.message }, { status: 404 });
+    }
+    if (err instanceof StaleHomepageSectionError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    throw err;
+  }
 }

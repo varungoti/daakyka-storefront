@@ -9,6 +9,7 @@ import {
   isSettingKey,
   setSetting,
   settingDefaults,
+  StaleSettingError,
 } from "@/lib/settings";
 import { findAnyAdminId } from "../helpers/admin-user";
 
@@ -100,6 +101,55 @@ describe("site settings integration", () => {
       // Restore.
       await setSetting("sale.enabled", true, adminId);
       assert.equal(await isSaleEnabled(), true);
+    });
+  });
+
+  // F-343: setSetting used to `upsert` unconditionally — two admins saving
+  // the same key around the same time both got a 200, and whichever write
+  // committed last silently discarded the other's edit.
+  describe("setSetting optimistic concurrency guard (F-343)", () => {
+    const originalMixMatch = settingDefaults["pages.mixMatch.enabled"];
+
+    after(async () => {
+      await db.siteSetting.upsert({
+        where: { key: "pages.mixMatch.enabled" },
+        create: { key: "pages.mixMatch.enabled", value: originalMixMatch },
+        update: { value: originalMixMatch },
+      });
+    });
+
+    it("writes unconditionally (unchanged behavior) when expectedUpdatedAt is omitted", async () => {
+      const adminId = await findAnyAdminId();
+      await setSetting("pages.mixMatch.enabled", true, adminId);
+      await setSetting("pages.mixMatch.enabled", false, adminId);
+      assert.equal(await getSetting("pages.mixMatch.enabled"), false);
+    });
+
+    it("throws StaleSettingError when expectedUpdatedAt no longer matches the stored row", async () => {
+      const adminId = await findAnyAdminId();
+      await setSetting("pages.mixMatch.enabled", true, adminId);
+      const loaded = await db.siteSetting.findUniqueOrThrow({ where: { key: "pages.mixMatch.enabled" } });
+
+      // Someone else saves the same key in between this admin loading it
+      // and submitting their own edit.
+      await setSetting("pages.mixMatch.enabled", false, adminId);
+
+      await assert.rejects(
+        () => setSetting("pages.mixMatch.enabled", true, adminId, loaded.updatedAt),
+        StaleSettingError,
+      );
+      // The "someone else"'s write must survive — the stale write above
+      // must not have gone through.
+      assert.equal(await getSetting("pages.mixMatch.enabled"), false);
+    });
+
+    it("succeeds when expectedUpdatedAt matches the row nobody else has touched since", async () => {
+      const adminId = await findAnyAdminId();
+      await setSetting("pages.mixMatch.enabled", false, adminId);
+      const loaded = await db.siteSetting.findUniqueOrThrow({ where: { key: "pages.mixMatch.enabled" } });
+
+      await setSetting("pages.mixMatch.enabled", true, adminId, loaded.updatedAt);
+      assert.equal(await getSetting("pages.mixMatch.enabled"), true);
     });
   });
 

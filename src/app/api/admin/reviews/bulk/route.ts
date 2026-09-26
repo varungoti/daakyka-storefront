@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
-import { bulkApprove } from "@/lib/reviews/moderate-review";
+import { bulkApprove, bulkReject } from "@/lib/reviews/moderate-review";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { adminReviewBulkSchema } from "@/lib/validation/schemas";
 
@@ -19,6 +19,11 @@ export async function POST(request: Request) {
     );
   }
 
-  const result = await bulkApprove(parsed.data.ids, session!.id);
+  // F-203: "reject" alongside the original "approve" for the bulk
+  // moderation queue's "Reject N selected" action.
+  const result =
+    parsed.data.action === "approve"
+      ? await bulkApprove(parsed.data.ids, session!.id)
+      : await bulkReject(parsed.data.ids, session!.id);
   return NextResponse.json(result);
 }

@@ -14,13 +14,20 @@ import { reviewSubmissionGate } from "@/lib/reviews/eligibility";
  * src/app/api/admin/media/route.ts's POST handler almost exactly (same
  * multipart validation, same saveMediaAsset() call) but gated on a
  * CUSTOMER session instead of an admin permission, fixed to
- * `usage=REVIEW`, and a tighter 5MB/file limit. It accepts one file per
+ * `usage=REVIEW`, and a tighter per-file limit. It accepts one file per
  * request rather than up to 3 in one call — simpler to mirror the existing
  * single-file route exactly, and the client just calls this up to 3 times
  * (REVIEW_MAX_PHOTOS) for a review with multiple photos.
+ *
+ * F-030 fix: this used to allow 5 MB, but Vercel Functions reject request
+ * bodies over 4.5 MB with a platform-level 413 before this handler even
+ * runs (see node_modules/next/dist/docs/... route handler body-size notes)
+ * — a 4.5-5 MB photo failed with a generic non-JSON error instead of this
+ * route's own message. 4 MB leaves headroom under that platform ceiling
+ * for the multipart boundary/field overhead around the file itself.
  */
 const ALLOWED_CONTENT_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
-const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 
 export async function POST(request: Request) {
   const session = await getCustomerSession();
@@ -39,7 +46,7 @@ export async function POST(request: Request) {
 
   const contentLength = request.headers.get("content-length");
   if (contentLength && Number(contentLength) > MAX_UPLOAD_BYTES) {
-    return NextResponse.json({ error: "File too large (max 5MB)" }, { status: 413 });
+    return NextResponse.json({ error: "File too large (max 4MB)" }, { status: 413 });
   }
 
   let form: FormData;
@@ -62,7 +69,7 @@ export async function POST(request: Request) {
   }
 
   if (file.size > MAX_UPLOAD_BYTES) {
-    return NextResponse.json({ error: "File too large (max 5MB)" }, { status: 413 });
+    return NextResponse.json({ error: "File too large (max 4MB)" }, { status: 413 });
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());

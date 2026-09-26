@@ -1,4 +1,4 @@
-import { Prisma } from "@/generated/prisma/client";
+import { MediaUsage, Prisma } from "@/generated/prisma/client";
 import type { OrderStatus } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { productCacheTag } from "@/lib/products";
@@ -142,6 +142,54 @@ function assertValidBody(body: string): void {
 }
 
 /**
+ * F-030 fix: `photoIds: input.photoAssetIds` used to be stored verbatim
+ * with no check that each id exists, was uploaded for review use, or isn't
+ * already someone else's review photo — any known MediaAsset id (a
+ * product shot, a banner, another customer's photo) could be attached as a
+ * "customer photo". Full per-customer ownership tracking would need a
+ * column linking a MediaAsset back to the uploading Customer —
+ * `MediaAsset.createdById` is a `User` (admin) FK, not a `Customer` one,
+ * and adding a new column is a schema change out of scope here — so this
+ * checks everything that *is* checkable without one: every id must be a
+ * real `MediaAsset` with `usage: REVIEW` (rules out product/banner/hero
+ * images), and must not already be attached to a review a moderator can
+ * still act on. `MediaAsset` ids are cuids (not enumerable/guessable), so
+ * together these close the practical exploit even without a full
+ * ownership column.
+ */
+async function assertReviewPhotoAssetIdsAreUsable(
+  photoAssetIds: string[],
+  excludeReviewId?: string,
+): Promise<void> {
+  const ids = [...new Set(photoAssetIds)];
+  if (ids.length === 0) return;
+
+  const assets = await db.mediaAsset.findMany({
+    where: { id: { in: ids }, usage: MediaUsage.REVIEW },
+    select: { id: true },
+  });
+  if (assets.length !== ids.length) {
+    throw new InvalidReviewInputError("One or more photos couldn't be attached — try uploading them again");
+  }
+
+  // Anything already sitting in the photoIds of a review a moderator could
+  // still approve or has approved (i.e. every status but REJECTED) is
+  // spoken for, whether that's this exact review being edited (excluded
+  // below) or a different one entirely.
+  const alreadyAttached = await db.review.findMany({
+    where: {
+      photoIds: { hasSome: ids },
+      status: { not: "REJECTED" },
+      ...(excludeReviewId ? { id: { not: excludeReviewId } } : {}),
+    },
+    select: { photoIds: true },
+  });
+  if (alreadyAttached.some((row) => row.photoIds.some((id) => ids.includes(id)))) {
+    throw new InvalidReviewInputError("One or more photos are already attached to another review");
+  }
+}
+
+/**
  * Creates a PENDING review for a customer. Never revalidates any cache tag
  * on create — a PENDING review isn't visible anywhere yet, so there's
  * nothing for a customer-facing page to show sooner. The product's cache
@@ -175,6 +223,10 @@ export async function createReview(input: CreateReviewInput): Promise<CreatedRev
   // scratch) instead of inserting a second one. A PENDING or APPROVED
   // existing review still blocks a second submission, same as before.
   if (existing && existing.status !== "REJECTED") throw new AlreadyReviewedError();
+
+  if (input.photoAssetIds && input.photoAssetIds.length > 0) {
+    await assertReviewPhotoAssetIdsAreUsable(input.photoAssetIds, existing?.id);
+  }
 
   const verifiedPurchase = await computeVerifiedPurchaseForCustomer(input.customerId, input.productId);
 

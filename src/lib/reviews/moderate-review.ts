@@ -21,9 +21,37 @@ export class ReviewNotFoundError extends Error {
   }
 }
 
+/**
+ * F-343 fix: approveReview/rejectReview used to `db.review.update` the row
+ * unconditionally — two admins acting on the same review at once (one
+ * Approve, one Reject; or the same action twice) both got a 200, and
+ * whichever write committed last silently won with no signal to the loser.
+ * A caller that knows what status it last saw the review in passes it as
+ * `fromStatus`; the write is then conditioned on the row still being in
+ * that status (`updateMany({ where: { id, status: fromStatus } })`), and
+ * this is thrown when nothing matched — the row exists (checked separately,
+ * see loadReviewWithProductSlug) but someone else already moderated it out
+ * from under this request. `fromStatus` is optional (older/direct callers —
+ * scripts, tests exercising the business logic in isolation — keep the
+ * previous unconditional-write behavior) but `PATCH /api/admin/reviews/[id]`,
+ * the only real production caller, always supplies it.
+ */
+export class ReviewConcurrentModificationError extends Error {
+  constructor() {
+    super("This review was already moderated by someone else — reload and try again.");
+    this.name = "ReviewConcurrentModificationError";
+  }
+}
+
 export interface ModeratedReview {
   id: string;
   status: ReviewStatus;
+}
+
+export interface ModerationOptions {
+  /** The status this caller last observed the review in — see
+   * ReviewConcurrentModificationError above. Omit to write unconditionally. */
+  fromStatus?: ReviewStatus;
 }
 
 function revalidateProductReviews(slug: string): void {
@@ -61,24 +89,49 @@ async function loadReviewWithProductSlug(reviewId: string) {
   return review;
 }
 
+/**
+ * The actual status-flipping write, shared by approveReview/rejectReview.
+ * Unconditional (`update`) when the caller has no `fromStatus` to guard
+ * against; conditioned on the row still being in `fromStatus`
+ * (`updateMany` — Prisma's `update` can only key off unique fields, and
+ * `status` isn't one) otherwise, throwing ReviewConcurrentModificationError
+ * when nothing matched.
+ */
+async function writeReviewStatus(
+  reviewId: string,
+  targetStatus: "APPROVED" | "REJECTED",
+  moderatorUserId: string,
+  fromStatus: ReviewStatus | undefined,
+): Promise<ModeratedReview> {
+  const data = { status: targetStatus, moderatedById: moderatorUserId, moderatedAt: new Date() };
+
+  if (fromStatus === undefined) {
+    return db.review.update({ where: { id: reviewId }, data, select: { id: true, status: true } });
+  }
+
+  const { count } = await db.review.updateMany({ where: { id: reviewId, status: fromStatus }, data });
+  if (count === 0) throw new ReviewConcurrentModificationError();
+  return { id: reviewId, status: targetStatus };
+}
+
 /** Approves a review: flips it to APPROVED, stamps the moderator/time, logs
  * the audit event, and revalidates the product's cache tags so the
  * storefront reviews list and rating summary reflect it. */
-export async function approveReview(reviewId: string, moderatorUserId: string): Promise<ModeratedReview> {
+export async function approveReview(
+  reviewId: string,
+  moderatorUserId: string,
+  options: ModerationOptions = {},
+): Promise<ModeratedReview> {
   const existing = await loadReviewWithProductSlug(reviewId);
 
-  const review = await db.review.update({
-    where: { id: reviewId },
-    data: { status: "APPROVED", moderatedById: moderatorUserId, moderatedAt: new Date() },
-    select: { id: true, status: true },
-  });
+  const review = await writeReviewStatus(reviewId, "APPROVED", moderatorUserId, options.fromStatus);
 
   await logAuditEvent({
     userId: moderatorUserId,
     action: "approve",
     entity: "review",
     entityId: reviewId,
-    metadata: { previousStatus: existing.status },
+    metadata: { previousStatus: options.fromStatus ?? existing.status },
   });
 
   revalidateProductReviews(existing.product.slug);
@@ -89,6 +142,10 @@ export async function approveReview(reviewId: string, moderatorUserId: string): 
 /**
  * Rejects a review: flips it to REJECTED, stamps the moderator/time, and
  * logs the audit event (with the optional `reason` in the audit metadata).
+ * F-203: also how an already-APPROVED review gets unpublished — the target
+ * status is always REJECTED regardless of what it's moderated *from*, so
+ * "reject" already doubled as "unpublish" once the admin UI started
+ * offering it from the Approved tab too (see reviews-admin-client.tsx).
  *
  * Design decision (documented per the phase brief): the `Review` model has
  * no column to persist a rejection reason, and adding one would mean a
@@ -104,28 +161,24 @@ export async function rejectReview(
   reviewId: string,
   moderatorUserId: string,
   reason?: string,
+  options: ModerationOptions = {},
 ): Promise<ModeratedReview> {
   const existing = await loadReviewWithProductSlug(reviewId);
 
-  const review = await db.review.update({
-    where: { id: reviewId },
-    data: { status: "REJECTED", moderatedById: moderatorUserId, moderatedAt: new Date() },
-    select: { id: true, status: true },
-  });
+  const review = await writeReviewStatus(reviewId, "REJECTED", moderatorUserId, options.fromStatus);
 
   await logAuditEvent({
     userId: moderatorUserId,
     action: "reject",
     entity: "review",
     entityId: reviewId,
-    metadata: { previousStatus: existing.status, reason: reason ?? null },
+    metadata: { previousStatus: options.fromStatus ?? existing.status, reason: reason ?? null },
   });
 
-  // A rejected review was never public (PENDING reviews aren't shown
-  // either), so strictly nothing changes for a cached storefront read.
-  // Revalidating anyway costs little and keeps this function's cache
-  // behavior symmetric with approveReview/bulkApprove rather than being a
-  // surprising exception a future reader has to reason about.
+  // An APPROVED review being unpublished (F-203) *is* a live-cache change;
+  // a PENDING one never was public in the first place. Revalidating
+  // unconditionally costs little either way and keeps this function's
+  // cache behavior simple rather than branching on the previous status.
   revalidateProductReviews(existing.product.slug);
 
   return review;
@@ -159,6 +212,37 @@ export async function bulkApprove(
   }
 
   return { approvedIds, notFoundIds };
+}
+
+export interface BulkRejectResult {
+  rejectedIds: string[];
+  notFoundIds: string[];
+}
+
+/** F-203: the reject counterpart to bulkApprove, for the "Reject N
+ * selected" bulk action — same skip-and-report-unknown-ids behavior. */
+export async function bulkReject(
+  reviewIds: string[],
+  moderatorUserId: string,
+  reason?: string,
+): Promise<BulkRejectResult> {
+  const rejectedIds: string[] = [];
+  const notFoundIds: string[] = [];
+
+  for (const reviewId of reviewIds) {
+    try {
+      const result = await rejectReview(reviewId, moderatorUserId, reason);
+      rejectedIds.push(result.id);
+    } catch (error) {
+      if (error instanceof ReviewNotFoundError) {
+        notFoundIds.push(reviewId);
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return { rejectedIds, notFoundIds };
 }
 
 export interface ListReviewsForAdminOptions {

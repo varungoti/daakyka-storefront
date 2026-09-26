@@ -939,7 +939,10 @@ function ReviewForm({
   const [hoverRating, setHoverRating] = useState(0);
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [photoIds, setPhotoIds] = useState<string[]>([]);
+  // F-030: keeps the uploaded URL alongside the id so the form can show an
+  // actual thumbnail (previously just the text "Photo attached") — not
+  // just the id createReview eventually gets.
+  const [photos, setPhotos] = useState<{ id: string; url: string }[]>([]);
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -975,7 +978,7 @@ function ReviewForm({
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    if (photoIds.length >= REVIEW_MAX_PHOTOS) {
+    if (photos.length >= REVIEW_MAX_PHOTOS) {
       setError(`You can attach up to ${REVIEW_MAX_PHOTOS} photos.`);
       return;
     }
@@ -990,13 +993,17 @@ function ReviewForm({
         const data = await response.json().catch(() => ({}));
         throw new Error(data.error ?? "Photo upload failed");
       }
-      const data = (await response.json()) as { id: string };
-      setPhotoIds((prev) => [...prev, data.id]);
+      const data = (await response.json()) as { id: string; url: string };
+      setPhotos((prev) => [...prev, { id: data.id, url: data.url }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Photo upload failed");
     } finally {
       setUploading(false);
     }
+  }
+
+  function removePhoto(id: string) {
+    setPhotos((prev) => prev.filter((photo) => photo.id !== id));
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -1017,7 +1024,7 @@ function ReviewForm({
           rating,
           title: title.trim(),
           body: body.trim(),
-          photoAssetIds: photoIds,
+          photoAssetIds: photos.map((photo) => photo.id),
         }),
       });
 
@@ -1153,15 +1160,36 @@ function ReviewForm({
           Photos <span className="font-normal text-muted">(optional, up to {REVIEW_MAX_PHOTOS})</span>
         </label>
         <div className="flex flex-wrap items-center gap-2">
-          {photoIds.map((id) => (
-            <span key={id} className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-muted">
-              Photo attached
-            </span>
+          {/* F-030: an actual thumbnail with a remove button, not just the
+              text "Photo attached" with no way to undo a wrong upload. */}
+          {photos.map((photo) => (
+            <div key={photo.id} className="relative h-14 w-14 overflow-hidden rounded-lg border border-border">
+              <Image src={photo.url} alt="Uploaded review photo" fill className="object-cover" sizes="56px" />
+              <button
+                type="button"
+                onClick={() => removePhoto(photo.id)}
+                aria-label="Remove this photo"
+                className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-ink/70 text-[10px] leading-none text-white hover:bg-ink"
+              >
+                ×
+              </button>
+            </div>
           ))}
-          {photoIds.length < REVIEW_MAX_PHOTOS && (
-            <label className="cursor-pointer rounded-md border border-dashed border-border px-3 py-1.5 text-xs font-semibold text-muted hover:border-brand hover:text-brand">
+          {photos.length < REVIEW_MAX_PHOTOS && (
+            // F-030: the file input used `className="hidden"` (display:none),
+            // which removes it from the tab order entirely — a keyboard user
+            // could never reach "Add photo". `sr-only` keeps it visually
+            // hidden but focusable, and `focus-within` puts a visible ring
+            // on the label that wraps it once it's focused.
+            <label className="cursor-pointer rounded-md border border-dashed border-border px-3 py-1.5 text-xs font-semibold text-muted hover:border-brand hover:text-brand focus-within:outline focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-brand">
               {uploading ? "Uploading…" : "Add photo"}
-              <input type="file" accept="image/*" onChange={handlePhotoUpload} disabled={uploading} className="hidden" />
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handlePhotoUpload}
+                disabled={uploading}
+                className="sr-only"
+              />
             </label>
           )}
         </div>

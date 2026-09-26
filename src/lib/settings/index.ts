@@ -152,18 +152,54 @@ export async function getSetting<K extends SettingKey>(key: K): Promise<SettingV
   }
 }
 
+/**
+ * F-343 fix: this used to `upsert` unconditionally — two admins saving the
+ * same setting (e.g. two edits to `announcement.messages`) around the same
+ * time both got a 200, and whichever write committed last silently
+ * overwrote the other with no signal that anything was lost. Thrown when a
+ * caller passes `expectedUpdatedAt` and the stored row's `updatedAt` no
+ * longer matches it — someone else saved this key in between this caller
+ * loading it and submitting its own edit.
+ */
+export class StaleSettingError extends Error {
+  constructor(key: string) {
+    super(`"${key}" was changed by someone else — reload and try again.`);
+    this.name = "StaleSettingError";
+  }
+}
+
 export async function setSetting<K extends SettingKey>(
   key: K,
   value: SettingValueMap[K],
   userId: string,
+  // Optional and last, purely additive: every existing call site keeps
+  // writing unconditionally until it's updated to pass the row's
+  // previously-loaded updatedAt.
+  expectedUpdatedAt?: Date,
 ): Promise<SettingValueMap[K]> {
   const parsed = settingSchemas[key].parse(value);
 
-  await db.siteSetting.upsert({
-    where: { key },
-    create: { key, value: parsed as Prisma.InputJsonValue, updatedById: userId },
-    update: { value: parsed as Prisma.InputJsonValue, updatedById: userId },
-  });
+  if (expectedUpdatedAt) {
+    // A row that doesn't exist yet can't be stale — `updateMany` matches
+    // zero rows either way, so an existence check comes first to tell
+    // "never saved" apart from "saved by someone else since you loaded it".
+    const current = await db.siteSetting.findUnique({ where: { key }, select: { updatedAt: true } });
+    if (current) {
+      const { count } = await db.siteSetting.updateMany({
+        where: { key, updatedAt: expectedUpdatedAt },
+        data: { value: parsed as Prisma.InputJsonValue, updatedById: userId },
+      });
+      if (count === 0) throw new StaleSettingError(key);
+    } else {
+      await db.siteSetting.create({ data: { key, value: parsed as Prisma.InputJsonValue, updatedById: userId } });
+    }
+  } else {
+    await db.siteSetting.upsert({
+      where: { key },
+      create: { key, value: parsed as Prisma.InputJsonValue, updatedById: userId },
+      update: { value: parsed as Prisma.InputJsonValue, updatedById: userId },
+    });
+  }
 
   await logAuditEvent({
     userId,

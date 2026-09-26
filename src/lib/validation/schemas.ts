@@ -412,6 +412,10 @@ export const customerProfileUpdateSchema = z
 
 export const customerAddressSchema = z.object({
   label: z.string().trim().max(60).optional(),
+  // F-134: who the shipment is addressed to — nullable/optional so
+  // existing rows (and any write path that doesn't send it) are
+  // unaffected; see the matching CustomerAddress.recipientName column.
+  recipientName: customerNameSchema.optional(),
   line1: z.string().trim().min(2, "Address line 1 is required").max(200),
   line2: z.string().trim().max(200).optional(),
   city: z.string().trim().min(2, "City is required").max(100),
@@ -440,10 +444,18 @@ export const reviewCreateSchema = z.object({
 export const adminReviewModerateSchema = z.object({
   action: z.enum(["approve", "reject"]),
   reason: z.string().trim().max(500).optional(),
+  // F-343: the status this admin last saw the review in, so the write can
+  // be conditioned on nobody else having moderated it in the meantime (see
+  // ReviewConcurrentModificationError in lib/reviews/moderate-review.ts).
+  // Optional so an older cached client bundle mid-deploy still gets a
+  // (best-effort, unconditional) write instead of a hard validation error.
+  fromStatus: z.enum(["PENDING", "APPROVED", "REJECTED"]).optional(),
 });
 
 export const adminReviewBulkSchema = z.object({
-  action: z.literal("approve"),
+  // F-203: "reject" added alongside "approve" for the bulk moderation
+  // queue's "Reject N selected" action.
+  action: z.enum(["approve", "reject"]),
   ids: z.array(z.string().trim().min(1)).min(1, "At least one review id is required").max(100),
 });
 

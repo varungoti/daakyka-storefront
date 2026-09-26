@@ -13,8 +13,10 @@ import {
 import {
   approveReview,
   bulkApprove,
+  bulkReject,
   listReviewsForAdmin,
   rejectReview,
+  ReviewConcurrentModificationError,
   ReviewNotFoundError,
 } from "@/lib/reviews/moderate-review";
 import { getApprovedReviews, getReviewSummary } from "@/lib/reviews";
@@ -396,6 +398,231 @@ describe("review submission + moderation (Phase D2)", () => {
 
     const rejected = await listReviewsForAdmin({ status: "REJECTED", productId });
     assert.ok(rejected.reviews.some((r) => r.id === createdReviewIds[1]));
+  });
+
+  it("bulkReject rejects every valid id and reports unknown ids separately", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const [customerA, customerB] = await Promise.all([
+      db.customer.create({ data: { email: `d2-bulk-reject-a-${unique}@example.com`, name: "Bulk Reject A", passwordHash: "x" } }),
+      db.customer.create({ data: { email: `d2-bulk-reject-b-${unique}@example.com`, name: "Bulk Reject B", passwordHash: "x" } }),
+    ]);
+    const [reviewA, reviewB] = await Promise.all([
+      createReview({ customerId: customerA.id, productId, rating: 2, title: "Bulk reject candidate A", body: "This review should be rejected as part of a bulk operation." }),
+      createReview({ customerId: customerB.id, productId, rating: 1, title: "Bulk reject candidate B", body: "This review should also be rejected as part of the same bulk call." }),
+    ]);
+    createdReviewIds.push(reviewA.id, reviewB.id);
+
+    try {
+      const result = await bulkReject([reviewA.id, reviewB.id, "does-not-exist"], adminId, "Bulk cleanup");
+      assert.deepEqual([...result.rejectedIds].sort(), [reviewA.id, reviewB.id].sort());
+      assert.deepEqual(result.notFoundIds, ["does-not-exist"]);
+
+      const rows = await db.review.findMany({ where: { id: { in: [reviewA.id, reviewB.id] } } });
+      assert.ok(rows.every((r) => r.status === "REJECTED"));
+    } finally {
+      await db.customer.deleteMany({ where: { id: { in: [customerA.id, customerB.id] } } }).catch(() => {});
+    }
+  });
+
+  // F-030: photoAssetIds used to be stored verbatim with no check that they
+  // exist, were uploaded for review use, or aren't already someone else's
+  // review photo.
+  describe("createReview validates photoAssetIds (F-030)", () => {
+    it("rejects a photoAssetId that isn't usage=REVIEW (e.g. a product photo)", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: { email: `d2-photo-usage-${unique}@example.com`, name: "Photo Usage Customer", passwordHash: "x" },
+      });
+      const nonReviewAsset = await db.mediaAsset.create({
+        data: {
+          key: `test/non-review-${unique}.webp`,
+          url: "https://example.test/non-review.webp",
+          usage: "PRODUCT",
+          source: "UPLOAD",
+        },
+      });
+      try {
+        await assert.rejects(
+          () =>
+            createReview({
+              customerId: customer.id,
+              productId,
+              rating: 5,
+              title: "Photo usage guard test",
+              body: "This review tries to attach a product photo, not a review photo.",
+              photoAssetIds: [nonReviewAsset.id],
+            }),
+          InvalidReviewInputError,
+        );
+      } finally {
+        await db.mediaAsset.delete({ where: { id: nonReviewAsset.id } }).catch(() => {});
+        await db.customer.delete({ where: { id: customer.id } }).catch(() => {});
+      }
+    });
+
+    it("rejects a photoAssetId already attached to a different, non-rejected review", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const [ownerCustomer, attackerCustomer] = await Promise.all([
+        db.customer.create({ data: { email: `d2-photo-owner-${unique}@example.com`, name: "Photo Owner", passwordHash: "x" } }),
+        db.customer.create({ data: { email: `d2-photo-attacker-${unique}@example.com`, name: "Photo Attacker", passwordHash: "x" } }),
+      ]);
+      const reviewAsset = await db.mediaAsset.create({
+        data: {
+          key: `test/review-photo-${unique}.webp`,
+          url: "https://example.test/review.webp",
+          usage: "REVIEW",
+          source: "UPLOAD",
+        },
+      });
+      let ownerReviewId: string | undefined;
+      try {
+        const ownerReview = await createReview({
+          customerId: ownerCustomer.id,
+          productId,
+          rating: 5,
+          title: "Owner's review with a photo",
+          body: "This review legitimately attaches the review photo it uploaded.",
+          photoAssetIds: [reviewAsset.id],
+        });
+        ownerReviewId = ownerReview.id;
+
+        await assert.rejects(
+          () =>
+            createReview({
+              customerId: attackerCustomer.id,
+              productId,
+              rating: 1,
+              title: "Trying to reuse someone else's photo",
+              body: "This review tries to attach a photo id from the review created above.",
+              photoAssetIds: [reviewAsset.id],
+            }),
+          InvalidReviewInputError,
+        );
+      } finally {
+        if (ownerReviewId) await db.review.delete({ where: { id: ownerReviewId } }).catch(() => {});
+        await db.mediaAsset.delete({ where: { id: reviewAsset.id } }).catch(() => {});
+        await db.customer
+          .deleteMany({ where: { id: { in: [ownerCustomer.id, attackerCustomer.id] } } })
+          .catch(() => {});
+      }
+    });
+  });
+
+  // F-343: approveReview/rejectReview used to write unconditionally — two
+  // admins moderating the same review at once both got a 200, with
+  // whichever write committed last silently winning.
+  describe("optimistic concurrency guard on review moderation (F-343)", () => {
+    it("two concurrent moderate calls on the same PENDING review: exactly one succeeds, the other gets ReviewConcurrentModificationError", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: { email: `d2-race-${unique}@example.com`, name: "Race Customer", passwordHash: "x" },
+      });
+      const review = await createReview({
+        customerId: customer.id,
+        productId,
+        rating: 3,
+        title: "Race condition candidate",
+        body: "This review is used to test the optimistic concurrency guard.",
+      });
+      try {
+        const [approveOutcome, rejectOutcome] = await Promise.allSettled([
+          approveReview(review.id, adminId, { fromStatus: "PENDING" }),
+          rejectReview(review.id, adminId, "Racing reject", { fromStatus: "PENDING" }),
+        ]);
+        const outcomes = [approveOutcome, rejectOutcome];
+
+        assert.equal(outcomes.filter((o) => o.status === "fulfilled").length, 1, "exactly one call should succeed");
+        const failed = outcomes.filter((o) => o.status === "rejected");
+        assert.equal(failed.length, 1, "exactly one call should fail");
+        assert.ok(failed[0].status === "rejected" && failed[0].reason instanceof ReviewConcurrentModificationError);
+
+        // Whichever one won, the row now reflects a single, unambiguous
+        // status — not silently overwritten by the loser.
+        const final = await db.review.findUnique({ where: { id: review.id } });
+        assert.ok(final?.status === "APPROVED" || final?.status === "REJECTED");
+      } finally {
+        await db.review.delete({ where: { id: review.id } }).catch(() => {});
+        await db.customer.delete({ where: { id: customer.id } }).catch(() => {});
+      }
+    });
+
+    it("rejects with ReviewConcurrentModificationError when fromStatus no longer matches the row", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: { email: `d2-stale-${unique}@example.com`, name: "Stale Customer", passwordHash: "x" },
+      });
+      const review = await createReview({
+        customerId: customer.id,
+        productId,
+        rating: 4,
+        title: "Stale fromStatus candidate",
+        body: "This review is still PENDING, but the caller believes it's REJECTED.",
+      });
+      try {
+        await assert.rejects(
+          () => approveReview(review.id, adminId, { fromStatus: "REJECTED" }),
+          ReviewConcurrentModificationError,
+        );
+        const row = await db.review.findUnique({ where: { id: review.id } });
+        assert.equal(row?.status, "PENDING", "a stale/failed guard must not have changed the row");
+      } finally {
+        await db.review.delete({ where: { id: review.id } }).catch(() => {});
+        await db.customer.delete({ where: { id: customer.id } }).catch(() => {});
+      }
+    });
+
+    // F-203: unpublish (reject an APPROVED review) and restore (approve a
+    // REJECTED one) both go through the same guarded write, keyed on
+    // whichever status the admin UI last observed the row in.
+    it("rejectReview with fromStatus=APPROVED unpublishes an already-approved review", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: { email: `d2-unpublish-${unique}@example.com`, name: "Unpublish Customer", passwordHash: "x" },
+      });
+      const review = await createReview({
+        customerId: customer.id,
+        productId,
+        rating: 5,
+        title: "Unpublish candidate",
+        body: "This review gets approved and then unpublished in this test.",
+      });
+      try {
+        await approveReview(review.id, adminId, { fromStatus: "PENDING" });
+        const result = await rejectReview(review.id, adminId, "Reported as fake", { fromStatus: "APPROVED" });
+        assert.equal(result.status, "REJECTED");
+
+        const approvedList = await getApprovedReviews(productId, {});
+        assert.ok(!approvedList.reviews.some((r) => r.id === review.id));
+      } finally {
+        await db.review.delete({ where: { id: review.id } }).catch(() => {});
+        await db.customer.delete({ where: { id: customer.id } }).catch(() => {});
+      }
+    });
+
+    it("approveReview with fromStatus=REJECTED restores a rejected review", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: { email: `d2-restore-${unique}@example.com`, name: "Restore Customer", passwordHash: "x" },
+      });
+      const review = await createReview({
+        customerId: customer.id,
+        productId,
+        rating: 2,
+        title: "Restore candidate",
+        body: "This review gets rejected and then restored in this test.",
+      });
+      try {
+        await rejectReview(review.id, adminId, "Initial reject", { fromStatus: "PENDING" });
+        const result = await approveReview(review.id, adminId, { fromStatus: "REJECTED" });
+        assert.equal(result.status, "APPROVED");
+
+        const approvedList = await getApprovedReviews(productId, {});
+        assert.ok(approvedList.reviews.some((r) => r.id === review.id));
+      } finally {
+        await db.review.delete({ where: { id: review.id } }).catch(() => {});
+        await db.customer.delete({ where: { id: customer.id } }).catch(() => {});
+      }
+    });
   });
 
   describe("admin review routes are guarded", () => {

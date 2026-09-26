@@ -1,7 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { deflateSync } from "node:zlib";
 import sharp from "sharp";
-import { InvalidImageError, MAX_LONG_EDGE, processImage } from "@/lib/media/process-image";
+import { InvalidImageError, MAX_INPUT_PIXELS, MAX_LONG_EDGE, processImage } from "@/lib/media/process-image";
 
 async function makePng(width: number, height: number, withExifOrientation = false): Promise<Buffer> {
   const image = sharp({
@@ -19,6 +20,64 @@ async function makePng(width: number, height: number, withExifOrientation = fals
     return image.withExif({ IFD0: { Orientation: "6" } }).toBuffer();
   }
   return image.toBuffer();
+}
+
+// F-359: builds a PNG whose IHDR chunk *declares* a huge width/height
+// without ever encoding that many real pixels — the IDAT is a tiny deflate
+// of a few zero bytes, so this fixture is a few dozen bytes on the wire but
+// still exercises sharp's pixel-limit check, which reads the declared
+// dimensions from the header before decoding any pixel data. Building a
+// *real* 256-megapixel image (even a single-colour one) would mean
+// allocating the same hundreds of megabytes of pixel buffer this test
+// exists to prove processImage now refuses to allocate.
+function crc32(buf: Buffer): number {
+  const table = crc32Table();
+  let crc = 0xffffffff;
+  for (const byte of buf) {
+    crc = table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+let cachedCrcTable: number[] | undefined;
+function crc32Table(): number[] {
+  if (cachedCrcTable) return cachedCrcTable;
+  const table: number[] = [];
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[n] = c;
+  }
+  cachedCrcTable = table;
+  return table;
+}
+
+function pngChunk(type: string, data: Buffer): Buffer {
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+  const typeAndData = Buffer.concat([Buffer.from(type, "ascii"), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(typeAndData), 0);
+  return Buffer.concat([length, typeAndData, crc]);
+}
+
+function makeDeclaredSizePng(width: number, height: number): Buffer {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // color type: RGB
+  // ihdr[10..12] (compression/filter/interlace) already zeroed by Buffer.alloc.
+  const idat = deflateSync(Buffer.alloc(10));
+  return Buffer.concat([
+    signature,
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", idat),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]);
 }
 
 describe("processImage", () => {
@@ -66,5 +125,29 @@ describe("processImage", () => {
   // every upload route can map to a clear 400 instead.
   it("throws InvalidImageError — not sharp's raw error — for bytes that aren't a readable image", async () => {
     await assert.rejects(() => processImage(Buffer.from("this is not an image")), InvalidImageError);
+  });
+
+  // F-359: a 16000x16000 declared PNG is 256 megapixels — comfortably under
+  // sharp's own default 268 MP safety limit (so it would decode, and
+  // allocate ~190 MB, without our own tighter cap) but well over
+  // MAX_INPUT_PIXELS. Asserts both that it's rejected and that it's
+  // rejected *for exceeding the pixel limit* specifically (not some other
+  // decode failure), so this test would fail if a future change silently
+  // dropped the `limitInputPixels` option.
+  it("rejects a small file that declares dimensions over MAX_INPUT_PIXELS, before decoding it", async () => {
+    const width = 16000;
+    const height = 16000;
+    assert.ok(width * height > MAX_INPUT_PIXELS, "fixture must exceed MAX_INPUT_PIXELS");
+    const bomb = makeDeclaredSizePng(width, height);
+    assert.ok(bomb.length < 1024, "fixture should be tiny on the wire, not a real 256MP image");
+
+    await assert.rejects(() => processImage(bomb), (error: unknown) => {
+      assert.ok(error instanceof InvalidImageError);
+      assert.ok(
+        error.cause instanceof Error && /pixel limit/i.test(error.cause.message),
+        `expected a pixel-limit error, got: ${error.cause instanceof Error ? error.cause.message : error.cause}`,
+      );
+      return true;
+    });
   });
 });

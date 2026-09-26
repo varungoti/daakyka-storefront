@@ -1,7 +1,12 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { db } from "@/lib/db";
-import { getHeroSlidesContent, getTrustStatsContent, updateHomepageSection } from "@/lib/homepage";
+import {
+  getHeroSlidesContent,
+  getTrustStatsContent,
+  StaleHomepageSectionError,
+  updateHomepageSection,
+} from "@/lib/homepage";
 import { PUT as putHomepageSection } from "@/app/api/admin/homepage/[key]/route";
 import { findAnyAdminId } from "../helpers/admin-user";
 
@@ -64,6 +69,78 @@ describe("homepage section cache round trip", () => {
     });
     assert.ok(audit, "expected an audit log row for the homepage section change");
     assert.equal(audit.action, "update");
+  });
+});
+
+// F-343: updateHomepageSection used to write unconditionally — two admins
+// editing the same section around the same time both got a 200, and
+// whichever write landed last silently discarded the other's edit.
+describe("updateHomepageSection optimistic concurrency guard (F-343)", () => {
+  let adminId: string;
+  let original: { content: string; enabled: boolean } | null = null;
+
+  before(async () => {
+    adminId = await findAnyAdminId();
+    const existing = await db.homepageSection.findUnique({ where: { key: "trust-stats" } });
+    if (existing) {
+      original = { content: existing.content, enabled: existing.enabled };
+    } else {
+      await db.homepageSection.create({
+        data: { key: "trust-stats", title: "Trust Stats", content: JSON.stringify({ stats: [] }) },
+      });
+    }
+  });
+
+  after(async () => {
+    if (original) {
+      await db.homepageSection.update({
+        where: { key: "trust-stats" },
+        data: { content: original.content, enabled: original.enabled },
+      });
+    } else {
+      await db.homepageSection.delete({ where: { key: "trust-stats" } }).catch(() => {});
+    }
+  });
+
+  it("writes unconditionally (unchanged behavior) when expectedUpdatedAt is omitted", async () => {
+    await updateHomepageSection("trust-stats", { stats: [{ value: "1", label: "A" }] }, adminId);
+    await updateHomepageSection("trust-stats", { stats: [{ value: "2", label: "B" }] }, adminId);
+    assert.deepEqual(await getTrustStatsContent(), { stats: [{ value: "2", label: "B" }] });
+  });
+
+  it("throws StaleHomepageSectionError when expectedUpdatedAt no longer matches the row", async () => {
+    await updateHomepageSection("trust-stats", { stats: [{ value: "1", label: "loaded" }] }, adminId);
+    const loaded = await db.homepageSection.findUniqueOrThrow({ where: { key: "trust-stats" } });
+
+    // Someone else saves this section in between this admin loading it and
+    // submitting their own edit.
+    await updateHomepageSection("trust-stats", { stats: [{ value: "2", label: "someone else's edit" }] }, adminId);
+
+    await assert.rejects(
+      () =>
+        updateHomepageSection(
+          "trust-stats",
+          { stats: [{ value: "3", label: "stale edit" }] },
+          adminId,
+          loaded.updatedAt,
+        ),
+      StaleHomepageSectionError,
+    );
+    // The "someone else"'s write must survive.
+    assert.deepEqual(await getTrustStatsContent(), { stats: [{ value: "2", label: "someone else's edit" }] });
+  });
+
+  it("succeeds when expectedUpdatedAt matches the row nobody else has touched since", async () => {
+    await updateHomepageSection("trust-stats", { stats: [{ value: "1", label: "before" }] }, adminId);
+    const loaded = await db.homepageSection.findUniqueOrThrow({ where: { key: "trust-stats" } });
+
+    await updateHomepageSection(
+      "trust-stats",
+      { stats: [{ value: "2", label: "after" }] },
+      adminId,
+      loaded.updatedAt,
+    );
+    assert.deepEqual(await getTrustStatsContent(), { stats: [{ value: "2", label: "after" }] });
   });
 });
 

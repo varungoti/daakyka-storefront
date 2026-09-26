@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdminSession } from "@/lib/auth/admin-api";
 import { hasPermission } from "@/lib/auth/rbac";
 import { readJsonBody } from "@/lib/security/parse-json-body";
-import { isSettingKey, setSetting, settingSchemas } from "@/lib/settings";
+import { isSettingKey, setSetting, settingSchemas, StaleSettingError } from "@/lib/settings";
 import { settingPermissions } from "@/lib/settings/permissions";
 
 interface RouteParams {
@@ -28,7 +28,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const bodyResult = await readJsonBody<{ value: unknown }>(request);
+  const bodyResult = await readJsonBody<{ value: unknown; updatedAt?: string }>(request);
   if (!bodyResult.ok) return bodyResult.response;
 
   const parsedValue = settingSchemas[key].safeParse(bodyResult.data?.value);
@@ -39,6 +39,23 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     );
   }
 
-  const value = await setSetting(key, parsedValue.data, session.id);
-  return NextResponse.json({ key, value });
+  // F-343: an editor that loaded this setting can send back the `updatedAt`
+  // it was loaded with (see GET's response shape) so a save that's gone
+  // stale in the meantime — someone else saved this same key first — is
+  // rejected with 409 instead of silently winning. Optional: an editor that
+  // hasn't been updated to send it yet keeps writing unconditionally.
+  const expectedUpdatedAt = bodyResult.data?.updatedAt ? new Date(bodyResult.data.updatedAt) : undefined;
+  if (expectedUpdatedAt && Number.isNaN(expectedUpdatedAt.getTime())) {
+    return NextResponse.json({ error: "Invalid updatedAt" }, { status: 400 });
+  }
+
+  try {
+    const value = await setSetting(key, parsedValue.data, session.id, expectedUpdatedAt);
+    return NextResponse.json({ key, value });
+  } catch (err) {
+    if (err instanceof StaleSettingError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    throw err;
+  }
 }

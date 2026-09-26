@@ -305,15 +305,53 @@ export async function getAllHomepageSections() {
   });
 }
 
+/**
+ * F-343 fix: same last-writer-wins gap as src/lib/settings/index.ts's
+ * setSetting() — two admins editing the same homepage section (e.g. two
+ * trust-stat edits) around the same time both got a 200, and whichever
+ * write landed last silently discarded the other's edit. Thrown when a
+ * caller passes `expectedUpdatedAt` and the row has since moved on.
+ */
+export class StaleHomepageSectionError extends Error {
+  constructor(key: string) {
+    super(`The "${key}" section was changed by someone else — reload and try again.`);
+    this.name = "StaleHomepageSectionError";
+  }
+}
+
+export class HomepageSectionNotFoundError extends Error {
+  constructor(key: string) {
+    super(`Homepage section "${key}" not found`);
+    this.name = "HomepageSectionNotFoundError";
+  }
+}
+
 export async function updateHomepageSection(
   key: string,
   content: unknown,
   userId: string,
+  // Optional and last, purely additive — see setSetting()'s identical
+  // parameter for why existing callers are unaffected until they pass it.
+  expectedUpdatedAt?: Date,
 ) {
-  const section = await db.homepageSection.update({
-    where: { key },
-    data: { content: JSON.stringify(content) },
-  });
+  let section;
+  if (expectedUpdatedAt) {
+    const { count } = await db.homepageSection.updateMany({
+      where: { key, updatedAt: expectedUpdatedAt },
+      data: { content: JSON.stringify(content) },
+    });
+    if (count === 0) {
+      const exists = await db.homepageSection.findUnique({ where: { key }, select: { id: true } });
+      if (!exists) throw new HomepageSectionNotFoundError(key);
+      throw new StaleHomepageSectionError(key);
+    }
+    section = await db.homepageSection.findUniqueOrThrow({ where: { key } });
+  } else {
+    section = await db.homepageSection.update({
+      where: { key },
+      data: { content: JSON.stringify(content) },
+    });
+  }
 
   const { logAuditEvent } = await import("@/lib/auth/audit");
   await logAuditEvent({

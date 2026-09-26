@@ -4,6 +4,24 @@ import sharp from "sharp";
 export const MAX_LONG_EDGE = 2400;
 export const WEBP_QUALITY = 82;
 
+/**
+ * F-359 fix: sharp's own default `limitInputPixels` (0x3FFF * 0x3FFF ≈
+ * 268 megapixels) is a decode-time safety valve, but it's sized for "don't
+ * let libvips allocate literally unbounded memory" — not for "this is a
+ * reasonable photo". A single-colour (and so highly compressible) PNG under
+ * 1 MB can still declare 16000x16000 (256 MP) in its header, which is under
+ * sharp's default cap and so decodes successfully, allocating ~190 MB of
+ * pixel buffer per request; a handful of concurrent uploads from one
+ * customer can push a Vercel function toward its memory limit. 50 MP is
+ * generous for any real camera/phone photo (a 12 MP phone photo is
+ * 4000x3000) while keeping worst-case decode memory in the tens of MB.
+ * Passed to `sharp()` itself so the check runs against the file's declared
+ * header dimensions, before any pixel data is decoded — not a `.metadata()`
+ * pre-check followed by a second `sharp()` call, which would decode the
+ * header twice for no benefit.
+ */
+export const MAX_INPUT_PIXELS = 50_000_000;
+
 export interface ProcessedImage {
   buffer: Buffer;
   width: number;
@@ -44,7 +62,7 @@ export class InvalidImageError extends Error {
  */
 export async function processImage(input: Buffer): Promise<ProcessedImage> {
   try {
-    const { data, info } = await sharp(input)
+    const { data, info } = await sharp(input, { limitInputPixels: MAX_INPUT_PIXELS })
       .rotate()
       .resize({
         width: MAX_LONG_EDGE,
