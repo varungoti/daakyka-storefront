@@ -108,48 +108,51 @@ describe("site settings integration", () => {
   // the same key around the same time both got a 200, and whichever write
   // committed last silently discarded the other's edit.
   describe("setSetting optimistic concurrency guard (F-343)", () => {
-    const originalMixMatch = settingDefaults["pages.mixMatch.enabled"];
+    // Uses a key no other integration file reads: the suite runs files in
+    // parallel against one DB, and routing/get-footer-links assert on the
+    // pages.* flags, so toggling those here raced with them.
+    const originalBulkCta = settingDefaults["header.bulkCta.enabled"];
 
     after(async () => {
       await db.siteSetting.upsert({
-        where: { key: "pages.mixMatch.enabled" },
-        create: { key: "pages.mixMatch.enabled", value: originalMixMatch },
-        update: { value: originalMixMatch },
+        where: { key: "header.bulkCta.enabled" },
+        create: { key: "header.bulkCta.enabled", value: originalBulkCta },
+        update: { value: originalBulkCta },
       });
     });
 
     it("writes unconditionally (unchanged behavior) when expectedUpdatedAt is omitted", async () => {
       const adminId = await findAnyAdminId();
-      await setSetting("pages.mixMatch.enabled", true, adminId);
-      await setSetting("pages.mixMatch.enabled", false, adminId);
-      assert.equal(await getSetting("pages.mixMatch.enabled"), false);
+      await setSetting("header.bulkCta.enabled", true, adminId);
+      await setSetting("header.bulkCta.enabled", false, adminId);
+      assert.equal(await getSetting("header.bulkCta.enabled"), false);
     });
 
     it("throws StaleSettingError when expectedUpdatedAt no longer matches the stored row", async () => {
       const adminId = await findAnyAdminId();
-      await setSetting("pages.mixMatch.enabled", true, adminId);
-      const loaded = await db.siteSetting.findUniqueOrThrow({ where: { key: "pages.mixMatch.enabled" } });
+      await setSetting("header.bulkCta.enabled", true, adminId);
+      const loaded = await db.siteSetting.findUniqueOrThrow({ where: { key: "header.bulkCta.enabled" } });
 
       // Someone else saves the same key in between this admin loading it
       // and submitting their own edit.
-      await setSetting("pages.mixMatch.enabled", false, adminId);
+      await setSetting("header.bulkCta.enabled", false, adminId);
 
       await assert.rejects(
-        () => setSetting("pages.mixMatch.enabled", true, adminId, loaded.updatedAt),
+        () => setSetting("header.bulkCta.enabled", true, adminId, loaded.updatedAt),
         StaleSettingError,
       );
       // The "someone else"'s write must survive — the stale write above
       // must not have gone through.
-      assert.equal(await getSetting("pages.mixMatch.enabled"), false);
+      assert.equal(await getSetting("header.bulkCta.enabled"), false);
     });
 
     it("succeeds when expectedUpdatedAt matches the row nobody else has touched since", async () => {
       const adminId = await findAnyAdminId();
-      await setSetting("pages.mixMatch.enabled", false, adminId);
-      const loaded = await db.siteSetting.findUniqueOrThrow({ where: { key: "pages.mixMatch.enabled" } });
+      await setSetting("header.bulkCta.enabled", false, adminId);
+      const loaded = await db.siteSetting.findUniqueOrThrow({ where: { key: "header.bulkCta.enabled" } });
 
-      await setSetting("pages.mixMatch.enabled", true, adminId, loaded.updatedAt);
-      assert.equal(await getSetting("pages.mixMatch.enabled"), true);
+      await setSetting("header.bulkCta.enabled", true, adminId, loaded.updatedAt);
+      assert.equal(await getSetting("header.bulkCta.enabled"), true);
     });
   });
 
