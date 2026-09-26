@@ -58,17 +58,46 @@ export function ProductImageGallery({
   const [pickerOpen, setPickerOpen] = useState(false);
 
   async function attachAsset(assetId: string, altGuess: string) {
-    const response = await fetch(`/api/admin/products/${productId}/images`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mediaAssetId: assetId, alt: altGuess }),
-    });
-    if (!response.ok) {
-      setNotice("Couldn't attach image to the product.");
-      return;
+    await attachAssets([{ id: assetId, alt: altGuess }]);
+  }
+
+  /** F-192: attaches several picked library images in one call — used by
+   * the media picker's "Add N images" multi-select. Each POST still
+   * happens one at a time (the API attaches one image per call), but
+   * every new row is folded into a *single* onChange([...images, ...new])
+   * at the end, rather than one onChange per image. That's deliberate:
+   * `images` is a prop closed over when this function was created, so a
+   * loop that called onChange after every await (as attachAsset used to,
+   * one call per selected image) would have each call rebuild
+   * `[...images, row]` from that same stale, pre-loop `images` — the
+   * parent's setState would then just overwrite the previous image with
+   * the next one, so only the *last* of several picked images would
+   * actually stick. */
+  async function attachAssets(picks: { id: string; alt: string }[]) {
+    const newRows: ProductImageRow[] = [];
+    for (const pick of picks) {
+      const response = await fetch(`/api/admin/products/${productId}/images`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mediaAssetId: pick.id, alt: pick.alt }),
+      });
+      if (!response.ok) {
+        setNotice(picks.length > 1 ? "Couldn't attach one or more images to the product." : "Couldn't attach image to the product.");
+        continue;
+      }
+      const body = await response.json();
+      newRows.push({
+        id: body.image.id,
+        mediaId: body.image.mediaId,
+        url: body.image.media.url,
+        alt: body.image.alt,
+        color: body.image.color,
+        sortOrder: body.image.sortOrder,
+      });
     }
-    const body = await response.json();
-    onChange([...images, { id: body.image.id, mediaId: body.image.mediaId, url: body.image.media.url, alt: body.image.alt, color: body.image.color, sortOrder: body.image.sortOrder }]);
+    if (newRows.length > 0) {
+      onChange([...images, ...newRows]);
+    }
   }
 
   async function onUploadFiles(files: FileList) {
@@ -246,12 +275,17 @@ export function ProductImageGallery({
 
       {pickerOpen && (
         <MediaLibraryBrowser
-          title="Choose a product image"
+          title="Choose product images"
           defaultUsage="PRODUCT"
+          multiple
           onClose={() => setPickerOpen(false)}
           onSelect={(asset) => {
             setPickerOpen(false);
             void attachAsset(asset.id, asset.alt ?? aiFields.name ?? "");
+          }}
+          onSelectMany={(assets) => {
+            setPickerOpen(false);
+            void attachAssets(assets.map((asset) => ({ id: asset.id, alt: asset.alt ?? aiFields.name ?? "" })));
           }}
         />
       )}

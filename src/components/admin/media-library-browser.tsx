@@ -86,16 +86,28 @@ function usageSummary(asset: MediaLibraryAsset): string {
 export function MediaLibraryBrowser({
   title = "Media Library",
   defaultUsage,
+  multiple = false,
   onClose,
   onSelect,
+  onSelectMany,
 }: {
   title?: string;
   /** Pre-selects the usage filter (e.g. "PRODUCT" from the product
    * gallery) — still changeable by the admin, since a photo shot for one
    * use (say a category tile) is often perfectly reusable for another. */
   defaultUsage?: string;
+  /** F-192: renders a checkbox on every tile plus an "Add N images"
+   * confirm button, instead of picking on the first click — so several
+   * library images can be attached in one open/scroll/pick cycle instead
+   * of one image per open/close. Requires `onSelectMany`; every existing
+   * single-pick caller (the category picker, hero slides, testimonials)
+   * is unaffected, since it simply doesn't pass this prop. */
+  multiple?: boolean;
   onClose: () => void;
   onSelect: (asset: { id: string; url: string; alt: string | null }) => void;
+  /** Called once with every checked asset when "Add N images" is clicked
+   * (only relevant when `multiple` is true — ignored otherwise). */
+  onSelectMany?: (assets: { id: string; url: string; alt: string | null }[]) => void;
 }) {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -106,7 +118,25 @@ export function MediaLibraryBrowser({
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const requestIdRef = useRef(0);
+
+  function toggleSelected(assetId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(assetId)) next.delete(assetId);
+      else next.add(assetId);
+      return next;
+    });
+  }
+
+  function confirmMultiSelect() {
+    const chosen = assets
+      .filter((asset) => selectedIds.has(asset.id))
+      .map((asset) => ({ id: asset.id, url: asset.url, alt: asset.alt }));
+    if (chosen.length === 0) return;
+    onSelectMany?.(chosen);
+  }
 
   useEffect(() => {
     const handle = setTimeout(() => setDebouncedSearch(search.trim()), 300);
@@ -204,28 +234,53 @@ export function MediaLibraryBrowser({
           </p>
         ) : (
           <div className="grid max-h-[55vh] grid-cols-3 gap-3 overflow-y-auto pr-1 sm:grid-cols-4 md:grid-cols-5">
-            {assets.map((asset) => (
-              <button
-                key={asset.id}
-                type="button"
-                onClick={() => onSelect({ id: asset.id, url: asset.url, alt: asset.alt })}
-                title={usageSummary(asset)}
-                className="group space-y-1 text-left"
-              >
-                <div className="relative aspect-square overflow-hidden rounded-lg border border-border bg-lavender/40 transition group-hover:ring-2 group-hover:ring-brand">
-                  <Image src={asset.url} alt={asset.alt ?? ""} fill sizes="150px" className="object-cover" />
-                  <span
+            {assets.map((asset) => {
+              const isSelected = selectedIds.has(asset.id);
+              return (
+                <button
+                  key={asset.id}
+                  type="button"
+                  onClick={() =>
+                    multiple ? toggleSelected(asset.id) : onSelect({ id: asset.id, url: asset.url, alt: asset.alt })
+                  }
+                  aria-pressed={multiple ? isSelected : undefined}
+                  title={usageSummary(asset)}
+                  className="group space-y-1 text-left"
+                >
+                  <div
                     className={cn(
-                      "absolute left-1 top-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white",
-                      asset.source === "AI" ? "bg-purple-600/90" : "bg-ink/70",
+                      "relative aspect-square overflow-hidden rounded-lg border bg-lavender/40 transition group-hover:ring-2 group-hover:ring-brand",
+                      isSelected ? "border-brand ring-2 ring-brand" : "border-border",
                     )}
                   >
-                    {asset.source === "AI" ? "AI" : "Upload"}
-                  </span>
-                </div>
-                <p className="truncate text-[11px] text-muted">{usageSummary(asset)}</p>
-              </button>
-            ))}
+                    <Image src={asset.url} alt={asset.alt ?? ""} fill sizes="150px" className="object-cover" />
+                    {/* F-192: a checkbox overlay in multi-select mode — the
+                        whole tile stays clickable (toggling it), the
+                        checkbox is just the visible affordance. */}
+                    {multiple && (
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full border-2 text-[11px] font-bold",
+                          isSelected ? "border-brand bg-brand text-white" : "border-white bg-black/30 text-transparent",
+                        )}
+                      >
+                        ✓
+                      </span>
+                    )}
+                    <span
+                      className={cn(
+                        "absolute left-1 top-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white",
+                        asset.source === "AI" ? "bg-purple-600/90" : "bg-ink/70",
+                      )}
+                    >
+                      {asset.source === "AI" ? "AI" : "Upload"}
+                    </span>
+                  </div>
+                  <p className="truncate text-[11px] text-muted">{usageSummary(asset)}</p>
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -233,11 +288,26 @@ export function MediaLibraryBrowser({
           <span>
             {loading ? "Loading…" : `Showing ${assets.length} of ${total}`}
           </span>
-          {!loading && assets.length < total ? (
-            <button type="button" onClick={() => load(assets.length)} className="rounded-full border border-border px-3 py-1.5 font-semibold text-ink hover:bg-lilac/40">
-              Load more
-            </button>
-          ) : null}
+          <div className="flex items-center gap-2">
+            {!loading && assets.length < total ? (
+              <button type="button" onClick={() => load(assets.length)} className="rounded-full border border-border px-3 py-1.5 font-semibold text-ink hover:bg-lilac/40">
+                Load more
+              </button>
+            ) : null}
+            {/* F-192: was one pick per open/close cycle — this lets an
+                admin check several library images and attach them all at
+                once. */}
+            {multiple && (
+              <button
+                type="button"
+                onClick={confirmMultiSelect}
+                disabled={selectedIds.size === 0}
+                className="rounded-full bg-brand px-3 py-1.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Add {selectedIds.size} image{selectedIds.size === 1 ? "" : "s"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </Modal>
