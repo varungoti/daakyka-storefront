@@ -263,6 +263,16 @@ export async function commitDiscountRedemption(
 ): Promise<CommitDiscountRedemptionResult> {
   const now = params.now ?? new Date();
 
+  // F-035 fix (release-hardening order-lifecycle-payment-integrity):
+  // idempotent by orderId, checked first. `DiscountRedemption.orderId` is
+  // `@unique`, so without this an order that's legitimately re-run through
+  // its PAID transition (e.g. a defensive retry, not merely the
+  // already-guarded CAS in markRazorpayOrderPaid) would hit a P2002 here
+  // instead of recognising "this order's redemption is already committed"
+  // and no-opping.
+  const existingRedemption = await tx.discountRedemption.findUnique({ where: { orderId: params.orderId } });
+  if (existingRedemption) return { ok: true };
+
   const conditions: Prisma.DiscountWhereInput[] = [
     { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
     { OR: [{ endsAt: null }, { endsAt: { gt: now } }] },
