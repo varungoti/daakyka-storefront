@@ -57,7 +57,10 @@ export function Header({ navigation }: { navigation: NavigationTree }) {
     <>
       <header
         className={cn(
-          "sticky top-0 z-50 border-b transition-all duration-300",
+          // F-328: print:hidden here too (not just the wrapper in
+          // site-shell.tsx) — a `sticky` element can otherwise repeat
+          // across every printed page the same way a `fixed` one does.
+          "sticky top-0 z-50 border-b transition-all duration-300 print:hidden",
           scrolled
             ? "border-border bg-background/95 backdrop-blur-xl shadow-[0_4px_24px_var(--shadow-tint)]"
             : "border-transparent bg-background/80 backdrop-blur-md",

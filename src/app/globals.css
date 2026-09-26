@@ -411,3 +411,26 @@ textarea::placeholder {
 .prose-description ol {
   margin-bottom: 0.75em;
 }
+
+/* ── Print (F-328) ──
+   Primary fix: the print:hidden Tailwind utility on the header, utility
+   bar, footer, WhatsApp fab and cart/wishlist drawers (site-shell.tsx),
+   the WhatsApp fab and header themselves (their own print:hidden, since
+   fixed/sticky elements can otherwise repeat on every printed page), and
+   the account layout's hero band/nav (src/app/account/(dashboard)/layout.tsx).
+   This block re-hides the same elements structurally — by tag, role or
+   aria-label rather than a utility class — as defense-in-depth, so a
+   printed order receipt still looks right even if one of those classes is
+   ever dropped by accident in a future edit. */
+@media print {
+  header,
+  footer,
+  [aria-label="Chat on WhatsApp"],
+  [role="dialog"] {
+    display: none !important;
+  }
+
+  body {
+    background: #fff;
+  }
+}

@@ -1,9 +1,11 @@
+import { OrderPrintButton } from "@/components/account/order-print-button";
 import { OrderTimelineView } from "@/components/account/order-timeline";
 import { OrderTrackingCard } from "@/components/account/order-tracking-card";
 import { brand } from "@/data/brand";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import type { OrderStatus } from "@/generated/prisma/client";
 import { checkOrderPageRateLimit, getAuthorizedOrder } from "@/lib/orders/get-order";
+import { formatReceiptDate, getReceiptPaymentSummary } from "@/lib/orders/receipt";
 import { getOrderTimeline } from "@/lib/orders/timeline";
 import { getClientIp } from "@/lib/security/rate-limit";
 import { getSetting } from "@/lib/settings";
@@ -108,7 +110,14 @@ export default async function OrderConfirmationPage({
   // F-125: no page in the money path stated whether prices include tax, or
   // named the seller/GSTIN — settings-driven so the GSTIN line is hidden
   // (not a placeholder) until the owner has actually registered for GST.
-  const gstin = await getSetting("legal.gstin");
+  // F-328: sellerAddress is fetched alongside for the printed-receipt
+  // "Sold by" block below — same settings-driven, hide-when-blank pattern
+  // the admin invoice page already uses
+  // (src/app/admin/(panel)/orders/[id]/invoice/page.tsx).
+  const [gstin, sellerAddress] = await Promise.all([
+    getSetting("legal.gstin"),
+    getSetting("contact.address"),
+  ]);
 
   // Audit F-281: reached right after Razorpay reported a successful
   // payment but this session's own POST /api/checkout/verify couldn't
@@ -123,24 +132,55 @@ export default async function OrderConfirmationPage({
   // F-141 fix precedent (src/lib/orders/timeline.ts): only matters for a
   // RAZORPAY order's CANCELLED wording — see that function's doc comment.
   const timeline = getOrderTimeline(order.status, order.paymentMethod, order.razorpayPaymentId !== null);
+  // F-328: the receipt's own "Placed <date>" / payment-status line — see
+  // src/lib/orders/receipt.ts for why these are pure, separately-tested
+  // helpers rather than inline JSX logic.
+  const placedDate = formatReceiptDate(order.createdAt);
+  const paymentSummary = getReceiptPaymentSummary(
+    order.status,
+    order.paymentMethod,
+    order.razorpayPaymentId !== null,
+  );
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-16 lg:px-8">
-      <div className="flex items-center gap-3 text-brand">
-        {isConfirmingPayment ? <Loader2 size={32} className="animate-spin" /> : <hero.Icon size={32} />}
-        <h1 className="font-display text-3xl font-bold text-ink">
-          {isConfirmingPayment ? "Payment received — confirming" : hero.label}
-        </h1>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-3 text-brand">
+            {isConfirmingPayment ? <Loader2 size={32} className="animate-spin" /> : <hero.Icon size={32} />}
+            <h1 className="font-display text-3xl font-bold text-ink">
+              {isConfirmingPayment ? "Payment received — confirming" : hero.label}
+            </h1>
+          </div>
+          <p className="mt-2 text-muted">
+            Order <span className="font-semibold text-ink">{order.number}</span> — status:{" "}
+            <span className="font-semibold text-ink">
+              {isConfirmingPayment ? "Confirming payment" : (STATUS_LABELS[order.status] ?? order.status)}
+            </span>
+          </p>
+          {/* F-328: order date + payment status — a printed receipt with
+              neither was one of this finding's core gaps. Skipped while
+              still confirming a just-completed payment, same condition as
+              the order-status section below: the underlying facts (paid?
+              when?) aren't settled yet. */}
+          {!isConfirmingPayment && (
+            <p className="mt-1 text-sm text-muted">
+              Placed {placedDate} · {paymentSummary}
+            </p>
+          )}
+        </div>
+        {/* F-328: itself print:hidden (see OrderPrintButton) — the only
+            on-page control meant to survive onto the printed receipt is
+            the receipt content itself. */}
+        {!isConfirmingPayment && <OrderPrintButton />}
       </div>
-      <p className="mt-2 text-muted">
-        Order <span className="font-semibold text-ink">{order.number}</span> — status:{" "}
-        <span className="font-semibold text-ink">
-          {isConfirmingPayment ? "Confirming payment" : (STATUS_LABELS[order.status] ?? order.status)}
-        </span>
-      </p>
 
+      {/* F-328: none of this "what's happening" chrome belongs on a printed
+          receipt — it's transient/decorative, not one of the receipt facts
+          (date, payment, items, totals, shipping, seller) the finding asks
+          for, so it's print:hidden the same way the site chrome is. */}
       {isConfirmingPayment && (
-        <div className="mt-6 flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/10 p-4 text-sm text-ink">
+        <div className="mt-6 flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/10 p-4 text-sm text-ink print:hidden">
           <Loader2 size={20} className="mt-0.5 shrink-0 animate-spin" />
           <p>
             We&rsquo;ve received your payment and are confirming it — this can take a minute. Please don&rsquo;t
@@ -151,19 +191,19 @@ export default async function OrderConfirmationPage({
       )}
 
       {!isConfirmingPayment && (
-        <section className="mt-8 rounded-2xl border border-border bg-surface p-5">
+        <section className="mt-8 rounded-2xl border border-border bg-surface p-5 print:hidden">
           <h2 className="mb-4 font-display text-lg font-bold text-ink">Order status</h2>
           <OrderTimelineView timeline={timeline} />
         </section>
       )}
 
       {!isConfirmingPayment && order.trackingNumber && (
-        <div className="mt-6">
+        <div className="mt-6 print:hidden">
           <OrderTrackingCard trackingNumber={order.trackingNumber} courier={order.courier} />
         </div>
       )}
 
-      <section className="mt-8 space-y-4">
+      <section className="mt-8 space-y-4 print:break-inside-avoid">
         <h2 className="font-display text-lg font-bold text-ink">Items</h2>
         <div className="divide-y divide-border rounded-2xl border border-border bg-surface">
           {order.items.map((item) => (
@@ -179,7 +219,7 @@ export default async function OrderConfirmationPage({
         </div>
       </section>
 
-      <section className="mt-6 space-y-1 rounded-2xl border border-border bg-surface p-4 text-sm">
+      <section className="mt-6 space-y-1 rounded-2xl border border-border bg-surface p-4 text-sm print:break-inside-avoid">
         <div className="flex justify-between">
           <span className="text-muted">Subtotal</span>
           <span className="text-ink">{formatInr(Number(order.subtotal))}</span>
@@ -204,7 +244,7 @@ export default async function OrderConfirmationPage({
         </p>
       </section>
 
-      <section className="mt-6 rounded-2xl border border-border bg-surface p-4 text-sm">
+      <section className="mt-6 rounded-2xl border border-border bg-surface p-4 text-sm print:break-inside-avoid">
         <h2 className="mb-2 font-display text-lg font-bold text-ink">Shipping to</h2>
         <p className="text-ink">{address?.name}</p>
         <p className="text-muted">
@@ -215,6 +255,19 @@ export default async function OrderConfirmationPage({
           {address?.city}, {address?.state} {address?.pincode}
         </p>
         <p className="text-muted">{address?.country === "IN" ? "India" : address?.country}</p>
+      </section>
+
+      {/* F-328: the receipt's seller block — legal name, address and GSTIN
+          (when set), the same settings-driven, hide-when-blank facts the
+          admin invoice page shows (src/app/admin/(panel)/orders/[id]/invoice/page.tsx).
+          Distinct from the one-line "Sold by" tax disclosure above (F-125):
+          that line exists to state tax-inclusivity next to the total, this
+          section is the actual seller identity a printed receipt needs. */}
+      <section className="mt-6 rounded-2xl border border-border bg-surface p-4 text-sm print:break-inside-avoid">
+        <h2 className="mb-2 font-display text-lg font-bold text-ink">Sold by</h2>
+        <p className="font-semibold text-ink">{brand.legalName}</p>
+        {sellerAddress && <p className="text-muted">{sellerAddress}</p>}
+        {gstin && <p className="text-muted">GSTIN {gstin}</p>}
       </section>
     </div>
   );

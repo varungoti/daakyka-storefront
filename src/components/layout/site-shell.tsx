@@ -64,29 +64,48 @@ export function SiteShell({
       >
         Skip to main content
       </a>
-      <UtilityBar
-        messages={announcementMessages}
-        phone={contactPhone}
-        whatsapp={contactWhatsapp}
-        bulkCtaEnabled={bulkCtaEnabled}
-      />
-      <Header navigation={navigation} />
+      {/* F-328: none of this site chrome belongs on a printed page (e.g. an
+          order receipt, src/app/order/[number]/page.tsx) — a wrapping
+          print:hidden div per component, rather than one div around all
+          six, so each stays a plain sibling and this can't change any of
+          their existing on-screen layout. globals.css carries a
+          structural (tag/role-based) @media print fallback for the same
+          elements as defense-in-depth. */}
+      <div className="print:hidden">
+        <UtilityBar
+          messages={announcementMessages}
+          phone={contactPhone}
+          whatsapp={contactWhatsapp}
+          bulkCtaEnabled={bulkCtaEnabled}
+        />
+      </div>
+      <div className="print:hidden">
+        <Header navigation={navigation} />
+      </div>
       <main id="main-content" className="flex-1">
         {children}
       </main>
-      <Footer
-        fabricTechEnabled={fabricTechEnabled}
-        mixMatchEnabled={mixMatchEnabled}
-        saleEnabled={saleEnabled}
-        contactPhone={contactPhone}
-        contactWhatsapp={contactWhatsapp}
-        contactEmail={contactEmail}
-        contactAddress={contactAddress}
-      />
-      <WhatsAppFab whatsapp={contactWhatsapp} />
-      <CartDrawer />
+      <div className="print:hidden">
+        <Footer
+          fabricTechEnabled={fabricTechEnabled}
+          mixMatchEnabled={mixMatchEnabled}
+          saleEnabled={saleEnabled}
+          contactPhone={contactPhone}
+          contactWhatsapp={contactWhatsapp}
+          contactEmail={contactEmail}
+          contactAddress={contactAddress}
+        />
+      </div>
+      <div className="print:hidden">
+        <WhatsAppFab whatsapp={contactWhatsapp} />
+      </div>
+      <div className="print:hidden">
+        <CartDrawer />
+      </div>
       <CartAbandonTracker />
-      <WishlistDrawer />
+      <div className="print:hidden">
+        <WishlistDrawer />
+      </div>
     </>
   );
 }

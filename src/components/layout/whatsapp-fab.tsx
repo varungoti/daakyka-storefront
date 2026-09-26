@@ -81,7 +81,12 @@ export function WhatsAppFab({ whatsapp }: { whatsapp: string }) {
       aria-hidden={fieldFocused || undefined}
       tabIndex={fieldFocused ? -1 : undefined}
       className={cn(
-        "fixed right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-trust text-white shadow-lg shadow-trust/30 transition-[bottom,opacity,transform] duration-200 hover:scale-105 hover:shadow-xl",
+        // F-328: print:hidden directly on this fixed-position element too
+        // (not just the print:hidden wrapper in site-shell.tsx) — a
+        // position:fixed element like this one is exactly what reprints on
+        // every page of a multi-page print job, so this is its own
+        // defense-in-depth, not a redundant belt-and-braces class.
+        "fixed right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-trust text-white shadow-lg shadow-trust/30 transition-[bottom,opacity,transform] duration-200 hover:scale-105 hover:shadow-xl print:hidden",
         stickyCartVisible ? "bottom-28 md:bottom-6" : "bottom-6",
         fieldFocused && "max-md:pointer-events-none max-md:scale-0 max-md:opacity-0",
       )}

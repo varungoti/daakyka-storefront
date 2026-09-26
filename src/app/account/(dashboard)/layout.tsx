@@ -72,17 +72,27 @@ export default async function AccountDashboardLayout({ children }: { children: R
 
   return (
     <>
-      <PageHeroBand innerClassName="max-w-2xl text-center">
-        <SectionHeading
-          eyebrow="Account"
-          title={`Welcome back, ${session.name.split(" ")[0]}`}
-          description="Manage your orders, addresses, reviews, and profile."
-          align="center"
-          titleAs="h1"
-        />
-      </PageHeroBand>
+      {/* F-328: hidden when printing — a signed-in shopper printing an
+          order from /account/orders/[number] would otherwise get this
+          hero band and the nav tab bar below on every printed page (see
+          that finding's evidence on the account order page). Nothing here
+          is receipt content, so it's chrome the same way site-shell.tsx's
+          header/footer are. */}
+      <div className="print:hidden">
+        <PageHeroBand innerClassName="max-w-2xl text-center">
+          <SectionHeading
+            eyebrow="Account"
+            title={`Welcome back, ${session.name.split(" ")[0]}`}
+            description="Manage your orders, addresses, reviews, and profile."
+            align="center"
+            titleAs="h1"
+          />
+        </PageHeroBand>
+      </div>
       <PageContentSection>
-        <AccountNav />
+        <div className="print:hidden">
+          <AccountNav />
+        </div>
         <div className="mt-8">{children}</div>
       </PageContentSection>
     </>
