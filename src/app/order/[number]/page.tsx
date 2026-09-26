@@ -2,7 +2,7 @@ import { getCustomerSession } from "@/lib/customer-auth/session";
 import { checkOrderPageRateLimit, getAuthorizedOrder } from "@/lib/orders/get-order";
 import { getClientIp } from "@/lib/security/rate-limit";
 import type { ShippingAddressInput } from "@/lib/validation/schemas";
-import { CheckCircle2, Truck } from "lucide-react";
+import { CheckCircle2, Loader2, Truck } from "lucide-react";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
@@ -35,10 +35,10 @@ export default async function OrderConfirmationPage({
   searchParams,
 }: {
   params: Promise<{ number: string }>;
-  searchParams: Promise<{ token?: string }>;
+  searchParams: Promise<{ token?: string; payment?: string }>;
 }) {
   const { number } = await params;
-  const { token } = await searchParams;
+  const { token, payment } = await searchParams;
 
   // Rate-limited before anything else touches the DB: an unauthenticated,
   // guessable-by-design URL (see get-order.ts's doc comment on finding F2)
@@ -69,18 +69,43 @@ export default async function OrderConfirmationPage({
 
   const address = order.shippingAddress as unknown as ShippingAddressInput;
 
+  // Audit F-281: reached right after Razorpay reported a successful
+  // payment but this session's own POST /api/checkout/verify couldn't
+  // confirm it (a network blip, a transient error, or the webhook simply
+  // hasn't landed yet — see checkout-page-content.tsx's openRazorpayCheckout).
+  // The order really may still be PENDING_PAYMENT at this exact moment;
+  // showing "Awaiting payment" here would read as "you haven't paid",
+  // inviting the shopper to pay again for a charge that already went
+  // through.
+  const isConfirmingPayment = order.status === "PENDING_PAYMENT" && payment === "confirming";
+
   return (
     <div className="mx-auto max-w-3xl px-4 py-16 lg:px-8">
       <div className="flex items-center gap-3 text-brand">
-        <CheckCircle2 size={32} />
-        <h1 className="font-display text-3xl font-bold text-ink">Order confirmed</h1>
+        {isConfirmingPayment ? <Loader2 size={32} className="animate-spin" /> : <CheckCircle2 size={32} />}
+        <h1 className="font-display text-3xl font-bold text-ink">
+          {isConfirmingPayment ? "Payment received — confirming" : "Order confirmed"}
+        </h1>
       </div>
       <p className="mt-2 text-muted">
         Order <span className="font-semibold text-ink">{order.number}</span> — status:{" "}
-        <span className="font-semibold text-ink">{STATUS_LABELS[order.status] ?? order.status}</span>
+        <span className="font-semibold text-ink">
+          {isConfirmingPayment ? "Confirming payment" : (STATUS_LABELS[order.status] ?? order.status)}
+        </span>
       </p>
 
-      {order.paymentMethod === "ORDER_REQUEST" && (
+      {isConfirmingPayment && (
+        <div className="mt-6 flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/10 p-4 text-sm text-ink">
+          <Loader2 size={20} className="mt-0.5 shrink-0 animate-spin" />
+          <p>
+            We&rsquo;ve received your payment and are confirming it — this can take a minute. Please don&rsquo;t
+            place the order again. If this doesn&rsquo;t update soon, contact us with your order number{" "}
+            <span className="font-semibold">{order.number}</span>.
+          </p>
+        </div>
+      )}
+
+      {!isConfirmingPayment && order.paymentMethod === "ORDER_REQUEST" && (
         <div className="mt-6 flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/10 p-4 text-sm text-ink">
           <Truck size={20} className="mt-0.5 shrink-0" />
           <p>Our team will contact you shortly to confirm payment and delivery for this order.</p>
