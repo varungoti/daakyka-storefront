@@ -338,6 +338,19 @@ export function ReviewsTab({ reviews }: { reviews: ReviewInfo[] }) {
           <p className="mt-1 text-sm text-muted">Rating: {review.rating} / 5</p>
           {review.title && <p className="mt-2 font-semibold text-ink">{review.title}</p>}
           <p className="mt-1 text-sm text-muted">{review.body}</p>
+          {/* F-296: a REJECTED review no longer permanently blocks this
+              customer from the product — the PDP now offers a fresh Write
+              a Review form for it (see ReviewEligibility's "rejected"
+              status), so this links straight back there instead of leaving
+              the customer with only a red pill and no next step. */}
+          {review.status === "REJECTED" && (
+            <p className="mt-2 text-xs text-muted">
+              Didn&apos;t meet our review guidelines.{" "}
+              <Link href={`/products/${review.productSlug}#reviews`} className="font-semibold text-brand hover:underline">
+                Write a new one
+              </Link>
+            </p>
+          )}
         </div>
       ))}
     </div>
@@ -347,7 +360,9 @@ export function ReviewsTab({ reviews }: { reviews: ReviewInfo[] }) {
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
     PENDING: "bg-yellow-100 text-yellow-800",
-    APPROVED: "bg-trust/15 text-trust",
+    // F-299: text-trust is only ~2.8:1 on this tint (fails WCAG AA for
+    // small text) — text-trust-ink is the same green family at ~6:1.
+    APPROVED: "bg-trust/15 text-trust-ink",
     REJECTED: "bg-red-100 text-red-700",
   };
   return (

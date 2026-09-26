@@ -929,6 +929,8 @@ export function CheckoutPageContent({
               {displayTotal === null ? "Calculating…" : renderInrPrice(displayTotal)}
             </span>
           </div>
+          {/* F-125 */}
+          <p className="mt-1 text-right text-xs text-muted">Inclusive of all taxes</p>
 
           <div className="mt-4 border-t border-border pt-4">
             {appliedDiscount ? (
@@ -996,7 +998,27 @@ export function CheckoutPageContent({
                 : `Place Order · ${formatBasePrice(displayTotal, "INR")}`}
           </Button>
 
+          {/* F-149: checkout used to link to no policy at all — the only
+              way to reach Terms/Refund/Privacy was the footer, which isn't
+              rendered on this page's own scroll position. Opens in a new
+              tab so a shopper reading a policy doesn't lose this form. */}
           <p className="mt-4 text-center text-xs text-muted">
+            By placing this order you agree to our{" "}
+            <Link href="/terms" target="_blank" rel="noopener" className="text-brand underline underline-offset-2">
+              Terms
+            </Link>
+            ,{" "}
+            <Link href="/returns" target="_blank" rel="noopener" className="text-brand underline underline-offset-2">
+              Refund &amp; Cancellation Policy
+            </Link>{" "}
+            and{" "}
+            <Link href="/privacy-policy" target="_blank" rel="noopener" className="text-brand underline underline-offset-2">
+              Privacy Policy
+            </Link>
+            .
+          </p>
+
+          <p className="mt-2 text-center text-xs text-muted">
             Having trouble?{" "}
             <Link href="/contact?intent=checkout" className="text-brand underline underline-offset-2">
               Contact us

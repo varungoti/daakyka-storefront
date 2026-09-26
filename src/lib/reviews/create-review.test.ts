@@ -26,6 +26,25 @@ describe("computeVerifiedPurchase (Phase D2)", () => {
     assert.equal(computeVerifiedPurchase([{ order: { status: "REFUNDED" } }]), false);
   });
 
+  // F-027: SHIPPED/DELIVERED are later transitions of an already-PAID
+  // order — a review written once the order has actually arrived (when
+  // customers realistically write reviews) must still count as a verified
+  // purchase, not lose the badge because the order moved past PAID.
+  it("is true when an order item's order status is SHIPPED", () => {
+    assert.equal(computeVerifiedPurchase([{ order: { status: "SHIPPED" } }]), true);
+  });
+
+  it("is true when an order item's order status is DELIVERED", () => {
+    assert.equal(computeVerifiedPurchase([{ order: { status: "DELIVERED" } }]), true);
+  });
+
+  it("is true for a mix of a non-counting and a DELIVERED order item", () => {
+    assert.equal(
+      computeVerifiedPurchase([{ order: { status: "CANCELLED" } }, { order: { status: "DELIVERED" } }]),
+      true,
+    );
+  });
+
   it("is true if at least one of several order items counts, even if others don't", () => {
     assert.equal(
       computeVerifiedPurchase([

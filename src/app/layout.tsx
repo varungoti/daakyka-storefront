@@ -98,7 +98,7 @@ export default async function RootLayout({
             only cost every visitor a wasted DNS/TCP attempt. */}
       </head>
       <body className="min-h-full flex flex-col antialiased">
-        <GlobalJsonLd />
+        <GlobalJsonLd contactAddress={contactAddress} contactPhone={contactPhone} contactEmail={contactEmail} />
         <CurrencyProvider>
           <WishlistProvider>
             <CartProvider>

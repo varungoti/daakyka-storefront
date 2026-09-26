@@ -2,7 +2,17 @@ import { brand } from "@/data/brand";
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://daakyka.com";
 
-export function organizationJsonLd() {
+/**
+ * F-053: `address`/`phone`/`email` are optional overrides from the same
+ * admin-editable `contact.*` settings the footer and /contact page already
+ * render, so the Organization JSON-LD can't drift out of step with them
+ * the way it used to (this used to always read the static brand.ts
+ * address, which a Site Controls edit never reached). Left optional, and
+ * defaulting to the brand.ts values when omitted, so the two existing
+ * no-args call sites (the admin SEO preview, schema-validation.test.ts)
+ * keep compiling and rendering exactly as before.
+ */
+export function organizationJsonLd(overrides?: { address?: string; phone?: string; email?: string }) {
   return {
     "@context": "https://schema.org",
     "@type": "Organization",
@@ -13,13 +23,26 @@ export function organizationJsonLd() {
     description: brand.description,
     address: {
       "@type": "PostalAddress",
-      streetAddress: brand.location.addressLine,
+      streetAddress: overrides?.address ?? brand.location.addressLine,
       addressLocality: brand.location.city,
       addressRegion: brand.location.state,
       addressCountry: "IN",
     },
     areaServed: brand.location.serviceArea,
     sameAs: [brand.web.domain],
+    ...(overrides?.phone || overrides?.email
+      ? {
+          contactPoint: [
+            {
+              "@type": "ContactPoint",
+              contactType: "customer service",
+              areaServed: "IN",
+              ...(overrides.phone ? { telephone: overrides.phone } : {}),
+              ...(overrides.email ? { email: overrides.email } : {}),
+            },
+          ],
+        }
+      : {}),
   };
 }
 
@@ -77,6 +100,15 @@ export function productJsonLd(product: {
   available?: boolean;
   rating: number;
   reviewCount: number;
+  // release-hardening F-311: India Legal Metrology declarations, optional
+  // so every existing caller (admin SEO preview, tests) keeps compiling
+  // unchanged. `manufacturer.address` is a single combined string (the
+  // same shape brand.location.addressLine/contact.address already use for
+  // the Organization address below) rather than a structured PostalAddress
+  // — Schema.org accepts a plain string for Organization.address.
+  countryOfOrigin?: string;
+  material?: string;
+  manufacturer?: { name: string; address?: string };
 }) {
   const base = siteUrlBase();
   const inStock = product.available ?? true;
@@ -106,6 +138,17 @@ export function productJsonLd(product: {
         : "https://schema.org/OutOfStock",
       url: `${base}/products/${product.handle}`,
     },
+    ...(product.countryOfOrigin ? { countryOfOrigin: product.countryOfOrigin } : {}),
+    ...(product.material ? { material: product.material } : {}),
+    ...(product.manufacturer
+      ? {
+          manufacturer: {
+            "@type": "Organization",
+            name: product.manufacturer.name,
+            ...(product.manufacturer.address ? { address: product.manufacturer.address } : {}),
+          },
+        }
+      : {}),
     // Google's structured-data guidelines require aggregateRating to
     // reflect real reviews — omit it rather than publish a rating with
     // zero (or fabricated) reviewCount, which Rich Results treats as

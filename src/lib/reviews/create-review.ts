@@ -9,17 +9,29 @@ import { productCacheTag } from "@/lib/products";
  * verifiedPurchase flag; every check here re-reads the DB).
  */
 
-// The order statuses D3's create-order.ts treats as "the purchase actually
-// went through" — a Razorpay order only ever reaches PAID once payment is
-// verified (see /api/checkout/verify), and an ORDER_REQUEST order (no
-// online payment gate) is created straight into PROCESSING, decrementing
-// stock immediately, so it's just as much a real commitment as PAID. Kept
-// as its own named export so it's the single place this definition lives
-// — if Phase D4 introduces further fulfillment states (SHIPPED, DELIVERED)
-// as *later* transitions of an already-PAID order, they're already
-// downstream of PAID and don't need adding here; if D4 ever changes what
-// "counts as purchased" means, update this set rather than duplicating it.
-export const PURCHASE_COUNTING_ORDER_STATUSES = new Set<OrderStatus>(["PAID", "PROCESSING"]);
+// The order statuses that count as "the purchase actually went through" —
+// a Razorpay order only ever reaches PAID once payment is verified (see
+// /api/checkout/verify), and an ORDER_REQUEST order (no online payment
+// gate) is created straight into PROCESSING, decrementing stock
+// immediately, so it's just as much a real commitment as PAID. Kept as its
+// own named export so it's the single place this definition lives.
+//
+// F-027: this check reads the order's *current* status (see
+// computeVerifiedPurchaseForCustomer below), not its history — SHIPPED and
+// DELIVERED are later transitions of an already-PAID order, but a review
+// written after the order reaches one of them found PAID/PROCESSING absent
+// from this set and got verifiedPurchase=false, exactly when customers
+// actually tend to write reviews. Every post-payment fulfilment status has
+// to be listed explicitly here for that reason. Matches
+// src/lib/customers/admin-customers.ts's SPENT_STATUSES, which already
+// treats these four the same way for "has this customer bought anything".
+// CANCELLED, REFUNDED and PENDING_PAYMENT are deliberately excluded.
+export const PURCHASE_COUNTING_ORDER_STATUSES = new Set<OrderStatus>([
+  "PAID",
+  "PROCESSING",
+  "SHIPPED",
+  "DELIVERED",
+]);
 
 export const REVIEW_TITLE_MIN = 4;
 export const REVIEW_TITLE_MAX = 120;
@@ -154,26 +166,47 @@ export async function createReview(input: CreateReviewInput): Promise<CreatedRev
 
   const existing = await db.review.findUnique({
     where: { productId_customerId: { productId: input.productId, customerId: input.customerId } },
-    select: { id: true },
+    select: { id: true, status: true },
   });
-  if (existing) throw new AlreadyReviewedError();
+  // F-296: a REJECTED review no longer permanently locks this customer out
+  // of the product with no way to fix or resubmit it — @@unique still
+  // allows only one Review row per (productId, customerId), so a
+  // resubmission *replaces* that row (reset to PENDING, re-moderated from
+  // scratch) instead of inserting a second one. A PENDING or APPROVED
+  // existing review still blocks a second submission, same as before.
+  if (existing && existing.status !== "REJECTED") throw new AlreadyReviewedError();
 
   const verifiedPurchase = await computeVerifiedPurchaseForCustomer(input.customerId, input.productId);
 
   try {
-    const review = await db.review.create({
-      data: {
-        productId: input.productId,
-        customerId: input.customerId,
-        rating: input.rating,
-        title: input.title.trim(),
-        body: input.body.trim(),
-        photoIds: input.photoAssetIds ?? [],
-        status: "PENDING",
-        verifiedPurchase,
-      },
-      select: { id: true },
-    });
+    const review = existing
+      ? await db.review.update({
+          where: { id: existing.id },
+          data: {
+            rating: input.rating,
+            title: input.title.trim(),
+            body: input.body.trim(),
+            photoIds: input.photoAssetIds ?? [],
+            status: "PENDING",
+            verifiedPurchase,
+            moderatedById: null,
+            moderatedAt: null,
+          },
+          select: { id: true },
+        })
+      : await db.review.create({
+          data: {
+            productId: input.productId,
+            customerId: input.customerId,
+            rating: input.rating,
+            title: input.title.trim(),
+            body: input.body.trim(),
+            photoIds: input.photoAssetIds ?? [],
+            status: "PENDING",
+            verifiedPurchase,
+          },
+          select: { id: true },
+        });
 
     return { id: review.id, status: "PENDING", verifiedPurchase };
   } catch (error) {
@@ -181,7 +214,9 @@ export async function createReview(input: CreateReviewInput): Promise<CreatedRev
     // pass the findUnique check above before either commits. The
     // @@unique([productId, customerId]) constraint is the real guard;
     // this just turns its violation into the same typed error as the
-    // pre-check above instead of a raw Prisma error leaking out.
+    // pre-check above instead of a raw Prisma error leaking out. (Only
+    // reachable from the `create` branch — the `update` branch targets an
+    // existing row by id, so it can't violate this constraint.)
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       throw new AlreadyReviewedError();
     }

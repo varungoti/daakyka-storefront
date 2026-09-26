@@ -38,6 +38,13 @@ export type ReviewEligibility =
   | { status: "guest" }
   | { status: "unverified"; email: string }
   | { status: "already-reviewed" }
+  // F-296: a REJECTED review no longer permanently blocks this customer
+  // from this product — distinct from "already-reviewed" (a
+  // PENDING/APPROVED review, which does still block a second submission)
+  // so the PDP can offer a fresh Write a Review form instead of a dead
+  // end. See getReviewEligibility in app/products/[handle]/page.tsx and
+  // createReview's resubmit-on-REJECTED path.
+  | { status: "rejected" }
   | { status: "eligible" };
 
 interface ProductDetailProps {
@@ -46,7 +53,17 @@ interface ProductDetailProps {
   sizeChart: SizeChartForDisplay | null;
   reviewSummary: ReviewSummary;
   initialReviews: GetApprovedReviewsResult;
-  shipping: { flatRate: number; freeAbove: number };
+  shipping: { flatRate: number; freeAbove: number; returnWindowDays: number };
+  // release-hardening F-311: India Legal Metrology declarations. Resolved
+  // server-side (product override falling back to the store default) so
+  // this stays a plain server-provided string, never invented here.
+  legal: {
+    countryOfOrigin: string;
+    netQuantity: string;
+    manufacturer: string;
+    consumerCarePhone: string;
+    consumerCareEmail: string;
+  };
 }
 
 const INSTITUTIONAL_SECTIONS = new Set(["HOSPITAL", "SCHOOL"]);
@@ -84,6 +101,7 @@ export function ProductDetail({
   reviewSummary,
   initialReviews,
   shipping,
+  legal,
 }: ProductDetailProps) {
   const { formatPrice } = useCurrency();
   const { cart } = useCart();
@@ -182,27 +200,51 @@ export function ProductDetail({
         <div className="space-y-6">
           <div>
             <h1 className="font-display text-4xl font-bold text-ink">{product.name}</h1>
-            {product.reviewCount > 0 ? (
+            {/* F-298: reads the freshly-fetched reviewSummary, not
+                product.reviewCount/rating (cached under the "products"
+                tag) — moderation revalidates that tag with a "max" profile,
+                which serves one more stale (pre-approval) response before
+                it catches up, so the header used to say "No reviews yet"
+                while the Reviews section below already showed the
+                approved review. reviewSummary is never cached, so it's
+                always in sync with what the Reviews section renders. */}
+            {reviewSummary.count > 0 ? (
               <a
                 href="#reviews"
                 className="mt-2 inline-block text-sm font-semibold text-ink hover:text-brand"
               >
-                {product.rating.toFixed(1)} · {product.reviewCount} review
-                {product.reviewCount === 1 ? "" : "s"}
+                {reviewSummary.average.toFixed(1)} · {reviewSummary.count} review
+                {reviewSummary.count === 1 ? "" : "s"}
               </a>
             ) : (
               <p className="mt-2 text-sm text-muted">No reviews yet</p>
             )}
           </div>
 
-          <div className="flex flex-wrap items-baseline gap-3">
-            <p className="font-display text-3xl font-bold text-ink">{formatPrice(displayPrice)}</p>
-            {product.compareAtPrice !== undefined && product.compareAtPrice > displayPrice && (
-              <>
-                <p className="text-lg text-muted line-through">{formatPrice(product.compareAtPrice)}</p>
-                {percentOff !== null && <Badge variant="sale">{percentOff}% Off</Badge>}
-              </>
-            )}
+          <div>
+            <div className="flex flex-wrap items-baseline gap-3">
+              <p className="font-display text-3xl font-bold text-ink">{formatPrice(displayPrice)}</p>
+              {product.compareAtPrice !== undefined && product.compareAtPrice > displayPrice && (
+                <>
+                  {/* F-313: the reference price is the product's MRP, not an
+                      unlabelled "was" price — the label sits outside the
+                      <s> so it isn't struck through itself, and the sr-only
+                      text spells out both prices for anyone whose screen
+                      reader skips line-through styling. */}
+                  <p className="text-lg text-muted">
+                    <span aria-hidden="true">MRP </span>
+                    <s>{formatPrice(product.compareAtPrice)}</s>
+                    <span className="sr-only">
+                      Maximum retail price {formatPrice(product.compareAtPrice)}, now {formatPrice(displayPrice)}
+                    </span>
+                  </p>
+                  {percentOff !== null && <Badge variant="sale">{percentOff}% Off</Badge>}
+                </>
+              )}
+            </div>
+            {/* F-311/F-125/F-313: Legal Metrology requires the price shown
+                before purchase to be labelled inclusive of all taxes. */}
+            <p className="mt-1 text-xs text-muted">Inclusive of all taxes</p>
           </div>
 
           {/* release-hardening audit F-111: this used to always render
@@ -395,11 +437,45 @@ export function ProductDetail({
           )}
         </AccordionItem>
 
+        {/* release-hardening F-311: Legal Metrology (Packaged Commodities)
+            Rules 2011 r.6(10) and the Consumer Protection (E-Commerce)
+            Rules 2020 r.6 declarations — country of origin, net quantity,
+            manufacturer/marketer with address, and consumer care, shown
+            before Add to Cart. `legal` is resolved server-side (a
+            per-product override falling back to the store default), never
+            invented in this component. */}
+        <AccordionItem title="Product Information">
+          <ul className="space-y-1">
+            <li>
+              <span className="font-semibold text-ink">Country of origin: </span>
+              {legal.countryOfOrigin}
+            </li>
+            <li>
+              <span className="font-semibold text-ink">Net quantity: </span>
+              {legal.netQuantity}
+            </li>
+            <li>
+              <span className="font-semibold text-ink">Manufactured &amp; marketed by: </span>
+              {legal.manufacturer}
+            </li>
+            {(legal.consumerCarePhone || legal.consumerCareEmail) && (
+              <li>
+                <span className="font-semibold text-ink">Consumer care: </span>
+                {[legal.consumerCarePhone, legal.consumerCareEmail].filter(Boolean).join(" · ")}
+              </li>
+            )}
+          </ul>
+        </AccordionItem>
+
         <AccordionItem title="Shipping & Returns">
           <p>
             Flat {formatPrice(shipping.flatRate)} shipping, free on orders above{" "}
-            {formatPrice(shipping.freeAbove)}. Get in touch within 7 days of delivery for returns or
-            exchanges.
+            {formatPrice(shipping.freeAbove)}. Get in touch within {shipping.returnWindowDays} days of
+            delivery for returns or exchanges — see our{" "}
+            <Link href="/returns" className="font-semibold text-brand hover:underline">
+              returns policy
+            </Link>
+            .
           </p>
         </AccordionItem>
 
@@ -646,15 +722,20 @@ function ReviewsSection({
             Write a Review
           </Link>
         )}
-        {reviewEligibility.status === "eligible" && !showForm && !submitted && (
-          <button
-            type="button"
-            onClick={() => setShowForm(true)}
-            className="rounded-md border border-ink px-4 py-2 text-sm font-semibold text-ink transition hover:bg-ink hover:text-white"
-          >
-            Write a Review
-          </button>
-        )}
+        {/* F-296: a REJECTED review can be rewritten, same as a fresh
+            "eligible" one — see the note above the form below for what's
+            different about that case. */}
+        {(reviewEligibility.status === "eligible" || reviewEligibility.status === "rejected") &&
+          !showForm &&
+          !submitted && (
+            <button
+              type="button"
+              onClick={() => setShowForm(true)}
+              className="rounded-md border border-ink px-4 py-2 text-sm font-semibold text-ink transition hover:bg-ink hover:text-white"
+            >
+              Write a Review
+            </button>
+          )}
       </div>
 
       {reviewEligibility.status === "unverified" && (
@@ -673,22 +754,31 @@ function ReviewsSection({
         </p>
       )}
 
+      {reviewEligibility.status === "rejected" && !showForm && !submitted && (
+        <p className="mt-3 rounded-lg bg-alt-surface px-4 py-3 text-sm text-muted">
+          Your earlier review of this product didn&apos;t meet our review guidelines. You can write a
+          new one.
+        </p>
+      )}
+
       {submitted && (
         <p className="mt-3 rounded-lg bg-trust/10 px-4 py-3 text-sm font-medium text-trust">
           Thanks — your review is awaiting moderation.
         </p>
       )}
 
-      {reviewEligibility.status === "eligible" && showForm && !submitted && (
-        <ReviewForm
-          productId={product.id}
-          onCancel={() => setShowForm(false)}
-          onSubmitted={() => {
-            setShowForm(false);
-            setSubmitted(true);
-          }}
-        />
-      )}
+      {(reviewEligibility.status === "eligible" || reviewEligibility.status === "rejected") &&
+        showForm &&
+        !submitted && (
+          <ReviewForm
+            productId={product.id}
+            onCancel={() => setShowForm(false)}
+            onSubmitted={() => {
+              setShowForm(false);
+              setSubmitted(true);
+            }}
+          />
+        )}
 
       <div className="mt-6 grid gap-10 md:grid-cols-[240px_1fr]">
         <div>
@@ -754,7 +844,7 @@ function ReviewsSection({
                   <div className="flex flex-wrap items-center gap-3">
                     <StarRating rating={review.rating} />
                     {review.verifiedPurchase && (
-                      <span className="rounded-full bg-trust/10 px-2.5 py-0.5 text-xs font-semibold text-trust">
+                      <span className="rounded-full bg-trust/10 px-2.5 py-0.5 text-xs font-semibold text-trust-ink">
                         Verified Buyer
                       </span>
                     )}
@@ -853,17 +943,33 @@ function ReviewForm({
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // F-295: field-level errors, only ever populated by an actual submit
+  // attempt (never while the shopper is still typing) — see validate()
+  // and handleSubmit below. Distinct from the free-text `error` state
+  // above, which is for a submission that reached the server and failed
+  // there (a network error, or a 4xx/5xx from POST /api/reviews).
+  const [fieldErrors, setFieldErrors] = useState<{ rating?: string; title?: string; body?: string }>({});
 
   const titleLength = title.trim().length;
   const bodyLength = body.trim().length;
-  const canSubmit =
-    rating >= 1 &&
-    rating <= 5 &&
-    titleLength >= REVIEW_TITLE_MIN &&
-    titleLength <= REVIEW_TITLE_MAX &&
-    bodyLength >= REVIEW_BODY_MIN &&
-    bodyLength <= REVIEW_BODY_MAX &&
-    !submitting;
+
+  /** F-295: the old version of this form just left Submit Review disabled
+   * with no explanation of what was wrong — a shopper with a 4-character
+   * title or a 8-character review had no way to find out why the button
+   * wouldn't respond. Submit is now always clickable (bar an in-flight
+   * request); clicking it computes and shows exactly which field(s) are
+   * short, long, or unset. */
+  function validate(): { rating?: string; title?: string; body?: string } {
+    const errors: { rating?: string; title?: string; body?: string } = {};
+    if (rating < 1 || rating > 5) errors.rating = "Select a star rating.";
+    if (titleLength < REVIEW_TITLE_MIN || titleLength > REVIEW_TITLE_MAX) {
+      errors.title = `Title must be ${REVIEW_TITLE_MIN}–${REVIEW_TITLE_MAX} characters (currently ${titleLength}).`;
+    }
+    if (bodyLength < REVIEW_BODY_MIN || bodyLength > REVIEW_BODY_MAX) {
+      errors.body = `Review must be ${REVIEW_BODY_MIN}–${REVIEW_BODY_MAX} characters (currently ${bodyLength}).`;
+    }
+    return errors;
+  }
 
   async function handlePhotoUpload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -895,7 +1001,10 @@ function ReviewForm({
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    if (!canSubmit) return;
+    if (submitting) return;
+    const errors = validate();
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) return;
 
     setSubmitting(true);
     setError(null);
@@ -925,16 +1034,36 @@ function ReviewForm({
     }
   }
 
+  const hasErrors = Object.keys(fieldErrors).length > 0;
+
   return (
-    <form onSubmit={handleSubmit} className="mt-4 space-y-4 rounded-2xl border border-border bg-alt-surface p-5">
-      <div>
-        <label className="mb-1.5 block text-sm font-semibold text-ink">Your rating</label>
+    <form onSubmit={handleSubmit} className="mt-4 space-y-4 rounded-2xl border border-border bg-alt-surface p-5" noValidate>
+      {/* F-295: a single, screen-reader-announced summary of everything
+          that's wrong, in addition to each field's own inline message
+          below — `role="alert"` means assistive tech announces this the
+          moment a failed submit sets fieldErrors, without the shopper
+          having to find it. */}
+      {hasErrors && (
+        <p role="alert" className="rounded-md bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+          Please fix the highlighted field{Object.keys(fieldErrors).length === 1 ? "" : "s"} below.
+        </p>
+      )}
+
+      <div role="radiogroup" aria-labelledby="review-rating-label" aria-required="true" aria-invalid={Boolean(fieldErrors.rating)}>
+        <span id="review-rating-label" className="mb-1.5 block text-sm font-semibold text-ink">
+          Your rating
+        </span>
         <div className="flex items-center gap-1" onMouseLeave={() => setHoverRating(0)}>
           {[1, 2, 3, 4, 5].map((star) => (
             <button
               key={star}
               type="button"
-              onClick={() => setRating(star)}
+              role="radio"
+              aria-checked={rating === star}
+              onClick={() => {
+                setRating(star);
+                if (fieldErrors.rating) setFieldErrors((prev) => ({ ...prev, rating: undefined }));
+              }}
               onMouseEnter={() => setHoverRating(star)}
               aria-label={`${star} star${star === 1 ? "" : "s"}`}
               className="p-0.5"
@@ -950,6 +1079,9 @@ function ReviewForm({
             </button>
           ))}
         </div>
+        {fieldErrors.rating && (
+          <p className="mt-1 text-xs font-medium text-red-600">{fieldErrors.rating}</p>
+        )}
       </div>
 
       <div>
@@ -960,11 +1092,28 @@ function ReviewForm({
           id="review-title"
           type="text"
           value={title}
-          onChange={(event) => setTitle(event.target.value)}
+          onChange={(event) => {
+            setTitle(event.target.value);
+            const length = event.target.value.trim().length;
+            if (fieldErrors.title && length >= REVIEW_TITLE_MIN && length <= REVIEW_TITLE_MAX) {
+              setFieldErrors((prev) => ({ ...prev, title: undefined }));
+            }
+          }}
           maxLength={REVIEW_TITLE_MAX}
           placeholder="Sum up your experience"
+          aria-invalid={Boolean(fieldErrors.title)}
+          aria-describedby={fieldErrors.title ? "review-title-error" : "review-title-hint"}
           className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-brand"
         />
+        {fieldErrors.title ? (
+          <p id="review-title-error" className="mt-1 text-xs font-medium text-red-600">
+            {fieldErrors.title}
+          </p>
+        ) : (
+          <p id="review-title-hint" className="mt-1 text-xs text-muted">
+            At least {REVIEW_TITLE_MIN} characters
+          </p>
+        )}
       </div>
 
       <div>
@@ -974,13 +1123,29 @@ function ReviewForm({
         <textarea
           id="review-body"
           value={body}
-          onChange={(event) => setBody(event.target.value)}
+          onChange={(event) => {
+            setBody(event.target.value);
+            const length = event.target.value.trim().length;
+            if (fieldErrors.body && length >= REVIEW_BODY_MIN && length <= REVIEW_BODY_MAX) {
+              setFieldErrors((prev) => ({ ...prev, body: undefined }));
+            }
+          }}
           maxLength={REVIEW_BODY_MAX}
           rows={4}
           placeholder="What did you like or dislike? How was the fit and fabric?"
+          aria-invalid={Boolean(fieldErrors.body)}
+          aria-describedby={fieldErrors.body ? "review-body-error" : "review-body-hint"}
           className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-brand"
         />
-        <p className="mt-1 text-xs text-muted">{bodyLength}/{REVIEW_BODY_MAX} characters</p>
+        {fieldErrors.body ? (
+          <p id="review-body-error" className="mt-1 text-xs font-medium text-red-600">
+            {fieldErrors.body}
+          </p>
+        ) : (
+          <p id="review-body-hint" className="mt-1 text-xs text-muted">
+            {bodyLength}/{REVIEW_BODY_MAX} characters · minimum {REVIEW_BODY_MIN}
+          </p>
+        )}
       </div>
 
       <div>
@@ -1002,12 +1167,16 @@ function ReviewForm({
         </div>
       </div>
 
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && (
+        <p role="alert" className="text-sm text-red-600">
+          {error}
+        </p>
+      )}
 
       <div className="flex gap-3">
         <button
           type="submit"
-          disabled={!canSubmit}
+          disabled={submitting}
           className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
         >
           {submitting ? "Submitting…" : "Submit Review"}

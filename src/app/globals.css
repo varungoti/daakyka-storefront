@@ -5,6 +5,12 @@
   --brand-purple: #8a347d; /* plum — primary */
   --medical-violet: #5d00a3; /* deep purple — secondary */
   --trust-green: #38a169;
+  /* F-299: text-on-tint token for the "Verified Buyer"/"Approved" pills —
+     --trust-green itself is only ~2.9:1 on the bg-trust/10-15 tints those
+     pills use, well under the 4.5:1 small-text WCAG AA minimum. This is
+     ~6:1 on the same tints; --trust-green stays as-is for icons and
+     non-text uses (3:1 is enough there). */
+  --trust-ink: #276749;
   --premium-plum: #8a347d;
   --accent-color: #ffcc00; /* used sparingly: bulk CTA, "New" badge, star ratings */
   --electric-violet: #ffcc00;
@@ -45,6 +51,7 @@
   --color-ink: var(--ink);
   --color-muted: var(--muted);
   --color-trust: var(--trust-green);
+  --color-trust-ink: var(--trust-ink);
   --color-plum: var(--premium-plum);
   --color-electric-violet: var(--electric-violet);
   --color-accent: var(--accent-color);

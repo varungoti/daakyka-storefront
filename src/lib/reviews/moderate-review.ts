@@ -28,8 +28,22 @@ export interface ModeratedReview {
 
 function revalidateProductReviews(slug: string): void {
   try {
-    revalidateTag(PRODUCTS_CACHE_TAG, "max");
-    revalidateTag(productCacheTag(slug), "max");
+    // F-298: "max" serves one more stale response while it revalidates in
+    // the background (see node_modules/next/dist/docs/.../revalidateTag.md,
+    // "Revalidation Behavior") — for most cache tags that's the right
+    // trade-off, but this specific tag gates the PDP header's rating/
+    // review-count text (product.rating/reviewCount, read from the very
+    // page this tag covers), which sits right next to the *uncached*
+    // reviewSummary the Reviews section below it renders from. Serving one
+    // more stale response here means those two numbers visibly disagree on
+    // the first reload after an approve/reject ("No reviews yet" above,
+    // "Based on 1 review" below). `{ expire: 0 }` makes the next request a
+    // blocking revalidate instead, so both numbers are consistent from the
+    // very first reload — an acceptable trade (one slower request,
+    // immediately after an admin moderates) for a customer-visible
+    // self-contradiction otherwise.
+    revalidateTag(PRODUCTS_CACHE_TAG, { expire: 0 });
+    revalidateTag(productCacheTag(slug), { expire: 0 });
   } catch {
     // No static generation store in this context (unit/integration tests
     // calling moderate functions directly, one-off scripts) — nothing to

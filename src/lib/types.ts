@@ -103,6 +103,14 @@ export interface Product {
    * (release-hardening F-111) — used for the PDP's summary line above the
    * Description accordion instead of repeating the long description. */
   shortDescription?: string;
+  // --- release-hardening F-311/F-195: India Legal Metrology / GST
+  // declarations, admin-entered per product (schema columns added in
+  // wave 1). Optional — the PDP and invoice fall back to store-wide
+  // defaults (country of origin) or simply omit the line (net quantity,
+  // HSN) when unset, rather than inventing a value. ---
+  countryOfOrigin?: string;
+  netQuantity?: string;
+  hsnCode?: string;
 }
 
 export interface CartLine {

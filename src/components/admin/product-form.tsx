@@ -45,6 +45,9 @@ export interface ProductFormInitial {
   gender: Gender;
   fabric: string | null;
   care: string | null;
+  countryOfOrigin: string | null;
+  netQuantity: string | null;
+  hsnCode: string | null;
   tags: string[];
   sizeChartId: string | null;
   seoTitle: string | null;
@@ -104,6 +107,9 @@ export function ProductForm({
   const [gender, setGender] = useState<Gender>(initial?.gender ?? "UNISEX");
   const [fabric, setFabric] = useState(initial?.fabric ?? "");
   const [care, setCare] = useState(initial?.care ?? "");
+  const [countryOfOrigin, setCountryOfOrigin] = useState(initial?.countryOfOrigin ?? "");
+  const [netQuantity, setNetQuantity] = useState(initial?.netQuantity ?? "");
+  const [hsnCode, setHsnCode] = useState(initial?.hsnCode ?? "");
   const [tagsText, setTagsText] = useState((initial?.tags ?? []).join(", "));
   const [sizeChartId, setSizeChartId] = useState(initial?.sizeChartId ?? "");
   const [seoTitle, setSeoTitle] = useState(initial?.seoTitle ?? "");
@@ -150,6 +156,9 @@ export function ProductForm({
       gender,
       fabric,
       care,
+      countryOfOrigin,
+      netQuantity,
+      hsnCode,
       tagsText,
       sizeChartId,
       seoTitle,
@@ -231,6 +240,9 @@ export function ProductForm({
       ["gender", "gender", gender],
       ["fabric", "fabric", fabric.trim() || null],
       ["care", "care", care.trim() || null],
+      ["countryOfOrigin", "countryOfOrigin", countryOfOrigin.trim() || null],
+      ["netQuantity", "netQuantity", netQuantity.trim() || null],
+      ["hsnCode", "hsnCode", hsnCode.trim() || null],
       ["tagsText", "tags", tagsText.split(",").map((t) => t.trim()).filter(Boolean)],
       ["sizeChartId", "sizeChartId", sizeChartId || null],
       ["seoTitle", "seoTitle", seoTitle.trim() || null],
@@ -256,6 +268,9 @@ export function ProductForm({
       gender?: typeof gender;
       fabric?: string | null;
       care?: string | null;
+      countryOfOrigin?: string | null;
+      netQuantity?: string | null;
+      hsnCode?: string | null;
       tags?: string[];
       sizeChartId?: string | null;
       seoTitle?: string | null;
@@ -327,8 +342,8 @@ export function ProductForm({
     const nextCompareAt = compareAtPrice === "" ? null : Number(compareAtPrice);
     if (nextCompareAt != null && nextCompareAt <= nextPrice) {
       setSaveStatus("error");
-      setErrorMessage("Compare-at price must be greater than the price.");
-      setFieldErrors({ compareAtPrice: "Compare-at price must be greater than the price." });
+      setErrorMessage("MRP must be greater than the price.");
+      setFieldErrors({ compareAtPrice: "MRP must be greater than the price." });
       return;
     }
 
@@ -586,7 +601,11 @@ export function ProductForm({
           <Field label="Price (INR)" error={fieldErrors.price}>
             <input type="number" min={0} step="0.01" value={price} onChange={(e) => setPrice(e.target.value === "" ? "" : Number(e.target.value))} className={inputClass} />
           </Field>
-          <Field label="Compare-at price" error={fieldErrors.compareAtPrice} hint="Must be greater than price to show a Sale badge">
+          <Field
+            label="MRP (incl. of all taxes)"
+            error={fieldErrors.compareAtPrice}
+            hint="The product's declared maximum retail price — shown struck through with a % Off badge when it's above the selling price. Must be a real MRP, not an invented reference price."
+          >
             <input
               type="number"
               min={0}
@@ -668,6 +687,44 @@ export function ProductForm({
             <input type="checkbox" checked={isNew} onChange={(e) => setIsNew(e.target.checked)} />
             New arrival
           </label>
+        </div>
+      </section>
+
+      {/* release-hardening F-311/F-195: India Legal Metrology declarations
+          (country of origin, net quantity) and the GST invoice HSN code.
+          Every field is optional — blank means the PDP/invoice fall back to
+          the store-wide default (country of origin) or just omit the line
+          (net quantity, HSN), rather than a phone-typing admin being forced
+          to fill these in for every SKU. */}
+      <section className="space-y-4 rounded-2xl border border-border bg-surface p-6">
+        <h2 className="font-display text-lg font-bold text-ink">Compliance / product information</h2>
+        <p className="text-xs text-muted">
+          Shown on the product page and the GST invoice. Leave blank to use the store default (Settings
+          → Legal) where one exists.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <Field
+            label="Country of origin"
+            error={fieldErrors.countryOfOrigin}
+            hint="Defaults to India if left blank"
+          >
+            <input
+              value={countryOfOrigin}
+              onChange={(e) => setCountryOfOrigin(e.target.value)}
+              placeholder="India"
+              className={inputClass}
+            />
+          </Field>
+          <Field
+            label="Net quantity"
+            error={fieldErrors.netQuantity}
+            hint={'e.g. "1 N" or "1 set = 2 pcs"'}
+          >
+            <input value={netQuantity} onChange={(e) => setNetQuantity(e.target.value)} className={inputClass} />
+          </Field>
+          <Field label="HSN code" error={fieldErrors.hsnCode} hint="For the GST invoice">
+            <input value={hsnCode} onChange={(e) => setHsnCode(e.target.value)} className={inputClass} />
+          </Field>
         </div>
       </section>
 

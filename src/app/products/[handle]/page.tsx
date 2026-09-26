@@ -2,6 +2,7 @@ import { ProductCard } from "@/components/ui/product-card";
 import { ProductDetail, type ReviewEligibility } from "@/components/product/product-detail";
 import { ProductViewTracker } from "@/components/product/product-view-tracker";
 import { JsonLdScript } from "@/components/seo/json-ld-script";
+import { brand } from "@/data/brand";
 import { getSizeChartForProduct } from "@/lib/catalog/size-charts";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import { db } from "@/lib/db";
@@ -41,8 +42,13 @@ async function getReviewEligibility(productId: string): Promise<ReviewEligibilit
 
   const existing = await db.review.findUnique({
     where: { productId_customerId: { productId, customerId: session.id } },
-    select: { id: true },
+    select: { id: true, status: true },
   });
+  // F-296: a REJECTED review no longer permanently blocks this customer
+  // from writing a new one for this product — only a still-live
+  // (PENDING/APPROVED) review counts as "already reviewed". See
+  // createReview's matching resubmit-on-REJECTED path.
+  if (existing?.status === "REJECTED") return { status: "rejected" };
   if (existing) return { status: "already-reviewed" };
 
   return { status: "eligible" };
@@ -104,17 +110,48 @@ export default async function ProductPage({ params }: ProductPageProps) {
     notFound();
   }
 
-  const [allProducts, reviewEligibility, sizeChart, reviewSummary, initialReviews, flatRate, freeAbove, resolvedCategory] =
-    await Promise.all([
-      getProducts(),
-      getReviewEligibility(product.id),
-      getSizeChartForProduct(product.id),
-      getReviewSummary(product.id),
-      getApprovedReviews(product.id, { page: 1 }),
-      getSetting("shipping.flatRate"),
-      getSetting("shipping.freeAbove"),
-      product.categorySlug ? getCategoryBySlug(product.categorySlug) : Promise.resolve(null),
-    ]);
+  const [
+    allProducts,
+    reviewEligibility,
+    sizeChart,
+    reviewSummary,
+    initialReviews,
+    flatRate,
+    freeAbove,
+    returnWindowDays,
+    contactAddress,
+    contactPhone,
+    contactEmail,
+    resolvedCategory,
+  ] = await Promise.all([
+    getProducts(),
+    getReviewEligibility(product.id),
+    getSizeChartForProduct(product.id),
+    getReviewSummary(product.id),
+    getApprovedReviews(product.id, { page: 1 }),
+    getSetting("shipping.flatRate"),
+    getSetting("shipping.freeAbove"),
+    getSetting("returns.windowDays"),
+    getSetting("contact.address"),
+    getSetting("contact.phone"),
+    getSetting("contact.email"),
+    product.categorySlug ? getCategoryBySlug(product.categorySlug) : Promise.resolve(null),
+  ]);
+
+  // release-hardening F-311: Legal Metrology declarations — a per-product
+  // override (set on the admin form's Compliance section) falling back to
+  // the store default. Country of origin defaults to the brand's own,
+  // already-known location rather than inventing one; manufacturer/
+  // consumer-care fall back to the same admin-editable contact settings
+  // the footer and /contact already use, so there's a single source of
+  // truth instead of a third hard-coded copy.
+  const legal = {
+    countryOfOrigin: product.countryOfOrigin || brand.location.country,
+    netQuantity: product.netQuantity || "1 N",
+    manufacturer: `${brand.legalName}, ${contactAddress}`,
+    consumerCarePhone: contactPhone,
+    consumerCareEmail: contactEmail,
+  };
 
   const related = allProducts
     .filter((item) => item.category === product.category && item.id !== product.id)
@@ -143,6 +180,17 @@ export default async function ProductPage({ params }: ProductPageProps) {
         data={productJsonLd({
           ...product,
           images: product.images?.map((img) => img.url),
+          // F-298: the rating/reviewCount that were on `product` come from
+          // the cached getProductByHandle (tagged "products", revalidated
+          // with a "max" profile on approve/reject) — reviewSummary is an
+          // uncached, per-request read, so it can never disagree with what
+          // the Reviews section below actually renders.
+          rating: reviewSummary.average,
+          reviewCount: reviewSummary.count,
+          // F-311: Legal Metrology declarations in structured data too.
+          countryOfOrigin: legal.countryOfOrigin,
+          material: product.fabric,
+          manufacturer: { name: brand.legalName, address: contactAddress },
         })}
       />
       <JsonLdScript data={breadcrumbJsonLd(breadcrumbItems)} />
@@ -179,7 +227,8 @@ export default async function ProductPage({ params }: ProductPageProps) {
             sizeChart={sizeChart}
             reviewSummary={reviewSummary}
             initialReviews={initialReviews}
-            shipping={{ flatRate, freeAbove }}
+            shipping={{ flatRate, freeAbove, returnWindowDays }}
+            legal={legal}
           />
         </div>
       </section>

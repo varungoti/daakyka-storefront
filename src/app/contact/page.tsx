@@ -27,23 +27,39 @@ const typeMap = {
 
 export default async function ContactPage({ searchParams }: ContactPageProps) {
   const params = await searchParams;
+  // F-154: this ternary used to return "GENERAL" either way — checkout
+  // help never actually preset the form's enquiry type to Product Support.
   const defaultType =
-    typeMap[params.type as keyof typeof typeMap] ??
-    (params.intent === "checkout" ? "GENERAL" : "GENERAL");
-  const [heroImage, contactWhatsapp] = await Promise.all([
-    getSiteImage("contact.banner"),
-    getSetting("contact.whatsapp"),
-  ]);
+    typeMap[params.type as keyof typeof typeMap] ?? (params.intent === "checkout" ? "SUPPORT" : "GENERAL");
+  const [heroImage, contactWhatsapp, contactAddress, contactPhone, contactEmail, grievanceName, grievanceDesignation, grievancePhone, grievanceEmail] =
+    await Promise.all([
+      getSiteImage("contact.banner"),
+      getSetting("contact.whatsapp"),
+      // F-053: single-sourced from the same admin-editable setting the
+      // footer already renders, instead of the separate hard-coded
+      // brand.location.addressLine this page used to show (the two could
+      // — and did — drift apart, and an admin's Site Controls edit never
+      // reached this page).
+      getSetting("contact.address"),
+      getSetting("contact.phone"),
+      getSetting("contact.email"),
+      getSetting("grievance.name"),
+      getSetting("grievance.designation"),
+      getSetting("grievance.phone"),
+      getSetting("grievance.email"),
+    ]);
+  const hasGrievanceOfficer = Boolean(grievanceName && grievancePhone && grievanceEmail);
 
   return (
     <>
       <PageHeroBand innerClassName="max-w-2xl text-center" image={heroImage}>
         <SectionHeading
           eyebrow="Get in Touch"
-          title={params.intent === "checkout" ? "Complete Your Order" : "Contact DAAKYKA"}
+          titleAs="h1"
+          title={params.intent === "checkout" ? "Need Help With Your Order?" : "Contact DAAKYKA"}
           description={
             params.intent === "checkout"
-              ? "Checkout is being connected. Share your cart details and our team will assist with your order."
+              ? "Tell us what went wrong at checkout and our team will call or WhatsApp you back — your cart is saved on this device."
               : "Questions about scrubs, hospital linens, school uniforms, or bulk institutional orders? Reach out to Babaji Enterprises."
           }
           align="center"
@@ -58,9 +74,18 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
                 <MapPin className="mt-1 text-brand" size={22} />
                 <div>
                   <h2 className="font-display font-bold text-ink">Visit Us</h2>
-                  <p className="mt-2 text-sm text-muted">{brand.location.addressLine}</p>
+                  <p className="mt-2 text-sm text-muted">{contactAddress}</p>
                   <p className="mt-1 text-sm font-medium text-brand">
                     {brand.location.serviceArea} Delivery
+                  </p>
+                  <p className="mt-3 text-sm text-muted">
+                    <a href={`tel:${contactPhone.replace(/\s+/g, "")}`} className="font-semibold text-brand hover:underline">
+                      {contactPhone}
+                    </a>
+                    {" · "}
+                    <a href={`mailto:${contactEmail}`} className="font-semibold text-brand hover:underline">
+                      {contactEmail}
+                    </a>
                   </p>
                 </div>
               </div>
@@ -98,6 +123,34 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
                 </div>
               </div>
             </article>
+
+            {/* F-150: a named Grievance Officer with designation, phone and
+                email, per the Consumer Protection (E-Commerce) Rules 2020
+                r.4(4)-(5) — admin-editable via Settings, and the whole card
+                stays hidden (rather than showing a blank line) until the
+                owner has actually filled it in. */}
+            {hasGrievanceOfficer && (
+              <article id="grievance" className="rounded-3xl border border-border bg-surface-elevated p-6">
+                <h2 className="font-display font-bold text-ink">Grievance Officer</h2>
+                <p className="mt-2 text-sm text-muted">
+                  {grievanceName}
+                  {grievanceDesignation ? `, ${grievanceDesignation}` : ""}
+                </p>
+                <p className="mt-1 text-sm text-muted">
+                  <a href={`tel:${grievancePhone.replace(/\s+/g, "")}`} className="font-semibold text-brand hover:underline">
+                    {grievancePhone}
+                  </a>
+                  {" · "}
+                  <a href={`mailto:${grievanceEmail}`} className="font-semibold text-brand hover:underline">
+                    {grievanceEmail}
+                  </a>
+                </p>
+                <p className="mt-2 text-xs text-muted">
+                  We acknowledge complaints within 48 hours and resolve them within one month of
+                  receipt, per the Consumer Protection (E-Commerce) Rules, 2020.
+                </p>
+              </article>
+            )}
 
             <p className="text-xs text-muted">
               Operated by {brand.legalName} ·{" "}

@@ -292,6 +292,72 @@ describe("review submission + moderation (Phase D2)", () => {
     assert.ok(audit, "expected a reject audit log entry");
   });
 
+  // F-296: a REJECTED review no longer permanently locks the customer out
+  // of the product with no way to fix it — resubmitting replaces the same
+  // row (same id, reset to PENDING) rather than throwing AlreadyReviewedError,
+  // and it drops the stale moderatedById/moderatedAt from the rejection so
+  // the resubmission goes through moderation fresh. Uses its own
+  // customer+product (rather than createdReviewIds[1]) so it doesn't
+  // disturb that review's REJECTED status, which a later test in this file
+  // (listReviewsForAdmin) still asserts on.
+  it("resubmitting after a rejection updates the same row instead of throwing AlreadyReviewedError", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const resubmitProduct = await db.product.create({
+      data: { name: `D2 Resubmit ${unique}`, slug: `d2-resubmit-${unique}`, categoryId, price: 599, status: "ACTIVE" },
+    });
+    const resubmitCustomer = await db.customer.create({
+      data: { email: `d2-resubmit-${unique}@example.com`, name: "Resubmit Customer", passwordHash: "x" },
+    });
+
+    try {
+      const first = await createReview({
+        customerId: resubmitCustomer.id,
+        productId: resubmitProduct.id,
+        rating: 1,
+        title: "Off-topic first attempt",
+        body: "This first review gets rejected by moderation in this test.",
+      });
+      await rejectReview(first.id, adminId, "Off-topic");
+      const rejected = await db.review.findUnique({ where: { id: first.id } });
+      assert.equal(rejected?.status, "REJECTED");
+
+      const result = await createReview({
+        customerId: resubmitCustomer.id,
+        productId: resubmitProduct.id,
+        rating: 5,
+        title: "Revised after feedback",
+        body: "Rewrote this review to follow the guidelines the first one missed.",
+      });
+
+      assert.equal(result.id, first.id, "resubmission should reuse the same review row");
+      assert.equal(result.status, "PENDING");
+
+      const after = await db.review.findUnique({ where: { id: first.id } });
+      assert.equal(after?.status, "PENDING");
+      assert.equal(after?.title, "Revised after feedback");
+      assert.equal(after?.moderatedById, null);
+      assert.equal(after?.moderatedAt, null);
+
+      // A PENDING review (post-resubmit) still blocks a second submission
+      // — only REJECTED is special-cased.
+      await assert.rejects(
+        () =>
+          createReview({
+            customerId: resubmitCustomer.id,
+            productId: resubmitProduct.id,
+            rating: 3,
+            title: "Trying a third time",
+            body: "This should be blocked because the resubmission is only PENDING, not REJECTED.",
+          }),
+        AlreadyReviewedError,
+      );
+    } finally {
+      await db.review.deleteMany({ where: { productId: resubmitProduct.id } }).catch(() => {});
+      await db.customer.delete({ where: { id: resubmitCustomer.id } }).catch(() => {});
+      await db.product.delete({ where: { id: resubmitProduct.id } }).catch(() => {});
+    }
+  });
+
   it("approveReview throws ReviewNotFoundError for an unknown id", async () => {
     await assert.rejects(() => approveReview("does-not-exist", adminId), ReviewNotFoundError);
   });

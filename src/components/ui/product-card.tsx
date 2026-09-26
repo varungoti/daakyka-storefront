@@ -191,7 +191,13 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
           <div className="flex items-baseline gap-2">
             <p className="font-display text-xl font-bold text-ink">{formatPrice(product.price)}</p>
             {product.compareAtPrice !== undefined && product.compareAtPrice > product.price && (
-              <p className="text-sm text-muted line-through">{formatPrice(product.compareAtPrice)}</p>
+              // F-313: labelled "MRP", same as the PDP — an unlabelled
+              // strikethrough price next to a "% Off" badge is exactly the
+              // pattern counsel flagged as a misleading-reference-price risk.
+              <p className="text-sm text-muted">
+                <span aria-hidden="true">MRP </span>
+                <s>{formatPrice(product.compareAtPrice)}</s>
+              </p>
             )}
           </div>
           {product.reviewCount > 0 && (

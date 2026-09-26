@@ -26,6 +26,26 @@ export interface SettingValueMap {
   "contact.whatsapp": string;
   "contact.email": string;
   "contact.address": string;
+  // release-hardening pdp-content-legal-pricing-reviews (F-150, F-195,
+  // F-312): admin-editable, blank-by-default facts a lawyer/owner has to
+  // supply — never invented by code. Every page that renders one of these
+  // hides the corresponding line/section when it's still "" rather than
+  // showing a placeholder or a fabricated value.
+  "grievance.name": string;
+  "grievance.designation": string;
+  "grievance.email": string;
+  "grievance.phone": string;
+  "legal.gstin": string;
+  // Telangana's GST state code — defaults to the seller's own registered
+  // state (see src/data/brand.ts's location), which is a known fact, not
+  // an invented one. Used to tell an intra-state order (CGST+SGST) from an
+  // inter-state one (IGST) once real tax data exists.
+  "legal.stateCode": string;
+  // F-026: the one return/exchange window every surface (PDP, /returns,
+  // trust badges, homepage) renders, so they can't contradict each other
+  // again. 30 matches what the Returns page, the trust bar and the
+  // homepage default already said before this fix.
+  "returns.windowDays": number;
 }
 
 export type SettingKey = keyof SettingValueMap;
@@ -44,6 +64,13 @@ export const settingDefaults: SettingValueMap = {
   "contact.whatsapp": "+91 95530 94251",
   "contact.email": "daakykaapparels@gmail.com",
   "contact.address": "286 Ridgewood Residency, Road No. 6, Kavuri Hills, Hyderabad, Telangana",
+  "grievance.name": "",
+  "grievance.designation": "",
+  "grievance.email": "",
+  "grievance.phone": "",
+  "legal.gstin": "",
+  "legal.stateCode": "36",
+  "returns.windowDays": 30,
 };
 
 export const settingSchemas: { [K in SettingKey]: z.ZodType<SettingValueMap[K]> } = {
@@ -58,6 +85,20 @@ export const settingSchemas: { [K in SettingKey]: z.ZodType<SettingValueMap[K]> 
   "contact.whatsapp": z.string().trim().min(6).max(30),
   "contact.email": z.string().trim().email().max(200),
   "contact.address": z.string().trim().min(5).max(500),
+  "grievance.name": z.string().trim().max(120),
+  "grievance.designation": z.string().trim().max(120),
+  "grievance.email": z.union([z.literal(""), z.string().trim().email()]).transform((v) => v),
+  "grievance.phone": z.string().trim().max(30),
+  "legal.gstin": z.union([
+    z.literal(""),
+    z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/, "Not a valid 15-character GSTIN"),
+  ]),
+  "legal.stateCode": z.string().trim().max(2),
+  "returns.windowDays": z.number().int().min(1).max(365),
 };
 
 const settingKeys = Object.keys(settingDefaults) as SettingKey[];

@@ -61,6 +61,14 @@ export const productInputSchema = z.object({
   gender: z.enum(productGenderValues).optional(),
   fabric: optionalTrimmed(200),
   care: optionalTrimmed(500),
+  // release-hardening F-311/F-195: India Legal Metrology / GST columns
+  // added in wave 1 (see prisma/schema.prisma) — per-product overrides of
+  // the store-wide defaults rendered on the PDP/invoice. All optional: a
+  // product with none of these set still falls back to the store default
+  // (country of origin) or simply omits the line (net quantity, HSN).
+  countryOfOrigin: optionalTrimmed(100),
+  netQuantity: optionalTrimmed(60),
+  hsnCode: optionalTrimmed(20),
   tags: z.array(z.string().trim().min(1).max(50)).max(30).optional(),
   sizeChartId: z.string().trim().min(1).max(60).optional().nullable(),
   seoTitle: optionalTrimmed(200),
@@ -338,6 +346,9 @@ export async function createProduct(input: ProductInput, userId: string): Promis
       gender: (input.gender ?? "UNISEX") as ProductGender,
       fabric: input.fabric ?? null,
       care: input.care ?? null,
+      countryOfOrigin: input.countryOfOrigin ?? null,
+      netQuantity: input.netQuantity ?? null,
+      hsnCode: input.hsnCode ?? null,
       tags: input.tags ?? [],
       sizeChartId: input.sizeChartId ?? category.sizeChartId ?? null,
       seoTitle: input.seoTitle ?? null,
@@ -422,6 +433,9 @@ export async function updateProduct(
   if (input.gender !== undefined) data.gender = input.gender;
   if (input.fabric !== undefined) data.fabric = input.fabric;
   if (input.care !== undefined) data.care = input.care;
+  if (input.countryOfOrigin !== undefined) data.countryOfOrigin = input.countryOfOrigin;
+  if (input.netQuantity !== undefined) data.netQuantity = input.netQuantity;
+  if (input.hsnCode !== undefined) data.hsnCode = input.hsnCode;
   if (input.tags !== undefined) data.tags = input.tags;
   if (input.sizeChartId !== undefined) {
     data.sizeChart = input.sizeChartId ? { connect: { id: input.sizeChartId } } : { disconnect: true };
@@ -1025,6 +1039,9 @@ export interface AdminProductDetail {
   gender: ProductGender;
   fabric: string | null;
   care: string | null;
+  countryOfOrigin: string | null;
+  netQuantity: string | null;
+  hsnCode: string | null;
   tags: string[];
   sizeChartId: string | null;
   seoTitle: string | null;
@@ -1080,6 +1097,9 @@ export async function getProductForAdmin(id: string): Promise<AdminProductDetail
     gender: row.gender,
     fabric: row.fabric,
     care: row.care,
+    countryOfOrigin: row.countryOfOrigin,
+    netQuantity: row.netQuantity,
+    hsnCode: row.hsnCode,
     tags: row.tags,
     sizeChartId: row.sizeChartId,
     seoTitle: row.seoTitle,

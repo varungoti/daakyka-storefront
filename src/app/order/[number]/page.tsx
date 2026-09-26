@@ -1,10 +1,12 @@
 import { OrderTimelineView } from "@/components/account/order-timeline";
 import { OrderTrackingCard } from "@/components/account/order-tracking-card";
+import { brand } from "@/data/brand";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import type { OrderStatus } from "@/generated/prisma/client";
 import { checkOrderPageRateLimit, getAuthorizedOrder } from "@/lib/orders/get-order";
 import { getOrderTimeline } from "@/lib/orders/timeline";
 import { getClientIp } from "@/lib/security/rate-limit";
+import { getSetting } from "@/lib/settings";
 import type { ShippingAddressInput } from "@/lib/validation/schemas";
 import { CheckCircle2, Loader2, RotateCcw, Truck, XCircle } from "lucide-react";
 import type { Metadata } from "next";
@@ -93,6 +95,10 @@ export default async function OrderConfirmationPage({
   if (!order) notFound();
 
   const address = order.shippingAddress as unknown as ShippingAddressInput;
+  // F-125: no page in the money path stated whether prices include tax, or
+  // named the seller/GSTIN — settings-driven so the GSTIN line is hidden
+  // (not a placeholder) until the owner has actually registered for GST.
+  const gstin = await getSetting("legal.gstin");
 
   // Audit F-281: reached right after Razorpay reported a successful
   // payment but this session's own POST /api/checkout/verify couldn't
@@ -182,6 +188,10 @@ export default async function OrderConfirmationPage({
           <span className="text-ink">Total</span>
           <span className="text-ink">{formatInr(Number(order.total))}</span>
         </div>
+        <p className="pt-1 text-right text-xs text-muted">
+          Inclusive of all taxes · Sold by {brand.legalName}
+          {gstin ? ` · GSTIN ${gstin}` : ""}
+        </p>
       </section>
 
       <section className="mt-6 rounded-2xl border border-border bg-surface p-4 text-sm">
