@@ -39,14 +39,14 @@ export function CampaignStatusSelect({
   const [message, setMessage] = useState<{ text: string; tone: "error" | "info" } | null>(null);
   const options = [currentStatus, ...nextStatuses[currentStatus]];
 
-  const updateStatus = async (status: CampaignStatus) => {
+  const updateStatus = async (status: CampaignStatus, extra?: { scheduledAt?: string }) => {
     setPending(true);
     setMessage(null);
     try {
       const res = await fetch(`/api/admin/campaigns/${campaignId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status, ...extra }),
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
@@ -75,6 +75,36 @@ export function CampaignStatusSelect({
 
   const handleChange = async (event: React.ChangeEvent<HTMLSelectElement>) => {
     const next = event.target.value as CampaignStatus;
+
+    if (next === "SCHEDULED") {
+      // F-217: the route now *requires* a real, future scheduledAt before
+      // it will accept SCHEDULED (a NULL one used to save fine and then
+      // never send — processDueScheduledCampaigns only ever selects rows
+      // where scheduledAt <= now). Collect it here rather than letting the
+      // PATCH 400 with no way to supply one. window.prompt matches this
+      // component's existing window.confirm for SENT — a full date/time
+      // picker belongs on the campaign edit form (campaign-form.tsx) for
+      // anyone who wants to set it ahead of time instead.
+      const input = window.prompt(
+        "Send this campaign at (local date & time, e.g. 2026-10-05 14:30):",
+      );
+      if (input === null) {
+        event.target.value = currentStatus;
+        return;
+      }
+      const parsedDate = new Date(input);
+      if (Number.isNaN(parsedDate.getTime()) || parsedDate.getTime() <= Date.now()) {
+        event.target.value = currentStatus;
+        setMessage({
+          text: "Enter a valid future date and time, e.g. 2026-10-05 14:30.",
+          tone: "error",
+        });
+        return;
+      }
+
+      await updateStatus(next, { scheduledAt: parsedDate.toISOString() });
+      return;
+    }
 
     if (next === "SENT") {
       // F-212: sending is irreversible and reaches real customers, so this

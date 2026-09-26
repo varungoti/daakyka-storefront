@@ -71,7 +71,17 @@ export function TemplateForm({ initial }: { initial?: TemplateFormInitial }) {
     if (!isEdit) return;
     setTestStatus("sending");
     setTestMessage(null);
-    const response = await fetch(`/api/admin/templates/${initial!.id}/send-test`, { method: "POST" });
+    // F-217: send the form's current subject/body, not just whatever was
+    // last saved — otherwise "Send test" while mid-edit silently tests the
+    // old copy instead of what's on screen.
+    const response = await fetch(`/api/admin/templates/${initial!.id}/send-test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subject: channel === "EMAIL" ? subject.trim() || undefined : undefined,
+        body,
+      }),
+    });
     const responseBody = await response.json().catch(() => ({}));
     if (response.ok && responseBody?.ok) {
       setTestStatus("sent");

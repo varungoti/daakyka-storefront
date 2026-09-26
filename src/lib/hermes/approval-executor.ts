@@ -138,7 +138,11 @@ export async function executeHermesApproval(approvalId: string): Promise<Approva
       await db.adminNotification.create({
         data: {
           title: "Campaign draft created from Hermes",
-          body: `"${campaign.name}" awaits approval in Campaign Planner.`,
+          // F-217: Hermes never attaches a template, so the campaign can't
+          // be sent or scheduled yet — point at the campaign's own edit
+          // page (Campaign Planner's "Edit" action) instead of leaving the
+          // admin to discover that gap on their own.
+          body: `"${campaign.name}" awaits approval in Campaign Planner — open it and attach a message template before approving.`,
           type: "hermes_campaign_draft",
           metadata: JSON.stringify({ campaignId: campaign.id }),
         },

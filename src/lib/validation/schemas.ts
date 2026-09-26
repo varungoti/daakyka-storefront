@@ -194,6 +194,23 @@ export const newsletterSchema = z.object({
     .refine((value) => value === true, { message: "Consent is required" }),
 });
 
+// F-217: src/lib/engagement/segment-resolver.ts only ever looks at these
+// four keys (source, consent, leadType, pages) — everything else it falls
+// through to `return []` for, silently matching nobody. `z.record` used to
+// accept any JSON object here, so a typo'd or made-up key (e.g. {"city":
+// "Hyderabad"}) saved without complaint and the segment just quietly
+// resolved to zero recipients. `.strict()` rejects any key outside this
+// set at save time instead, so that mistake is caught on the spot rather
+// than discovered after the campaign "sends" to nobody.
+const segmentCriteriaSchema = z
+  .object({
+    source: z.string().trim().min(1).max(100).optional(),
+    consent: z.boolean().optional(),
+    leadType: z.string().trim().min(1).max(100).optional(),
+    pages: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+  })
+  .strict();
+
 export const segmentSchema = z.object({
   name: z.string().trim().min(2).max(150),
   slug: z
@@ -203,7 +220,7 @@ export const segmentSchema = z.object({
     .max(160)
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and hyphens only"),
   description: z.string().trim().max(2000).optional().nullable(),
-  criteria: z.record(z.string(), z.unknown()).optional(),
+  criteria: segmentCriteriaSchema.optional(),
 });
 
 export const segmentUpdateSchema = segmentSchema.partial();
@@ -226,6 +243,26 @@ export const campaignSchema = z.object({
   templateId: z.string().optional().nullable(),
   scheduledAt: z.string().optional().nullable(),
   notes: z.string().optional(),
+});
+
+// F-217: the campaign editor (src/components/admin/campaign-form.tsx) edits
+// a campaign's content — name/channel/segment/template/notes/send time —
+// separately from the SENT/SCHEDULED/etc. status transitions
+// campaign-status-select.tsx drives; every field here is optional so
+// PATCH /api/admin/campaigns/[id] can tell "just changing status" (only
+// `status`/`sendNow` sent) apart from "editing details" (everything else)
+// without needing two separate schemas or endpoints. `scheduledAt` uses
+// `.datetime()` (an ISO string with an offset), matching the existing
+// status-update path in that same route.
+export const campaignUpdateSchema = z.object({
+  name: z.string().trim().min(2).max(200).optional(),
+  channel: z.enum(["EMAIL", "WHATSAPP"]).optional(),
+  segmentId: z.string().nullable().optional(),
+  templateId: z.string().nullable().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+  status: z.enum(["DRAFT", "PENDING_APPROVAL", "APPROVED", "SCHEDULED", "SENT", "CANCELLED"]).optional(),
+  sendNow: z.boolean().optional(),
+  scheduledAt: z.string().datetime().nullable().optional(),
 });
 
 // F-211: Media Library assets are served from this app's own relative

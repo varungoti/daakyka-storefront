@@ -2,6 +2,14 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
+import { processDueScheduledCampaigns } from "@/lib/engagement/campaign-dispatcher";
+import { setIntegrationEnabled } from "@/lib/integrations/enabled";
+import { withEnv } from "../helpers/env";
+import {
+  DELETE as deleteCampaignRoute,
+  GET as getCampaignRoute,
+  PATCH as patchCampaignRoute,
+} from "@/app/api/admin/campaigns/[id]/route";
 
 import {
   createTestimonial,
@@ -47,7 +55,7 @@ import {
   GET as getTemplate,
   PATCH as patchTemplate,
 } from "@/app/api/admin/templates/[id]/route";
-import { POST as sendTestTemplateRoute } from "@/app/api/admin/templates/[id]/send-test/route";
+import { POST as sendTestTemplateRoute, resolveTestSendSource } from "@/app/api/admin/templates/[id]/send-test/route";
 
 import { createOffer, deleteOffer, getOfferForAdmin, OfferNotFoundError, updateOffer } from "@/lib/offers";
 import { GET as getOffers, POST as postOffer } from "@/app/api/admin/offers/route";
@@ -58,6 +66,7 @@ import {
   deleteSeoRecord,
   getSeoRecordForAdmin,
   SeoPagePathConflictError,
+  SeoPagePathNotWiredError,
   SeoPageRecordNotFoundError,
   updateSeoRecord,
 } from "@/lib/seo/records";
@@ -301,13 +310,13 @@ describe("templates admin CRUD", () => {
     await assert.rejects(() => getTemplateForAdmin(template.id), TemplateNotFoundError);
   });
 
-  it("deleteTemplate is blocked while a campaign references it", async () => {
+  it("deleteTemplate is blocked while an in-flight (APPROVED/SCHEDULED/SENDING) campaign references it", async () => {
     const unique = randomUUID().slice(0, 8);
     const template = await createTemplate({ name: `Referenced ${unique}`, channel: "EMAIL", body: "Body content here" }, adminId);
     createdIds.push(template.id);
 
     const campaign = await db.campaign.create({
-      data: { name: `Campaign ${unique}`, channel: "EMAIL", status: "SENT", templateId: template.id },
+      data: { name: `Campaign ${unique}`, channel: "EMAIL", status: "SCHEDULED", templateId: template.id },
     });
     createdCampaignIds.push(campaign.id);
 
@@ -317,6 +326,30 @@ describe("templates admin CRUD", () => {
     createdCampaignIds.splice(createdCampaignIds.indexOf(campaign.id), 1);
     await deleteTemplate(template.id, adminId);
     createdIds.splice(createdIds.indexOf(template.id), 1);
+  });
+
+  // F-217: a SENT/DRAFT/PENDING_APPROVAL/CANCELLED/FAILED campaign is not
+  // "in flight" — it no longer blocks deleting the template. This is what
+  // makes the seeded "Welcome Email" template (referenced by the seeded
+  // PENDING_APPROVAL "Welcome Series — Week 1" campaign) deletable, instead
+  // of permanently stuck the way any prior reference used to block it.
+  // Campaign.templateId is onDelete: SetNull, so the reference is nulled,
+  // not left dangling.
+  it("deleteTemplate is NOT blocked by a SENT campaign, and nulls that campaign's templateId", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const template = await createTemplate({ name: `Historical ${unique}`, channel: "EMAIL", body: "Body content here" }, adminId);
+    createdIds.push(template.id);
+
+    const campaign = await db.campaign.create({
+      data: { name: `Sent Campaign ${unique}`, channel: "EMAIL", status: "SENT", templateId: template.id },
+    });
+    createdCampaignIds.push(campaign.id);
+
+    await deleteTemplate(template.id, adminId);
+    createdIds.splice(createdIds.indexOf(template.id), 1);
+
+    const refetched = await db.campaign.findUnique({ where: { id: campaign.id } });
+    assert.equal(refetched?.templateId, null);
   });
 
   it("routes reject with 401/403 without a session", async () => {
@@ -346,6 +379,32 @@ describe("templates admin CRUD", () => {
         (await sendTestTemplateRoute(jsonRequest("http://localhost/api/admin/templates/any-id/send-test", "POST"), { params: idParams })).status,
       ),
     );
+  });
+
+  // F-217: "Send test" used to always render the saved row, so testing an
+  // unsaved edit silently sent the old copy — resolveTestSendSource is the
+  // route's precedence rule (posted override beats the saved template),
+  // tested directly since requireAdminPermission needs a real session the
+  // route itself can't be driven through here (see this file's header
+  // comment).
+  it("resolveTestSendSource prefers the posted (possibly unsaved) subject/body over the saved template", () => {
+    const saved = { name: "Welcome Email", subject: "Saved subject", body: "Saved body" };
+
+    assert.deepEqual(resolveTestSendSource(saved, {}), { subject: "Saved subject", body: "Saved body" });
+    assert.deepEqual(resolveTestSendSource(saved, { body: "Unsaved draft body" }), {
+      subject: "Saved subject",
+      body: "Unsaved draft body",
+    });
+    assert.deepEqual(resolveTestSendSource(saved, { subject: "Unsaved draft subject", body: "Unsaved draft body" }), {
+      subject: "Unsaved draft subject",
+      body: "Unsaved draft body",
+    });
+    // No saved subject (e.g. a WHATSAPP template) and no override falls
+    // back to a generic "[Test] <name>" subject, same as before this fix.
+    assert.deepEqual(resolveTestSendSource({ ...saved, subject: null }, {}), {
+      subject: "[Test] Welcome Email",
+      body: "Saved body",
+    });
   });
 });
 
@@ -415,12 +474,24 @@ describe("SEO records admin CRUD", () => {
     if (createdIds.length) await db.seoPageRecord.deleteMany({ where: { id: { in: createdIds } } }).catch(() => {});
   });
 
-  it("full round trip: create -> read -> update -> delete", async () => {
+  // F-052 fix: createSeoRecord now rejects a *new* record for a path the
+  // storefront doesn't actually read overrides from (src/lib/seo/
+  // wired-paths.ts) — see the two rejection tests below. This round trip
+  // instead inserts the row directly, the same way an existing off-wired
+  // record (e.g. prisma/seed.ts's "/bulk-orders" row, or one created before
+  // this fix) would already be sitting in the table, to prove read/update/
+  // delete are untouched by the new restriction — it only applies to create.
+  it("full round trip: read -> update -> delete (an existing off-wired record)", async () => {
     const unique = randomUUID().slice(0, 8);
-    const record = await createSeoRecord(
-      { path: `/test-seo-${unique}`, title: "Test Page", metaDescription: "A test meta description." },
-      adminId,
-    );
+    const record = await db.seoPageRecord.create({
+      data: {
+        path: `/test-seo-${unique}`,
+        title: "Test Page",
+        metaDescription: "A test meta description.",
+        status: "ok",
+        issues: "[]",
+      },
+    });
     createdIds.push(record.id);
 
     const fetched = await getSeoRecordForAdmin(record.id);
@@ -435,14 +506,24 @@ describe("SEO records admin CRUD", () => {
     await assert.rejects(() => getSeoRecordForAdmin(record.id), SeoPageRecordNotFoundError);
   });
 
-  it("createSeoRecord rejects a path already in use", async () => {
+  it("createSeoRecord rejects a new path that isn't read live by the storefront", async () => {
     const unique = randomUUID().slice(0, 8);
-    const path = `/test-seo-dup-${unique}`;
-    const first = await createSeoRecord({ path, title: "First", metaDescription: "First description." }, adminId);
-    createdIds.push(first.id);
-
     await assert.rejects(
-      () => createSeoRecord({ path, title: "Second", metaDescription: "Second description." }, adminId),
+      () =>
+        createSeoRecord(
+          { path: `/test-seo-not-wired-${unique}`, title: "Test", metaDescription: "A test meta description." },
+          adminId,
+        ),
+      SeoPagePathNotWiredError,
+    );
+  });
+
+  it("createSeoRecord rejects a wired path already in use", async () => {
+    // prisma/seed.ts always seeds a "/" row, so this needs no setup of its
+    // own — proves the not-wired check (above) doesn't shadow the
+    // pre-existing path-conflict check for a path that *is* wired.
+    await assert.rejects(
+      () => createSeoRecord({ path: "/", title: "Duplicate", metaDescription: "Duplicate description." }, adminId),
       SeoPagePathConflictError,
     );
   });
@@ -701,5 +782,112 @@ describe("users admin CRUD (invite, reset-password, delete)", () => {
         (await resetPasswordRoute(jsonRequest("http://localhost/api/admin/users/any-id/reset-password", "POST"), { params: idParams })).status,
       ),
     );
+  });
+});
+
+describe("campaigns admin routes (F-217)", () => {
+  it("GET/PATCH/DELETE reject with 401/403 without a session", async () => {
+    assert.ok(
+      [401, 403].includes(
+        (await getCampaignRoute(jsonRequest("http://localhost/api/admin/campaigns/any-id", "GET"), { params: idParams })).status,
+      ),
+    );
+    assert.ok(
+      [401, 403].includes(
+        (await patchCampaignRoute(jsonRequest("http://localhost/api/admin/campaigns/any-id", "PATCH", { name: "x" }), { params: idParams })).status,
+      ),
+    );
+    assert.ok(
+      [401, 403].includes(
+        (await deleteCampaignRoute(jsonRequest("http://localhost/api/admin/campaigns/any-id", "DELETE"), { params: idParams })).status,
+      ),
+    );
+  });
+});
+
+// F-217: processDueScheduledCampaigns (src/lib/engagement/campaign-
+// dispatcher.ts) already correctly filters on `scheduledAt <= now` — the
+// actual bug was that nothing in the admin UI/API ever set a real
+// scheduledAt when a campaign moved to SCHEDULED (it saved NULL, which
+// this filter never matches), so a "scheduled" campaign silently never
+// sent. campaigns/[id]/route.ts's PATCH handler now requires a real,
+// future scheduledAt before it accepts a SCHEDULED transition at all —
+// this proves the other half: once a campaign genuinely has a past-due
+// scheduledAt, the existing dispatcher does pick it up and process it, so
+// fixing the write path is sufficient and this exact dispatcher behavior
+// doesn't also need to change. BREVO is enabled for this test only (with
+// zero recipients, so nothing is actually sent) because dispatchCampaign
+// now preflights the provider and leaves an unconfigured-provider campaign
+// untouched on purpose (see ProviderNotConfiguredError) — that's a
+// deliberate, separate concern from whether a past-due campaign is picked
+// up at all, which is what this test is asserting. Both the enabled flag
+// (setIntegrationEnabled) AND a configured key (isProviderConfigured, via
+// BREVO_API_KEY here rather than the encrypted DB credential store, which
+// needs CREDENTIAL_ENCRYPTION_KEY) are required for isIntegrationEnabled
+// to report true — see src/lib/integrations/enabled.ts.
+describe("processDueScheduledCampaigns picks up a past-due SCHEDULED campaign (F-217)", () => {
+  const createdSegmentIds: string[] = [];
+  const createdTemplateIds: string[] = [];
+  const createdCampaignIds: string[] = [];
+
+  before(async () => {
+    await setIntegrationEnabled("BREVO", true);
+  });
+
+  after(async () => {
+    await setIntegrationEnabled("BREVO", false);
+    if (createdCampaignIds.length) {
+      await db.campaignDelivery.deleteMany({ where: { campaignId: { in: createdCampaignIds } } }).catch(() => {});
+      await db.campaign.deleteMany({ where: { id: { in: createdCampaignIds } } }).catch(() => {});
+    }
+    if (createdTemplateIds.length) {
+      await db.messageTemplate.deleteMany({ where: { id: { in: createdTemplateIds } } }).catch(() => {});
+    }
+    if (createdSegmentIds.length) {
+      await db.customerSegment.deleteMany({ where: { id: { in: createdSegmentIds } } }).catch(() => {});
+    }
+  });
+
+  it("dispatches (and moves off SCHEDULED) a campaign whose scheduledAt has already passed", async () => {
+    const unique = randomUUID().slice(0, 8);
+
+    const segment = await db.customerSegment.create({
+      data: { name: `Sched Test ${unique}`, slug: `sched-test-${unique}`, criteria: JSON.stringify({}) },
+    });
+    createdSegmentIds.push(segment.id);
+
+    const template = await db.messageTemplate.create({
+      data: { name: `Sched Template ${unique}`, channel: "EMAIL", body: "Hi, this is a scheduled test." },
+    });
+    createdTemplateIds.push(template.id);
+
+    const campaign = await db.campaign.create({
+      data: {
+        name: `Scheduled Past-Due ${unique}`,
+        channel: "EMAIL",
+        status: "SCHEDULED",
+        segmentId: segment.id,
+        templateId: template.id,
+        scheduledAt: new Date(Date.now() - 60_000),
+      },
+    });
+    createdCampaignIds.push(campaign.id);
+
+    const { processed, results } = await withEnv({ BREVO_API_KEY: "test-key" }, () =>
+      processDueScheduledCampaigns(),
+    );
+    assert.ok(processed >= 1, "expected at least the seeded past-due campaign to be processed");
+    assert.ok(
+      results.some((r) => r.campaignId === campaign.id),
+      "the past-due SCHEDULED campaign must be picked up by the dispatcher",
+    );
+
+    const refetched = await db.campaign.findUnique({ where: { id: campaign.id } });
+    // The segment has zero recipients, so campaign-dispatcher.ts's own
+    // "delivered to nobody" rule marks this FAILED rather than SENT —
+    // either way, it must have moved off SCHEDULED, proving it was
+    // actually picked up and processed instead of sitting forever the way
+    // a scheduledAt=NULL row used to.
+    assert.notEqual(refetched?.status, "SCHEDULED");
   });
 });

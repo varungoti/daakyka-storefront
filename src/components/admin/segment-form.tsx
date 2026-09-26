@@ -3,6 +3,31 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+interface ZodIssueLike {
+  code?: string;
+  path?: (string | number)[];
+  keys?: string[];
+  message?: string;
+}
+
+// F-217: the server now validates `criteria` against the exact keys
+// segment-resolver.ts reads (source, consent, leadType, pages) instead of
+// accepting any JSON object, so a typo like {"city": "Hyderabad"} that used
+// to save silently and resolve to zero recipients is now rejected. Surface
+// *which* key/shape was wrong instead of the route's generic "Validation
+// failed", so that rejection is actually actionable from this form.
+function describeValidationIssues(issues: unknown): string | null {
+  if (!Array.isArray(issues) || issues.length === 0) return null;
+  const messages = (issues as ZodIssueLike[]).map((issue) => {
+    if (issue.code === "unrecognized_keys" && issue.keys?.length) {
+      return `Unsupported criteria key${issue.keys.length === 1 ? "" : "s"}: ${issue.keys.join(", ")} (supported: source, consent, leadType, pages)`;
+    }
+    const path = issue.path?.join(".");
+    return path ? `${path}: ${issue.message ?? "invalid"}` : (issue.message ?? "invalid");
+  });
+  return messages.join("; ");
+}
+
 export interface SegmentFormInitial {
   id: string;
   name: string;
@@ -71,7 +96,9 @@ export function SegmentForm({ initial }: { initial?: SegmentFormInitial }) {
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
       setStatus("error");
-      setErrorMessage(body?.error ?? "Couldn't save — check the fields above.");
+      setErrorMessage(
+        describeValidationIssues(body?.issues) ?? body?.error ?? "Couldn't save — check the fields above.",
+      );
       return;
     }
 

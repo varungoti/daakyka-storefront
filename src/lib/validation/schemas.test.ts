@@ -584,9 +584,22 @@ describe("segmentSchema / segmentUpdateSchema", () => {
     assert.equal(segmentSchema.safeParse({ ...valid, slug: "not a slug" }).success, false);
   });
 
-  it("accepts criteria as an arbitrary JSON object", () => {
+  it("accepts criteria using the keys segment-resolver.ts actually reads", () => {
     const result = segmentSchema.safeParse({ ...valid, criteria: { pages: ["shop"], consent: true } });
     assert.equal(result.success, true);
+  });
+
+  // F-217: a key segment-resolver.ts doesn't recognize used to save fine
+  // and just silently resolve to zero recipients — reject it up front
+  // instead.
+  it("rejects criteria with a key segment-resolver.ts doesn't recognize", () => {
+    const result = segmentSchema.safeParse({ ...valid, criteria: { city: "Hyderabad" } });
+    assert.equal(result.success, false);
+  });
+
+  it("rejects a non-array, non-string value for a known criteria key", () => {
+    assert.equal(segmentSchema.safeParse({ ...valid, criteria: { consent: "yes" } }).success, false);
+    assert.equal(segmentSchema.safeParse({ ...valid, criteria: { pages: "shop" } }).success, false);
   });
 
   it("segmentUpdateSchema accepts a partial payload", () => {
