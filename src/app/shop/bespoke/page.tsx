@@ -1,12 +1,17 @@
 import { BespokeSection } from "@/components/home/bespoke-section";
 import { buttonClassNames } from "@/components/ui/button";
+import { canonicalPath } from "@/lib/seo/canonical";
 import type { Metadata } from "next";
 import Link from "next/link";
 
+// release-hardening F-147/F-151: this used to be only {title, description},
+// so /shop/bespoke inherited the root layout's canonical (the homepage)
+// despite being listed as its own URL in sitemap.ts.
 export const metadata: Metadata = {
-  title: "Bespoke Collection",
+  title: "Bespoke Uniform Enquiries",
   description:
-    "Luxury medical apparel crafted for refinement, performance and prestige.",
+    "Made-to-order uniforms and apparel for hospitals, schools and organisations. Enquire about fabric, fit, colour and quantity.",
+  alternates: { canonical: canonicalPath("/shop/bespoke") },
 };
 
 /**

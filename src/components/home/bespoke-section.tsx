@@ -1,14 +1,14 @@
 import { marketingMedia } from "@/data/media/catalog";
 import { buttonClassNames } from "@/components/ui/button";
-import { ArrowRight, Crown, Gem, Sparkles, Star } from "lucide-react";
+import { ArrowRight, Gem, Ruler, Sparkles, Star } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 
 const features = [
   { icon: Gem, label: "Premium Fabrics" },
-  { icon: Crown, label: "Limited Edition Styles" },
-  { icon: Star, label: "Tailored for Excellence" },
-  { icon: Sparkles, label: "Personalized Experience" },
+  { icon: Ruler, label: "Made to Your Measurements" },
+  { icon: Star, label: "Fabric and Colour Options" },
+  { icon: Sparkles, label: "Institutional Order Support" },
 ];
 
 export function BespokeSection() {
@@ -24,7 +24,7 @@ export function BespokeSection() {
           <div className="relative aspect-[4/5] overflow-hidden rounded-[2rem] border border-white/10 shadow-2xl">
             <Image
               src={marketingMedia.bespokeFeature}
-              alt="DAAKYKA Bespoke collection"
+              alt="Illustrative tailoring worktable with fabric swatches and measuring tools"
               fill
               className="object-cover"
               sizes="(max-width: 1024px) 100vw, 50vw"
@@ -44,12 +44,11 @@ export function BespokeSection() {
               DAAKYKA Bespoke
             </p>
             <h2 className="mt-3 font-display text-4xl font-semibold leading-tight md:text-5xl">
-              Luxury in Every Stitch
+              Made to Order for Your Team
             </h2>
             <p className="mt-4 max-w-lg text-base leading-relaxed text-white/75">
-              Exclusively crafted for those who value refinement, performance and
-              prestige. Premium fabrics, limited editions, and personalized
-              experiences for discerning healthcare professionals.
+              Tell us the garment, fit, fabric, colour and quantity your organisation
+              needs. Our team will discuss the available options and prepare a quote.
             </p>
           </div>
 
@@ -66,7 +65,7 @@ export function BespokeSection() {
           </div>
 
           <Link href="/shop/bespoke" className={buttonClassNames({ variant: "luxury", size: "lg" })}>
-            Explore Bespoke Collection
+            Discuss a Bespoke Order
             <ArrowRight size={18} />
           </Link>
         </div>

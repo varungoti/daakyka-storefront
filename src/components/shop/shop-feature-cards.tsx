@@ -25,12 +25,13 @@ export function ShopFeatureCards({
           />
         ) : null}
         <FeatureCard
-          eyebrow="Luxury Collection"
-          title="Bespoke Collection"
-          description="Premium fabrics. Tailored fits. Exclusively for those who expect more."
+          eyebrow="Made to Order"
+          title="Bespoke Uniform Enquiries"
+          description="Discuss fabric, fit, colour and quantity with our team for your organisation."
           href="/shop/bespoke"
           image={marketingMedia.shopFeatureBespoke}
-          cta="Explore Bespoke"
+          imageAlt="Illustrative tailoring worktable with fabric swatches and measuring tools"
+          cta="Discuss Your Order"
           icon={<Crown className="text-brand" size={20} />}
           dark
         />
@@ -45,6 +46,7 @@ function FeatureCard({
   description,
   href,
   image,
+  imageAlt,
   cta,
   icon,
   dark = false,
@@ -54,6 +56,7 @@ function FeatureCard({
   description: string;
   href: string;
   image: string;
+  imageAlt?: string;
   cta: string;
   icon: React.ReactNode;
   dark?: boolean;
@@ -66,7 +69,7 @@ function FeatureCard({
     >
       <div className="grid md:grid-cols-2">
         <div className="relative min-h-[240px]">
-          <Image src={image} alt={title} fill className="object-cover" sizes="400px" />
+          <Image src={image} alt={imageAlt ?? title} fill className="object-cover" sizes="400px" />
         </div>
         <div className="flex flex-col justify-center p-8">
           <div className="mb-3 flex items-center gap-2">

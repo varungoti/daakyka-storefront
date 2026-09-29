@@ -69,16 +69,15 @@ export function withImageWidth(url: string, width: number): string {
  * shopper on /shop/bespoke, /our-story and /shop (see bespoke-section.tsx
  * and shop-feature-cards.tsx). None of them are declared slots in
  * src/data/media/image-manifest.ts, so there was also no way for an admin
- * to ever replace them from Site Images. Until real photography (or a
- * proper manifest slot + AI-generated stand-in) replaces these, they now
- * point at the same licensed Pexels/Unsplash photography used elsewhere
- * on the site (`scrubMedia` below) rather than a placeholder graphic.
+ * to ever replace them from Site Images. The bespoke enquiry now uses an
+ * explicitly illustrative tailoring scene. Other generic scenes still
+ * use the licensed Pexels/Unsplash photography elsewhere in this file.
  */
 export const daakykaMedia = {
   /** Product design collage — scrubs, hospital linen, institutional uniforms */
   productDesigns: pexelsPhoto(8460109, imageWidths.feature),
-  /** Healthcare & hospital uniform manufacturing showcase */
-  hospitalUniforms: pexelsPhoto(5712513, imageWidths.hero),
+  /** Illustrative hospital apparel and linen design studio */
+  hospitalUniforms: "/images/hospital-apparel-studio.webp",
   /** School & sports uniform production */
   schoolUniforms: pexelsPhoto(4386466, imageWidths.hero),
   /** Institutional apparel & linen quality showcase */
@@ -107,8 +106,8 @@ export const scrubMedia = {
   scrubsFullBody: unsplashPhoto("photo-1666887360684-8082fc98ebd2"),
   /** Nurse in scrubs — clinical portrait */
   nursePortrait: pexelsPhoto(4173251),
-  /** Healthcare worker in blue scrubs with ID badge */
-  clinicalBlue: pexelsPhoto(5712513),
+  /** Navy-clad healthcare worker in a clinical setting */
+  clinicalBlue: pexelsPhoto(6129685),
   /** Surgeon / OR scrubs preparation */
   orScrubs: pexelsPhoto(8460109),
 } as const;
@@ -126,11 +125,11 @@ export const marketingMedia = {
   ],
   mixMatchTops: [scrubMedia.zipLilac, scrubMedia.joggerNavy, scrubMedia.vNeckLilac, scrubMedia.mandarinSage],
   mixMatchDefault: scrubMedia.straightCharcoal,
-  bespokeFeature: daakykaMedia.hospitalUniforms,
+  bespokeFeature: "/images/bespoke-worktable.webp",
   insightsFabric: scrubMedia.mandarinSage,
   insightsInstitutional: daakykaMedia.institutionalShowcase,
   shopFeatureFabric: scrubMedia.zipLilac,
-  shopFeatureBespoke: daakykaMedia.schoolUniforms,
+  shopFeatureBespoke: "/images/bespoke-worktable.webp",
   bulkOrdersHero: daakykaMedia.hospitalUniforms,
   aboutProcess: daakykaMedia.productDesigns,
 } as const;

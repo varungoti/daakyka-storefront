@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
-import { before, describe, it } from "node:test";
+import { describe, it } from "node:test";
 import { db } from "@/lib/db";
+import { draftCategories } from "@/data/catalog/draft-catalog";
 import { getNavigation } from "@/lib/navigation/get-navigation";
 import { getCategoryTree, getProducts, type CategoryTreeNode } from "@/lib/products";
-import { seedCatalog } from "../../prisma/seed-catalog";
 
 describe("navigation category product coverage", () => {
-  before(async () => { await seedCatalog(db, { publish: true }); });
-
   it("serves all published products from every category link in the menu", async () => {
     const navigation = await getNavigation();
     const tree = await getCategoryTree();
@@ -32,10 +30,14 @@ describe("navigation category product coverage", () => {
       }
     }
 
-    assert.ok(hrefs.size > 20);
+    // Other integration files create temporary visible categories while this
+    // file runs. Restrict the assertion to the seeded launch catalog.
+    const launchSlugs = new Set(draftCategories.map((category) => category.slug));
+    const launchHrefs = [...hrefs].filter((href) => launchSlugs.has(href.split("/").at(-1)!));
+    assert.ok(launchHrefs.length > 20);
     const descendantSlugs = (node: CategoryTreeNode): string[] =>
       [node.slug, ...node.children.flatMap(descendantSlugs)];
-    for (const href of hrefs) {
+    for (const href of launchHrefs) {
       const slug = href.split("/").at(-1)!;
       const node = nodes.get(slug);
       assert.ok(node, `${href} must resolve to an active category`);

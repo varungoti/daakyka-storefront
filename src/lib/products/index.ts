@@ -443,13 +443,23 @@ export async function getCategoryTreeStrict(): Promise<CategoryTreeNode[]> {
   return buildCategoryTree(await fetchActiveCategoriesFlat());
 }
 
+/** An empty graceful tree can mean a brief pooler failure, not an empty
+ * catalog. Confirm it with an exception-propagating read before a product
+ * query is allowed to cache zero results. */
+async function getCategoryTreeForListing(): Promise<CategoryTreeNode[]> {
+  const tree = await getCategoryTree();
+  return tree.length > 0 ? tree : getCategoryTreeStrict();
+}
+
 function flattenTree(nodes: CategoryTreeNode[]): CategoryTreeNode[] {
   return nodes.flatMap((n) => [n, ...flattenTree(n.children)]);
 }
 
 export async function getCategoryBySlug(slug: string): Promise<CategoryTreeNode | null> {
   const tree = await getCategoryTree();
-  return flattenTree(tree).find((c) => c.slug === slug) ?? null;
+  const match = flattenTree(tree).find((c) => c.slug === slug);
+  // A transient category-tree failure must not turn a real category into a 404.
+  return match ?? flattenTree(await getCategoryTreeStrict()).find((c) => c.slug === slug) ?? null;
 }
 
 /** The category's own slug plus every descendant slug, for
@@ -460,9 +470,11 @@ export async function getCategoryBySlug(slug: string): Promise<CategoryTreeNode 
  * caller decides what that means — see getProductsByCategory's legacy
  * fallback for old seed-only category slugs like "bespoke"). */
 async function getSelfAndDescendantCategorySlugs(slug: string): Promise<string[]> {
-  const tree = await getCategoryTree();
-  const flat = flattenTree(tree);
-  const root = flat.find((c) => c.slug === slug);
+  const tree = await getCategoryTreeForListing();
+  let root = flattenTree(tree).find((c) => c.slug === slug);
+  // A cached tree may predate a newly published category. Confirm an
+  // apparent miss from the DB before caching an empty product result.
+  if (!root) root = flattenTree(await getCategoryTreeStrict()).find((c) => c.slug === slug);
   if (!root) return [];
 
   const slugs: string[] = [];
@@ -484,11 +496,10 @@ async function getSelfAndDescendantCategorySlugs(slug: string): Promise<string[]
 
 async function queryActiveProductsFromDb(
   options: GetProductsOptions,
-  // Defaults to the cached, graceful-fallback tree read; getProductsStrict
-  // (below, used only by the sitemap) passes getCategoryTreeStrict instead
-  // so a DB error propagates rather than silently resolving to "no visible
-  // categories, so no products" as getCategoryTree's own [] fallback would.
-  categoryTreeFn: () => Promise<CategoryTreeNode[]> = getCategoryTree,
+  // Use a cached tree in normal operation, but confirm an empty result with
+  // a strict DB read before a product query is cached. The sitemap always
+  // uses the strict reader directly.
+  categoryTreeFn: () => Promise<CategoryTreeNode[]> = getCategoryTreeForListing,
 ): Promise<Product[]> {
   // release-hardening audit F-099: restrict to categories actually
   // reachable from the (pruned) active category tree, not just "this
@@ -589,7 +600,7 @@ const cachedGetProducts = unstable_cache(
   async (optionsJson: string) => queryActiveProductsFromDb(JSON.parse(optionsJson)),
   // Version the key after the old deployment cached empty category results
   // without a TTL. A deploy must read the real catalog immediately.
-  ["products-query", "category-slugs-v2"],
+  ["products-query", "category-slugs-v3"],
   { tags: [PRODUCTS_CACHE_TAG], revalidate: CATALOG_CACHE_REVALIDATE_SECONDS },
 );
 

@@ -1,5 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   blogMedia,
   categoryMedia,
@@ -35,16 +37,9 @@ describe("media catalog", () => {
     assert.ok(!JSON.stringify(exported).includes("daakyka.com"));
   });
 
-  // release-hardening audit F-272: these four fields used to all be
-  // "/placeholder-scene.svg" — a large grey image-icon shown to every
-  // shopper on /shop/bespoke, /our-story and /shop, with no admin way to
-  // ever replace it (none of them are a manifest slot — see
-  // image-manifest.ts). They must now resolve to real, licensed photography
-  // like the rest of the catalog, not a placeholder graphic.
-  it("uses real photography, not a placeholder graphic, for generic uniform/manufacturing scene imagery", () => {
+  it("uses working editorial assets for uniform and manufacturing scenes", () => {
     for (const url of [
       daakykaMedia.productDesigns,
-      daakykaMedia.hospitalUniforms,
       daakykaMedia.schoolUniforms,
       daakykaMedia.institutionalShowcase,
     ]) {
@@ -52,6 +47,12 @@ describe("media catalog", () => {
       assert.match(url, /(pexels|unsplash)/);
       assert.ok(!isLocalPath(url), `expected a real photo, not a local placeholder path: ${url}`);
     }
+    for (const url of [daakykaMedia.hospitalUniforms, marketingMedia.bespokeFeature, marketingMedia.shopFeatureBespoke]) {
+      assert.match(url, /^\/images\/[\w-]+\.webp$/);
+      assert.ok(existsSync(join(process.cwd(), "public", url.slice(1))), `${url} must exist in public/images`);
+    }
+    assert.ok(!JSON.stringify({ daakykaMedia, scrubMedia, marketingMedia, categoryMedia, blogMedia }).includes("5712513"),
+      "removed Pexels source must not return to the media catalog");
   });
 
   it("withImageWidth appends a CDN width param to a remote URL", () => {
