@@ -406,7 +406,9 @@ const CATALOG_CACHE_REVALIDATE_SECONDS = 300;
 
 const cachedCategoryTree = unstable_cache(
   async () => buildCategoryTree(await fetchActiveCategoriesFlat()),
-  ["category-tree"],
+  // The previous deployment cached this indefinitely. Start a fresh tree
+  // when the bounded cache policy reaches production.
+  ["category-tree", "bounded-v2"],
   { tags: [CATEGORIES_CACHE_TAG], revalidate: CATALOG_CACHE_REVALIDATE_SECONDS },
 );
 
@@ -450,20 +452,22 @@ export async function getCategoryBySlug(slug: string): Promise<CategoryTreeNode 
   return flattenTree(tree).find((c) => c.slug === slug) ?? null;
 }
 
-/** The category's own id plus every descendant category's id, for
- * "products in this category or any sub-category" queries. Returns an
+/** The category's own slug plus every descendant slug, for
+ * "products in this category or any sub-category" queries. Slugs survive
+ * category re-seeding while row ids do not, so a temporarily stale tree
+ * cannot turn a populated menu category into an empty product grid. Returns an
  * empty array when the slug doesn't exist in the DB category tree (the
  * caller decides what that means — see getProductsByCategory's legacy
  * fallback for old seed-only category slugs like "bespoke"). */
-async function getSelfAndDescendantCategoryIds(slug: string): Promise<string[]> {
+async function getSelfAndDescendantCategorySlugs(slug: string): Promise<string[]> {
   const tree = await getCategoryTree();
   const flat = flattenTree(tree);
   const root = flat.find((c) => c.slug === slug);
   if (!root) return [];
 
-  const ids: string[] = [];
+  const slugs: string[] = [];
   const collect = (node: CategoryTreeNode) => {
-    ids.push(node.id);
+    slugs.push(node.slug);
     for (const child of node.children) collect(child);
   };
 
@@ -471,7 +475,7 @@ async function getSelfAndDescendantCategoryIds(slug: string): Promise<string[]> 
   // not the flattened copy (which has children too, since flattenTree
   // just walks and doesn't strip them — either works, kept for clarity).
   collect(root);
-  return ids;
+  return slugs;
 }
 
 // ---------------------------------------------------------------------------
@@ -495,19 +499,22 @@ async function queryActiveProductsFromDb(
   // filter kept serving its products to /shop, the top-level filter chips
   // and the mega-menu even though the category itself had become an
   // orphaned dead end (its own page 404s once it's not in the tree).
-  let categoryIds: string[];
+  let categorySlugs: string[];
   if (options.categorySlug) {
-    categoryIds = await getSelfAndDescendantCategoryIds(options.categorySlug);
-    if (categoryIds.length === 0) return [];
+    categorySlugs = await getSelfAndDescendantCategorySlugs(options.categorySlug);
+    if (categorySlugs.length === 0) return [];
   } else {
-    categoryIds = flattenTree(await categoryTreeFn()).map((c) => c.id);
-    if (categoryIds.length === 0) return [];
+    categorySlugs = flattenTree(await categoryTreeFn()).map((c) => c.slug);
+    if (categorySlugs.length === 0) return [];
   }
 
   const where: Prisma.ProductWhereInput = {
     status: "ACTIVE",
-    categoryId: { in: categoryIds },
-    ...(options.section ? { category: { section: options.section } } : {}),
+    category: {
+      slug: { in: categorySlugs },
+      active: true,
+      ...(options.section ? { section: options.section } : {}),
+    },
   };
 
   if (options.featured) {
@@ -580,7 +587,9 @@ function fallbackProducts(options: GetProductsOptions): Product[] {
 
 const cachedGetProducts = unstable_cache(
   async (optionsJson: string) => queryActiveProductsFromDb(JSON.parse(optionsJson)),
-  ["products-query"],
+  // Version the key after the old deployment cached empty category results
+  // without a TTL. A deploy must read the real catalog immediately.
+  ["products-query", "category-slugs-v2"],
   { tags: [PRODUCTS_CACHE_TAG], revalidate: CATALOG_CACHE_REVALIDATE_SECONDS },
 );
 
@@ -671,7 +680,9 @@ async function queryProductByHandleFromDb(handle: string): Promise<Product | nul
 export async function getProductByHandle(handle: string): Promise<Product | null> {
   const cached = unstable_cache(
     () => queryProductByHandleFromDb(handle),
-    ["product-by-handle", handle],
+    // Refresh old indefinite PDP entries as well (new gallery images need
+    // to appear on the first request after this deployment).
+    ["product-by-handle", "bounded-v2", handle],
     { tags: [PRODUCTS_CACHE_TAG, productCacheTag(handle)], revalidate: CATALOG_CACHE_REVALIDATE_SECONDS },
   );
 

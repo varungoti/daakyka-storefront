@@ -211,13 +211,7 @@ async function main() {
   if (!existingAdmin) {
     console.log("Created admin user.");
     if (!isRemoteDatabase) {
-      // Only useful to print for a fresh local create against a local DB
-      // — an existing account's real password is whatever it was already
-      // set to, and printing this value against any remote database
-      // (Vercel's build log, or a stray local run pointed at a remote
-      // DATABASE_URL — see F-301) would leak it there.
       console.log(`Admin login: ${email}`);
-      console.log(`Admin password: ${password}`);
     }
   } else {
     console.log(`Admin user already exists: ${email} (password unchanged).`);
