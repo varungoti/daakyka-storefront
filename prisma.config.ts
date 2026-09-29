@@ -9,6 +9,8 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    url: process.env["DATABASE_URL"],
+    // The CLI needs a session connection for migrations and advisory locks.
+    // Serverless runtime DATABASE_URL can use Supabase's transaction pooler.
+    url: process.env["MIGRATION_DATABASE_URL"] ?? process.env["DATABASE_URL"],
   },
 });

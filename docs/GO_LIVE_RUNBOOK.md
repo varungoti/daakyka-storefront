@@ -31,9 +31,9 @@ Any Postgres works for staging (a separate Supabase project, Neon, etc.) — it 
 the same one production uses.
 
 1. Create a **staging** Postgres database.
-2. Set it as Vercel's `DATABASE_URL` env var for the Preview/staging environment (Prisma — see
-   `prisma.config.ts` — only ever reads the env var literally named `DATABASE_URL`; there is no
-   other name it recognizes).
+2. Set it as Vercel's `DATABASE_URL` env var for the Preview/staging environment. The Prisma CLI
+   uses `MIGRATION_DATABASE_URL` when set, and otherwise uses `DATABASE_URL`; keep the migration
+   variable unset in a simple staging setup.
 3. **Migrations do *not* run automatically on Preview** (fixed post-F-229 — every Git push used to
    build a Preview that ran `prisma migrate deploy` + the seed against whatever `DATABASE_URL`
    Preview had, including, once, the *production* Supabase database). `scripts/vercel-build.mjs`
@@ -84,28 +84,29 @@ the `go-live:check` summary further down.
 
 ## Phase B — Production database (Supabase)
 
-Production runs on **Supabase Postgres**, connected through the **session pooler** — this is not
-optional/interchangeable with the other two connection strings Supabase gives you:
+Production runs on **Supabase Postgres**. Vercel functions use the transaction pooler; Prisma
+migrations use the session pooler through `MIGRATION_DATABASE_URL`. This split was verified after
+the session pooler's 15-client cap caused repeated public `/api/health` 503 responses.
 
 | Connection | Port | IPv4? | Use it? |
 |---|---|---|---|
 | Direct host (`db.<project-ref>.supabase.co`) | 5432 | **No — IPv6 only** (verified: DNS returns only an AAAA record, no A record) | No — Vercel's default runtime egress is IPv4 |
-| Transaction pooler | 6543 | IPv6 only | No, same reason |
-| **Session pooler** (`aws-0-<region>.pooler.supabase.com`) | **5432** | **Yes** (verified: resolves to real IPv4 addresses behind an AWS ELB) | **Yes — use this one** |
+| **Transaction pooler** (`aws-0-<region>.pooler.supabase.com`) | **6543** | **Yes — verified from this host** | **Vercel runtime `DATABASE_URL`** |
+| Session pooler (`aws-0-<region>.pooler.supabase.com`) | 5432 | Yes | Prisma CLI migrations only, via `MIGRATION_DATABASE_URL` |
 
 Steps:
 
-1. Get the session-pooler connection string from Supabase (Project Settings → Database →
-   Connection string → **Session pooler**).
+1. Get both pooler connection strings from Supabase (Project Settings → Database → Connection string).
 2. **Percent-encode the password** in the URL if it contains any special characters (`@`, `#`, `%`,
    `/`, etc. all need encoding, or the URL parses wrong).
-3. In Vercel, set the **Production** environment variable named exactly `DATABASE_URL` (not
-   `SUPABASE_DATABASE_URL` — Prisma doesn't read that name; see `prisma.config.ts`) to that string.
+3. In Vercel Production, set `DATABASE_URL` to the transaction-pooler URL on port 6543 and
+   `MIGRATION_DATABASE_URL` to the session-pooler URL on port 5432. The Prisma CLI uses the
+   latter; the application runtime uses the former. Do not point both at the session pooler.
    This repo's local `.env` happens to keep a copy of the production value under
    `SUPABASE_DATABASE_URL` purely as a reference — that's a deliberately different name so a local
    `npm run dev`/`npm test` (which loads `.env` and always uses `DATABASE_URL`) can never point at
    production by accident. **Never copy that value into `.env`'s own `DATABASE_URL`.**
-4. Production has already been migrated and seeded once using this connection string — a fresh
+4. Production has already been migrated and seeded once — a fresh
    **production** deploy (`VERCEL_ENV === "production"`) just re-runs the same `migrate deploy` +
    `seed.ts` from A2, which is safe (see the note there: real content seeds at most once per
    database, so it won't resurrect anything already deleted from `/admin`). A Preview/branch deploy
