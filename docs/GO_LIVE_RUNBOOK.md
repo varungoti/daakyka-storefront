@@ -99,7 +99,8 @@ Steps:
 1. Get both pooler connection strings from Supabase (Project Settings → Database → Connection string).
 2. **Percent-encode the password** in the URL if it contains any special characters (`@`, `#`, `%`,
    `/`, etc. all need encoding, or the URL parses wrong).
-3. In Vercel Production, set `DATABASE_URL` to the transaction-pooler URL on port 6543 and
+3. In Vercel Production, set `DATABASE_URL` to the transaction-pooler URL on port 6543 with
+   `pgbouncer=true` in its query string (per Supabase and Prisma's pooler guidance), and set
    `MIGRATION_DATABASE_URL` to the session-pooler URL on port 5432. The Prisma CLI uses the
    latter; the application runtime uses the former. Do not point both at the session pooler.
    This repo's local `.env` happens to keep a copy of the production value under
