@@ -251,8 +251,8 @@ function SlideCard({
           <div>
             <label className="mb-1 block text-[11px] font-semibold text-muted">Label</label>
             <input
-              value={slide.primaryCta.label}
-              onChange={(e) => onChange({ primaryCta: { ...slide.primaryCta, label: e.target.value } })}
+              value={slide.primaryCta?.label ?? ""}
+              onChange={(e) => onChange({ primaryCta: { ...(slide.primaryCta ?? {}), label: e.target.value } })}
               aria-invalid={Boolean(err("primaryCta", "label"))}
               className="w-full rounded-lg border border-border px-2 py-1.5 text-sm outline-none focus:border-brand"
             />
@@ -261,8 +261,8 @@ function SlideCard({
           <div>
             <label className="mb-1 block text-[11px] font-semibold text-muted">Link</label>
             <input
-              value={slide.primaryCta.href}
-              onChange={(e) => onChange({ primaryCta: { ...slide.primaryCta, href: e.target.value } })}
+              value={slide.primaryCta?.href ?? ""}
+              onChange={(e) => onChange({ primaryCta: { ...(slide.primaryCta ?? {}), href: e.target.value } })}
               placeholder="/shop or https://example.com"
               aria-invalid={Boolean(err("primaryCta", "href"))}
               className="w-full rounded-lg border border-border px-2 py-1.5 text-sm outline-none focus:border-brand"
@@ -275,8 +275,8 @@ function SlideCard({
           <div>
             <label className="mb-1 block text-[11px] font-semibold text-muted">Label</label>
             <input
-              value={slide.secondaryCta.label}
-              onChange={(e) => onChange({ secondaryCta: { ...slide.secondaryCta, label: e.target.value } })}
+              value={slide.secondaryCta?.label ?? ""}
+              onChange={(e) => onChange({ secondaryCta: { ...(slide.secondaryCta ?? {}), label: e.target.value } })}
               aria-invalid={Boolean(err("secondaryCta", "label"))}
               className="w-full rounded-lg border border-border px-2 py-1.5 text-sm outline-none focus:border-brand"
             />
@@ -285,8 +285,8 @@ function SlideCard({
           <div>
             <label className="mb-1 block text-[11px] font-semibold text-muted">Link</label>
             <input
-              value={slide.secondaryCta.href}
-              onChange={(e) => onChange({ secondaryCta: { ...slide.secondaryCta, href: e.target.value } })}
+              value={slide.secondaryCta?.href ?? ""}
+              onChange={(e) => onChange({ secondaryCta: { ...(slide.secondaryCta ?? {}), href: e.target.value } })}
               placeholder="/for-hospitals or https://example.com"
               aria-invalid={Boolean(err("secondaryCta", "href"))}
               className="w-full rounded-lg border border-border px-2 py-1.5 text-sm outline-none focus:border-brand"

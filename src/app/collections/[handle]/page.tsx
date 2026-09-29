@@ -3,6 +3,8 @@ import { ProductCard } from "@/components/ui/product-card";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { getBestSellers } from "@/lib/products";
+import { canonicalPath } from "@/lib/seo/canonical";
+import { baseOpenGraph } from "@/lib/seo/json-ld";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -18,8 +20,20 @@ export function generateStaticParams() {
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { handle } = await params;
   const collection = getCollection(handle);
-  if (!collection) return { title: "Collection Not Found" };
-  return { title: collection.title, description: collection.description };
+  if (!collection) {
+    // release-hardening F-012: Next already tags a notFound() render
+    // `noindex` on its own.
+    return { title: "Collection Not Found", robots: { index: false, follow: true } };
+  }
+  // release-hardening F-147/F-151: this used to be only {title,
+  // description}, so every /collections/<handle> page (including the ones
+  // sitemap.ts lists) inherited the root layout's canonical (the homepage).
+  return {
+    title: collection.title,
+    description: collection.description,
+    alternates: { canonical: canonicalPath(`/collections/${handle}`) },
+    openGraph: baseOpenGraph(`/collections/${handle}`),
+  };
 }
 
 /**

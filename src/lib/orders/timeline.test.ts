@@ -78,6 +78,12 @@ describe("getOrderTimeline", () => {
     assert.equal(confirmedStep?.state, "complete");
   });
 
+  it("PROCESSING + ORDER_REQUEST shows confirmation after payment was recorded", () => {
+    const timeline = getOrderTimeline("PROCESSING", "ORDER_REQUEST", false, false, false, true);
+    assert.equal(timeline.steps.find((step) => step.id === "confirmed")?.state, "complete");
+    assert.equal(timeline.steps.find((step) => step.id === "shipped")?.state, "current");
+  });
+
   it("SHIPPED marks delivered as the current (final) step", () => {
     const timeline = getOrderTimeline("SHIPPED", "RAZORPAY");
     assert.deepEqual(
@@ -114,10 +120,49 @@ describe("getOrderTimeline", () => {
     assert.equal(timeline.terminal!.tone, "refunded");
   });
 
-  it("RETURNED renders without throwing (schema-foundation placeholder — unreachable until wave-4 wires a transition into it)", () => {
+  // F-199 fix: RETURNED is now reachable from SHIPPED or DELIVERED.
+  it("RETURNED asserts placed+confirmed+shipped as fact (reachable only from SHIPPED/DELIVERED) and renders a terminal banner", () => {
     const timeline = getOrderTimeline("RETURNED", "RAZORPAY");
+    assert.deepEqual(
+      timeline.steps.map((s) => s.id),
+      ["placed", "confirmed", "shipped"],
+    );
+    assert.ok(timeline.steps.every((s) => s.state === "complete"));
     assert.ok(timeline.terminal);
-    assert.ok(timeline.steps.length > 0);
+    assert.equal(timeline.terminal!.tone, "refunded");
+    assert.match(timeline.terminal!.label, /returned/i);
+  });
+
+  it("RETURNED additionally asserts 'delivered' complete when wasDelivered is true (DELIVERED -> RETURNED, not SHIPPED -> RETURNED)", () => {
+    const timeline = getOrderTimeline("RETURNED", "RAZORPAY", true, true, true);
+    assert.deepEqual(
+      timeline.steps.map((s) => s.id),
+      ["placed", "confirmed", "shipped", "delivered"],
+    );
+    assert.ok(timeline.steps.every((s) => s.state === "complete"));
+  });
+
+  // F-199 fix: REFUNDED is now also reachable from RETURNED (shipped, and
+  // possibly delivered, before being sent back) — not only from PAID.
+  it("REFUNDED includes shipped/delivered steps only when wasShipped/wasDelivered say so", () => {
+    const neverShipped = getOrderTimeline("REFUNDED", "RAZORPAY");
+    assert.deepEqual(
+      neverShipped.steps.map((s) => s.id),
+      ["placed", "confirmed"],
+    );
+
+    const shippedNotDelivered = getOrderTimeline("REFUNDED", "RAZORPAY", true, true, false);
+    assert.deepEqual(
+      shippedNotDelivered.steps.map((s) => s.id),
+      ["placed", "confirmed", "shipped"],
+    );
+
+    const shippedAndDelivered = getOrderTimeline("REFUNDED", "RAZORPAY", true, true, true);
+    assert.deepEqual(
+      shippedAndDelivered.steps.map((s) => s.id),
+      ["placed", "confirmed", "shipped", "delivered"],
+    );
+    assert.equal(shippedAndDelivered.terminal!.tone, "refunded");
   });
 
   it("never claims a step happened that the transition matrix contradicts (CANCELLED vs REFUNDED asymmetry)", () => {
@@ -169,6 +214,7 @@ describe("getOrderTimeline", () => {
       "DELIVERED",
       "CANCELLED",
       "REFUNDED",
+      "RETURNED",
     ]);
     for (const status of orderStatusValues) {
       assert.ok(covered.has(status), `${status} is in the schema but not in this test's coverage set`);

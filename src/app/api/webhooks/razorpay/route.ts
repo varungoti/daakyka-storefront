@@ -59,16 +59,43 @@ interface RazorpayWebhookPayload {
         order_id?: string;
         status?: string;
         /** Paise. Present on payment.captured/refunded events — used by
-         * handleRefundProcessed to tell a partial refund from a full one. */
+         * handleRefundProcessed to tell a partial refund from a full one,
+         * and by handlePaymentCaptured (F-286) to confirm the captured
+         * amount actually matches the order total before marking it PAID. */
         amount?: number;
         amount_refunded?: number;
+        /** ISO 4217, e.g. "INR". F-286: checked against order.currency
+         * alongside `amount` — Razorpay fixes both on the order it
+         * created (see createRazorpayOrder), but nothing downstream of
+         * the webhook re-checked either. */
+        currency?: string;
       };
     };
     refund?: { entity?: { id?: string; payment_id?: string; amount?: number } };
   };
 }
 
-async function handlePaymentCaptured(payment: { id?: string; order_id?: string }) {
+// F-286: neither /api/checkout/verify nor this webhook ever compared the
+// captured amount/currency against the order it's about to mark PAID.
+// Today that's only defence-in-depth — createRazorpayOrder fixes the
+// order's amount/currency server-side with payment_capture:true and no
+// partial_payment, so Razorpay itself rejects a mismatched payment before
+// this webhook could ever see one — but it costs a few lines on the money
+// path and the fields are already in the signed, verified payload. On a
+// mismatch, the order is left alone (not silently marked PAID) and an
+// admin is notified rather than the transition being attempted.
+function paymentMatchesOrder(
+  payment: { amount?: number; currency?: string },
+  order: { total: unknown; currency: string },
+): boolean {
+  if (payment.amount === undefined || payment.currency === undefined) return false;
+  const expectedPaise = Math.round(Number(order.total) * 100);
+  if (payment.amount !== expectedPaise) return false;
+  if (payment.currency.toUpperCase() !== order.currency.toUpperCase()) return false;
+  return true;
+}
+
+async function handlePaymentCaptured(payment: { id?: string; order_id?: string; amount?: number; currency?: string }) {
   if (!payment.order_id || !payment.id) return;
 
   const order = await db.order.findFirst({
@@ -85,6 +112,28 @@ async function handlePaymentCaptured(payment: { id?: string; order_id?: string }
   // decrement stock — see this file's header comment for exactly which
   // statuses are (and aren't) eligible.
   if (order.razorpayPaymentId !== null || !["PENDING_PAYMENT", "CANCELLED"].includes(order.status)) return;
+
+  if (!paymentMatchesOrder(payment, order)) {
+    await db.order.update({
+      where: { id: order.id },
+      data: {
+        adminNotes: [order.adminNotes, `AMOUNT MISMATCH: captured ${payment.amount ?? "?"} ${payment.currency ?? "?"} for payment ${payment.id}, expected ${Math.round(Number(order.total) * 100)} ${order.currency}.`]
+          .filter(Boolean)
+          .join("\n"),
+      },
+    }).catch(() => undefined);
+    await db.adminNotification
+      .create({
+        data: {
+          title: `Payment amount mismatch on order ${order.number}`,
+          body: `Razorpay payment ${payment.id} was captured for a different amount/currency than order ${order.number}'s total. The order was left unpaid — review before marking it paid manually.`,
+          type: "order_amount_mismatch",
+          metadata: JSON.stringify({ orderNumber: order.number, paymentId: payment.id }),
+        },
+      })
+      .catch(() => undefined);
+    return;
+  }
 
   const { won: wonTransition, stockConflict, discountConflict } = await db.$transaction(
     (tx) => markRazorpayOrderPaid(tx, order, payment.id!),

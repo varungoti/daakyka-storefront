@@ -54,6 +54,25 @@ describe("JSON-LD schema validation", () => {
     assert.equal("aggregateRating" in data, false);
   });
 
+  it("publishes only prices of purchasable variants", () => {
+    const data = productJsonLd({
+      id: "prod-priced",
+      handle: "priced-scrubs",
+      name: "Priced Scrubs",
+      image: "https://example.com/image.jpg",
+      price: 1000,
+      rating: 0,
+      reviewCount: 0,
+      variants: [
+        { price: 1500, available: true },
+        { price: 1700, available: true },
+        { price: 900, available: false },
+      ],
+    });
+    assert.equal(data.offers.lowPrice, 1500);
+    assert.equal(data.offers.highPrice, 1700);
+  });
+
   it("validates breadcrumb schema", () => {
     const result = validateJsonLdObject(
       breadcrumbJsonLd([

@@ -73,6 +73,21 @@ export function getOrderTimeline(
    * value.
    */
   hasCapturedPayment = true,
+  /**
+   * F-199 fix: whether `Order.shippedAt`/`deliveredAt` are actually set —
+   * real columns (see status-transitions.ts's orderStatusTimestampField),
+   * not a guess the way `hasCapturedPayment` sometimes has to be. Only
+   * meaningful for REFUNDED and RETURNED, the statuses now reachable
+   * *after* shipping (SHIPPED/DELIVERED -> RETURNED -> REFUNDED, see
+   * ORDER_STATUS_TRANSITIONS) as well as before it (PAID -> REFUNDED
+   * directly). Both default to `false` — "never claim a step happened
+   * unless the caller actually says so" — so every existing caller/test
+   * that doesn't pass them keeps reading exactly as before (REFUNDED
+   * used to be reachable only from PAID, i.e. never shipped).
+   */
+  wasShipped = false,
+  wasDelivered = false,
+  wasPaid = false,
 ): OrderTimeline {
   switch (status) {
     case "PENDING_PAYMENT": {
@@ -112,20 +127,10 @@ export function getOrderTimeline(
       };
 
     case "PROCESSING": {
-      // create-order.ts creates an ORDER_REQUEST order directly into
-      // PROCESSING (it has no online payment step to gate on — see that
-      // file's doc comment: `initialStatus = paymentMethod === "ORDER_REQUEST"
-      // ? "PROCESSING" : "PENDING_PAYMENT"`), and the transition matrix
-      // (status-transitions.ts) never allows PROCESSING -> PAID, so an
-      // ORDER_REQUEST order can reach PROCESSING *without* our team ever
-      // having confirmed payment yet — unlike a RAZORPAY order, which can
-      // only be PROCESSING after actually passing through PAID. The same
-      // enum value means something different depending on paymentMethod,
-      // so this keeps "confirmed" as the current (not complete) step,
-      // with the same "our team will contact you" framing as the
-      // PENDING_PAYMENT case above, until the order reaches SHIPPED —
-      // which does unambiguously prove it was confirmed and prepared.
-      if (paymentMethod === "ORDER_REQUEST") {
+      // Manual orders begin in PROCESSING before payment. Once the admin
+      // records payment, paidAt remains set even if the order returns to
+      // PROCESSING, so the customer sees the confirmed state.
+      if (paymentMethod === "ORDER_REQUEST" && !wasPaid) {
         return {
           terminal: null,
           steps: [
@@ -207,37 +212,53 @@ export function getOrderTimeline(
       };
     }
 
-    case "REFUNDED":
-      // Unlike CANCELLED, REFUNDED is reachable only from PAID (see
-      // ORDER_STATUS_TRANSITIONS — no other status lists REFUNDED as a
-      // next state), so showing "confirmed" as complete here reflects
-      // this app's own enforced transition matrix, not a guess.
+    case "REFUNDED": {
+      // F-199 fix: two different journeys reach REFUNDED now
+      // (ORDER_STATUS_TRANSITIONS) — PAID -> REFUNDED directly (refunded
+      // before ever shipping) or RETURNED -> REFUNDED (shipped, and
+      // possibly delivered, before being sent back and refunded).
+      // wasShipped/wasDelivered are real Order columns, so — unlike
+      // CANCELLED's hasCapturedPayment hedge — the extra steps below
+      // state a fact rather than guess one.
+      const steps: OrderTimelineStep[] = [
+        placedStep(),
+        { id: "confirmed", label: confirmedLabel(paymentMethod), state: "complete" },
+      ];
+      if (wasShipped) steps.push({ id: "shipped", label: "Shipped", state: "complete" });
+      if (wasDelivered) steps.push({ id: "delivered", label: "Delivered", state: "complete" });
       return {
-        steps: [placedStep(), { id: "confirmed", label: confirmedLabel(paymentMethod), state: "complete" }],
+        steps,
         terminal: {
           tone: "refunded",
           label: "Order refunded",
           description: "This order was refunded.",
         },
       };
+    }
 
-    case "RETURNED":
-      // release-hardening schema-foundation (wave 1): the enum value
-      // exists (F-199) but status-transitions.ts has no transition into
-      // it yet, so this status is unreachable today — this case exists
-      // only to keep the exhaustiveness check below compiling. A minimal
-      // placeholder (reuses the "cancelled" tone/icon rather than
-      // inventing a new one) rather than a designed banner — wave-4's
-      // order-status-workflow-and-timeline package owns building this out
-      // for real once RETURNED is actually reachable.
+    case "RETURNED": {
+      // F-199 fix: reachable only from SHIPPED or DELIVERED
+      // (ORDER_STATUS_TRANSITIONS), so "shipped" is always a fact here —
+      // only "delivered" depends on which of the two it came from.
+      const steps: OrderTimelineStep[] = [
+        placedStep(),
+        { id: "confirmed", label: confirmedLabel(paymentMethod), state: "complete" },
+        { id: "shipped", label: "Shipped", state: "complete" },
+      ];
+      if (wasDelivered) steps.push({ id: "delivered", label: "Delivered", state: "complete" });
       return {
-        steps: [placedStep(), { id: "confirmed", label: confirmedLabel(paymentMethod), state: "complete" }],
+        steps,
+        // "refunded" tone (amber/RotateCcw in OrderTimelineView) reads
+        // better for a return-in-progress than "cancelled" (red/XCircle)
+        // — nothing about a return itself is an error state the way a
+        // cancellation is.
         terminal: {
-          tone: "cancelled",
+          tone: "refunded",
           label: "Order returned",
-          description: "This order was returned.",
+          description: "This order was returned. Any eligible refund will be issued to your original payment method.",
         },
       };
+    }
 
     default: {
       const exhaustiveCheck: never = status;

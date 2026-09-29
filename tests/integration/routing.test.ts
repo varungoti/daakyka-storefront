@@ -2,6 +2,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import sitemap from "@/app/sitemap";
 import { getNavigation } from "@/lib/navigation/get-navigation";
+import { getCategoryTree, getProducts, type CategoryTreeNode } from "@/lib/products";
 import { db } from "@/lib/db";
 import { getSetting, setSetting } from "@/lib/settings";
 import { seedCatalog } from "../../prisma/seed-catalog";
@@ -83,7 +84,50 @@ describe("sitemap.xml URL generation (Phase C3)", () => {
     await setSetting("pages.mixMatch.enabled", originalMixMatch, adminId);
   });
 
-  it("includes the new C3 section-landing and category routes", async () => {
+  it("serves active products for every category link in the navigation menu", async () => {
+    const navigation = await getNavigation();
+    const tree = await getCategoryTree();
+    const nodes = new Map<string, CategoryTreeNode>();
+    const visit = (node: CategoryTreeNode) => {
+      nodes.set(node.slug, node);
+      node.children.forEach(visit);
+    };
+    tree.forEach(visit);
+
+    const hrefs = new Set<string>();
+    for (const item of navigation.items) {
+      if (item.kind === "mega-grid") {
+        for (const tile of item.tiles) {
+          hrefs.add(tile.href);
+          tile.children.forEach((child) => hrefs.add(child.href));
+        }
+      } else if (item.kind === "mega-columns") {
+        item.columns.forEach((column) => column.items.forEach((link) => hrefs.add(link.href)));
+      } else if (item.kind === "simple") {
+        item.children.forEach((link) => hrefs.add(link.href));
+      }
+    }
+
+    assert.ok(hrefs.size > 20, "expected the seeded navigation to contain its full catalog");
+    const descendantSlugs = (node: CategoryTreeNode): string[] =>
+      [node.slug, ...node.children.flatMap(descendantSlugs)];
+    for (const href of hrefs) {
+      const slug = href.split("/").at(-1)!;
+      const node = nodes.get(slug);
+      assert.ok(node, `${href} must resolve to an active category`);
+      const expected = await db.product.count({
+        where: {
+          status: "ACTIVE",
+          category: { slug: { in: descendantSlugs(node) }, active: true },
+        },
+      });
+      assert.ok(expected > 0, `${href} must have published products`);
+      const actual = await getProducts({ categorySlug: slug });
+      assert.equal(actual.length, expected, `${href} must show every published product`);
+    }
+  });
+
+  it("includes section landings and canonical category routes only once", async () => {
     const entries = await sitemap();
     const urls = entries.map((entry) => entry.url);
 
@@ -91,7 +135,9 @@ describe("sitemap.xml URL generation (Phase C3)", () => {
     assert.ok(urls.some((url) => url.endsWith("/school-uniforms")));
     assert.ok(urls.some((url) => url.endsWith("/kids-wear")));
     assert.ok(urls.some((url) => url.endsWith("/our-story")));
-    assert.ok(urls.some((url) => url.endsWith("/category/for-hospitals")));
+    assert.ok(!urls.some((url) => url.endsWith("/category/for-hospitals")));
+    assert.ok(!urls.some((url) => url.endsWith("/category/school-uniforms")));
+    assert.ok(!urls.some((url) => url.endsWith("/category/kids-wear")));
     assert.ok(urls.some((url) => url.endsWith("/category/school-shirts")));
     // Old removed routes should not be listed as canonical URLs (they
     // now 301 redirect instead) — note /guides/hospital-uniforms is a
@@ -146,12 +192,12 @@ describe("sitemap.xml URL generation (Phase C3)", () => {
   });
 
   it("stamps a category URL with that category's own real updatedAt, not the build time", async () => {
-    const category = await db.category.findFirst({ where: { slug: "for-hospitals" } });
-    assert.ok(category, "expected the seeded for-hospitals category to exist");
+    const category = await db.category.findFirst({ where: { slug: "school-shirts" } });
+    assert.ok(category, "expected the seeded school-shirts category to exist");
 
     const entries = await sitemap();
-    const entry = entries.find((e) => e.url.endsWith("/category/for-hospitals"));
-    assert.ok(entry, "expected a /category/for-hospitals sitemap entry");
+    const entry = entries.find((e) => e.url.endsWith("/category/school-shirts"));
+    assert.ok(entry, "expected a /category/school-shirts sitemap entry");
     assert.equal(new Date(entry!.lastModified!).toISOString(), category!.updatedAt.toISOString());
   });
 

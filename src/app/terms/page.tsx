@@ -6,6 +6,7 @@ import Link from "next/link";
 export const metadata = policyMetadata(
   "Terms of Service",
   `Terms of service for shopping with ${brand.name}.`,
+  "/terms",
 );
 
 /**

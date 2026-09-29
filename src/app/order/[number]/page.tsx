@@ -3,16 +3,18 @@ import { OrderTimelineView } from "@/components/account/order-timeline";
 import { OrderTrackingCard } from "@/components/account/order-tracking-card";
 import { brand } from "@/data/brand";
 import { getCustomerSession } from "@/lib/customer-auth/session";
-import type { OrderStatus } from "@/generated/prisma/client";
+import type { OrderStatus, PaymentMethod } from "@/generated/prisma/client";
 import { checkOrderPageRateLimit, getAuthorizedOrder } from "@/lib/orders/get-order";
 import { formatReceiptDate, getReceiptPaymentSummary } from "@/lib/orders/receipt";
 import { getOrderTimeline } from "@/lib/orders/timeline";
 import { getClientIp } from "@/lib/security/rate-limit";
 import { getSetting } from "@/lib/settings";
 import type { ShippingAddressInput } from "@/lib/validation/schemas";
-import { CheckCircle2, Loader2, RotateCcw, Truck, XCircle } from "lucide-react";
+import { buttonClassNames } from "@/components/ui/button";
+import { CheckCircle2, Clock, Loader2, RotateCcw, Truck, XCircle } from "lucide-react";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 
 export const metadata: Metadata = {
@@ -36,6 +38,9 @@ const STATUS_LABELS: Record<string, string> = {
   DELIVERED: "Delivered",
   CANCELLED: "Cancelled",
   REFUNDED: "Refunded",
+  // F-199 fix: reachable now (a shipped/delivered order can be returned —
+  // see status-transitions.ts).
+  RETURNED: "Returned",
 };
 
 /**
@@ -43,9 +48,28 @@ const STATUS_LABELS: Record<string, string> = {
  * check icon for every status, including CANCELLED and REFUNDED — actively
  * misleading, not just a missing feature. Mirrors getOrderTimeline's own
  * per-status framing (src/lib/orders/timeline.ts) at the top of the page.
+ *
+ * F-120 fix: that first pass still left two cases showing "Order
+ * confirmed" when nothing had actually been confirmed yet — an unpaid
+ * RAZORPAY order (PENDING_PAYMENT, reachable any time this page is opened
+ * from an emailed link before payment completes, not just right after
+ * checkout) and an ORDER_REQUEST order still awaiting our team's
+ * confirmation (PENDING_PAYMENT/PROCESSING — see getOrderTimeline's own
+ * PROCESSING case for why PROCESSING means something different for
+ * ORDER_REQUEST than for RAZORPAY). Also added RETURNED, now reachable
+ * (status-transitions.ts) — it used to silently fall through to the
+ * default "Order confirmed" case.
  */
-function getStatusHero(status: OrderStatus): { Icon: typeof CheckCircle2; label: string } {
+function getStatusHero(status: OrderStatus, paymentMethod: PaymentMethod): { Icon: typeof CheckCircle2; label: string } {
   switch (status) {
+    case "PENDING_PAYMENT":
+      return paymentMethod === "ORDER_REQUEST"
+        ? { Icon: Clock, label: "Order received" }
+        : { Icon: Clock, label: "Awaiting payment" };
+    case "PROCESSING":
+      return paymentMethod === "ORDER_REQUEST"
+        ? { Icon: Clock, label: "Order received" }
+        : { Icon: CheckCircle2, label: "Order confirmed" };
     case "SHIPPED":
       return { Icon: Truck, label: "Order shipped" };
     case "DELIVERED":
@@ -54,6 +78,8 @@ function getStatusHero(status: OrderStatus): { Icon: typeof CheckCircle2; label:
       return { Icon: XCircle, label: "Order cancelled" };
     case "REFUNDED":
       return { Icon: RotateCcw, label: "Order refunded" };
+    case "RETURNED":
+      return { Icon: RotateCcw, label: "Order returned" };
     default:
       return { Icon: CheckCircle2, label: "Order confirmed" };
   }
@@ -128,10 +154,19 @@ export default async function OrderConfirmationPage({
   // inviting the shopper to pay again for a charge that already went
   // through.
   const isConfirmingPayment = order.status === "PENDING_PAYMENT" && payment === "confirming";
-  const hero = getStatusHero(order.status);
+  const hero = getStatusHero(order.status, order.paymentMethod);
   // F-141 fix precedent (src/lib/orders/timeline.ts): only matters for a
   // RAZORPAY order's CANCELLED wording — see that function's doc comment.
-  const timeline = getOrderTimeline(order.status, order.paymentMethod, order.razorpayPaymentId !== null);
+  // F-199 fix: shippedAt/deliveredAt are real columns, used only for the
+  // (now reachable) RETURNED and post-shipping REFUNDED cases.
+  const timeline = getOrderTimeline(
+    order.status,
+    order.paymentMethod,
+    order.razorpayPaymentId !== null,
+    order.shippedAt !== null,
+    order.deliveredAt !== null,
+    order.paidAt !== null,
+  );
   // F-328: the receipt's own "Placed <date>" / payment-status line — see
   // src/lib/orders/receipt.ts for why these are pure, separately-tested
   // helpers rather than inline JSX logic.
@@ -140,6 +175,7 @@ export default async function OrderConfirmationPage({
     order.status,
     order.paymentMethod,
     order.razorpayPaymentId !== null,
+    order.paidAt !== null,
   );
 
   return (
@@ -200,6 +236,23 @@ export default async function OrderConfirmationPage({
       {!isConfirmingPayment && order.trackingNumber && (
         <div className="mt-6 print:hidden">
           <OrderTrackingCard trackingNumber={order.trackingNumber} courier={order.courier} />
+        </div>
+      )}
+
+      {/* F-120 fix: this page used to be a dead end — no way onward once a
+          shopper had read their order status. "View my orders" only for a
+          signed-in shopper (a guest has no account order list to send them
+          to); "Continue shopping" always. */}
+      {!isConfirmingPayment && (
+        <div className="mt-6 flex flex-wrap gap-3 print:hidden">
+          <Link href="/shop" className={buttonClassNames({ variant: "outline", size: "sm" })}>
+            Continue shopping
+          </Link>
+          {session && (
+            <Link href="/account/orders" className={buttonClassNames({ variant: "ghost", size: "sm" })}>
+              View my orders
+            </Link>
+          )}
         </div>
       )}
 

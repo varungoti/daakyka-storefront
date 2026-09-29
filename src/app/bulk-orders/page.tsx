@@ -4,15 +4,23 @@ import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { brand } from "@/data/brand";
 import { whatsappHref } from "@/lib/contact/whatsapp";
 import { getSiteImage } from "@/lib/media/get-site-image";
+import { canonicalPath } from "@/lib/seo/canonical";
+import { baseOpenGraph } from "@/lib/seo/json-ld";
 import { getSetting } from "@/lib/settings";
 import { Building2, MessageCircle, ShieldCheck, Users } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 
+// release-hardening F-147/F-151: this used to be only {title, description},
+// so /bulk-orders inherited the root layout's canonical (the homepage) and
+// its og:title/og:url — a B2B lead page listed in its own right in
+// sitemap.ts, not a duplicate of "/".
 export const metadata: Metadata = {
   title: "Bulk Orders",
   description:
     "Bulk uniform enquiries for hospitals, schools, sports teams and corporate offices — DAAKYKA Apparels, Pan India.",
+  alternates: { canonical: canonicalPath("/bulk-orders") },
+  openGraph: baseOpenGraph("/bulk-orders"),
 };
 
 export default async function BulkOrdersPage() {

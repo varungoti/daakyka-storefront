@@ -198,11 +198,20 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
             </div>
             {order.paymentMethod === "ORDER_REQUEST" && (
               <p className="mt-3 rounded-xl bg-lavender/30 p-3 text-xs text-muted">
+                {/* F-199 fix: this used to call every ORDER_REQUEST order
+                    "unpaid" unconditionally, even after an admin recorded
+                    its payment (PROCESSING -> PAID below) or it shipped —
+                    `paidAt` is the one real fact that survives the order
+                    moving past PAID onto PROCESSING/SHIPPED/DELIVERED. */}
                 {order.status === "CANCELLED"
-                  ? "This unpaid order request was cancelled — the stock it had reserved was restored to inventory."
-                  : order.status === "SHIPPED" || order.status === "DELIVERED"
-                    ? "Stock for this unpaid order request was decremented at checkout and has already shipped."
-                    : "This is an unpaid order request: stock was decremented at checkout (no online payment step). Cancelling it will restore that stock to inventory."}
+                  ? "This order request was cancelled — the stock it had reserved was restored to inventory."
+                  : order.paidAt
+                    ? order.status === "SHIPPED" || order.status === "DELIVERED"
+                      ? "Payment for this order request has been recorded, and it has already shipped."
+                      : "Payment for this order request has been recorded."
+                    : order.status === "SHIPPED" || order.status === "DELIVERED"
+                      ? "This unpaid order request has already shipped — stock was decremented at checkout, and no payment has been recorded for it."
+                      : "This is an unpaid order request: stock was decremented at checkout (no online payment step). Use the status dropdown below to mark it paid once payment is confirmed, or cancel it to restore that stock to inventory."}
               </p>
             )}
             {order.paymentMethod === "RAZORPAY" && order.razorpayPaymentId && (

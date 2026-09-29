@@ -29,6 +29,7 @@ export function getReceiptPaymentSummary(
    * (`razorpayPaymentId !== null`) — irrelevant for ORDER_REQUEST. Same
    * flag getOrderTimeline takes for its CANCELLED case. */
   hasCapturedPayment: boolean,
+  wasPaid = false,
 ): string {
   const method = PAYMENT_METHOD_LABELS[paymentMethod];
   switch (status) {
@@ -41,11 +42,12 @@ export function getReceiptPaymentSummary(
       // having confirmed payment yet (create-order.ts creates it directly
       // into PROCESSING) — same subtlety timeline.ts's PROCESSING case
       // documents.
-      return paymentMethod === "ORDER_REQUEST" ? `${method} · awaiting confirmation` : `${method} · paid`;
+      return paymentMethod === "ORDER_REQUEST" && !wasPaid ? `${method} · awaiting confirmation` : `${method} · paid`;
     case "PAID":
+      return `${method} · paid`;
     case "SHIPPED":
     case "DELIVERED":
-      return `${method} · paid`;
+      return paymentMethod === "ORDER_REQUEST" && !wasPaid ? `${method} · payment not recorded` : `${method} · paid`;
     case "CANCELLED": {
       const neverPaid = paymentMethod === "RAZORPAY" && !hasCapturedPayment;
       return neverPaid ? `${method} · not charged` : `${method} · cancelled`;
@@ -53,9 +55,6 @@ export function getReceiptPaymentSummary(
     case "REFUNDED":
       return `${method} · refunded`;
     case "RETURNED":
-      // F-199: reachable in the schema but no transition produces it yet
-      // (status-transitions.ts) — placeholder wording only, same as
-      // timeline.ts's own RETURNED case.
       return `${method} · returned`;
     default: {
       const exhaustiveCheck: never = status;

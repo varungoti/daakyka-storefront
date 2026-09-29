@@ -49,7 +49,6 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
       products={products}
       categories={categories}
       testimonials={testimonials}
-      initialCategory={params.category}
       initialQuery={params.q}
       fabricTechEnabled={fabricTechEnabled}
       mixMatchEnabled={mixMatchEnabled}

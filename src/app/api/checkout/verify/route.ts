@@ -5,7 +5,7 @@ import { hashOrderAccessToken } from "@/lib/orders/access-token";
 import { extractGuestName } from "@/lib/orders/admin-orders";
 import { notifyNewOrder } from "@/lib/orders/notify";
 import { markRazorpayOrderPaid } from "@/lib/orders/payment-transitions";
-import { verifyPaymentSignature } from "@/lib/payments/razorpay";
+import { capturedPaymentMatchesOrder, isRazorpayConfigured, verifyPaymentSignature } from "@/lib/payments/razorpay";
 import { revalidateProductStockForVariants } from "@/lib/products";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
@@ -78,6 +78,31 @@ export async function POST(request: Request) {
 
   if (!(await verifyPaymentSignature(razorpayOrderId, razorpayPaymentId, razorpaySignature))) {
     return NextResponse.json({ error: "Payment signature verification failed" }, { status: 400 });
+  }
+
+  // In production a Checkout signature is necessary but does not include
+  // amount or capture state. Confirm both against Razorpay before applying
+  // stock/discount side effects. The development-only unconfigured path
+  // supports local route tests, where no live payment can be created.
+  const providerConfigured = await isRazorpayConfigured();
+  if (!providerConfigured && process.env.NODE_ENV === "production") {
+    return NextResponse.json({ error: "Payment verification temporarily unavailable" }, { status: 503 });
+  }
+  if (providerConfigured) {
+    let matches = false;
+    try {
+      matches = await capturedPaymentMatchesOrder(
+        razorpayPaymentId,
+        razorpayOrderId,
+        Math.round(Number(order.total) * 100),
+        order.currency,
+      );
+    } catch {
+      return NextResponse.json({ error: "Payment verification temporarily unavailable" }, { status: 503 });
+    }
+    if (!matches) {
+      return NextResponse.json({ error: "Payment details do not match this order" }, { status: 409 });
+    }
   }
 
   const { won: wonTransition, stockConflict, discountConflict } = await db.$transaction(

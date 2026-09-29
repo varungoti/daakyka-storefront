@@ -87,6 +87,35 @@ export interface RazorpayOrderClient {
     }): Promise<RazorpayOrderResult>;
     fetchPayments?(orderId: string): Promise<{ items: RazorpayPaymentSummary[] }>;
   };
+  payments?: {
+    fetch(paymentId: string): Promise<{
+      id: string;
+      order_id: string;
+      status: string;
+      amount: number;
+      currency: string;
+    }>;
+  };
+}
+
+/** Read the provider's payment entity before a browser callback can mark
+ * an order paid. A valid Checkout signature identifies a payment/order pair;
+ * this second check confirms capture and the actual money/currency. */
+export async function capturedPaymentMatchesOrder(
+  paymentId: string,
+  orderId: string,
+  expectedAmountPaise: number,
+  expectedCurrency: string,
+): Promise<boolean> {
+  if (!(await isRazorpayConfigured())) return false;
+  const client = await getDefaultClient();
+  if (!client.payments?.fetch) return false;
+  const payment = await client.payments.fetch(paymentId);
+  return payment.id === paymentId &&
+    payment.order_id === orderId &&
+    payment.status === "captured" &&
+    payment.amount === expectedAmountPaise &&
+    payment.currency.toUpperCase() === expectedCurrency.toUpperCase();
 }
 
 let cachedClient: RazorpayOrderClient | null = null;

@@ -145,6 +145,10 @@ function deriveFabricTech(tags: string[], fabric: string | null): FabricTech[] {
   return [...result];
 }
 
+// F-031: see the doc comment where this is used, in mapDbProductToUi's
+// `variants` mapping below.
+const PUBLIC_STOCK_DISPLAY_CAP = 20;
+
 function mapDbProductToUi(p: DbProduct): Product {
   // release-hardening audit F-024: Postgres has no defined row order for
   // `variants`/`images`, so a card or PDP that read them straight off the
@@ -188,7 +192,20 @@ function mapDbProductToUi(p: DbProduct): Product {
       { name: "Size", value: v.size },
       { name: "Color", value: v.color },
     ],
-    stock: v.stock,
+    // F-031: this `stock` figure reaches the client (the PDP's RSC payload
+    // and /api/products both serialize whatever's in this object), so the
+    // real on-hand count for every variant of every product used to be
+    // public — a competitor could track exact sell-through across the
+    // whole catalog. `available` above is unaffected (still derived from
+    // the real `v.stock`). Capping keeps this field meaningful for its
+    // only real UI purposes — "is this DB-tracked at all" (the
+    // `typeof stock === "number"` check in add-to-cart-button.tsx /
+    // product-detail.tsx) and sizing the quantity stepper — without
+    // revealing the exact count once there's comfortably more on hand
+    // than any single order would need. Checkout re-validates the real
+    // stock server-side regardless (src/lib/orders/create-order.ts), so
+    // this is display-only and never risks overselling.
+    stock: Math.min(v.stock, PUBLIC_STOCK_DISPLAY_CAP),
     size: v.size,
     color: v.color,
     colorHex: v.colorHex ?? undefined,
@@ -281,7 +298,7 @@ function mapDbProductToUi(p: DbProduct): Product {
     colors,
     sizes,
     fabricTech: deriveFabricTech(p.tags, p.fabric),
-    image: defaultColorImage?.url ?? images[0]?.url ?? PLACEHOLDER_PRODUCT_IMAGE,
+    image: defaultColorImage?.url ?? images.find((img) => !img.color)?.url ?? PLACEHOLDER_PRODUCT_IMAGE,
     images,
     badge: p.featured ? "best-seller" : p.isNew ? "new" : undefined,
     gender: p.gender.toLowerCase(),
@@ -406,7 +423,9 @@ const CATALOG_CACHE_REVALIDATE_SECONDS = 300;
 
 const cachedCategoryTree = unstable_cache(
   async () => buildCategoryTree(await fetchActiveCategoriesFlat()),
-  ["category-tree"],
+  // The previous deployment cached this indefinitely. Start a fresh tree
+  // when the bounded cache policy reaches production.
+  ["category-tree", "bounded-v2"],
   { tags: [CATEGORIES_CACHE_TAG], revalidate: CATALOG_CACHE_REVALIDATE_SECONDS },
 );
 
@@ -420,8 +439,11 @@ export async function getCategoryTree(): Promise<CategoryTreeNode[]> {
   } catch {
     try {
       return await buildCategoryTree(await fetchActiveCategoriesFlat());
-    } catch {
-      return [];
+    } catch (error) {
+      // A database outage is not an empty catalog. Let the route's error
+      // boundary tell shoppers the page could not load rather than showing
+      // "No products found" and hiding every navigation category.
+      throw error;
     }
   }
 }
@@ -429,10 +451,9 @@ export async function getCategoryTree(): Promise<CategoryTreeNode[]> {
 /**
  * release-hardening audit F-046: an uncached, exception-propagating read of
  * the category tree — used only by src/app/sitemap.ts. Unlike
- * `getCategoryTree` above (which every page's nav calls, and which must
- * never turn a transient DB blip into a 500 on every request), the sitemap
- * is rebuilt rarely and its correctness matters more than availability: a
- * thrown error here fails a bad build loudly instead of letting `[]` (from
+ * `getCategoryTree` above (which uses the cache and retries a direct query),
+ * the sitemap is rebuilt rarely and reads the source directly: a thrown
+ * error fails a bad build loudly instead of letting `[]` (from
  * the graceful fallback) get cached as a "successful" sitemap with zero
  * category URLs, which then stays wrong indefinitely (revalidate=false
  * metadata routes only rebuild on a tag revalidation).
@@ -441,29 +462,43 @@ export async function getCategoryTreeStrict(): Promise<CategoryTreeNode[]> {
   return buildCategoryTree(await fetchActiveCategoriesFlat());
 }
 
+/** An empty graceful tree can mean a brief pooler failure, not an empty
+ * catalog. Confirm it with an exception-propagating read before a product
+ * query is allowed to cache zero results. */
+async function getCategoryTreeForListing(): Promise<CategoryTreeNode[]> {
+  const tree = await getCategoryTree();
+  return tree.length > 0 ? tree : getCategoryTreeStrict();
+}
+
 function flattenTree(nodes: CategoryTreeNode[]): CategoryTreeNode[] {
   return nodes.flatMap((n) => [n, ...flattenTree(n.children)]);
 }
 
 export async function getCategoryBySlug(slug: string): Promise<CategoryTreeNode | null> {
   const tree = await getCategoryTree();
-  return flattenTree(tree).find((c) => c.slug === slug) ?? null;
+  const match = flattenTree(tree).find((c) => c.slug === slug);
+  // A transient category-tree failure must not turn a real category into a 404.
+  return match ?? flattenTree(await getCategoryTreeStrict()).find((c) => c.slug === slug) ?? null;
 }
 
-/** The category's own id plus every descendant category's id, for
- * "products in this category or any sub-category" queries. Returns an
+/** The category's own slug plus every descendant slug, for
+ * "products in this category or any sub-category" queries. Slugs survive
+ * category re-seeding while row ids do not, so a temporarily stale tree
+ * cannot turn a populated menu category into an empty product grid. Returns an
  * empty array when the slug doesn't exist in the DB category tree (the
  * caller decides what that means — see getProductsByCategory's legacy
  * fallback for old seed-only category slugs like "bespoke"). */
-async function getSelfAndDescendantCategoryIds(slug: string): Promise<string[]> {
-  const tree = await getCategoryTree();
-  const flat = flattenTree(tree);
-  const root = flat.find((c) => c.slug === slug);
+async function getSelfAndDescendantCategorySlugs(slug: string): Promise<string[]> {
+  const tree = await getCategoryTreeForListing();
+  let root = flattenTree(tree).find((c) => c.slug === slug);
+  // A cached tree may predate a newly published category. Confirm an
+  // apparent miss from the DB before caching an empty product result.
+  if (!root) root = flattenTree(await getCategoryTreeStrict()).find((c) => c.slug === slug);
   if (!root) return [];
 
-  const ids: string[] = [];
+  const slugs: string[] = [];
   const collect = (node: CategoryTreeNode) => {
-    ids.push(node.id);
+    slugs.push(node.slug);
     for (const child of node.children) collect(child);
   };
 
@@ -471,7 +506,7 @@ async function getSelfAndDescendantCategoryIds(slug: string): Promise<string[]> 
   // not the flattened copy (which has children too, since flattenTree
   // just walks and doesn't strip them — either works, kept for clarity).
   collect(root);
-  return ids;
+  return slugs;
 }
 
 // ---------------------------------------------------------------------------
@@ -480,11 +515,10 @@ async function getSelfAndDescendantCategoryIds(slug: string): Promise<string[]> 
 
 async function queryActiveProductsFromDb(
   options: GetProductsOptions,
-  // Defaults to the cached, graceful-fallback tree read; getProductsStrict
-  // (below, used only by the sitemap) passes getCategoryTreeStrict instead
-  // so a DB error propagates rather than silently resolving to "no visible
-  // categories, so no products" as getCategoryTree's own [] fallback would.
-  categoryTreeFn: () => Promise<CategoryTreeNode[]> = getCategoryTree,
+  // Use a cached tree in normal operation, but confirm an empty result with
+  // a strict DB read before a product query is cached. The sitemap always
+  // uses the strict reader directly.
+  categoryTreeFn: () => Promise<CategoryTreeNode[]> = getCategoryTreeForListing,
 ): Promise<Product[]> {
   // release-hardening audit F-099: restrict to categories actually
   // reachable from the (pruned) active category tree, not just "this
@@ -495,19 +529,22 @@ async function queryActiveProductsFromDb(
   // filter kept serving its products to /shop, the top-level filter chips
   // and the mega-menu even though the category itself had become an
   // orphaned dead end (its own page 404s once it's not in the tree).
-  let categoryIds: string[];
+  let categorySlugs: string[];
   if (options.categorySlug) {
-    categoryIds = await getSelfAndDescendantCategoryIds(options.categorySlug);
-    if (categoryIds.length === 0) return [];
+    categorySlugs = await getSelfAndDescendantCategorySlugs(options.categorySlug);
+    if (categorySlugs.length === 0) return [];
   } else {
-    categoryIds = flattenTree(await categoryTreeFn()).map((c) => c.id);
-    if (categoryIds.length === 0) return [];
+    categorySlugs = flattenTree(await categoryTreeFn()).map((c) => c.slug);
+    if (categorySlugs.length === 0) return [];
   }
 
   const where: Prisma.ProductWhereInput = {
     status: "ACTIVE",
-    categoryId: { in: categoryIds },
-    ...(options.section ? { category: { section: options.section } } : {}),
+    category: {
+      slug: { in: categorySlugs },
+      active: true,
+      ...(options.section ? { section: options.section } : {}),
+    },
   };
 
   if (options.featured) {
@@ -580,7 +617,9 @@ function fallbackProducts(options: GetProductsOptions): Product[] {
 
 const cachedGetProducts = unstable_cache(
   async (optionsJson: string) => queryActiveProductsFromDb(JSON.parse(optionsJson)),
-  ["products-query"],
+  // Version the key after the old deployment cached empty category results
+  // without a TTL. A deploy must read the real catalog immediately.
+  ["products-query", "category-slugs-v3"],
   { tags: [PRODUCTS_CACHE_TAG], revalidate: CATALOG_CACHE_REVALIDATE_SECONDS },
 );
 
@@ -614,7 +653,8 @@ export async function getProducts(options: GetProductsOptions = {}): Promise<Pro
     }
   } catch (error) {
     warnFallbackOnce(`DB query failed (${error instanceof Error ? error.message : String(error)})`);
-    return shouldUseSeedFallback() ? fallbackProducts(options) : [];
+    if (shouldUseSeedFallback()) return fallbackProducts(options);
+    throw error;
   }
 
   if (rows.length === 0) {
@@ -671,7 +711,9 @@ async function queryProductByHandleFromDb(handle: string): Promise<Product | nul
 export async function getProductByHandle(handle: string): Promise<Product | null> {
   const cached = unstable_cache(
     () => queryProductByHandleFromDb(handle),
-    ["product-by-handle", handle],
+    // Refresh old indefinite PDP entries as well (new gallery images need
+    // to appear on the first request after this deployment).
+    ["product-by-handle", "bounded-v2", handle],
     { tags: [PRODUCTS_CACHE_TAG, productCacheTag(handle)], revalidate: CATALOG_CACHE_REVALIDATE_SECONDS },
   );
 

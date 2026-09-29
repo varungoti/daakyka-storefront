@@ -3,7 +3,6 @@
 import { useCart } from "@/context/cart-provider";
 import { useCurrency } from "@/context/currency-provider";
 import { Badge } from "@/components/ui/badge";
-import type { LightboxImage } from "@/components/ui/image-lightbox";
 import { StarRating } from "@/components/ui/star-rating";
 import { WishlistButton } from "@/components/wishlist/wishlist-button";
 import { computePercentOff } from "@/lib/pricing/percent-off";
@@ -11,18 +10,9 @@ import { isSizeAvailableForColor, isVariantInStock, resolveVariant } from "@/lib
 import type { Product } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ShoppingBag } from "lucide-react";
-import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
-
-// ProductCard renders once per grid item (a dozen-plus times on /shop, /,
-// and a PDP's related-products row) — see product-detail.tsx's ImageLightbox
-// note. Deferring this the same way keeps its code out of every one of
-// those instances' contribution to the shared bundle.
-const ImageLightbox = dynamic(() => import("@/components/ui/image-lightbox").then((mod) => mod.ImageLightbox), {
-  ssr: false,
-});
 
 interface ProductCardProps {
   product: Product;
@@ -46,16 +36,20 @@ interface ProductCardProps {
  * button, title, price) in a single `<Link>`, with the wishlist button
  * nested inside it as a real `<button>` (an anchor-containing-button a11y
  * bug, worked around with stopPropagation). Now:
- *  - the image is a `<button>` that opens the full-screen lightbox, and
- *    is NOT inside the product `<Link>`.
- *  - the wishlist button, colour swatches and quick-add are siblings of
- *    the `<button>`/`<Link>`, not nested inside either.
- *  - only the name/price/"View Product" text sits inside the `<Link>`.
+ *  - the image is a `<Link>` to the product page (release-hardening audit
+ *    F-021: it used to be a `<button>` that opened a full-screen lightbox
+ *    instead, so tapping the photo — most of the card on a phone — never
+ *    reached the PDP; the lightbox already exists there).
+ *  - the wishlist button and colour swatches are siblings of the two
+ *    `<Link>`s, not nested inside either.
+ *  - the image `<Link>` is `aria-hidden`/`tabIndex={-1}` and the name/
+ *    price/"View Product" text sits in its own `<Link>`, so a keyboard or
+ *    screen-reader user gets exactly one stop per card, not two identical
+ *    ones.
  * No button-inside-anchor or anchor-inside-button remains.
  */
 export function ProductCard({ product, className, loadEagerly = false }: ProductCardProps) {
   const { formatPrice } = useCurrency();
-  const [lightboxOpen, setLightboxOpen] = useState(false);
   // release-hardening audit F-016: `product.image` and `product.colorName`
   // are now the same colour (see mapDbProductToUi's `defaultColor`) —
   // seeding this from `product.images[0]` instead of `product.image` was
@@ -64,16 +58,6 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
   // colour.
   const [displayImage, setDisplayImage] = useState(product.image);
   const [selectedColor, setSelectedColor] = useState(product.colorName);
-
-  const galleryImages: LightboxImage[] =
-    product.images && product.images.length > 0
-      ? product.images.map((img) => ({ url: img.url, alt: img.alt ?? product.name }))
-      : [{ url: product.image, alt: product.name }];
-
-  const startIndex = Math.max(
-    0,
-    galleryImages.findIndex((img) => img.url === displayImage),
-  );
 
   const percentOff = computePercentOff(product.price, product.compareAtPrice);
   const isOnSale =
@@ -93,11 +77,16 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
       )}
     >
       <div className="relative">
-        <button
-          type="button"
-          onClick={() => setLightboxOpen(true)}
-          aria-label={`View full-screen images of ${product.name}`}
-          className="block w-full"
+        {/* F-021: a `<Link>`, not a `<button>` that opened a lightbox — see
+            the component doc comment. `aria-hidden`/`tabIndex={-1}` keep
+            it out of the tab order and the accessibility tree, since the
+            name/price `<Link>` below already carries the accessible name
+            for "go to this product". */}
+        <Link
+          href={`/products/${product.handle}`}
+          aria-hidden="true"
+          tabIndex={-1}
+          className="block"
         >
           <div className="relative aspect-[4/5] overflow-hidden bg-lilac/30">
             <Image
@@ -107,19 +96,14 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
               quality={75}
               unoptimized={displayImage.endsWith(".svg")}
               className="object-cover transition-transform duration-500 group-hover:scale-105"
-              sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
+              sizes="(max-width: 640px) 50vw, (max-width: 1280px) 50vw, 25vw"
               preload={loadEagerly}
               fetchPriority={loadEagerly ? "high" : undefined}
             />
-            <div className="absolute inset-0 flex items-end justify-center bg-gradient-to-t from-ink/50 via-transparent to-transparent p-5 opacity-0 transition duration-300 group-hover:opacity-100">
-              <span className="rounded-md bg-surface px-4 py-2 text-xs font-bold uppercase tracking-wide text-ink shadow-lg">
-                View Full Screen
-              </span>
-            </div>
           </div>
-        </button>
+        </Link>
 
-        <div className="pointer-events-none absolute left-4 top-4 flex flex-col gap-2">
+        <div className="pointer-events-none absolute left-2 top-2 flex flex-col gap-2 sm:left-4 sm:top-4">
           {soldOut && (
             <Badge variant="bestseller" className="pointer-events-auto bg-ink text-white">
               Sold out
@@ -148,12 +132,15 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
           )}
         </div>
 
-        <WishlistButton product={product} className="absolute right-4 top-4 z-10" />
+        <WishlistButton product={product} className="absolute right-2 top-2 z-10 sm:right-4 sm:top-4" />
       </div>
 
       {product.colors.length > 1 && (
-        <div className="flex items-center gap-2 px-5 pt-4">
+        <div className="flex items-center gap-1 px-3 pt-3 sm:gap-2 sm:px-5 sm:pt-4">
           {product.colors.slice(0, 5).map((color) => (
+            // F-240: the visible swatch stays 16px (`span` below), but the
+            // button itself is a 24px hit area — axe's target-size audit
+            // flagged the old 16x16 button on 93 nodes on /shop alone.
             <button
               key={color.name}
               type="button"
@@ -165,36 +152,44 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
                 // even after the photo changed to a different one.
                 setSelectedColor(color.name);
                 const match = product.images?.find((img) => img.color === color.name);
-                if (match) setDisplayImage(match.url);
+                setDisplayImage(match?.url ?? "/placeholder-product.svg");
               }}
               aria-pressed={selectedColor === color.name}
               aria-label={`Preview ${product.name} in ${color.name}`}
               title={color.name}
-              className="h-4 w-4 rounded-full border border-border ring-1 ring-surface-elevated transition hover:scale-110"
-              style={{ backgroundColor: color.hex }}
-            />
+              className="group/sw grid h-6 w-6 place-items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            >
+              <span
+                aria-hidden="true"
+                className="h-4 w-4 rounded-full border border-border ring-1 ring-surface-elevated transition group-hover/sw:scale-110"
+                style={{ backgroundColor: color.hex }}
+              />
+            </button>
           ))}
         </div>
       )}
 
       <Link
         href={`/products/${product.handle}`}
-        className={cn("block space-y-3 px-5 pb-2", product.colors.length > 1 ? "pt-3" : "pt-4")}
+        className={cn(
+          "block space-y-2 px-3 pb-2 sm:space-y-3 sm:px-5",
+          product.colors.length > 1 ? "pt-2 sm:pt-3" : "pt-3 sm:pt-4",
+        )}
       >
         <div>
-          <h3 className="font-display text-lg font-semibold leading-snug text-ink group-hover:text-brand">
+          <h3 className="font-display text-sm font-semibold leading-snug text-ink group-hover:text-brand sm:text-lg">
             {product.name}
           </h3>
-          <p className="text-sm text-muted">{selectedColor}</p>
+          <p className="text-xs text-muted sm:text-sm">{selectedColor}</p>
         </div>
         <div className="flex items-end justify-between gap-2">
           <div className="flex items-baseline gap-2">
-            <p className="font-display text-xl font-bold text-ink">{formatPrice(product.price)}</p>
+            <p className="font-display text-base font-bold text-ink sm:text-xl">{formatPrice(product.price)}</p>
             {product.compareAtPrice !== undefined && product.compareAtPrice > product.price && (
               // F-313: labelled "MRP", same as the PDP — an unlabelled
               // strikethrough price next to a "% Off" badge is exactly the
               // pattern counsel flagged as a misleading-reference-price risk.
-              <p className="text-sm text-muted">
+              <p className="text-xs text-muted sm:text-sm">
                 <span aria-hidden="true">MRP </span>
                 <s>{formatPrice(product.compareAtPrice)}</s>
               </p>
@@ -204,26 +199,22 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
             <StarRating rating={product.rating} reviewCount={product.reviewCount} />
           )}
         </div>
-        <span className="inline-block text-xs font-semibold uppercase tracking-wide text-brand group-hover:underline">
+        <span className="hidden text-xs font-semibold uppercase tracking-wide text-brand group-hover:underline sm:inline-block">
           View Product
         </span>
       </Link>
 
       {/* F-006: sold-out products get the badge above, not a Quick Add
           that can only ever fail at checkout — the PDP link still gets
-          them to "Notify me when available". */}
+          them to "Notify me when available".
+          F-021/F-242: hidden below `sm` — at the ~170px width a 2-column
+          mobile card gets, six size chips plus an "Add" button wrap onto
+          several lines; the whole photo is now a link to the PDP, which
+          has its own full-size add-to-cart. */}
       {!soldOut && (
-        <div className="px-5 pb-5">
+        <div className="hidden px-5 pb-5 sm:block">
           <QuickAddPanel product={product} selectedColor={selectedColor} />
         </div>
-      )}
-
-      {lightboxOpen && (
-        <ImageLightbox
-          images={galleryImages}
-          startIndex={startIndex === -1 ? 0 : startIndex}
-          onClose={() => setLightboxOpen(false)}
-        />
       )}
     </article>
   );

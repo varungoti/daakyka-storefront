@@ -48,10 +48,21 @@ export function DiscountForm({ initial }: { initial?: DiscountFormInitial }) {
 
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // F-038: the server now returns `issues: [{path, message}]` alongside
+  // `error` (the first issue's own message) — previously the form threw
+  // `issues` away and showed only the generic fallback string, so a PATCH
+  // like `{code: "HERO 10"}` surfaced as "Validation failed" instead of
+  // pointing at the code field specifically.
+  const [fieldIssues, setFieldIssues] = useState<{ path: (string | number)[]; message: string }[]>([]);
+
+  function fieldError(name: string): string | undefined {
+    return fieldIssues.find((issue) => issue.path[0] === name)?.message;
+  }
 
   const save = async () => {
     setStatus("saving");
     setErrorMessage(null);
+    setFieldIssues([]);
 
     const payload = {
       code: code.trim(),
@@ -75,6 +86,7 @@ export function DiscountForm({ initial }: { initial?: DiscountFormInitial }) {
       const body = await response.json().catch(() => ({}));
       setStatus("error");
       setErrorMessage(body?.error ?? "Couldn't save — check the fields above.");
+      setFieldIssues(Array.isArray(body?.issues) ? body.issues : []);
       return;
     }
 
@@ -82,16 +94,25 @@ export function DiscountForm({ initial }: { initial?: DiscountFormInitial }) {
     router.refresh();
   };
 
-  const canSubmit = code.trim().length >= 3 && Number(value) > 0 && status !== "saving";
+  const canSubmit =
+    code.trim().length >= 3 &&
+    Number(value) > 0 &&
+    (type !== "PERCENTAGE" || Number(value) <= 100) &&
+    status !== "saving";
 
   return (
     <div className="max-w-2xl space-y-6 rounded-2xl border border-border bg-surface p-6">
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Code" hint="Case-insensitive — stored and matched in UPPERCASE, e.g. HERO10">
+        <Field
+          label="Code"
+          hint="Case-insensitive — stored and matched in UPPERCASE, e.g. HERO10"
+          error={fieldError("code")}
+        >
           <input
             value={code}
             onChange={(e) => setCode(e.target.value)}
             placeholder="HERO10"
+            aria-invalid={Boolean(fieldError("code"))}
             className="w-full rounded-xl border border-border p-2.5 font-mono text-sm uppercase text-ink outline-none focus:border-brand"
           />
         </Field>
@@ -110,13 +131,20 @@ export function DiscountForm({ initial }: { initial?: DiscountFormInitial }) {
       <Field
         label={type === "PERCENTAGE" ? "Value (% off, e.g. 10)" : "Value (₹ off)"}
         hint="Never applied for more than the order subtotal, however this is set."
+        error={fieldError("value")}
       >
         <input
           type="number"
           min="0"
+          // F-038: a UX nicety only — the Save button uses onClick, not a
+          // form submit, so browser constraint validation never actually
+          // runs here. The server's superRefine check (schemas.ts's
+          // discountSchema) is the real guard against >100%.
+          max={type === "PERCENTAGE" ? "100" : undefined}
           step="0.01"
           value={value}
           onChange={(e) => setValue(e.target.value)}
+          aria-invalid={Boolean(fieldError("value"))}
           className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
         />
       </Field>
@@ -155,19 +183,21 @@ export function DiscountForm({ initial }: { initial?: DiscountFormInitial }) {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Valid from" hint="Optional">
+        <Field label="Valid from (IST)" hint="Optional — the whole day, from midnight IST" error={fieldError("startsAt")}>
           <input
             type="date"
             value={startsAt}
             onChange={(e) => setStartsAt(e.target.value)}
+            aria-invalid={Boolean(fieldError("startsAt"))}
             className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
           />
         </Field>
-        <Field label="Valid until" hint="Optional">
+        <Field label="Valid until (IST)" hint="Optional — through the whole day, until 11:59pm IST" error={fieldError("endsAt")}>
           <input
             type="date"
             value={endsAt}
             onChange={(e) => setEndsAt(e.target.value)}
+            aria-invalid={Boolean(fieldError("endsAt"))}
             className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
           />
         </Field>
@@ -208,12 +238,26 @@ export function DiscountForm({ initial }: { initial?: DiscountFormInitial }) {
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({
+  label,
+  hint,
+  error,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  error?: string;
+  children: React.ReactNode;
+}) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-semibold text-muted">{label}</span>
       {children}
-      {hint ? <span className="mt-1 block text-[11px] text-muted">{hint}</span> : null}
+      {error ? (
+        <span className="mt-1 block text-[11px] font-medium text-red-600">{error}</span>
+      ) : hint ? (
+        <span className="mt-1 block text-[11px] text-muted">{hint}</span>
+      ) : null}
     </label>
   );
 }

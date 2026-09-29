@@ -96,6 +96,25 @@ test.describe("Storefront E2E", () => {
     expect(filteredCount).toBeLessThanOrEqual(initialCount);
   });
 
+  test("desktop navigation opens a populated category", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("navigation").getByRole("button", { name: "Shop", exact: true }).click();
+    await page.getByRole("region", { name: "Shop menu" }).getByRole("link", { name: "Scrub Sets" }).click();
+    await expect(page).toHaveURL(/\/category\/scrub-sets$/);
+    await expect(page.locator("article")).toHaveCount(4);
+  });
+
+  test("mobile navigation opens a populated category", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    await page.getByRole("button", { name: /open menu/i }).click();
+    const drawer = page.getByRole("dialog", { name: "Site navigation" });
+    await drawer.getByRole("button", { name: "For Hospitals", exact: true }).click();
+    await drawer.getByRole("link", { name: "Scrub Sets", exact: true }).click();
+    await expect(page).toHaveURL(/\/category\/scrub-sets$/);
+    await expect(page.locator("article")).toHaveCount(4);
+  });
+
   test("mobile navigation drawer opens", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/");
@@ -112,7 +131,9 @@ test.describe("Storefront E2E", () => {
     await page.goto("/about");
     await expect(page.getByRole("heading", { name: "Meet the Founders" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Trusted by Leading Organizations" })).toBeVisible();
-    await expect(page.locator('img[alt*="KIMS"]').first()).toBeVisible();
+    // Authentic client logos are optional uploads; the name remains visible
+    // as text until the owner supplies the actual trademark artwork.
+    await expect(page.getByText("KIMS Hospitals", { exact: true })).toBeVisible();
   });
 
   test("institutional page redirects to For Hospitals landing page", async ({ page }) => {

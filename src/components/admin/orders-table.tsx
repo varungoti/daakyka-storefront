@@ -19,7 +19,10 @@ interface OrderListItem {
   createdAt: string;
 }
 
-const STATUS_OPTIONS = ["PENDING_PAYMENT", "PAID", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED", "REFUNDED"];
+// F-199 fix: RETURNED is now a reachable status (see status-transitions.ts)
+// — omitting it here just meant an admin could never filter for it, not
+// that it couldn't occur.
+const STATUS_OPTIONS = ["PENDING_PAYMENT", "PAID", "PROCESSING", "SHIPPED", "DELIVERED", "CANCELLED", "REFUNDED", "RETURNED"];
 const PAYMENT_OPTIONS = ["RAZORPAY", "ORDER_REQUEST"];
 
 const STATUS_STYLES: Record<string, string> = {
@@ -30,6 +33,7 @@ const STATUS_STYLES: Record<string, string> = {
   DELIVERED: "bg-emerald-100 text-emerald-700",
   CANCELLED: "bg-gray-200 text-gray-700",
   REFUNDED: "bg-red-100 text-red-700",
+  RETURNED: "bg-orange-100 text-orange-700",
 };
 
 // F-202 fix: was a local `maximumFractionDigits: 0` formatter, which

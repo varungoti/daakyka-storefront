@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { readFile, rm } from "node:fs/promises";
 import sharp from "sharp";
+import { isUploadOnlySlot } from "@/data/media/image-manifest";
 import { db } from "@/lib/db";
 import type { OpenAIImageClient } from "@/lib/ai/image-generation";
 import type { StorageDeps } from "@/lib/media/store";
@@ -267,6 +268,12 @@ describe("planProductJobs", () => {
 });
 
 describe("planSlotJobs", () => {
+  it("never queues authentic portraits, process photos, or client logos for AI generation", async () => {
+    const jobs = await planSlotJobs(db);
+    assert.ok(jobs.every((job) => !isUploadOnlySlot(job.slot)));
+    assert.ok(!jobs.some((job) => job.slot?.startsWith("about.client.")));
+  });
+
   it("excludes a manifest slot once a MediaAsset exists for it, and includes it again once removed (resumability)", async () => {
     const targetSlot = "home.hero.1";
 

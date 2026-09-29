@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { CustomerTokenType } from "@/generated/prisma/client";
+import { Prisma, type CustomerTokenType } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { safeEquals } from "@/lib/security/timing-safe-equal";
 
@@ -87,6 +87,28 @@ export async function markTokenUsed(tokenId: string): Promise<void> {
 }
 
 /**
+ * F-133 fix: atomically claims a token that `consumeCustomerToken` already
+ * pre-checked, so two concurrent requests presenting the same raw token
+ * can't both succeed. `consumeCustomerToken` (above) is read-only — it does
+ * a `findUnique` and returns `ok: true` without marking anything used,
+ * which left a window between that read and the caller's later
+ * `markTokenUsed` where several parallel requests could all pass the
+ * check. This does the claim as a single conditional UPDATE ("use it only
+ * if it's still unused and unexpired") and reports whether THIS call was
+ * the one that won the race — run it inside the same transaction as the
+ * password update so a losing claim can't proceed. Must always be called
+ * inside a transaction: on failure the caller throws to roll the
+ * transaction back rather than partially applying the password change.
+ */
+export async function claimCustomerToken(tx: Prisma.TransactionClient, tokenId: string): Promise<boolean> {
+  const { count } = await tx.customerToken.updateMany({
+    where: { id: tokenId, usedAt: null, expiresAt: { gt: new Date() } },
+    data: { usedAt: new Date() },
+  });
+  return count === 1;
+}
+
+/**
  * Marks every currently-outstanding (unused — expired or not) token of
  * `type` for this customer as used, without ever being consumed through
  * consumeCustomerToken. Used before issuing a fresh token should supersede
@@ -100,8 +122,14 @@ export async function markTokenUsed(tokenId: string): Promise<void> {
 export async function invalidateOutstandingTokens(
   customerId: string,
   type: CustomerTokenType,
+  // F-133: optional so a caller that needs this to be part of a larger
+  // db.$transaction (a reset or a password change revoking every other
+  // outstanding RESET token atomically) can pass its `tx` client. Defaults
+  // to the plain `db` client for existing standalone callers (e.g.
+  // resend-verification.ts).
+  client: Prisma.TransactionClient | typeof db = db,
 ): Promise<void> {
-  await db.customerToken.updateMany({
+  await client.customerToken.updateMany({
     where: { customerId, type, usedAt: null },
     data: { usedAt: new Date() },
   });

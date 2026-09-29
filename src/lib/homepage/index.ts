@@ -1,6 +1,7 @@
 import { revalidateTag, unstable_cache } from "next/cache";
 import { db } from "@/lib/db";
 import { getSiteImage } from "@/lib/media/get-site-image";
+import { homepageSectionSchemas, isHomepageSectionKey } from "@/lib/validation/schemas";
 
 export interface HeroContent {
   eyebrow: string;
@@ -122,11 +123,36 @@ const defaultHeroSlides: HeroSlidesContent = { slides: [], autoAdvanceMs: 6000 }
  */
 export const HOMEPAGE_CACHE_TAG = "homepage";
 
+// F-370 fix: the write path (src/app/api/admin/homepage/[key]/route.ts) has
+// validated every PUT against homepageSectionSchemas since the F-5 fix, but
+// this read path used to trust `JSON.parse(section.content) as T` blindly —
+// a type-cast, not a runtime check. Anything that writes the row outside
+// that one validated route (a migration, a manual SQL fix, an import
+// script, incident-response surgery, schema drift in prisma/seed.ts) could
+// still leave a malformed-but-valid-JSON row that crashed every reader
+// (both the public hero and the only admin UI that could fix it) with no
+// in-app recovery. Re-validating on read closes that gap by degrading to
+// `fallback` instead. Split out as a pure function (no `db`) so it's
+// unit-testable with a deliberately malformed fixture — see
+// src/lib/homepage/index.test.ts — the same reason legacyHeroToSlide above
+// is split out. Deliberately in-memory only: a bad row is NOT
+// repaired/written back here, so nothing gets silently persisted outside
+// the validated PUT route.
+export function validateHomepageSectionContent<T>(key: string, raw: unknown, fallback: T): T {
+  if (!isHomepageSectionKey(key)) return raw as T;
+  const parsed = homepageSectionSchemas[key].safeParse(raw);
+  if (!parsed.success) {
+    console.error(`[homepage] invalid stored content for section "${key}"`, parsed.error.issues);
+    return fallback;
+  }
+  return parsed.data as T;
+}
+
 async function readSectionContentFromDb<T>(key: string, fallback: T): Promise<T> {
   try {
     const section = await db.homepageSection.findUnique({ where: { key } });
     if (!section?.enabled) return fallback;
-    return JSON.parse(section.content) as T;
+    return validateHomepageSectionContent(key, JSON.parse(section.content), fallback);
   } catch {
     return fallback;
   }
@@ -288,10 +314,17 @@ export async function getHeroSlidesContentForAdmin(): Promise<HeroSlidesContent>
  * revalidateTag).
  */
 export function revalidateHomepageCache(
-  revalidate: (tag: string, profile: string) => void = revalidateTag,
+  revalidate: (tag: string, profile: string | { expire?: number }) => void = revalidateTag,
 ): void {
   try {
-    revalidate(HOMEPAGE_CACHE_TAG, "max");
+    // F-214 fix: "max" is stale-while-revalidate (node_modules/next/dist/docs/
+    // 01-app/03-api-reference/04-functions/revalidateTag.md) — the next
+    // request after an admin save was served the OLD content while a
+    // background refresh ran, so the owner's first reload after Save still
+    // showed the old hero/offer/etc. `{ expire: 0 }` is the documented way
+    // to force the next read to be fresh instead of stale (updateTag isn't
+    // available here — this runs from Route Handlers, not Server Actions).
+    revalidate(HOMEPAGE_CACHE_TAG, { expire: 0 });
   } catch {
     // No static generation store in this context (unit tests, scripts) —
     // nothing to revalidate. Same defensive pattern as

@@ -194,7 +194,11 @@ function describeCandidate(c: OrphanCandidate): string {
   return `  - ${c.id}  key=${c.key}  usage=${c.usage}  source=${c.source}  createdAt=${c.createdAt.toISOString()}`;
 }
 
-export async function runCli(argv: string[], database: Database = defaultDb): Promise<number> {
+export async function runCli(
+  argv: string[],
+  database: Database = defaultDb,
+  deleteAsset: (id: string) => Promise<void> = deleteUnattachedMediaAsset,
+): Promise<number> {
   assertNotProductionDatabase(process.env.DATABASE_URL, process.env.SUPABASE_DATABASE_URL);
   const options = parseCliArgs(argv);
 
@@ -206,7 +210,7 @@ export async function runCli(argv: string[], database: Database = defaultDb): Pr
   // --execute and production media, but failing here, before any candidate
   // is even scanned, gives a clear, immediate reason rather than a
   // per-row "Failed to delete" warning from deep inside the loop below.
-  if (options.execute) {
+  if (options.execute && deleteAsset === deleteUnattachedMediaAsset) {
     assertBucketIsWritable(process.env.R2_BUCKET ?? "");
   }
 
@@ -250,7 +254,7 @@ export async function runCli(argv: string[], database: Database = defaultDb): Pr
   let deleted = 0;
   for (const candidate of safe) {
     try {
-      await deleteUnattachedMediaAsset(candidate.id);
+      await deleteAsset(candidate.id);
       deleted += 1;
     } catch (error) {
       if (error instanceof MediaAssetNotFoundError) {

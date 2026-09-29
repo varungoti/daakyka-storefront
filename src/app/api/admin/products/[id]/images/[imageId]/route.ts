@@ -43,10 +43,10 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     }
     let image = null;
     if (parsed.data.color !== undefined) {
-      image = await setImageColor(imageId, parsed.data.color, session.id);
+      image = await setImageColor(id, imageId, parsed.data.color, session.id);
     }
     if (parsed.data.alt !== undefined) {
-      image = await updateImageAlt(imageId, parsed.data.alt, session.id);
+      image = await updateImageAlt(id, imageId, parsed.data.alt, session.id);
     }
     return NextResponse.json({ success: true, image });
   } catch (err) {
@@ -61,9 +61,9 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
   const { session, error } = await requireAdminPermission("products:manage");
   if (error) return error;
 
-  const { imageId } = await params;
+  const { id, imageId } = await params;
   try {
-    await removeProductImage(imageId, session.id);
+    await removeProductImage(id, imageId, session.id);
     return NextResponse.json({ success: true });
   } catch (err) {
     if (err instanceof ProductImageNotFoundError) {

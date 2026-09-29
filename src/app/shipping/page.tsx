@@ -6,6 +6,7 @@ import { getSetting } from "@/lib/settings";
 export const metadata = policyMetadata(
   "Shipping",
   `Shipping and delivery information for ${brand.name} — ${brand.location.serviceArea}.`,
+  "/shipping",
 );
 
 /**

@@ -6,7 +6,7 @@ import type { MediaUsage, PrismaClient } from "@/generated/prisma/client";
 import { MediaSource } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { addProductImage, createProduct } from "@/lib/catalog/products";
-import { saveMediaAsset, type StorageDeps } from "@/lib/media/store";
+import { deleteUnattachedMediaAsset, saveMediaAsset, type StorageDeps } from "@/lib/media/store";
 import {
   assertNotProductionDatabase,
   findOrphanedMediaCandidates,
@@ -64,6 +64,9 @@ function makeFakeStorage(overrides: Partial<StorageDeps> = {}): StorageDeps {
     ...overrides,
   };
 }
+
+const deleteFakeAsset = (id: string) =>
+  deleteUnattachedMediaAsset(id, makeFakeStorage({ remove: async () => {} }));
 
 async function tinyPngBuffer(): Promise<Buffer> {
   return sharp({ create: { width: 16, height: 16, channels: 3, background: { r: 1, g: 2, b: 3 } } }).png().toBuffer();
@@ -268,7 +271,7 @@ describe("findOrphanedMediaCandidates + runCli (scoped to this test's own rows)"
       "an APPROVED review's photo must never be a candidate, no matter how old",
     );
 
-    const code = await runCli(["--execute"], scoped);
+    const code = await runCli(["--execute"], scoped, deleteFakeAsset);
     assert.equal(code, 0);
     assert.ok(
       await db.mediaAsset.findUnique({ where: { id: reviewPhoto } }),
@@ -335,7 +338,7 @@ describe("findOrphanedMediaCandidates + runCli (scoped to this test's own rows)"
     const attached = await createAssetAt(oldEnough);
     await addProductImage(product.id, attached, {}, adminId);
 
-    const code = await runCli(["--execute"], scopedDb([orphan, attached]));
+    const code = await runCli(["--execute"], scopedDb([orphan, attached]), deleteFakeAsset);
     assert.equal(code, 0);
 
     assert.equal(await db.mediaAsset.findUnique({ where: { id: orphan } }), null, "the orphaned row should be deleted");
@@ -345,11 +348,11 @@ describe("findOrphanedMediaCandidates + runCli (scoped to this test's own rows)"
   it("respects a custom --older-than-hours grace period", async () => {
     const oneHourOld = await createAssetAt(new Date(Date.now() - 60 * 60 * 1000));
 
-    const tooStrict = await runCli(["--execute"], scopedDb([oneHourOld]));
+    const tooStrict = await runCli(["--execute"], scopedDb([oneHourOld]), deleteFakeAsset);
     assert.equal(tooStrict, 0);
     assert.ok(await db.mediaAsset.findUnique({ where: { id: oneHourOld } }), "1h old must survive the default 48h grace period");
 
-    const relaxed = await runCli(["--execute", "--older-than-hours=0"], scopedDb([oneHourOld]));
+    const relaxed = await runCli(["--execute", "--older-than-hours=0"], scopedDb([oneHourOld]), deleteFakeAsset);
     assert.equal(relaxed, 0);
     assert.equal(await db.mediaAsset.findUnique({ where: { id: oneHourOld } }), null, "must be deleted once the grace period is relaxed to 0h");
   });

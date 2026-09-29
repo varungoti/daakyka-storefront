@@ -1,4 +1,18 @@
+import type { Metadata } from "next";
 import Link from "next/link";
+
+// F-012: without this, the root 404 kept the layout's default <title>
+// ("DAAKYKA Apparels | Quality Uniforms & Linens for Pan India") — a
+// visitor on an unknown URL saw a homepage-branded browser tab with no clue
+// the page didn't exist. Next already injects its own `noindex` meta tag
+// whenever `notFound()` fires (see node_modules/next/dist/docs/01-app/
+// 03-api-reference/04-functions/not-found.md), so `follow: true` here keeps
+// that from also fighting the root layout's `index, follow` (production
+// robots meta used to carry both at once).
+export const metadata: Metadata = {
+  title: "Page not found",
+  robots: { index: false, follow: true },
+};
 
 export default function NotFound() {
   return (

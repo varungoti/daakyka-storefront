@@ -9,6 +9,7 @@ import {
   listOrdersForAdmin,
   MissingTrackingInfoError,
   OrderNotFoundError,
+  OrderRequestPaymentOnlyError,
   OrderUpdateConflictError,
   RefundAcknowledgementRequiredError,
   streamOrdersCsv,
@@ -418,6 +419,135 @@ describe("orders admin service (Phase D4)", () => {
 
     const updated = await updateOrderAdmin(order.id, { status: "CANCELLED" }, adminId);
     assert.equal(updated.status, "CANCELLED", "a never-paid order has nothing to acknowledge — no money was ever taken");
+  });
+
+  // F-199 fix: PROCESSING -> PAID lets an admin record that an
+  // ORDER_REQUEST order (UPI/bank transfer/COD — no online payment step)
+  // has actually been paid. Restricted to ORDER_REQUEST only — a RAZORPAY
+  // order reaches PROCESSING by having already passed through PAID, so it
+  // has nothing to "record".
+
+  it("F-199: PROCESSING -> PAID records an order-request's payment (paidAt set) without touching stock a second time", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createOrderRequestOrder(5, 2);
+    const beforePaid = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(beforePaid?.stock, 3, "stock was already decremented at checkout");
+
+    const updated = await updateOrderAdmin(order.id, { status: "PAID" }, adminId);
+    assert.equal(updated.status, "PAID");
+    assert.ok(updated.paidAt, "paidAt should be recorded when payment is marked");
+
+    const afterPaid = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(afterPaid?.stock, 3, "marking an order-request paid must not decrement stock a second time");
+  });
+
+  it("does not record the same manual payment again after paid order resumes processing", async () => {
+    const adminId = await findAnyAdminId();
+    const { order } = await createOrderRequestOrder(5, 2);
+    await updateOrderAdmin(order.id, { status: "PAID" }, adminId);
+    await updateOrderAdmin(order.id, { status: "PROCESSING" }, adminId);
+    await assert.rejects(() => updateOrderAdmin(order.id, { status: "PAID" }, adminId), OrderRequestPaymentOnlyError);
+    const unchanged = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    assert.equal(unchanged.status, "PROCESSING");
+  });
+
+  it("F-199: PROCESSING -> PAID is rejected for a RAZORPAY order (OrderRequestPaymentOnlyError)", async () => {
+    const adminId = await findAnyAdminId();
+    const order = await db.order.create({
+      data: baseOrderData({
+        email: `f199-razorpay-processing-${randomUUID().slice(0, 8)}@example.com`,
+        status: "PROCESSING",
+        paymentMethod: "RAZORPAY",
+        razorpayPaymentId: `pay_${randomUUID().slice(0, 8)}`,
+      }),
+    });
+    createdOrderIds.push(order.id);
+
+    await assert.rejects(() => updateOrderAdmin(order.id, { status: "PAID" }, adminId), OrderRequestPaymentOnlyError);
+
+    const unchanged = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    assert.equal(unchanged.status, "PROCESSING", "a RAZORPAY order already past PAID must not be reset to PAID");
+  });
+
+  // Shipped returns stay outside sellable inventory until inspected.
+
+  async function createRazorpayOrderAtStatus(status: "SHIPPED" | "DELIVERED", stock: number, quantity: number) {
+    const unique = randomUUID().slice(0, 8);
+    const category = await db.category.create({
+      data: { name: `Orders Admin Return Category ${unique}`, slug: `orders-admin-return-category-${unique}`, section: "GENERAL" },
+    });
+    createdCategoryIds.push(category.id);
+    const product = await db.product.create({
+      data: { name: `Orders Admin Return Product ${unique}`, slug: `orders-admin-return-product-${unique}`, categoryId: category.id, status: "ACTIVE", price: 500 },
+    });
+    createdProductIds.push(product.id);
+    const variant = await db.productVariant.create({
+      data: { productId: product.id, sku: `DK-OA-RET-${unique}`, size: "M", color: "Navy", stock, active: true },
+    });
+
+    // Simulate an order that's already shipped/delivered: stock already
+    // decremented at PAID time (as the verify/webhook flow would have
+    // done), same as createPaidRazorpayOrder above.
+    const order = await db.order.create({
+      data: baseOrderData({
+        email: `orders-admin-return-${unique}@example.com`,
+        status,
+        paymentMethod: "RAZORPAY",
+        razorpayPaymentId: `pay_${unique}`,
+        trackingNumber: "TRK-RETURN",
+        courier: "Bluedart",
+        items: { create: [{ variantId: variant.id, productName: "Test Scrub Set", unitPrice: 500, quantity }] },
+      }),
+    });
+    createdOrderIds.push(order.id);
+    await db.productVariant.update({ where: { id: variant.id }, data: { stock: { decrement: quantity } } });
+
+    return { order, variant };
+  }
+
+  it("DELIVERED -> RETURNED does not sell uninspected returns", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createRazorpayOrderAtStatus("DELIVERED", 3, 2);
+    const beforeReturn = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(beforeReturn?.stock, 1);
+
+    const updated = await updateOrderAdmin(order.id, { status: "RETURNED" }, adminId);
+    assert.equal(updated.status, "RETURNED");
+
+    const afterReturn = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(afterReturn?.stock, 1, "a returned item is not sellable until inspection");
+  });
+
+  it("SHIPPED -> RETURNED keeps committed stock outside inventory", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createRazorpayOrderAtStatus("SHIPPED", 3, 2);
+
+    const updated = await updateOrderAdmin(order.id, { status: "RETURNED" }, adminId);
+    assert.equal(updated.status, "RETURNED");
+
+    const afterReturn = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(afterReturn?.stock, 1);
+  });
+
+  it("RETURNED -> REFUNDED does not mark the uninspected item sellable", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createRazorpayOrderAtStatus("DELIVERED", 3, 2);
+
+    await updateOrderAdmin(order.id, { status: "RETURNED" }, adminId);
+    const afterReturn = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(afterReturn?.stock, 1);
+
+    // REFUNDED after a captured RAZORPAY payment still needs the same
+    // "this doesn't refund the customer" acknowledgement as CANCELLED does.
+    const updated = await updateOrderAdmin(
+      order.id,
+      { status: "REFUNDED", acknowledgeExternalRefund: true },
+      adminId,
+    );
+    assert.equal(updated.status, "REFUNDED");
+
+    const afterRefund = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(afterRefund?.stock, 1, "a refund alone does not make a return sellable");
   });
 
   it("OrderUpdateConflictError is exported and constructs a useful message", () => {

@@ -57,9 +57,8 @@ export function buildFooterLinks(flags: FooterFlags): FooterLinks {
 
   const companyLinks: FooterLink[] = [
     { label: "Our Story", href: "/our-story" },
-    { label: "About", href: "/about" },
+    { label: "Meet the Founders", href: "/about" },
     { label: "Blog", href: "/blog" },
-    { label: "Contact", href: "/contact" },
   ];
   if (flags.fabricTechEnabled) {
     companyLinks.push({ label: "Fabric Technology", href: "/fabric-technology" });

@@ -23,6 +23,14 @@ interface MobileFilterDrawerProps {
    * actually has — passed through to ShopFiltersPanel so the mobile drawer
    * hides the same dead Fabric Technology options the desktop panel does. */
   availableFabricIds?: ReadonlySet<string>;
+  /** F-100: live count of products the currently-selected facets match —
+   * shown in the footer's primary button so a shopper can see the effect
+   * of a pick without closing the drawer first. */
+  resultCount: number;
+  /** Number of active facets, used to disable "Clear all" when nothing is
+   * set and to announce the count change to screen readers. */
+  activeCount: number;
+  onClearAll: () => void;
 }
 
 export function MobileFilterDrawer({
@@ -34,6 +42,9 @@ export function MobileFilterDrawer({
   categoryCounts,
   totalCount,
   availableFabricIds,
+  resultCount,
+  activeCount,
+  onClearAll,
 }: MobileFilterDrawerProps) {
   const panelRef = useFocusTrap<HTMLElement>(open, onClose, { lockScroll: true });
 
@@ -57,14 +68,14 @@ export function MobileFilterDrawer({
             aria-modal="true"
             aria-label="Shop filters"
             className={cn(
-              "fixed inset-y-0 left-0 z-[70] w-full max-w-sm overflow-y-auto bg-background p-6 shadow-2xl outline-none lg:hidden",
+              "fixed inset-y-0 left-0 z-[70] flex w-full max-w-sm flex-col bg-background shadow-2xl outline-none lg:hidden",
             )}
             initial={{ x: "-100%" }}
             animate={{ x: 0 }}
             exit={{ x: "-100%" }}
             transition={{ type: "spring", damping: 28, stiffness: 260 }}
           >
-            <div className="mb-6 flex items-center justify-between">
+            <div className="flex items-center justify-between border-b border-border px-6 py-4">
               <p className="font-display text-lg font-bold text-ink">Filters</p>
               <button
                 type="button"
@@ -75,15 +86,46 @@ export function MobileFilterDrawer({
                 <X size={20} />
               </button>
             </div>
-            <ShopFiltersPanel
-              filters={filters}
-              onChange={onChange}
-              categories={categories}
-              categoryCounts={categoryCounts}
-              totalCount={totalCount}
-              showHeading={false}
-              availableFabricIds={availableFabricIds}
-            />
+
+            <div className="flex-1 overflow-y-auto p-6">
+              <ShopFiltersPanel
+                filters={filters}
+                onChange={onChange}
+                categories={categories}
+                categoryCounts={categoryCounts}
+                totalCount={totalCount}
+                showHeading={false}
+                availableFabricIds={availableFabricIds}
+              />
+            </div>
+
+            {/* F-100: the drawer previously had no result count, Apply or
+                Clear-all — filters applied invisibly behind the scrim, and
+                the only way to see how many products were left was to
+                close the drawer. Filters still apply live (no separate
+                "Apply" step, which would break the existing instant
+                URL-sync behaviour); this footer's primary button only
+                closes the drawer. */}
+            <p aria-live="polite" className="sr-only">
+              {resultCount} product{resultCount === 1 ? "" : "s"} match the selected filters
+            </p>
+            <div className="flex gap-3 border-t border-border p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+              <button
+                type="button"
+                onClick={onClearAll}
+                disabled={activeCount === 0}
+                className="flex-1 rounded-full border border-border px-4 py-3 text-sm font-semibold text-ink transition hover:border-brand hover:text-brand disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Clear all
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 rounded-full bg-ink px-4 py-3 text-sm font-semibold text-white transition hover:bg-ink/90"
+              >
+                Show {resultCount} product{resultCount === 1 ? "" : "s"}
+              </button>
+            </div>
           </motion.aside>
         </>
       )}

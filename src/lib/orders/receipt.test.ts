@@ -32,6 +32,12 @@ describe("getReceiptPaymentSummary", () => {
     assert.match(getReceiptPaymentSummary("PROCESSING", "ORDER_REQUEST", false), /awaiting confirmation/);
   });
 
+  it("a manually paid ORDER_REQUEST remains paid when its status becomes PROCESSING", () => {
+    assert.match(getReceiptPaymentSummary("PROCESSING", "ORDER_REQUEST", false, true), /paid/);
+    assert.match(getReceiptPaymentSummary("SHIPPED", "ORDER_REQUEST", false, false), /payment not recorded/);
+    assert.match(getReceiptPaymentSummary("DELIVERED", "ORDER_REQUEST", false, true), /paid/);
+  });
+
   it("a CANCELLED RAZORPAY order that never captured a payment says 'not charged', not 'cancelled'", () => {
     assert.match(getReceiptPaymentSummary("CANCELLED", "RAZORPAY", false), /not charged/);
     assert.match(getReceiptPaymentSummary("CANCELLED", "RAZORPAY", true), /cancelled/);

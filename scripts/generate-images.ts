@@ -109,7 +109,9 @@ export async function planSlotJobs(database: Database): Promise<SlotJob[]> {
   });
   const filled = new Set(existing.map((asset) => asset.slot));
 
-  return IMAGE_MANIFEST.filter((entry) => !filled.has(entry.slot)).map((entry) => ({
+  // Real founders, workshop evidence, and client trademarks require an
+  // authentic upload. Never queue them for AI, even in a dry-run plan.
+  return IMAGE_MANIFEST.filter((entry) => !entry.uploadOnly && !filled.has(entry.slot)).map((entry) => ({
     group: "slots",
     id: entry.slot,
     label: entry.label,

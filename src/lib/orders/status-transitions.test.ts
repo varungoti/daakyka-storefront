@@ -35,7 +35,15 @@ describe("order status transition matrix (Phase D4)", () => {
     ["PAID", "CANCELLED"],
     ["PROCESSING", "SHIPPED"],
     ["PROCESSING", "CANCELLED"],
+    // F-199 fix: records an order-request's payment (admin-orders.ts
+    // further restricts *using* this edge to ORDER_REQUEST orders only).
+    ["PROCESSING", "PAID"],
     ["SHIPPED", "DELIVERED"],
+    // F-199 fix: a shipped or delivered order can be marked returned, and
+    // a return can then be marked refunded.
+    ["SHIPPED", "RETURNED"],
+    ["DELIVERED", "RETURNED"],
+    ["RETURNED", "REFUNDED"],
   ];
 
   for (const [from, to] of validCases) {
@@ -57,10 +65,18 @@ describe("order status transition matrix (Phase D4)", () => {
     ["PAID", "PENDING_PAYMENT"],
     ["PAID", "SHIPPED"],
     ["PAID", "DELIVERED"],
-    ["PROCESSING", "PAID"],
     ["PROCESSING", "PENDING_PAYMENT"],
     ["PROCESSING", "DELIVERED"],
     ["SHIPPED", "SHIPPED"],
+    // F-199 fix: RETURNED is reachable only from SHIPPED/DELIVERED, and
+    // only leads to REFUNDED — never a cancellation, never a second
+    // return, and never reachable from a status that skipped shipping.
+    ["PAID", "RETURNED"],
+    ["CANCELLED", "RETURNED"],
+    ["REFUNDED", "RETURNED"],
+    ["RETURNED", "CANCELLED"],
+    ["RETURNED", "DELIVERED"],
+    ["RETURNED", "RETURNED"],
   ];
 
   for (const [from, to] of invalidCases) {

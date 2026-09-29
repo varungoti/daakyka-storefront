@@ -5,6 +5,7 @@ import { getSetting } from "@/lib/settings";
 export const metadata = policyMetadata(
   "Returns, Exchanges & Cancellation Policy",
   `Return, exchange, cancellation and refund policy for ${brand.name} medical apparel.`,
+  "/returns",
 );
 
 /**

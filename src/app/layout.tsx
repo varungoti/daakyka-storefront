@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { DM_Sans, Outfit } from "next/font/google";
 import { CurrencyProvider } from "@/context/currency-provider";
 import { WishlistProvider } from "@/context/wishlist-provider";
@@ -8,7 +8,6 @@ import { GlobalJsonLd } from "@/components/seo/global-json-ld";
 import { isIndexingAllowed } from "@/lib/env";
 import { getNavigation } from "@/lib/navigation/get-navigation";
 import { getSetting, isPageEnabled, isSaleEnabled } from "@/lib/settings";
-import { canonicalPath } from "@/lib/seo/canonical";
 import "./globals.css";
 
 const outfit = Outfit({
@@ -28,6 +27,12 @@ const dmSans = DM_Sans({
 const SITE_DESCRIPTION =
   "Expertly designed, meticulously crafted. Hospital linens, medical scrubs, school uniforms, and corporate wear by Babaji Enterprises — Hyderabad, Pan India delivery.";
 
+// F-089: the mobile browser chrome's brand colour — matches manifest.ts's
+// theme_color so the two never drift apart.
+export const viewport: Viewport = {
+  themeColor: "#8A347D",
+};
+
 export async function generateMetadata(): Promise<Metadata> {
   const allowIndex = isIndexingAllowed();
 
@@ -38,24 +43,48 @@ export async function generateMetadata(): Promise<Metadata> {
       template: "%s | DAAKYKA Apparels",
     },
     description: SITE_DESCRIPTION,
-    alternates: {
-      canonical: canonicalPath("/"),
-    },
+    // release-hardening F-147: this used to be `canonical: canonicalPath("/")`
+    // here, and Next merges metadata per-key across segments — so any page
+    // that didn't set its own `alternates` (most of the legal/contact/
+    // collections pages didn't) silently inherited the *homepage's*
+    // canonical instead of having none. A missing canonical is harmless; a
+    // wrong one tells search engines the page is a duplicate of "/". The
+    // homepage now sets its own canonical (src/app/page.tsx).
+    //
+    // F-151: same reasoning for `openGraph.title`/`description` and
+    // `twitter.title`/`description` below — they used to be hardcoded here
+    // too, which every page without its own `openGraph`/`twitter` (i.e.
+    // almost all of them) inherited verbatim, so sharing any blog post,
+    // guide or policy page on WhatsApp/LinkedIn/X showed the homepage's
+    // card. Next's own metadata resolution (postProcessMetadata in
+    // node_modules/next/dist/lib/metadata/resolve-metadata.js) already
+    // fills an empty openGraph/twitter title+description from the page's
+    // own resolved <title>/description — so simply not setting them here
+    // lets every page get its own social title for free, and the homepage
+    // (src/app/page.tsx) still gets these exact strings via its own
+    // title/description.
     openGraph: {
       type: "website",
       siteName: "DAAKYKA Apparels",
-      title: "DAAKYKA Apparels | Quality Uniforms & Linens for Pan India",
-      description: SITE_DESCRIPTION,
       locale: "en_IN",
     },
     twitter: {
       card: "summary_large_image",
-      title: "DAAKYKA Apparels | Quality Uniforms & Linens for Pan India",
-      description: SITE_DESCRIPTION,
     },
     robots: allowIndex
       ? { index: true, follow: true }
       : { index: false, follow: false },
+    // F-320: no-ops (Next omits the tag) until the owner sets these from
+    // Search Console / Meta Business Suite — see docs/LAUNCH_CHECKLIST.md.
+    // A DNS TXT record at Hostinger is the simpler route once daakyka.com
+    // points at Vercel, but a meta tag works immediately and doesn't need a
+    // DNS change.
+    verification: {
+      google: process.env.GOOGLE_SITE_VERIFICATION || undefined,
+      other: process.env.FB_DOMAIN_VERIFICATION
+        ? { "facebook-domain-verification": process.env.FB_DOMAIN_VERIFICATION }
+        : undefined,
+    },
   };
 }
 

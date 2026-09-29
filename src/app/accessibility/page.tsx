@@ -4,6 +4,7 @@ import { brand } from "@/data/brand";
 export const metadata = policyMetadata(
   "Accessibility",
   `Accessibility statement for ${brand.name}.`,
+  "/accessibility",
 );
 
 export default function AccessibilityPage() {

@@ -638,6 +638,37 @@ describe("POST /api/checkout/verify (Phase D3)", () => {
     assert.equal(updatedVariant?.stock, 4);
   });
 
+  it("rejects a signed callback when the provider payment amount differs", async () => {
+    const { order, variant, razorpayOrderId } = await createPendingRazorpayOrder(5);
+    const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+    const signature = createHmac("sha256", TEST_KEY_SECRET).update(`${razorpayOrderId}|${paymentId}`).digest("hex");
+    setRazorpayClientForTesting({
+      orders: { create: async () => { throw new Error("not used"); } },
+      payments: { fetch: async () => ({
+        id: paymentId,
+        order_id: razorpayOrderId,
+        status: "captured",
+        amount: Math.round(Number(order.total) * 100) - 100,
+        currency: order.currency,
+      }) },
+    });
+    try {
+      await withEnv({ RAZORPAY_KEY_ID: "rzp_test_verify", RAZORPAY_KEY_SECRET: TEST_KEY_SECRET }, async () => {
+        const response = await verifyRoute(jsonRequest("http://localhost/api/checkout/verify", {
+          orderNumber: order.number,
+          razorpayPaymentId: paymentId,
+          razorpayOrderId,
+          razorpaySignature: signature,
+        }));
+        assert.equal(response.status, 409);
+      });
+    } finally {
+      setRazorpayClientForTesting(null);
+    }
+    assert.equal((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status, "PENDING_PAYMENT");
+    assert.equal((await db.productVariant.findUniqueOrThrow({ where: { id: variant.id } })).stock, 5);
+  });
+
   // F-290: a system-driven PAID transition used to leave no AuditLog row
   // at all — only an admin changing an order's status did.
   it("records a system audit-log row for the PAID transition", async () => {
@@ -705,7 +736,7 @@ describe("POST /api/webhooks/razorpay (Phase D3)", () => {
     const paymentId = `pay_${randomUUID().slice(0, 12)}`;
     const rawBody = JSON.stringify({
       event: "payment.captured",
-      payload: { payment: { entity: { id: paymentId, order_id: razorpayOrderId, status: "captured" } } },
+      payload: { payment: { entity: { id: paymentId, order_id: razorpayOrderId, status: "captured", amount: Math.round(Number(order.total) * 100), currency: "INR" } } },
     });
 
     await withEnv({ RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {
@@ -740,6 +771,77 @@ describe("POST /api/webhooks/razorpay (Phase D3)", () => {
     assert.equal(metadata.toStatus, "PAID");
   });
 
+  // F-286: neither /verify nor the webhook checked that the captured
+  // amount matched the order total. createRazorpayOrder fixes both
+  // server-side, so this can't happen through the real Razorpay flow, but
+  // a forged/misdelivered payment.captured event with a mismatched amount
+  // must not be allowed to mark the order PAID.
+  it("does not mark the order PAID when the captured amount doesn't match the order total", async () => {
+    const { variant } = await createActiveProductWithVariant({ stock: 5 });
+    const order = await createOrderFromCart({
+      items: [{ variantId: variant.id, quantity: 1 }],
+      email: "webhook-mismatch@example.com",
+      shippingAddress: {
+        name: "Buyer",
+        line1: "1 Test Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        pincode: "500032",
+        country: "IN",
+      },
+      paymentMethod: "RAZORPAY",
+    });
+    createdOrderIds.push(order.id);
+
+    const razorpayOrderId = `order_${randomUUID().slice(0, 12)}`;
+    await db.order.update({ where: { id: order.id }, data: { razorpayOrderId } });
+
+    const expectedPaise = Math.round(Number(order.total) * 100);
+    const wrongPaise = expectedPaise - 100; // one rupee short
+
+    const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+    const rawBody = JSON.stringify({
+      event: "payment.captured",
+      payload: {
+        payment: { entity: { id: paymentId, order_id: razorpayOrderId, status: "captured", amount: wrongPaise, currency: "INR" } },
+      },
+    });
+
+    await withEnv({ RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {
+      const signature = createHmac("sha256", TEST_WEBHOOK_SECRET).update(rawBody, "utf8").digest("hex");
+      const response = await webhookRoute(
+        rawRequest("http://localhost/api/webhooks/razorpay", rawBody, { "x-razorpay-signature": signature }),
+      );
+      // Still 200 — Razorpay must not be told to keep retrying a mismatch
+      // that will never resolve itself.
+      assert.equal(response.status, 200);
+    });
+
+    const dbOrder = await db.order.findUnique({ where: { id: order.id } });
+    assert.equal(dbOrder?.status, "PENDING_PAYMENT", "a mismatched capture must not flip the order to PAID");
+    assert.equal(dbOrder?.razorpayPaymentId, null);
+    assert.match(dbOrder?.adminNotes ?? "", /AMOUNT MISMATCH/);
+
+    const updatedVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(updatedVariant?.stock, 5, "stock must not be decremented for a rejected mismatch");
+
+    const notification = await db.adminNotification.findFirst({
+      where: { type: "order_amount_mismatch", metadata: { contains: order.number } },
+    });
+    assert.ok(notification, "expected an admin notification about the amount mismatch");
+
+    const missingAmountBody = JSON.stringify({
+      event: "payment.captured",
+      payload: { payment: { entity: { id: `pay_${randomUUID().slice(0, 12)}`, order_id: razorpayOrderId, status: "captured" } } },
+    });
+    await withEnv({ RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {
+      const signature = createHmac("sha256", TEST_WEBHOOK_SECRET).update(missingAmountBody, "utf8").digest("hex");
+      const response = await webhookRoute(rawRequest("http://localhost/api/webhooks/razorpay", missingAmountBody, { "x-razorpay-signature": signature }));
+      assert.equal(response.status, 200);
+    });
+    assert.equal((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status, "PENDING_PAYMENT");
+  });
+
   // F-284 fix: the webhook never sees a raw capability token (only
   // Order.accessTokenHash is ever persisted — see access-token.ts), so
   // when it alone confirms payment (the shopper's tab closed before
@@ -769,7 +871,7 @@ describe("POST /api/webhooks/razorpay (Phase D3)", () => {
     const paymentId = `pay_${randomUUID().slice(0, 12)}`;
     const rawBody = JSON.stringify({
       event: "payment.captured",
-      payload: { payment: { entity: { id: paymentId, order_id: razorpayOrderId, status: "captured" } } },
+      payload: { payment: { entity: { id: paymentId, order_id: razorpayOrderId, status: "captured", amount: Math.round(Number(order.total) * 100), currency: "INR" } } },
     });
 
     await withEnv({ RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {
@@ -808,7 +910,7 @@ describe("verify + webhook concurrency (F3 fix)", () => {
 
     const webhookBody = JSON.stringify({
       event: "payment.captured",
-      payload: { payment: { entity: { id: paymentId, order_id: razorpayOrderId, status: "captured" } } },
+      payload: { payment: { entity: { id: paymentId, order_id: razorpayOrderId, status: "captured", amount: Math.round(Number(order.total) * 100), currency: "INR" } } },
     });
 
     await withEnv({ RAZORPAY_KEY_SECRET: TEST_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {
@@ -922,7 +1024,7 @@ describe("F-035: replaying /verify or the webhook after the order has moved past
     const paymentId = `pay_${randomUUID().slice(0, 12)}`;
     const webhookBody = JSON.stringify({
       event: "payment.captured",
-      payload: { payment: { entity: { id: paymentId, order_id: razorpayOrderId, status: "captured" } } },
+      payload: { payment: { entity: { id: paymentId, order_id: razorpayOrderId, status: "captured", amount: Math.round(Number(order.total) * 100), currency: "INR" } } },
     });
 
     await withEnv({ RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {

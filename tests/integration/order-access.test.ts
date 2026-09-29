@@ -49,7 +49,7 @@ const SHIPPING_ADDRESS = {
   city: "Hyderabad",
   state: "Telangana",
   pincode: "500032",
-  country: "IN",
+  country: "IN" as const,
 };
 
 async function createActiveProductWithVariant(stock: number) {

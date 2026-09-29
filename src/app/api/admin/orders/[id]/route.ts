@@ -6,6 +6,7 @@ import {
   getOrderForAdmin,
   MissingTrackingInfoError,
   OrderNotFoundError,
+  OrderRequestPaymentOnlyError,
   OrderUpdateConflictError,
   orderUpdateSchema,
   RefundAcknowledgementRequiredError,
@@ -65,7 +66,8 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     if (
       err instanceof InvalidOrderStatusTransitionError ||
       err instanceof MissingTrackingInfoError ||
-      err instanceof RefundAcknowledgementRequiredError
+      err instanceof RefundAcknowledgementRequiredError ||
+      err instanceof OrderRequestPaymentOnlyError
     ) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }

@@ -9,7 +9,7 @@ import { db } from "@/lib/db";
 import { getCategoryBySlug, getProductByHandle, getProducts } from "@/lib/products";
 import { getApprovedReviews, getReviewSummary } from "@/lib/reviews";
 import { canonicalPath } from "@/lib/seo/canonical";
-import { breadcrumbJsonLd, productJsonLd, siteUrlBase } from "@/lib/seo/json-ld";
+import { baseOpenGraph, breadcrumbJsonLd, productJsonLd, siteUrlBase } from "@/lib/seo/json-ld";
 import { getSetting } from "@/lib/settings";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -56,6 +56,13 @@ async function getReviewEligibility(productId: string): Promise<ReviewEligibilit
 
 const META_DESCRIPTION_MAX_LENGTH = 160;
 
+// Matches src/lib/products/index.ts's own PLACEHOLDER_PRODUCT_IMAGE (not
+// exported — that file is out of scope for this fix) — the fallback shown
+// for a product with zero real images. Neither social cards nor Google's
+// structured-data image guidelines accept an SVG, so it must never be
+// published as og:image or a JSON-LD image (release-hardening F-110).
+const PLACEHOLDER_PRODUCT_IMAGE = "/placeholder-product.svg";
+
 /** Trims to a word boundary rather than mid-word, so a long admin-entered
  * SEO/short description never ends mid-syllable in search results. */
 function truncateAtWordBoundary(text: string, maxLength: number): string {
@@ -71,7 +78,10 @@ export async function generateMetadata({ params }: ProductPageProps) {
   const product = await getProductByHandle(handle);
 
   if (!product) {
-    return { title: "Product Not Found" };
+    // release-hardening F-012: Next already tags a notFound() render
+    // `noindex` on its own — `follow: true` keeps that from also fighting
+    // the root layout's `index, follow`.
+    return { title: "Product Not Found", robots: { index: false, follow: true } };
   }
 
   // release-hardening audit F-106: the admin's SEO title/description
@@ -90,14 +100,26 @@ export async function generateMetadata({ params }: ProductPageProps) {
     META_DESCRIPTION_MAX_LENGTH,
   );
 
+  // release-hardening F-110: this used to replace the whole `openGraph`
+  // object with just {title, description, images}, dropping og:type/
+  // og:site_name/og:locale (the root layout's openGraph doesn't merge into
+  // a page-level one — see json-ld.ts's baseOpenGraph doc comment) and
+  // never setting og:url at all. It also published the SVG placeholder as
+  // og:image/JSON-LD image for a product with zero real photos — neither
+  // social unfurlers nor Google's structured-data guidelines accept an SVG
+  // there. twitter:title/description now come from openGraph automatically
+  // (see the root layout's doc comment) — no need to repeat them here.
+  const hasRealImage = product.image !== PLACEHOLDER_PRODUCT_IMAGE;
+
   return {
     title: seoTitle ? { absolute: seoTitle } : product.name,
     description,
     alternates: { canonical: canonicalPath(`/products/${handle}`) },
     openGraph: {
+      ...baseOpenGraph(`/products/${handle}`),
       title: seoTitle ?? product.name,
       description,
-      images: [product.image],
+      ...(hasRealImage ? { images: [product.image] } : {}),
     },
   };
 }
@@ -191,6 +213,11 @@ export default async function ProductPage({ params }: ProductPageProps) {
           countryOfOrigin: legal.countryOfOrigin,
           material: product.fabric,
           manufacturer: { name: brand.legalName, address: contactAddress },
+          // F-110/F-320: same variant prices and shipping/returns settings
+          // the size picker and the PDP's shipping/returns copy already use
+          // (fetched above), so structured data can't disagree with them.
+          shipping: { flatRateInr: flatRate },
+          returnWindowDays,
         })}
       />
       <JsonLdScript data={breadcrumbJsonLd(breadcrumbItems)} />

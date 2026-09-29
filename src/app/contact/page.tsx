@@ -4,14 +4,21 @@ import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { brand } from "@/data/brand";
 import { whatsappHref } from "@/lib/contact/whatsapp";
 import { getSiteImage } from "@/lib/media/get-site-image";
+import { canonicalPath } from "@/lib/seo/canonical";
+import { baseOpenGraph } from "@/lib/seo/json-ld";
 import { getSetting } from "@/lib/settings";
 import { Clock, MapPin, MessageCircle } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 
+// release-hardening F-147/F-151: this used to be only {title, description},
+// so /contact inherited the root layout's canonical (the homepage) and its
+// og:title/og:url — a B2B lead page that isn't its own canonical URL.
 export const metadata: Metadata = {
   title: "Contact",
   description: `Contact ${brand.name} — ${brand.legalName}, ${brand.location.city}. Pan India institutional uniforms and medical apparel.`,
+  alternates: { canonical: canonicalPath("/contact") },
+  openGraph: baseOpenGraph("/contact"),
 };
 
 interface ContactPageProps {

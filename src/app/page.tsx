@@ -9,6 +9,7 @@ import { TrustBar } from "@/components/layout/trust-bar";
 import { getHeroContent, getHeroSlidesContent, getTrustStatsContent } from "@/lib/homepage";
 import { getSiteImages } from "@/lib/media/get-site-image";
 import { getCategoryTree, getProducts } from "@/lib/products";
+import { canonicalPath } from "@/lib/seo/canonical";
 import { getSeoOverrideForPath } from "@/lib/seo/records";
 import { getSetting, isSaleEnabled } from "@/lib/settings";
 import { getTestimonials } from "@/lib/testimonials";
@@ -32,11 +33,18 @@ const HOME_IMAGE_SLOTS = [
 /** Lets an admin override the home page's <title>/meta description from
  * /admin/seo (SeoPageRecord, path "/") without touching code. Falls back
  * to the root layout's defaults (src/app/layout.tsx's generateMetadata())
- * when no override exists — returning {} here means "inherit". */
+ * for title/description when no override exists.
+ *
+ * release-hardening F-147: the homepage's `alternates.canonical` used to
+ * live on the root layout, which meant every *other* page that forgot to
+ * set its own canonical inherited the homepage's by accident. The root
+ * layout no longer sets one at all, so the homepage has to set its own
+ * here instead — same value as before (canonicalPath("/") === "/"). */
 export async function generateMetadata(): Promise<Metadata> {
   const override = await getSeoOverrideForPath("/");
-  if (!override) return {};
-  return { title: override.title, description: override.metaDescription };
+  const base: Metadata = { alternates: { canonical: canonicalPath("/") } };
+  if (!override) return base;
+  return { ...base, title: override.title, description: override.metaDescription };
 }
 
 /**

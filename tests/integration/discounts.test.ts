@@ -15,6 +15,7 @@ import {
   DiscountNotFoundError,
   DiscountNotStartedError,
   DiscountUsageLimitReachedError,
+  DiscountValidationError,
   DuplicateDiscountCodeError,
   normalizeDiscountCode,
   resolveDiscount,
@@ -539,6 +540,43 @@ describe("admin discount CRUD", () => {
     assert.equal(updated.active, false);
 
     await assert.rejects(() => resolveDiscount(discount.code, 1000, "buyer@example.com"), DiscountInactiveError);
+  });
+
+  // F-038: a create rejects a >100% PERCENTAGE code outright (superRefine
+  // on discountSchema — see schemas.test.ts for the pure-schema cases).
+  // These two exercise the gap a create-only check misses: a PATCH that's
+  // only invalid once MERGED with the row it's patching.
+  it("rejects a PATCH that would push an existing PERCENTAGE code's value over 100", async () => {
+    const admin = await findAnyAdminId();
+    const discount = await createTestDiscount(admin, { type: "PERCENTAGE", value: 10 });
+    await assert.rejects(
+      () => updateDiscount(discount.id, { value: 500 }, admin),
+      DiscountValidationError,
+    );
+
+    const unchanged = await db.discount.findUniqueOrThrow({ where: { id: discount.id } });
+    assert.equal(Number(unchanged.value), 10, "the value must not have been written");
+  });
+
+  it("rejects a PATCH whose new endsAt would land at or before the existing startsAt", async () => {
+    const admin = await findAnyAdminId();
+    const discount = await createTestDiscount(admin, {
+      startsAt: new Date("2026-12-31T00:00:00+05:30"),
+    });
+    await assert.rejects(
+      () => updateDiscount(discount.id, { endsAt: new Date("2026-01-01T00:00:00+05:30") }, admin),
+      DiscountValidationError,
+    );
+  });
+
+  it("allows a PATCH that only changes an unrelated field on an otherwise-invalid-looking-but-untouched record", async () => {
+    // A FIXED-type code is never subject to the percentage cap, even if
+    // its numeric value happens to be over 100 (₹150 off is fine).
+    const admin = await findAnyAdminId();
+    const discount = await createTestDiscount(admin, { type: "FIXED", value: 150 });
+    const updated = await updateDiscount(discount.id, { active: false }, admin);
+    assert.equal(updated.active, false);
+    assert.equal(Number(updated.value), 150);
   });
 });
 

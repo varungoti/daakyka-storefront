@@ -16,7 +16,10 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
-        disallow: ["/admin/", "/api/", "/checkout"],
+        // F-045: /account was missing here, so a crawler could index the
+        // login/orders/addresses pages once indexing goes live (production
+        // is noindex today, which is what masked this).
+        disallow: ["/admin/", "/api/", "/checkout", "/account"],
       },
     ],
     sitemap: `${base}/sitemap.xml`,

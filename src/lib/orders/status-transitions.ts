@@ -13,17 +13,32 @@ import type { OrderStatus } from "@/generated/prisma/client";
 export const ORDER_STATUS_TRANSITIONS: Record<OrderStatus, readonly OrderStatus[]> = {
   PENDING_PAYMENT: ["PAID", "CANCELLED"],
   PAID: ["PROCESSING", "REFUNDED", "CANCELLED"],
-  PROCESSING: ["SHIPPED", "CANCELLED"],
-  SHIPPED: ["DELIVERED"],
-  DELIVERED: [],
+  // F-199 fix: PROCESSING -> PAID exists only so an admin can record that
+  // an order-request (UPI/bank transfer/COD — no online payment step) has
+  // actually been paid. create-order.ts puts an ORDER_REQUEST order
+  // straight into PROCESSING with no PAID step behind it, so before this
+  // there was no way to ever record the payment — see admin-orders.ts's
+  // updateOrderAdmin, which further restricts *using* this edge to
+  // ORDER_REQUEST orders only (a RAZORPAY order only ever reaches
+  // PROCESSING by having already passed through PAID, so it has nothing
+  // to "record").
+  PROCESSING: ["SHIPPED", "CANCELLED", "PAID"],
+  // F-199 fix: a shipped or delivered order can now be marked RETURNED
+  // (the customer sent it back) — REFUNDED stays a separate, deliberate
+  // next step (see RETURNED below) rather than folding "returned" and
+  // "money back" into one transition, since the two don't always happen
+  // at the same time.
+  SHIPPED: ["DELIVERED", "RETURNED"],
+  DELIVERED: ["RETURNED"],
   CANCELLED: [],
   REFUNDED: [],
-  // release-hardening schema-foundation (wave 1): the OrderStatus enum
-  // value exists (F-199, see prisma/schema.prisma) but no transition
-  // into or out of it is wired up yet — that's wave-4's
-  // order-status-workflow-and-timeline package. An empty array here is
-  // just what every other terminal-for-now state above already has.
-  RETURNED: [],
+  // F-199 fix: previously unreachable (wave-1 schema-foundation only
+  // added the enum value — see the old comment this replaces). Reachable
+  // now from SHIPPED or DELIVERED (above); RETURNED -> REFUNDED is the
+  // deliberate second step once the returned item/refund has actually
+  // been processed. Neither return nor refund automatically restores
+  // sellable stock; condition inspection is a separate operation.
+  RETURNED: ["REFUNDED"],
 };
 
 export class InvalidOrderStatusTransitionError extends Error {

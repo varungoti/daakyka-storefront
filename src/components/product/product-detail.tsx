@@ -116,24 +116,17 @@ export function ProductDetail({
   // when the primary CTA row has scrolled out of the viewport.
   const ctaRowRef = useRef<HTMLDivElement>(null);
 
-  // F-363 fix: used to filter to img.color === selectedColor alone and
-  // fall back to *every* image once none matched — so a colour with its
-  // own tagged photos hid every untagged (shared) shot, and a colour with
-  // no photos of its own showed some other colour's photo as the main
-  // image instead. Untagged photos now always show for every colour,
-  // after that colour's own; only when a colour has neither its own nor
-  // any untagged photos does this fall back to showing everything.
+  // Show only photos of the selected colour plus genuinely shared photos.
+  // A missing colourway must never inherit another colour's photograph.
   const gallery = useMemo<LightboxImage[]>(() => {
     const colorImages = product.images?.filter((img) => img.color === selectedColor) ?? [];
     const untaggedImages = product.images?.filter((img) => !img.color) ?? [];
     const source =
       colorImages.length > 0 || untaggedImages.length > 0
         ? [...colorImages, ...untaggedImages]
-        : product.images && product.images.length > 0
-          ? product.images
-          : [{ url: product.image, alt: product.name }];
+        : [{ url: "/placeholder-product.svg", alt: `${product.name} photo unavailable in ${selectedColor}` }];
     return source.map((img) => ({ url: img.url, alt: img.alt ?? product.name }));
-  }, [product.images, product.image, product.name, selectedColor]);
+  }, [product.images, product.name, selectedColor]);
 
   // `selectedVariant`: resolveVariant's fallback-if-no-exact-match
   // behaviour — kept only for what's safe to fall back on, price/gallery

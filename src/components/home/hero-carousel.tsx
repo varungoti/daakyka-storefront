@@ -173,7 +173,12 @@ export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, rating
         {`Slide ${activeIndex + 1} of ${slides.length}: ${active.headline}`}
       </p>
 
-      <div className="relative mx-auto grid max-w-[1320px] items-center gap-10 px-4 py-12 lg:grid-cols-[1.05fr_0.95fr_0.55fr] lg:gap-8 lg:px-8 md:py-16">
+      {/* F-085: `gap-6 py-8` on mobile (was `gap-10 py-12`) — the fixed
+          mobile min-height this used to have is gone (see F-001's grid-
+          stack comment above), but the grid's own gap and padding were
+          still sized for desktop and added their own dead space on top of
+          three unshrunk sections stacked in a single mobile column. */}
+      <div className="relative mx-auto grid max-w-[1320px] items-center gap-6 px-4 py-8 sm:gap-8 md:gap-10 md:py-16 lg:grid-cols-[1.05fr_0.95fr_0.55fr] lg:gap-8 lg:px-8">
         <div className="animate-fade-up lg:pr-4">
           {/* F-001: `grid` instead of `relative` + a guessed min-height.
               Every slide below is stacked in the same grid cell
@@ -263,19 +268,27 @@ export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, rating
                 </button>
               </div>
 
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1">
                 {slides.map((slide, index) => (
+                  // F-240: axe's target-size audit flagged these at 10x10 —
+                  // the button itself is now a 24px hit area (`h-6 min-w-6`)
+                  // around the same visually 10px-tall pill (`span` below).
                   <button
                     key={slide.id}
                     type="button"
                     onClick={() => goTo(index)}
                     aria-label={`Go to slide ${index + 1} of ${slides.length}: ${slide.headline}`}
                     aria-current={index === activeIndex ? "true" : undefined}
-                    className={cn(
-                      "h-2.5 rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
-                      index === activeIndex ? "w-6 bg-brand" : "w-2.5 bg-ink/20 hover:bg-ink/40",
-                    )}
-                  />
+                    className="group grid h-6 min-w-6 place-items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        "block h-2.5 rounded-full transition-all",
+                        index === activeIndex ? "w-6 bg-brand" : "w-2.5 bg-ink/20 group-hover:bg-ink/40",
+                      )}
+                    />
+                  </button>
                 ))}
               </div>
 
@@ -319,7 +332,13 @@ export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, rating
           </div>
         </div>
 
-        <div className="animate-scale-in relative mx-auto w-full max-w-md lg:max-w-none">
+        {/* F-085: `order-first` puts the model photos ahead of the text
+            column in the single-column mobile layout (`lg:order-none`
+            restores document order at the 3-column desktop layout) — this
+            used to be the very last thing on the page before the trust-
+            stat cards, so a phone shopper's whole first screen was text
+            with no product imagery at all. */}
+        <div className="animate-scale-in relative order-first mx-auto w-full max-w-md lg:order-none lg:max-w-none">
           <div className="absolute inset-x-6 top-6 bottom-6 rounded-full bg-brand/10 blur-3xl" />
           <div className="relative mx-auto aspect-[4/5] max-w-lg">
             <div className="absolute bottom-[8%] left-1/2 h-8 w-[72%] -translate-x-1/2 rounded-[100%] bg-brand/25 blur-2xl" />

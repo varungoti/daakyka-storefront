@@ -1,8 +1,10 @@
+import { BuyAgainButton } from "@/components/account/buy-again-button";
 import { OrderPrintButton } from "@/components/account/order-print-button";
 import { OrderStatusBadge } from "@/components/account/order-status-badge";
 import { OrderTimelineView } from "@/components/account/order-timeline";
 import { OrderTrackingCard } from "@/components/account/order-tracking-card";
 import { brand } from "@/data/brand";
+import { db } from "@/lib/db";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import { getAuthorizedOrder } from "@/lib/orders/get-order";
 import { formatReceiptDate, getReceiptPaymentSummary } from "@/lib/orders/receipt";
@@ -82,7 +84,35 @@ export default async function AccountOrderDetailPage({
   const address = order.shippingAddress as unknown as ShippingAddressInput;
   // F-141 fix: see getOrderTimeline's doc comment — only matters for a
   // RAZORPAY order that never captured a payment.
-  const timeline = getOrderTimeline(order.status, order.paymentMethod, order.razorpayPaymentId !== null);
+  // F-199 fix: shippedAt/deliveredAt are real columns, used only for the
+  // (now reachable) RETURNED and post-shipping REFUNDED cases.
+  const timeline = getOrderTimeline(
+    order.status,
+    order.paymentMethod,
+    order.razorpayPaymentId !== null,
+    order.shippedAt !== null,
+    order.deliveredAt !== null,
+    order.paidAt !== null,
+  );
+  // F-300 fix: "Write a review" is hidden once the customer already has
+  // one for that product (Review has @@unique([productId, customerId])) —
+  // one batched query for every product this delivered order shipped,
+  // rather than one query per line.
+  const deliveredProductIds =
+    order.status === "DELIVERED"
+      ? Array.from(new Set(order.items.map((item) => item.variant?.productId).filter((id): id is string => Boolean(id))))
+      : [];
+  const reviewedProductIds =
+    deliveredProductIds.length > 0
+      ? new Set(
+          (
+            await db.review.findMany({
+              where: { customerId: session.id, productId: { in: deliveredProductIds } },
+              select: { productId: true },
+            })
+          ).map((review) => review.productId),
+        )
+      : new Set<string>();
   // F-328: same receipt facts (date, payment status, seller) the guest
   // /order/[number] page shows — see src/lib/orders/receipt.ts.
   const placedDate = formatReceiptDate(order.createdAt);
@@ -90,6 +120,7 @@ export default async function AccountOrderDetailPage({
     order.status,
     order.paymentMethod,
     order.razorpayPaymentId !== null,
+    order.paidAt !== null,
   );
   const [gstin, sellerAddress] = await Promise.all([
     getSetting("legal.gstin"),
@@ -123,21 +154,72 @@ export default async function AccountOrderDetailPage({
       <section className="mt-6 space-y-4 print:break-inside-avoid">
         <h2 className="font-display text-lg font-bold text-ink">Items</h2>
         <div className="divide-y divide-border rounded-2xl border border-border bg-surface">
-          {order.items.map((item) => (
-            <div key={item.id} className="flex items-center gap-4 p-4">
-              <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-border bg-lavender/40">
-                {item.imageUrl ? (
-                  <Image src={item.imageUrl} alt={item.productName} fill className="object-cover" sizes="64px" />
-                ) : null}
+          {order.items.map((item) => {
+            // F-300 fix: a delivered order's items were plain text — no
+            // link to the product, no way to review it or buy it again.
+            // `variant` (and so `productHref`) is null for an item whose
+            // variant was later deleted — it still renders, just with no
+            // link/CTA, same as any other "product no longer exists" case.
+            const productHref = item.variant?.product.status === "ACTIVE" ? `/products/${item.variant.product.slug}` : null;
+            const canBuyAgain =
+              order.status === "DELIVERED" &&
+              item.variant !== null &&
+              item.variant.active &&
+              item.variant.stock > 0 &&
+              item.variant.product.status === "ACTIVE";
+            const reviewHref = productHref ? `${productHref}#reviews` : null;
+            const canReview =
+              order.status === "DELIVERED" &&
+              item.variant !== null &&
+              reviewHref !== null &&
+              !reviewedProductIds.has(item.variant.productId);
+            return (
+              <div key={item.id} className="flex items-center gap-4 p-4">
+                <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-border bg-lavender/40">
+                  {item.imageUrl ? (
+                    productHref ? (
+                      <Link href={productHref}>
+                        <Image src={item.imageUrl} alt={item.productName} fill className="object-cover" sizes="64px" />
+                      </Link>
+                    ) : (
+                      <Image src={item.imageUrl} alt={item.productName} fill className="object-cover" sizes="64px" />
+                    )
+                  ) : null}
+                </div>
+                <div className="flex-1">
+                  {productHref ? (
+                    <Link href={productHref} className="font-semibold text-ink hover:underline">
+                      {item.productName}
+                    </Link>
+                  ) : (
+                    <p className="font-semibold text-ink">{item.productName}</p>
+                  )}
+                  {item.variantLabel && <p className="text-sm text-muted">{item.variantLabel}</p>}
+                  <p className="text-sm text-muted">Qty {item.quantity}</p>
+                  {(canReview || canBuyAgain) && (
+                    <div className="mt-2 flex flex-wrap items-center gap-3 print:hidden">
+                      {canReview && reviewHref && (
+                        <Link href={reviewHref} className="text-xs font-semibold text-brand hover:underline">
+                          Write a review
+                        </Link>
+                      )}
+                      {canBuyAgain && item.variant && (
+                        <BuyAgainButton
+                          variantId={item.variant.id}
+                          productHandle={item.variant.product.slug}
+                          productTitle={item.productName}
+                          variantTitle={item.variantLabel}
+                          price={item.variant.price !== null ? Number(item.variant.price) : Number(item.variant.product.price)}
+                          image={item.imageUrl}
+                        />
+                      )}
+                    </div>
+                  )}
+                </div>
+                <p className="font-semibold text-ink">{formatInr(Number(item.unitPrice) * item.quantity)}</p>
               </div>
-              <div className="flex-1">
-                <p className="font-semibold text-ink">{item.productName}</p>
-                {item.variantLabel && <p className="text-sm text-muted">{item.variantLabel}</p>}
-                <p className="text-sm text-muted">Qty {item.quantity}</p>
-              </div>
-              <p className="font-semibold text-ink">{formatInr(Number(item.unitPrice) * item.quantity)}</p>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 

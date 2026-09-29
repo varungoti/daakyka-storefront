@@ -3,9 +3,22 @@ import { issueCustomerToken } from "@/lib/customer-auth/tokens";
 import { sendPasswordResetEmail } from "@/lib/customer-auth/mailer";
 import { db } from "@/lib/db";
 import { readJsonBody } from "@/lib/security/parse-json-body";
-import { rateLimitOrResponse } from "@/lib/security/rate-limit";
+import { checkRateLimit, rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { customerForgotPasswordSchema } from "@/lib/validation/schemas";
 import { isHoneypotTripped } from "@/lib/validation/honeypot";
+
+// F-139: the per-IP limiter below (rateLimitOrResponse) doesn't stop one
+// IP from flooding a single victim's inbox, and doesn't stop several IPs
+// from doing it together. Mirrors resend-verification's identical
+// per-account limiter (same helper, same shape) — keyed by the submitted
+// email rather than the caller's IP, so it's bounded regardless of how
+// many different IPs ask. Never returns a distinct response on its own:
+// unlike resend-verification's 429, forgot-password's whole point is that
+// the response never varies with anything about the request, so hitting
+// this limit still returns GENERIC_RESPONSE below rather than revealing
+// that an account exists (or that a limit was hit at all).
+const PER_ACCOUNT_LIMIT = 3;
+const PER_ACCOUNT_WINDOW_MS = 15 * 60 * 1000;
 
 // Always the exact same status + body, whether or not the email is
 // registered — response shape and timing must not let a caller
@@ -49,6 +62,16 @@ export async function POST(request: Request) {
     }
 
     const email = parsed.data.email.toLowerCase();
+
+    const accountLimit = await checkRateLimit(
+      `account-forgot-password:${email}`,
+      PER_ACCOUNT_LIMIT,
+      PER_ACCOUNT_WINDOW_MS,
+    );
+    if (!accountLimit.ok) {
+      return NextResponse.json(GENERIC_RESPONSE);
+    }
+
     const customer = await db.customer.findUnique({ where: { email } });
 
     if (customer && customer.active) {

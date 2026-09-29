@@ -1,7 +1,10 @@
 import { getBlogPostBySlug, getPublishedBlogPosts } from "@/lib/blog";
+import { JsonLdScript } from "@/components/seo/json-ld-script";
 import { PageContentSection } from "@/components/ui/page-shell";
 import { formatDateIST } from "@/lib/format/datetime";
+import { baseOpenGraph, breadcrumbJsonLd, siteUrlBase, toAbsoluteUrl } from "@/lib/seo/json-ld";
 import { canonicalPath } from "@/lib/seo/canonical";
+import { computeReadTime } from "@/lib/seo/read-time";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -18,11 +21,25 @@ export async function generateStaticParams() {
 export async function generateMetadata({ params }: BlogPostPageProps) {
   const { slug } = await params;
   const post = await getBlogPostBySlug(slug);
-  if (!post) return { title: "Blog" };
+  if (!post) {
+    // release-hardening F-012: Next already tags a notFound() render
+    // `noindex` on its own — `follow: true` keeps that from also fighting
+    // the root layout's `index, follow`.
+    return { title: "Blog", robots: { index: false, follow: true } };
+  }
   return {
     title: post.title,
     description: post.excerpt,
     alternates: { canonical: canonicalPath(`/blog/${slug}`) },
+    // release-hardening F-151: og:url wasn't set on any page, and a blog
+    // post is an article, not a generic "website" — see the root layout's
+    // doc comment on why title/description don't need repeating here.
+    openGraph: {
+      ...baseOpenGraph(`/blog/${slug}`, "article"),
+      images: [post.image],
+      publishedTime: post.publishedAt,
+      authors: [post.author],
+    },
   };
 }
 
@@ -34,8 +51,32 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
     notFound();
   }
 
+  const readTime = computeReadTime(post.content);
+  const base = siteUrlBase();
+
   return (
     <>
+      <JsonLdScript
+        data={{
+          "@context": "https://schema.org",
+          "@type": "BlogPosting",
+          headline: post.title,
+          description: post.excerpt,
+          image: [toAbsoluteUrl(post.image)],
+          datePublished: post.publishedAt,
+          author: { "@type": "Organization", name: post.author },
+          publisher: { "@type": "Organization", name: "DAAKYKA Apparels", logo: `${base}/icon.svg` },
+          mainEntityOfPage: `${base}/blog/${slug}`,
+        }}
+      />
+      <JsonLdScript
+        data={breadcrumbJsonLd([
+          { name: "Home", url: base },
+          { name: "Journal", url: `${base}/blog` },
+          { name: post.title, url: `${base}/blog/${slug}` },
+        ])}
+      />
+
       <section className="border-b border-border bg-alt-surface py-6">
         <div className="mx-auto max-w-3xl px-4 text-sm text-muted lg:px-8">
           <Link href="/" className="hover:text-brand">
@@ -59,7 +100,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
             {post.title}
           </h1>
           <p className="mt-4 text-sm text-muted">
-            {post.author} · {formatDateIST(post.publishedAt)} · {post.readTime}
+            {post.author} · {formatDateIST(post.publishedAt)} · {readTime}
           </p>
 
           <div className="relative mt-8 aspect-[16/9] overflow-hidden rounded-[2rem]">

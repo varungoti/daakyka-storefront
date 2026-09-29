@@ -10,6 +10,8 @@ import {
   customerForgotPasswordSchema,
   customerRegisterSchema,
   customerResetPasswordSchema,
+  discountSchema,
+  discountUpdateSchema,
   heroContentSchema,
   heroSlideSchema,
   heroSlidesContentSchema,
@@ -344,6 +346,43 @@ describe("validation schemas", () => {
     assert.equal(customerAddressUpdateSchema.safeParse({ postalCode: "AB123" }).success, false);
   });
 
+  // F-135: customerAddressUpdateSchema used to be customerAddressSchema
+  // .partial(), which — because .partial() still applies each field's own
+  // .default() — silently injected country: "IN" and isDefault: false into
+  // every partial update, even when the caller only sent e.g. { label }.
+  it("customerAddressUpdateSchema does not inject country/isDefault defaults for an omitted field", () => {
+    const result = customerAddressUpdateSchema.safeParse({ label: "Office" });
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal("country" in result.data, false, "country must be left out, not defaulted to IN");
+      assert.equal("isDefault" in result.data, false, "isDefault must be left out, not defaulted to false");
+      assert.deepEqual(result.data, { label: "Office" });
+    }
+  });
+
+  it("customerAddressUpdateSchema still accepts isDefault/country when the caller explicitly sends them", () => {
+    const result = customerAddressUpdateSchema.safeParse({ isDefault: true, country: "IN" });
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.data.isDefault, true);
+      assert.equal(result.data.country, "IN");
+    }
+  });
+
+  // F-128: customerAddressSchema.country now matches shippingAddressSchema
+  // — a saved address must also be India-only, since checkout's own
+  // pincode/phone validation already assumes it is.
+  it("rejects a customer address with a non-India country", () => {
+    const result = customerAddressSchema.safeParse({
+      line1: "221B Baker Street",
+      city: "Hyderabad",
+      state: "Telangana",
+      postalCode: "500032",
+      country: "US",
+    });
+    assert.equal(result.success, false);
+  });
+
   // Phase D3: checkout / Razorpay.
 
   const validCheckoutPayload = {
@@ -401,6 +440,20 @@ describe("validation schemas", () => {
       shippingAddress: { ...validCheckoutPayload.shippingAddress, country: "IND" },
     });
     assert.equal(result.success, false);
+  });
+
+  // F-128: a crafted checkout used to accept ANY 2-letter code (e.g. "US")
+  // and still charge the domestic flat shipping rate — only the UI
+  // hard-coded India. The store only ships within India today.
+  it("rejects a shipping address with a valid-looking but non-India 2-letter country code", () => {
+    const result = checkoutSchema.safeParse({
+      ...validCheckoutPayload,
+      shippingAddress: { ...validCheckoutPayload.shippingAddress, country: "US" },
+    });
+    assert.equal(result.success, false);
+    if (!result.success) {
+      assert.ok(result.error.issues.some((issue) => issue.message.includes("India")));
+    }
   });
 
   // Release-hardening Finding A: a live order was placed with phone
@@ -941,6 +994,119 @@ describe("homepageSectionSchemas", () => {
       "hero-slides",
       "trust-stats",
     ]);
+  });
+});
+
+// F-038: percentages over 100%, an end date at or before the start date,
+// and a date-only boundary that expired 5.5 hours too early (IST vs UTC
+// midnight) all used to save without complaint.
+describe("discountSchema (F-038)", () => {
+  const valid = { code: "HERO10", type: "PERCENTAGE" as const, value: 10 };
+
+  it("accepts a valid percentage code", () => {
+    assert.equal(discountSchema.safeParse(valid).success, true);
+  });
+
+  it("rejects a PERCENTAGE value over 100", () => {
+    const result = discountSchema.safeParse({ ...valid, value: 150 });
+    assert.equal(result.success, false);
+    if (!result.success) {
+      assert.ok(result.error.issues.some((issue) => issue.path[0] === "value"));
+    }
+  });
+
+  it("accepts a FIXED value over 100 (no percentage cap applies)", () => {
+    const result = discountSchema.safeParse({ ...valid, type: "FIXED", value: 500 });
+    assert.equal(result.success, true);
+  });
+
+  it("rejects an endsAt at or before startsAt", () => {
+    const result = discountSchema.safeParse({
+      ...valid,
+      startsAt: "2026-12-31",
+      endsAt: "2026-01-01",
+    });
+    assert.equal(result.success, false);
+    if (!result.success) {
+      assert.ok(result.error.issues.some((issue) => issue.path[0] === "endsAt"));
+    }
+  });
+
+  it("rejects an endsAt exactly equal to startsAt", () => {
+    const result = discountSchema.safeParse({
+      ...valid,
+      // Date-only bounds represent the whole IST calendar day; identical
+      // dates are valid. Compare identical instants to exercise equality.
+      startsAt: "2026-06-01T10:00:00.000Z",
+      endsAt: "2026-06-01T10:00:00.000Z",
+    });
+    assert.equal(result.success, false);
+  });
+
+  // A date-only "YYYY-MM-DD" is what the admin's <input type="date"> sends.
+  // z.coerce.date() alone parses that as UTC midnight (05:30 IST) — this
+  // must instead run the whole IST calendar day: 00:00 IST through
+  // 23:59:59.999 IST.
+  it("parses a date-only startsAt as the start of that day in IST, not UTC", () => {
+    const result = discountSchema.safeParse({ ...valid, startsAt: "2026-09-25" });
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.data.startsAt?.toISOString(), "2026-09-24T18:30:00.000Z");
+    }
+  });
+
+  it("parses a date-only endsAt as the end of that day in IST, not UTC midnight", () => {
+    const result = discountSchema.safeParse({ ...valid, endsAt: "2026-09-25" });
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.data.endsAt?.toISOString(), "2026-09-25T18:29:59.999Z");
+    }
+  });
+
+  it("a date-only endsAt of today is still valid at 23:00 IST (17:30Z) and expired by the next UTC day", () => {
+    const result = discountSchema.safeParse({ ...valid, endsAt: "2026-09-25" });
+    assert.equal(result.success, true);
+    if (result.success) {
+      const endsAt = result.data.endsAt!;
+      assert.ok(endsAt.getTime() > new Date("2026-09-25T17:30:00.000Z").getTime(), "expected 23:00 IST to be before endsAt");
+      assert.ok(endsAt.getTime() < new Date("2026-09-26T00:00:00.000Z").getTime(), "expected endsAt to have passed by the next UTC day");
+    }
+  });
+
+  it("leaves a full ISO timestamp untouched", () => {
+    const result = discountSchema.safeParse({ ...valid, endsAt: "2026-09-25T12:00:00.000Z" });
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.data.endsAt?.toISOString(), "2026-09-25T12:00:00.000Z");
+    }
+  });
+
+  it("rejects a code with spaces (e.g. a mis-pasted 'HERO 10')", () => {
+    assert.equal(discountSchema.safeParse({ ...valid, code: "HERO 10" }).success, false);
+  });
+});
+
+describe("discountUpdateSchema (F-038)", () => {
+  // discountUpdateSchema deliberately has NO cross-field superRefine — Zod
+  // 4 refuses .partial() on a refined object schema — so it can't catch a
+  // >100% or endsAt<=startsAt that only becomes true once merged with the
+  // existing row. That merged check lives in updateDiscount
+  // (src/lib/discounts/index.ts) instead — see
+  // tests/integration/discounts.test.ts for those cases.
+  it("accepts a lone value over 100 in isolation (the cross-field check happens in updateDiscount)", () => {
+    assert.equal(discountUpdateSchema.safeParse({ value: 500 }).success, true);
+  });
+
+  it("still normalizes a date-only endsAt to the end of the IST day", () => {
+    const result = discountUpdateSchema.safeParse({ endsAt: "2026-09-25" });
+    assert.equal(result.success, true);
+    if (result.success) {
+      assert.equal(result.data.endsAt?.toISOString(), "2026-09-25T18:29:59.999Z");
+    }
+  });
+
+  it("accepts an empty partial payload", () => {
+    assert.equal(discountUpdateSchema.safeParse({}).success, true);
   });
 });
 

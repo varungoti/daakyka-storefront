@@ -3,6 +3,7 @@ import { Prisma } from "@/generated/prisma/client";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import {
   DiscountNotFoundForAdminError,
+  DiscountValidationError,
   DuplicateDiscountCodeError,
   getDiscountForAdmin,
   updateDiscount,
@@ -48,7 +49,11 @@ export async function PATCH(request: Request, { params }: RouteParams) {
 
   const parsed = discountUpdateSchema.safeParse(bodyResult.data);
   if (!parsed.success) {
-    return NextResponse.json({ error: "Validation failed", issues: parsed.error.issues }, { status: 400 });
+    // F-038: see the identical fix in ../route.ts's POST handler.
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Validation failed", issues: parsed.error.issues },
+      { status: 400 },
+    );
   }
 
   try {
@@ -60,6 +65,12 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     }
     if (err instanceof DuplicateDiscountCodeError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    // F-038: a PATCH that's invalid only once merged with the existing row
+    // (e.g. `{ value: 500 }` against an existing PERCENTAGE code) —
+    // discountUpdateSchema's own per-field checks above can't catch this.
+    if (err instanceof DiscountValidationError) {
+      return NextResponse.json({ error: err.message, issues: err.issues }, { status: 400 });
     }
     throw err;
   }

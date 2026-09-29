@@ -88,4 +88,15 @@ describe("buildFooterLinks", () => {
     assert.ok(links.company.links.some((link) => link.href === "/fabric-technology"));
     assert.ok(links.company.links.some((link) => link.href === "/mix-and-match"));
   });
+
+  it("uses each footer destination once across the main columns", () => {
+    const links = buildFooterLinks({
+      fabricTechEnabled: true,
+      mixMatchEnabled: true,
+      saleEnabled: true,
+    });
+    const all = [links.shop, links.help, links.company].flatMap((column) => column.links);
+    assert.equal(new Set(all.map((link) => link.href)).size, all.length);
+    assert.equal(all.find((link) => link.href === "/about")?.label, "Meet the Founders");
+  });
 });

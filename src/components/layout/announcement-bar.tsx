@@ -1,6 +1,7 @@
 "use client";
 
 import { announcementItems } from "@/data/navigation";
+import { cn } from "@/lib/utils";
 import { Phone, MessageCircle } from "lucide-react";
 import Link from "next/link";
 
@@ -40,9 +41,14 @@ export function UtilityBar({
   return (
     <div className="bg-brand-violet py-2.5 text-xs font-medium tracking-wide text-white md:text-sm">
       <div className="mx-auto flex max-w-[1320px] flex-wrap items-center justify-between gap-x-4 gap-y-1.5 px-4">
+        {/* F-085/F-242: only the first message shows below `md` — all of
+            them used to render at once, and with the separator bullet
+            already hidden below `md` (`hidden ... md:inline`), each one
+            wrapped onto its own line, turning this into a 3-line band on
+            every page before a shopper saw anything else. */}
         <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
           {items.map((item, index) => (
-            <span key={item} className="flex items-center gap-4">
+            <span key={item} className={cn("flex items-center gap-4", index > 0 && "hidden md:flex")}>
               {item}
               {index < items.length - 1 && (
                 <span className="hidden text-white/50 md:inline">•</span>

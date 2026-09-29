@@ -66,19 +66,26 @@ export function Header({ navigation }: { navigation: NavigationTree }) {
             : "border-transparent bg-background/80 backdrop-blur-md",
         )}
       >
-        <div className="mx-auto grid max-w-[1320px] grid-cols-[auto_1fr_auto] items-center gap-4 px-4 py-4 lg:px-8">
+        <div className="mx-auto grid max-w-[1320px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-3 py-4 sm:gap-4 sm:px-4 lg:px-8">
           <div className="flex items-center gap-1">
             <IconButton label="Search" onClick={() => setSearchOpen(true)}>
               <Search size={18} />
             </IconButton>
           </div>
 
+          {/* F-011: `min-w-0` so this grid item can actually shrink below
+              its text's intrinsic width (a grid item's default min-width is
+              `auto`, i.e. min-content, same as flexbox) — without it the
+              middle `minmax(0,1fr)` track above couldn't do anything and
+              the "Open menu" button was clipped past the 320px viewport.
+              The real space (not `ml-1`) between the two words is the wrap
+              point that keeps this readable if it's ever squeezed that
+              far. */}
           <Link
             href="/"
-            className="justify-self-center font-display text-lg font-bold tracking-tight text-ink md:text-xl"
+            className="min-w-0 justify-self-center text-center font-display text-base font-bold tracking-tight text-ink sm:text-lg md:text-xl"
           >
-            DAAKYKA
-            <span className="ml-1 font-semibold text-brand">APPARELS</span>
+            DAAKYKA <span className="font-semibold text-brand">APPARELS</span>
           </Link>
 
           <div className="flex items-center justify-end gap-1 md:gap-2">
@@ -455,6 +462,11 @@ function MobileNavDrawer({
 }) {
   const panelRef = useFocusTrap<HTMLDivElement>(open, onClose, { restoreFocusRef: triggerRef });
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // F-009: phones have no header wishlist icon (`hidden sm:flex`), so this
+  // drawer is the only mobile entry point — pulled in here rather than
+  // passed as a prop since Header already reads the same hook for its own
+  // icon.
+  const { count: wishlistCount, openWishlist } = useWishlist();
 
   if (!open) return null;
 
@@ -557,7 +569,7 @@ function MobileNavDrawer({
         </nav>
 
         <div className="space-y-3 border-t border-border p-4">
-          <CurrencyToggle />
+          <CurrencyToggle className="w-fit" />
           <div className="flex gap-2">
             <Link
               href="/account"
@@ -566,6 +578,20 @@ function MobileNavDrawer({
             >
               Account
             </Link>
+            {/* F-009: a guest's wishlist lives only in localStorage and
+                /account/wishlist redirects a signed-out visitor to login,
+                so this button (not a link) is the only way a phone guest
+                can ever see their hearted items. */}
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                openWishlist();
+              }}
+              className="flex-1 rounded-xl border border-border px-4 py-2.5 text-center text-sm font-semibold text-ink hover:border-brand hover:text-brand"
+            >
+              Wishlist{wishlistCount > 0 ? ` (${wishlistCount})` : ""}
+            </button>
           </div>
         </div>
       </div>

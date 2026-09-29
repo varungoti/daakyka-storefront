@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createCustomerSession, getCustomerSession } from "@/lib/customer-auth/session";
 import { hashPassword } from "@/lib/customer-auth/password";
+import { invalidateOutstandingTokens } from "@/lib/customer-auth/tokens";
 import { lockedResponse, verifyCurrentPassword } from "@/lib/customer-auth/verify-current-password";
 import { db } from "@/lib/db";
 import { readJsonBody } from "@/lib/security/parse-json-body";
@@ -60,15 +61,31 @@ export async function PATCH(request: Request) {
 
     // Never trust a client-supplied id — always scope the update to the
     // caller's own session id.
-    const customer = await db.customer.update({
-      where: { id: session.id },
-      data: {
-        ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
-        ...(parsed.data.phone !== undefined ? { phone: parsed.data.phone } : {}),
-        ...(newPasswordHash ? { passwordHash: newPasswordHash, sessionVersion: { increment: 1 } } : {}),
-      },
-      select: { id: true, email: true, name: true, phone: true, emailVerifiedAt: true, createdAt: true },
-    });
+    const updateData = {
+      ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
+      ...(parsed.data.phone !== undefined ? { phone: parsed.data.phone } : {}),
+      ...(newPasswordHash ? { passwordHash: newPasswordHash, sessionVersion: { increment: 1 } } : {}),
+    };
+    // F-133: a password change while logged in must revoke any RESET token
+    // still sitting unused in an old forgot-password email — otherwise it
+    // kept working after the customer had already changed their password
+    // through a different route. Only worth a transaction when there's
+    // actually a password change to pair it with.
+    const customer = newPasswordHash
+      ? await db.$transaction(async (tx) => {
+          const updated = await tx.customer.update({
+            where: { id: session.id },
+            data: updateData,
+            select: { id: true, email: true, name: true, phone: true, emailVerifiedAt: true, createdAt: true },
+          });
+          await invalidateOutstandingTokens(session.id, "RESET", tx);
+          return updated;
+        })
+      : await db.customer.update({
+          where: { id: session.id },
+          data: updateData,
+          select: { id: true, email: true, name: true, phone: true, emailVerifiedAt: true, createdAt: true },
+        });
 
     // Changing the password bumps sessionVersion, which invalidates the
     // token this very request is using — re-issue immediately so the

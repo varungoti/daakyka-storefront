@@ -28,7 +28,14 @@ export async function POST(request: Request) {
   if (!bodyResult.ok) return bodyResult.response;
   const parsed = discountSchema.safeParse(bodyResult.data);
   if (!parsed.success) {
-    return NextResponse.json({ error: "Validation failed", issues: parsed.error.issues }, { status: 400 });
+    // F-038: surface the actual field message (e.g. "Percentage can't
+    // exceed 100") instead of a bare "Validation failed" the form only
+    // ever showed as-is — `issues` was already in the response, but
+    // nothing read it.
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Validation failed", issues: parsed.error.issues },
+      { status: 400 },
+    );
   }
 
   try {

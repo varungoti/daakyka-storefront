@@ -1,0 +1,52 @@
+/** Lower-bound planning metric by colourway. The current ProductImage model
+ * cannot tag a size or prove that these views accurately cover each size;
+ * this count must not be presented as the user's per-size release gate. */
+export const REQUIRED_IMAGES_PER_COLORWAY = 3;
+
+export interface MediaCoverageProduct {
+  slug: string;
+  name: string;
+  variants: { size: string; color: string; active: boolean }[];
+  images: { mediaId: string; color: string | null }[];
+}
+
+export interface MediaCoverageGap {
+  slug: string;
+  name: string;
+  color: string;
+  sizes: string[];
+  imageCount: number;
+  missing: number;
+}
+
+export function findProductImageCoverageGaps(products: MediaCoverageProduct[]): MediaCoverageGap[] {
+  const gaps: MediaCoverageGap[] = [];
+  for (const product of products) {
+    const active = product.variants.filter((variant) => variant.active);
+    const colors = new Map<string, Set<string>>();
+    for (const variant of active) {
+      if (!colors.has(variant.color)) colors.set(variant.color, new Set());
+      colors.get(variant.color)!.add(variant.size);
+    }
+
+    for (const [color, sizes] of colors) {
+      // An untagged image cannot safely represent every colour of a
+      // multi-colour garment. It is accepted only for a one-colour product.
+      const mediaIds = new Set(
+        product.images
+          .filter((image) => image.color === color || (colors.size === 1 && !image.color))
+          .map((image) => image.mediaId),
+      );
+      if (mediaIds.size >= REQUIRED_IMAGES_PER_COLORWAY) continue;
+      gaps.push({
+        slug: product.slug,
+        name: product.name,
+        color,
+        sizes: [...sizes].sort(),
+        imageCount: mediaIds.size,
+        missing: REQUIRED_IMAGES_PER_COLORWAY - mediaIds.size,
+      });
+    }
+  }
+  return gaps.sort((a, b) => a.slug.localeCompare(b.slug) || a.color.localeCompare(b.color));
+}

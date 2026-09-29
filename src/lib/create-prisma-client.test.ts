@@ -30,7 +30,7 @@ describe("createPrismaClient helpers", () => {
     assert.equal(config.statement_timeout, 8000);
     assert.equal(config.query_timeout, 10000);
     assert.equal(config.idle_in_transaction_session_timeout, 10000);
-    assert.equal(config.max, Number(process.env.DB_POOL_MAX ?? 5));
+    assert.equal(config.max, Number(process.env.DB_POOL_MAX ?? 2));
   });
 });
 

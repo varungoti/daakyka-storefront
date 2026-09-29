@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 import {
+  capturedPaymentMatchesOrder,
   fetchCapturedPaymentId,
   isRazorpayConfigured,
   setRazorpayClientForTesting,
@@ -12,6 +13,25 @@ import { withEnv } from "../../../tests/helpers/env";
 
 const TEST_KEY_SECRET = "test-razorpay-key-secret";
 const TEST_WEBHOOK_SECRET = "test-razorpay-webhook-secret";
+
+describe("capturedPaymentMatchesOrder", () => {
+  it("requires the provider payment to match id, order, capture, amount and currency", async () => {
+    await withEnv({ RAZORPAY_KEY_ID: "rzp_test_x", RAZORPAY_KEY_SECRET: TEST_KEY_SECRET }, async () => {
+      let amount = 25000;
+      setRazorpayClientForTesting({
+        orders: { create: async () => { throw new Error("not used"); } },
+        payments: { fetch: async (id) => ({ id, order_id: "order_x", status: "captured", amount, currency: "INR" }) },
+      });
+      try {
+        assert.equal(await capturedPaymentMatchesOrder("pay_x", "order_x", 25000, "INR"), true);
+        amount = 24900;
+        assert.equal(await capturedPaymentMatchesOrder("pay_x", "order_x", 25000, "INR"), false);
+      } finally {
+        setRazorpayClientForTesting(null);
+      }
+    });
+  });
+});
 
 describe("isRazorpayConfigured", () => {
   it("is false when either key is missing", async () => {

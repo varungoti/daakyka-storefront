@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { Prisma, type Discount as DiscountRow, type DiscountType } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
-import type { DiscountInput, DiscountUpdateInput } from "@/lib/validation/schemas";
+import { validateDiscountRules, type DiscountInput, type DiscountUpdateInput } from "@/lib/validation/schemas";
 
 /**
  * Release-hardening F7 (docs/audit-2026-09-19/storefront-ux.md finding F7 /
@@ -372,6 +372,20 @@ export class DuplicateDiscountCodeError extends Error {
   }
 }
 
+// F-038: discountSchema's superRefine only ever sees a create's full
+// payload. A PATCH validates each sent field in isolation
+// (discountUpdateSchema has no cross-field check — see its doc comment),
+// so `{ value: 500 }` against an existing PERCENTAGE code, or `{ endsAt }`
+// against an existing startsAt, passed straight through to the DB. Thrown
+// by updateDiscount below when the MERGED (existing + incoming) record
+// fails the same rules a create would.
+export class DiscountValidationError extends Error {
+  constructor(public readonly issues: { path: (string | number)[]; message: string }[]) {
+    super(issues[0]?.message ?? "Validation failed");
+    this.name = "DiscountValidationError";
+  }
+}
+
 export async function listDiscountsForAdmin(): Promise<DiscountRow[]> {
   return db.discount.findMany({ orderBy: { createdAt: "desc" } });
 }
@@ -422,6 +436,18 @@ export async function updateDiscount(
 ): Promise<DiscountRow> {
   const existing = await db.discount.findUnique({ where: { id } });
   if (!existing) throw new DiscountNotFoundForAdminError(id);
+
+  // F-038: validate the record as it will exist AFTER this patch, not just
+  // the fields the caller happened to send.
+  const merged = {
+    type: input.type ?? existing.type,
+    value: input.value ?? Number(existing.value),
+    startsAt: input.startsAt !== undefined ? input.startsAt : existing.startsAt,
+    endsAt: input.endsAt !== undefined ? input.endsAt : existing.endsAt,
+  };
+  const issues: { path: (string | number)[]; message: string }[] = [];
+  validateDiscountRules(merged, (issue) => issues.push(issue));
+  if (issues.length > 0) throw new DiscountValidationError(issues);
 
   const data: Prisma.DiscountUpdateInput = {};
   if (input.code !== undefined) data.code = normalizeDiscountCode(input.code);

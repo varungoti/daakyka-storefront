@@ -75,8 +75,16 @@ export default async function AdminDiscountsPage() {
                   {discount.maxRedemptionsPerCustomer != null ? ` (max ${discount.maxRedemptionsPerCustomer}/customer)` : ""}
                 </td>
                 <td className="px-4 py-3 text-muted">
-                  {discount.startsAt ? new Date(discount.startsAt).toLocaleDateString("en-IN") : "Any time"}
-                  {discount.endsAt ? ` – ${new Date(discount.endsAt).toLocaleDateString("en-IN")}` : ""}
+                  {/* F-038: explicit timeZone — without it this renders in
+                      the server's local zone (UTC on Vercel), which is a
+                      day off from the IST calendar day discountSchema now
+                      stores startsAt/endsAt boundaries at. */}
+                  {discount.startsAt
+                    ? new Date(discount.startsAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })
+                    : "Any time"}
+                  {discount.endsAt
+                    ? ` – ${new Date(discount.endsAt).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata" })}`
+                    : ""}
                 </td>
                 <td className="px-4 py-3">
                   <DiscountToggle id={discount.id} active={discount.active} />

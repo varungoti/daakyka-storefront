@@ -213,12 +213,15 @@ export function CartDrawer() {
                             </p>
                           )}
                           <div className="mt-auto flex items-center justify-between pt-3">
+                            {/* F-240: the steppers measured 22x22 — the pill
+                                keeps its visual size, but each button is now
+                                a 32px hit area (`grid h-8 w-8`). */}
                             {!isUnavailable && (
-                              <div className="flex items-center gap-2 rounded-full border border-border px-2 py-1">
+                              <div className="flex items-center gap-2 rounded-full border border-border px-1 py-0.5">
                                 <button
                                   type="button"
                                   aria-label="Decrease quantity"
-                                  className="rounded-full p-1 hover:bg-lilac/50"
+                                  className="grid h-8 w-8 place-items-center rounded-full hover:bg-lilac/50"
                                   onClick={() =>
                                     line.quantity > 1
                                       ? updateQuantity(line.id, line.quantity - 1)
@@ -234,7 +237,7 @@ export function CartDrawer() {
                                 <button
                                   type="button"
                                   aria-label="Increase quantity"
-                                  className="rounded-full p-1 hover:bg-lilac/50 disabled:cursor-not-allowed disabled:opacity-40"
+                                  className="grid h-8 w-8 place-items-center rounded-full hover:bg-lilac/50 disabled:cursor-not-allowed disabled:opacity-40"
                                   onClick={() =>
                                     updateQuantity(line.id, line.quantity + 1)
                                   }
@@ -247,7 +250,7 @@ export function CartDrawer() {
                             <button
                               type="button"
                               onClick={() => removeLine(line.id)}
-                              className="text-xs font-semibold text-muted hover:text-brand"
+                              className="min-h-8 px-2 text-xs font-semibold text-muted hover:text-brand"
                               disabled={isLoading}
                             >
                               Remove

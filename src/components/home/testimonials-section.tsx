@@ -45,12 +45,15 @@ export function TestimonialsSection({ testimonials }: TestimonialsSectionProps) 
             <p className="mt-4 text-lg leading-relaxed text-ink md:text-xl">
               &ldquo;{featured.quote}&rdquo;
             </p>
-            <div className="mt-8 flex items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <div className="relative h-14 w-14 overflow-hidden rounded-full ring-2 ring-brand/20">
+            {/* F-011: `flex-wrap` + `min-w-0` — at 320px this row's two
+                unshrinkable children (name/title block, star rating) ran a
+                few px past the viewport with nowhere to wrap. */}
+            <div className="mt-8 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-4">
+                <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-full ring-2 ring-brand/20">
                   <TestimonialAvatar avatar={featured.avatar} name={featured.name} sizePx={56} />
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="font-display font-bold text-ink">{featured.name}</p>
                   <p className="text-sm text-muted">{featured.title}</p>
                 </div>
@@ -65,12 +68,14 @@ export function TestimonialsSection({ testimonials }: TestimonialsSectionProps) 
             <SectionHeading eyebrow="Community" title="Voices of Our Community" className="mb-8" />
             <div className="hover:border-brand hover:shadow-sm transition-colors relative rounded-[2rem] border border-border bg-surface p-8 shadow-sm">
               <p className="text-lg leading-relaxed text-ink md:text-xl">&ldquo;{current.quote}&rdquo;</p>
-              <div className="mt-6 flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="relative h-11 w-11 overflow-hidden rounded-full">
+              {/* F-011: same `flex-wrap` + `min-w-0` fix as the featured
+                  quote above. */}
+              <div className="mt-6 flex flex-wrap items-center justify-between gap-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-full">
                     <TestimonialAvatar avatar={current.avatar} name={current.name} sizePx={44} />
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="font-semibold text-ink">{current.name}</p>
                     <p className="text-sm text-muted">{current.title}</p>
                   </div>

@@ -116,8 +116,8 @@ in one run instead of clicking through each one. Run it with:
 npm run images:generate -- [--dry-run] [--only=slots|products|categories] [--limit=N] [--yes]
 ```
 
-- **What it fills in**: every manifest slot from `src/data/media/image-manifest.ts` without a
-  `MediaAsset`, every `Category` missing an image, and every `Product` with zero `ProductImage`
+- **What it fills in**: every AI-eligible manifest slot from `src/data/media/image-manifest.ts` without a
+  `MediaAsset` (never `uploadOnly` portraits, real process photos, or client logos), every `Category` missing an image, and every `Product` with zero `ProductImage`
   rows (one image per distinct colour, capped at `MAX_COLORS_PER_PRODUCT` = 3, to bound cost on
   products with long colourways).
 - **`--dry-run`**: lists every job (slot/product/category and the exact prompt it would use) and

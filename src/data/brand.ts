@@ -35,28 +35,28 @@ export const brand = {
       title: "Hospital Linens & Scrubs",
       description:
         "Hygienic, durable bedsheets, pillow covers, patient gowns, scrubs, aprons, and staff uniforms for demanding healthcare environments.",
-      href: "/shop",
+      href: "/for-hospitals",
       icon: "healthcare",
     },
     {
       title: "School Uniforms",
       description:
         "Smart, comfortable tunics, shirts, trousers, skirts, and pinafores reflecting institutional pride.",
-      href: "/bulk-orders",
+      href: "/school-uniforms",
       icon: "school",
     },
     {
       title: "Sports Uniforms",
       description:
         "High-performance jerseys, shorts, tracksuits, and team kits with breathable fabrics for movement and durability.",
-      href: "/bulk-orders",
+      href: "/category/sports-teams",
       icon: "sports",
     },
     {
       title: "Executive & Corporate Wear",
       description:
         "Sophisticated shirts, trousers, skirts, and jackets that enhance professional brand image.",
-      href: "/bulk-orders",
+      href: "/category/corporate-uniforms",
       icon: "corporate",
     },
     {

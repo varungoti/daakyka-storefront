@@ -850,8 +850,14 @@ export async function addProductImage(
   return image;
 }
 
-export async function removeProductImage(imageId: string, userId: string): Promise<void> {
-  const image = await db.productImage.findUnique({ where: { id: imageId }, include: { product: { select: { slug: true } } } });
+// F-194 fix: all three helpers below used to look the image up by imageId
+// alone, so a request to /products/{A}/images/{imageOfB} silently edited or
+// removed product B's image (and revalidated B) while the URL claimed to
+// be acting on A. They now require the caller's productId to match the
+// image's actual productId, mirroring reorderProductImages below (which
+// was already scoped this way).
+export async function removeProductImage(productId: string, imageId: string, userId: string): Promise<void> {
+  const image = await db.productImage.findFirst({ where: { id: imageId, productId }, include: { product: { select: { slug: true } } } });
   if (!image) throw new ProductImageNotFoundError(imageId);
 
   await db.productImage.delete({ where: { id: imageId } });
@@ -860,8 +866,8 @@ export async function removeProductImage(imageId: string, userId: string): Promi
   revalidateProduct(image.product.slug);
 }
 
-export async function setImageColor(imageId: string, color: string | null, userId: string) {
-  const image = await db.productImage.findUnique({ where: { id: imageId }, include: { product: { select: { slug: true } } } });
+export async function setImageColor(productId: string, imageId: string, color: string | null, userId: string) {
+  const image = await db.productImage.findFirst({ where: { id: imageId, productId }, include: { product: { select: { slug: true } } } });
   if (!image) throw new ProductImageNotFoundError(imageId);
 
   const updated = await db.productImage.update({ where: { id: imageId }, data: { color }, include: { media: true } });
@@ -871,8 +877,8 @@ export async function setImageColor(imageId: string, color: string | null, userI
   return updated;
 }
 
-export async function updateImageAlt(imageId: string, alt: string | null, userId: string) {
-  const image = await db.productImage.findUnique({ where: { id: imageId }, include: { product: { select: { slug: true } } } });
+export async function updateImageAlt(productId: string, imageId: string, alt: string | null, userId: string) {
+  const image = await db.productImage.findFirst({ where: { id: imageId, productId }, include: { product: { select: { slug: true } } } });
   if (!image) throw new ProductImageNotFoundError(imageId);
 
   const updated = await db.productImage.update({ where: { id: imageId }, data: { alt }, include: { media: true } });
@@ -896,8 +902,12 @@ export async function reorderProductImages(productId: string, imageId: string, d
   });
 
   const index = siblings.findIndex((s) => s.id === imageId);
+  // F-194: the image isn't on this product at all (a mismatched
+  // productId/imageId pair) — a real not-found, distinct from the
+  // legitimate no-op below when the image is already first/last.
+  if (index === -1) throw new ProductImageNotFoundError(imageId);
   const swapIndex = direction === "up" ? index - 1 : index + 1;
-  if (index === -1 || swapIndex < 0 || swapIndex >= siblings.length) return false;
+  if (swapIndex < 0 || swapIndex >= siblings.length) return false;
 
   const self = siblings[index];
   const other = siblings[swapIndex];

@@ -4,7 +4,32 @@ import { hashOrderAccessToken, verifyOrderLinkSignature } from "@/lib/orders/acc
 import { checkRateLimit } from "@/lib/security/rate-limit";
 import { safeEquals } from "@/lib/security/timing-safe-equal";
 
-const ORDER_WITH_ITEMS = { items: { orderBy: { createdAt: "asc" } } } satisfies Prisma.OrderInclude;
+const ORDER_WITH_ITEMS = {
+  items: {
+    orderBy: { createdAt: "asc" },
+    // F-300 fix: resolves whether (and where) an item's "view product" /
+    // "buy again" / "write a review" actions on the account order page
+    // should point — the historical productName/sku/unitPrice snapshot on
+    // OrderItem itself is untouched, this is only used to decide whether a
+    // still-existing, still-active product/variant can be linked or
+    // re-added to the cart. `variantId` (and so `variant`) is null for an
+    // order whose variant was later deleted (SetNull) — those items just
+    // render with no link/CTA, same as any other "product no longer
+    // exists" case elsewhere in this codebase.
+    include: {
+      variant: {
+        select: {
+          id: true,
+          active: true,
+          stock: true,
+          price: true,
+          productId: true,
+          product: { select: { slug: true, status: true, price: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.OrderInclude;
 
 export type OrderWithItems = Prisma.OrderGetPayload<{ include: typeof ORDER_WITH_ITEMS }>;
 

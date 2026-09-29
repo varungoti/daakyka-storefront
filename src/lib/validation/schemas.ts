@@ -75,7 +75,13 @@ export const shippingAddressSchema = z.object({
   city: z.string().trim().min(2, "City is required").max(100),
   state: z.string().trim().min(2, "State is required").max(100),
   pincode: indianPincodeField(),
-  country: z.string().trim().length(2, "Country must be a 2-letter code").default("IN"),
+  // F-128: was `z.string().trim().length(2, ...)`, which accepted ANY
+  // 2-letter code — the checkout UI hard-codes India, but a crafted
+  // request could set e.g. "US" and still get charged the domestic flat
+  // shipping rate. The store only ships within India today, so this is
+  // the India-only checkout schema; loosen it if/when international
+  // shipping is actually priced and supported.
+  country: z.literal("IN", { message: "We currently ship within India only" }).default("IN"),
 });
 
 export type ShippingAddressInput = z.infer<typeof shippingAddressSchema>;
@@ -173,16 +179,54 @@ export const loginSchema = z.object({
   password: z.string().min(8).max(200),
 });
 
+// F-216/F-213: mirrors avatarImageSchema above — a same-origin root-relative
+// path (a `/cdn/...` Media Library asset, or a static path like
+// `/placeholder-scene.svg`, which is what Hermes-created drafts use as a
+// stand-in image — see approval-executor.ts) or an https URL on an
+// allowed host. `z.string().url()` used to reject every relative form
+// outright, which is everything MediaLibraryBrowser (or the Hermes
+// executor) actually returns here.
+const blogImageSchema = z
+  .string()
+  .trim()
+  .min(1, "Image is required")
+  .max(2048)
+  .refine(
+    (value) => (value.startsWith("/") && !value.startsWith("//") && !value.includes("..")) || isTrustedImageUrl(value),
+    "Use a Media Library image, a root-relative path, or an https image URL from an allowed host",
+  );
+
 export const blogPostSchema = z.object({
-  slug: z.string().min(2),
-  title: z.string().min(4),
-  excerpt: z.string().min(10),
-  category: z.string().min(2),
-  author: z.string().min(2),
-  publishedAt: z.string(),
-  readTime: z.string().min(2),
-  image: z.string().url(),
-  content: z.array(z.string().min(1)).min(1),
+  // F-216: was `z.string().min(2)` — a slug with spaces/capitals (e.g.
+  // "Audit Blog 123") saved and could even publish, but /blog/<that slug>
+  // 404s (the public route matches on the exact, unencoded path segment),
+  // so /blog linked to a page that didn't exist. Auto-lowercased and
+  // hyphen-only, the same shape category/product slugs already enforce
+  // (see segmentSchema's identical regex further down).
+  slug: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .min(2, "Slug must be at least 2 characters")
+    .max(120)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers and hyphens only"),
+  title: z.string().trim().min(4).max(200),
+  excerpt: z.string().trim().min(10).max(500),
+  category: z.string().trim().min(2).max(80),
+  author: z.string().trim().min(2).max(120),
+  // F-216: was a bare `z.string()` — any text, including "25/09/2026" (what
+  // an Indian admin types by habit), reached `new Date(...)` in the route
+  // as an Invalid Date and crashed the write with an unhandled 500. Must
+  // match the `<input type="date">` shape (see blog-post-editor.tsx) that
+  // parseIstDateOnly (src/app/api/admin/blog/route.ts) expects.
+  publishedAt: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Use a valid date (YYYY-MM-DD)")
+    .refine((value) => !Number.isNaN(Date.parse(value)), { message: "Invalid date" }),
+  readTime: z.string().trim().min(2).max(40),
+  image: blogImageSchema,
+  content: z.array(z.string().trim().min(1).max(5000)).min(1).max(200),
   status: z.enum(["DRAFT", "PUBLISHED"]),
 });
 
@@ -430,7 +474,10 @@ export const customerProfileUpdateSchema = z
     path: ["currentPassword"],
   });
 
-export const customerAddressSchema = z.object({
+// F-135: kept WITHOUT any `.default()` — see customerAddressUpdateSchema's
+// doc comment below for why. customerAddressSchema (the create schema)
+// re-adds the defaults on top of this same shape.
+const customerAddressBaseSchema = z.object({
   label: z.string().trim().max(60).optional(),
   // F-134: who the shipment is addressed to — nullable/optional so
   // existing rows (and any write path that doesn't send it) are
@@ -441,12 +488,34 @@ export const customerAddressSchema = z.object({
   city: z.string().trim().min(2, "City is required").max(100),
   state: z.string().trim().min(2, "State is required").max(100),
   postalCode: indianPincodeField(),
-  country: z.string().trim().min(2).max(2).default("IN"),
+  // F-128: was `z.string().trim().min(2).max(2)`, which accepted any
+  // 2-letter code even though postalCode/phone above are already
+  // India-only validated. Matches shippingAddressSchema's identical
+  // restriction.
+  country: z.literal("IN", { message: "We currently ship within India only" }),
   phone: customerPhoneSchema.optional(),
+  isDefault: z.boolean().optional(),
+});
+
+export const customerAddressSchema = customerAddressBaseSchema.extend({
+  country: customerAddressBaseSchema.shape.country.default("IN"),
   isDefault: z.boolean().optional().default(false),
 });
 
-export const customerAddressUpdateSchema = customerAddressSchema.partial();
+// F-135 fix: this used to be `customerAddressSchema.partial()`. In Zod
+// 4.4.3, `.partial()` still applies each field's own `.default()` even
+// when the caller's input omits that key entirely — confirmed directly:
+// `z.object({ country: z.string().default("IN") }).partial().parse({})`
+// returns `{ country: "IN" }`, not `{}`. So a PATCH sending only
+// `{ label: "x" }` parsed to `{ label: "x", country: "IN", isDefault:
+// false }`, and the route (addresses/[id]/route.ts) spread that straight
+// into `db.customerAddress.update({ data: parsed.data })` — silently
+// clearing `isDefault` and resetting `country` on every partial update.
+// Building the update schema from customerAddressBaseSchema (no
+// `.default()` anywhere in it) instead means an omitted field parses to
+// `undefined` and is left off the update entirely, so only the fields the
+// caller actually sent are touched.
+export const customerAddressUpdateSchema = customerAddressBaseSchema.partial();
 
 // Phase D2: reviews. Bounds mirror the length-bound style used above
 // (customerNameSchema, shippingAddressSchema, etc) — title 4-120, body
@@ -636,6 +705,43 @@ export const homepageSectionSchemas = {
   "trust-stats": trustStatsContentSchema,
 } satisfies Record<HomepageSectionKey, z.ZodTypeAny>;
 
+// F-038: a bare "YYYY-MM-DD" (what the admin date-picker inputs send)
+// parsed by z.coerce.date() lands at UTC midnight, i.e. 05:30 IST — so a
+// code advertised "valid until 25 Sep" actually expired at 05:30 IST that
+// SAME morning (assertDiscountUsable treats endsAt <= now as expired), and
+// "valid from" likewise started 5.5 hours late. Store owners and shoppers
+// are IST; a date-only boundary should mean the whole IST calendar day.
+// Preprocessing here means every caller (admin UI, any future API client)
+// gets this, not just one form. A full ISO timestamp (already carrying its
+// own offset) passes through unchanged.
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const istStartOfDay = z.preprocess(
+  (value) => (typeof value === "string" && DATE_ONLY_PATTERN.test(value) ? new Date(`${value}T00:00:00+05:30`) : value),
+  z.coerce.date(),
+);
+const istEndOfDay = z.preprocess(
+  (value) => (typeof value === "string" && DATE_ONLY_PATTERN.test(value) ? new Date(`${value}T23:59:59.999+05:30`) : value),
+  z.coerce.date(),
+);
+
+// F-038: shared by discountSchema's superRefine below AND updateDiscount
+// (src/lib/discounts/index.ts), which runs it again against the record
+// MERGED with the existing row — a PATCH sending only `{ value: 500 }` on
+// an existing PERCENTAGE code, or only `{ endsAt }` on a code whose
+// startsAt is already in the future, must be caught too, not just a
+// create that sends every field at once.
+export function validateDiscountRules(
+  discount: { type?: "PERCENTAGE" | "FIXED"; value?: number; startsAt?: Date | null; endsAt?: Date | null },
+  addIssue: (issue: { path: (string | number)[]; message: string }) => void,
+): void {
+  if (discount.type === "PERCENTAGE" && discount.value !== undefined && discount.value > 100) {
+    addIssue({ path: ["value"], message: "Percentage can't exceed 100" });
+  }
+  if (discount.startsAt && discount.endsAt && discount.endsAt.getTime() <= discount.startsAt.getTime()) {
+    addIssue({ path: ["endsAt"], message: "End date must be after the start date" });
+  }
+}
+
 // Release-hardening F7: admin discount-code CRUD
 // (POST/PATCH /api/admin/discounts). `minSubtotal`/`maxRedemptions`/
 // `maxRedemptionsPerCustomer`/`startsAt`/`endsAt` are all `.nullable()` (as
@@ -643,7 +749,13 @@ export const homepageSectionSchemas = {
 // clear a previously-set cap/window, matching the distinction
 // src/lib/discounts/index.ts's updateDiscount draws between "omitted, leave
 // alone" (undefined) and "explicitly cleared" (null).
-export const discountSchema = z.object({
+//
+// F-038: kept WITHOUT the cross-field superRefine below — Zod 4 refuses
+// `.partial()` on an object schema that already carries a refinement
+// ("`.partial()` cannot be used on object schemas containing
+// refinements"). discountUpdateSchema is built from this unrefined base;
+// discountSchema (the create schema) adds the refinement on top.
+const discountBaseSchema = z.object({
   code: z
     .string()
     .trim()
@@ -655,12 +767,19 @@ export const discountSchema = z.object({
   minSubtotal: z.number().min(0).max(10_000_000).nullable().optional(),
   maxRedemptions: z.number().int().positive("Must be at least 1").max(1_000_000).nullable().optional(),
   maxRedemptionsPerCustomer: z.number().int().positive("Must be at least 1").max(1_000).nullable().optional(),
-  startsAt: z.coerce.date().nullable().optional(),
-  endsAt: z.coerce.date().nullable().optional(),
+  startsAt: istStartOfDay.nullable().optional(),
+  endsAt: istEndOfDay.nullable().optional(),
   active: z.boolean().optional(),
 });
 
-export const discountUpdateSchema = discountSchema.partial();
+// F-038: percentages over 100% (free merchandise on a typo) and an end
+// date at or before the start date (a code that can never be redeemed)
+// used to save without complaint.
+export const discountSchema = discountBaseSchema.superRefine((discount, ctx) => {
+  validateDiscountRules(discount, (issue) => ctx.addIssue({ code: z.ZodIssueCode.custom, ...issue }));
+});
+
+export const discountUpdateSchema = discountBaseSchema.partial();
 
 export type DiscountInput = z.infer<typeof discountSchema>;
 export type DiscountUpdateInput = z.infer<typeof discountUpdateSchema>;

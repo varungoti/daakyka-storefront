@@ -1,13 +1,20 @@
 import { collectionPages } from "@/data/seo-landing-pages";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { canonicalPath } from "@/lib/seo/canonical";
+import { baseOpenGraph } from "@/lib/seo/json-ld";
 import { ArrowRight } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 
+// release-hardening F-147/F-151: this used to be only {title, description},
+// so /collections inherited the root layout's canonical (the homepage) and
+// its og:title/og:url, despite being listed as its own URL in sitemap.ts.
 export const metadata: Metadata = {
   title: "Collections",
   description: "Browse DAAKYKA collections, starting with our current featured picks.",
+  alternates: { canonical: canonicalPath("/collections") },
+  openGraph: baseOpenGraph("/collections"),
 };
 
 export default function CollectionsPage() {

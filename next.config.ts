@@ -5,6 +5,20 @@ import { getTrustedImageHosts } from "./src/lib/security/image-hosts";
 
 validateEnv();
 
+// release-hardening F-156: fabricSeoRedirects' own `destination` values
+// point at /fabric-technology/<slug> detail pages, which 404 while Fabric
+// Technology stays disabled behind the `fabricTech` Site Controls flag
+// (src/app/fabric-technology/[slug]/page.tsx calls notFound() when it's
+// off) — permanently redirecting a legacy SEO URL straight into a 404
+// wastes whatever link equity it had. `redirects()` below is resolved once
+// (build/startup), so it can't read that runtime, DB-backed flag to decide
+// conditionally; instead, send these legacy URLs to a page that's live
+// either way — the matching /guides article when one exists, /shop
+// otherwise — regardless of the flag.
+const FABRIC_SEO_FALLBACK_DESTINATIONS: Record<string, string> = {
+  "/4-way-stretch-scrubs": "/guides/what-is-4-way-stretch-fabric",
+};
+
 // A pragmatic CSP, not the fully strict nonce-based one: this app
 // relies on inline style="" attributes throughout (dynamic tint
 // colors, etc.) and next/font injects an inline <style> block for
@@ -114,7 +128,7 @@ const nextConfig: NextConfig = {
         })),
       ...fabricSeoRedirects.map((redirect) => ({
         source: redirect.path,
-        destination: redirect.destination,
+        destination: FABRIC_SEO_FALLBACK_DESTINATIONS[redirect.path] ?? "/shop",
         permanent: true,
       })),
     ];

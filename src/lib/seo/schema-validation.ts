@@ -42,8 +42,16 @@ export function validateJsonLdObject(data: Record<string, unknown>): SchemaValid
     case "Product": {
       requireString(data, "name", issues);
       const offers = data.offers as Record<string, unknown> | undefined;
-      if (!offers || offers["@type"] !== "Offer") {
+      // release-hardening F-110: productJsonLd emits an AggregateOffer
+      // (lowPrice/highPrice) instead of a single Offer (price) when a
+      // product's variants price differently from its base price.
+      if (!offers || (offers["@type"] !== "Offer" && offers["@type"] !== "AggregateOffer")) {
         issues.push('Product missing valid "offers" object');
+      } else if (offers["@type"] === "AggregateOffer") {
+        if (typeof offers.lowPrice !== "number" || typeof offers.highPrice !== "number") {
+          issues.push("AggregateOffer missing numeric lowPrice/highPrice");
+        }
+        requireString(offers, "priceCurrency", issues);
       } else {
         if (typeof offers.price !== "number") issues.push("Offer missing numeric price");
         requireString(offers, "priceCurrency", issues);

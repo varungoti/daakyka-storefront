@@ -79,6 +79,13 @@ export const orderStatusValues = [
   "DELIVERED",
   "CANCELLED",
   "REFUNDED",
+  // F-199 fix: RETURNED is now a reachable status (see
+  // status-transitions.ts's ORDER_STATUS_TRANSITIONS) — omitting it here
+  // used to mean orderUpdateSchema's `z.enum(orderStatusValues)` rejected
+  // it outright, the admin orders list/export filters couldn't select it,
+  // and getOrderHistory's asOrderStatus guard silently dropped it from a
+  // RETURNED transition's audit row.
+  "RETURNED",
 ] as const satisfies readonly OrderStatus[];
 
 export const paymentMethodValues = ["RAZORPAY", "ORDER_REQUEST"] as const satisfies readonly PaymentMethod[];
@@ -126,6 +133,22 @@ export class RefundAcknowledgementRequiredError extends Error {
       "This only changes the order status — it does NOT refund the customer. Refund the payment in Razorpay first, then confirm.",
     );
     this.name = "RefundAcknowledgementRequiredError";
+  }
+}
+
+/**
+ * F-199 fix: PROCESSING -> PAID exists so an admin can record that an
+ * ORDER_REQUEST order (UPI/bank transfer/COD — no online payment step) has
+ * actually been paid — see status-transitions.ts's ORDER_STATUS_TRANSITIONS
+ * comment on that edge. A RAZORPAY order only ever reaches PROCESSING by
+ * having already passed through PAID (razorpayPaymentId already set), so
+ * "marking" one paid again from PROCESSING wouldn't record a payment —
+ * it would just re-stamp paidAt for one that already happened.
+ */
+export class OrderRequestPaymentOnlyError extends Error {
+  constructor() {
+    super("Only an unpaid order-request can be marked paid from Processing.");
+    this.name = "OrderRequestPaymentOnlyError";
   }
 }
 
@@ -533,6 +556,13 @@ export interface AdminOrderDetail {
   courier: string | null;
   notes: string | null;
   adminNotes: string | null;
+  /** F-199 fix: when this order was actually recorded as paid (RAZORPAY's
+   * verify/webhook, or an admin's manual PENDING_PAYMENT/PROCESSING ->
+   * PAID) — the one real fact that distinguishes "this order-request was
+   * never paid" from "it was paid, then moved on" once its `status` is no
+   * longer PAID itself. See the "unpaid order request" note on the admin
+   * order detail page. */
+  paidAt: Date | null;
   items: AdminOrderItemView[];
   createdAt: Date;
   updatedAt: Date;
@@ -570,6 +600,7 @@ export function serializeOrderDetail(row: OrderDetailRow): AdminOrderDetail {
     courier: row.courier,
     notes: row.notes,
     adminNotes: row.adminNotes,
+    paidAt: row.paidAt,
     items: row.items.map((item) => ({
       id: item.id,
       productName: item.productName,
@@ -749,6 +780,15 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
       }
     }
 
+    // F-199 fix: PROCESSING -> PAID exists to record an ORDER_REQUEST
+    // order's payment — see OrderRequestPaymentOnlyError's doc comment. A
+    // RAZORPAY order reaches PROCESSING only by already having passed
+    // through PAID, so this edge has nothing to do for one.
+    if (existing.status === "PROCESSING" && input.status === "PAID" &&
+        (existing.paymentMethod !== "ORDER_REQUEST" || existing.paidAt !== null)) {
+      throw new OrderRequestPaymentOnlyError();
+    }
+
     // F-282 fix: a paid Razorpay order's status has no effect on the
     // customer's money — see RefundAcknowledgementRequiredError's doc
     // comment. Gate this before anything else runs.
@@ -763,17 +803,25 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
 
     data.status = input.status;
     // F-334: record when this step was actually reached, so the
-    // customer-facing timeline (wave-4's order-status-workflow-and-
-    // timeline package) has a real date to render instead of none at all.
+    // customer-facing timeline (src/lib/orders/timeline.ts) has a real
+    // date to render instead of none at all.
     const timestampField = orderStatusTimestampField(input.status);
     if (timestampField) {
       data[timestampField] = new Date();
     }
 
+    // Only unshipped cancellations/refunds release reserved stock. Returned
+    // goods stay outside sellable inventory until they have been inspected;
+    // a refund by itself does not establish that they can be sold again.
     const stockCommitted =
-      existing.paymentMethod === "ORDER_REQUEST" ||
-      (existing.paymentMethod === "RAZORPAY" && (existing.status === "PAID" || existing.status === "PROCESSING"));
-    if ((input.status === "CANCELLED" || input.status === "REFUNDED") && stockCommitted) {
+      (existing.paymentMethod === "ORDER_REQUEST" && existing.status === "PROCESSING") ||
+      (existing.paymentMethod === "RAZORPAY" &&
+        (existing.status === "PAID" ||
+          existing.status === "PROCESSING"));
+    if (
+      (input.status === "CANCELLED" || input.status === "REFUNDED") &&
+      stockCommitted
+    ) {
       restockItems = existing.items
         .filter((item): item is typeof item & { variantId: string } => item.variantId !== null)
         .map((item) => ({ variantId: item.variantId, quantity: item.quantity }));

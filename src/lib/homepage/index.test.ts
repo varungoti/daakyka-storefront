@@ -1,15 +1,70 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { HOMEPAGE_CACHE_TAG, legacyHeroToSlide, revalidateHomepageCache } from "@/lib/homepage/index";
-import type { HeroContent } from "@/lib/homepage/index";
+import {
+  HOMEPAGE_CACHE_TAG,
+  legacyHeroToSlide,
+  revalidateHomepageCache,
+  validateHomepageSectionContent,
+} from "@/lib/homepage/index";
+import type { HeroContent, HeroSlidesContent } from "@/lib/homepage/index";
+
+describe("validateHomepageSectionContent", () => {
+  // F-370: a HomepageSection row written outside the validated PUT route
+  // (migration, manual SQL, import script, incident-response surgery) can
+  // be valid JSON but the wrong shape. The read path used to trust it with
+  // a blind `as T` cast, which crashed both the public hero and the only
+  // admin UI that could fix it. This is the exact malformed fixture from
+  // the finding's live repro.
+  const malformedHeroSlides = {
+    slides: [{ id: "audit-bad", enabled: true }],
+    autoAdvanceMs: 6000,
+  };
+  const fallback: HeroSlidesContent = { slides: [], autoAdvanceMs: 6000 };
+
+  it("falls back to the default when the stored content fails schema validation", () => {
+    const result = validateHomepageSectionContent("hero-slides", malformedHeroSlides, fallback);
+    assert.deepEqual(result, fallback);
+  });
+
+  it("returns the parsed content unchanged when it matches the schema", () => {
+    const valid: HeroSlidesContent = {
+      slides: [
+        {
+          id: "s1",
+          enabled: true,
+          eyebrow: "Eyebrow",
+          headline: "Headline",
+          subheadline: "Subheadline",
+          description: "Description",
+          primaryCta: { label: "Shop", href: "/shop" },
+          secondaryCta: { label: "Learn", href: "/learn" },
+          image: null,
+          secondaryImage: null,
+        },
+      ],
+      autoAdvanceMs: 6000,
+    };
+    const result = validateHomepageSectionContent("hero-slides", valid, fallback);
+    assert.deepEqual(result, valid);
+  });
+
+  it("does not throw and does not mutate the fallback reference", () => {
+    const result = validateHomepageSectionContent("hero-slides", malformedHeroSlides, fallback);
+    assert.notEqual(result, malformedHeroSlides);
+    assert.deepEqual(fallback, { slides: [], autoAdvanceMs: 6000 });
+  });
+});
 
 describe("revalidateHomepageCache", () => {
-  it("invokes the revalidate function with the homepage tag and the 'max' profile", () => {
-    const calls: Array<[string, string]> = [];
+  it("invokes the revalidate function with the homepage tag and an immediate ({ expire: 0 }) profile", () => {
+    // F-214 fix: "max" is stale-while-revalidate, so the owner's first
+    // reload after Save still showed the old content. { expire: 0 } forces
+    // the next read to be fresh.
+    const calls: Array<[string, string | { expire?: number }]> = [];
     revalidateHomepageCache((tag, profile) => {
       calls.push([tag, profile]);
     });
-    assert.deepEqual(calls, [[HOMEPAGE_CACHE_TAG, "max"]]);
+    assert.deepEqual(calls, [[HOMEPAGE_CACHE_TAG, { expire: 0 }]]);
   });
 
   it("swallows an error thrown by the revalidate function instead of throwing", () => {

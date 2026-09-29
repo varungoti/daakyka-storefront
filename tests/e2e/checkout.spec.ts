@@ -27,7 +27,7 @@ async function addFirstProductToCart(page: import("@playwright/test").Page) {
 async function fillValidCheckoutDetails(page: import("@playwright/test").Page) {
   await page.getByLabel("Full name").fill("Audit Tester");
   await page.getByLabel("Phone").fill("9876543210");
-  await page.getByLabel("Email").fill(`checkout-e2e-${Date.now()}@example.com`);
+  await page.getByRole("textbox", { name: "Email", exact: true }).fill(`checkout-e2e-${Date.now()}@example.com`);
   await page.getByLabel("Address line 1").fill("221B Test Street");
   await page.getByLabel("City").fill("Hyderabad");
   await page.getByLabel("State").selectOption("Telangana");
@@ -72,7 +72,7 @@ test.describe("Checkout page UX (release-hardening)", () => {
 
     await expect(phoneInput).toBeFocused();
     await expect(phoneInput).toBeInViewport();
-    await expect(page.getByRole("alert")).toBeInViewport();
+    await expect(page.getByRole("alert").filter({ hasText: "Please fix the highlighted" })).toBeInViewport();
   });
 
   // F-115/F-116: the page must show the same Shipping/Total the server

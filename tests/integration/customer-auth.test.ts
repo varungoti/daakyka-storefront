@@ -566,6 +566,43 @@ describe("customer accounts (Phase D1)", () => {
       });
       assert.equal(tokenCount, 1);
     });
+
+    // F-139: forgot-password used to be throttled only per IP (5/min), so
+    // one IP — or several acting together — could flood a single victim's
+    // inbox with reset emails. Mirrors resend-verification's own per-
+    // account throttle test below. The response must stay the identical
+    // GENERIC_RESPONSE even once the limit is hit — a distinct status or
+    // body would itself leak that the account exists and is being
+    // throttled.
+    it("caps reset emails for one account regardless of how many requests it gets", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const email = `forgot-throttle-${unique}@example.com`;
+      const customer = await db.customer.create({
+        data: { email, name: "Forgot Throttle Test", passwordHash: await hashPassword("password123") },
+      });
+      createdCustomerIds.push(customer.id);
+
+      const bodies: unknown[] = [];
+      const statuses: number[] = [];
+      for (let attempt = 1; attempt <= 4; attempt += 1) {
+        const response = await postForgotPassword(
+          jsonRequest("http://localhost/api/account/forgot-password", "POST", { email }),
+        );
+        statuses.push(response.status);
+        bodies.push(await response.json());
+      }
+
+      assert.ok(statuses.every((status) => status === 200), `expected every response to be 200, got ${statuses}`);
+      assert.ok(
+        bodies.every((body) => JSON.stringify(body) === JSON.stringify(bodies[0])),
+        "every response body must be identical, including once the per-account limit is hit",
+      );
+
+      const tokenCount = await db.customerToken.count({
+        where: { customerId: customer.id, type: "RESET" },
+      });
+      assert.equal(tokenCount, 3, `expected only the first 3 requests to issue a token, got ${tokenCount}`);
+    });
   });
 
   describe("invalidateOutstandingTokens (F3)", () => {
@@ -751,6 +788,90 @@ describe("customer accounts (Phase D1)", () => {
         }),
       );
       assert.equal(second.status, 400);
+    });
+
+    // F-133: forgot-password deliberately allows several outstanding RESET
+    // tokens at once (see tokens.ts's invalidateOutstandingTokens doc
+    // comment), but a *successful* reset must revoke every other one —
+    // otherwise an older reset link emailed earlier kept working after the
+    // account's password had already changed.
+    it("revokes every other outstanding RESET token once a reset succeeds", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: {
+          email: `reset-revoke-${unique}@example.com`,
+          name: "Reset Revoke Test",
+          passwordHash: await hashPassword("old-password-123"),
+        },
+      });
+      createdCustomerIds.push(customer.id);
+
+      const first = await issueCustomerToken(customer.id, "RESET");
+      const second = await issueCustomerToken(customer.id, "RESET");
+
+      const firstResponse = await postResetPassword(
+        jsonRequest("http://localhost/api/account/reset-password", "POST", {
+          token: first.raw,
+          newPassword: "new-password-456",
+        }),
+      );
+      assert.equal(firstResponse.status, 200);
+
+      const secondResponse = await postResetPassword(
+        jsonRequest("http://localhost/api/account/reset-password", "POST", {
+          token: second.raw,
+          newPassword: "yet-another-password-789",
+        }),
+      );
+      assert.equal(
+        secondResponse.status,
+        400,
+        "a second outstanding reset link must stop working once an earlier one has succeeded",
+      );
+
+      const updated = await db.customer.findUnique({ where: { id: customer.id } });
+      assert.equal(
+        await verifyPassword("new-password-456", updated!.passwordHash),
+        true,
+        "the password from the first (successful) reset must be the one that stuck",
+      );
+    });
+
+    // F-133: consumeCustomerToken was a read-only pre-check, and the actual
+    // claim (markTokenUsed) happened only after the password update — a
+    // window where several concurrent requests presenting the SAME token
+    // could all pass the check. claimCustomerToken's atomic
+    // `updateMany({ usedAt: null, ... })` inside the transaction closes it.
+    it("lets exactly one of several concurrent requests with the same token succeed", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: {
+          email: `reset-race-${unique}@example.com`,
+          name: "Reset Race Test",
+          passwordHash: await hashPassword("old-password-123"),
+        },
+      });
+      createdCustomerIds.push(customer.id);
+      const { raw } = await issueCustomerToken(customer.id, "RESET");
+
+      const responses = await Promise.all(
+        Array.from({ length: 5 }, (_, i) =>
+          postResetPassword(
+            jsonRequest("http://localhost/api/account/reset-password", "POST", {
+              token: raw,
+              newPassword: `concurrent-password-${i}`,
+            }),
+          ),
+        ),
+      );
+      const statuses = responses.map((r) => r.status);
+      assert.equal(statuses.filter((s) => s === 200).length, 1, `expected exactly one 200, got ${statuses}`);
+      assert.equal(statuses.filter((s) => s === 400).length, 4, `expected the other four to be 400, got ${statuses}`);
+
+      const updated = await db.customer.findUnique({ where: { id: customer.id } });
+      // sessionVersion must only have been bumped once — not once per
+      // request that got past the old read-only pre-check.
+      assert.equal(updated!.sessionVersion, customer.sessionVersion + 1);
     });
   });
 

@@ -53,7 +53,15 @@ export function OrderDetailActions({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  const nextStatuses = ORDER_STATUS_TRANSITIONS[currentStatus] ?? [];
+  // F-199 fix: PROCESSING -> PAID exists in the matrix so an ORDER_REQUEST
+  // order's payment can be recorded, but a RAZORPAY order only ever
+  // reaches PROCESSING by having already passed through PAID — offering
+  // it there would just re-stamp paidAt for a payment that already
+  // happened (the server rejects it too — see admin-orders.ts's
+  // OrderRequestPaymentOnlyError).
+  const nextStatuses = (ORDER_STATUS_TRANSITIONS[currentStatus] ?? []).filter(
+    (s) => !(s === "PAID" && currentStatus === "PROCESSING" && paymentMethod !== "ORDER_REQUEST"),
+  );
   const willShip = status === "SHIPPED" && status !== currentStatus;
   // F-205 fix: tracking used to render only for `willShip || currentStatus
   // === "SHIPPED"` — so it vanished from the page entirely the moment an
@@ -88,10 +96,14 @@ export function OrderDetailActions({
     // Other destructive admin actions in this codebase (delete-button.tsx,
     // user-role-editor.tsx, category-tree.tsx) already confirm first — this
     // brings order cancellation in line with them.
-    if (status !== currentStatus && (status === "CANCELLED" || status === "REFUNDED")) {
+    if (status !== currentStatus && (status === "CANCELLED" || status === "REFUNDED" || status === "RETURNED")) {
+      // F-199 fix: RETURNED -> REFUNDED never restocks a second time — the
+      // SHIPPED/DELIVERED -> RETURNED transition that got it there already
+      // did (see admin-orders.ts's `alreadyRestockedOnReturn`).
       const willRestock =
-        paymentMethod === "ORDER_REQUEST" || (paymentMethod === "RAZORPAY" && hasCapturedPayment);
-      const verb = status === "CANCELLED" ? "cancel" : "refund";
+        currentStatus !== "RETURNED" &&
+        (paymentMethod === "ORDER_REQUEST" || (paymentMethod === "RAZORPAY" && hasCapturedPayment));
+      const verb = status === "CANCELLED" ? "cancel" : status === "REFUNDED" ? "refund" : "return";
       const confirmed = window.confirm(
         `Are you sure you want to ${verb} this order? This cannot be undone.` +
           (willRestock ? " Stock reserved for it will be restored to inventory." : ""),

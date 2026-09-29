@@ -94,7 +94,8 @@ const MATRIX: MatrixCase[] = [
   // VIEWER is one of only three roles with audit:view — worth proving a
   // narrow role's one real permission actually works, not just denials.
   { permission: "audit:view", allowRole: "VIEWER", denyRole: "BULK_ORDER_MANAGER", route: { kind: "page", path: "/admin/audit-logs", allowedMarker: "Audit Logs" } },
-  { permission: "settings:manage", allowRole: "MARKETING_ADMIN", denyRole: "VIEWER", route: { kind: "api", method: "PATCH", path: "/api/admin/settings/shipping" } },
+  { permission: "settings:manage", allowRole: "SUPER_ADMIN", denyRole: "VIEWER", route: { kind: "api", method: "PATCH", path: "/api/admin/settings/shipping.flatRate" } },
+  { permission: "settings:marketing", allowRole: "MARKETING_ADMIN", denyRole: "VIEWER", route: { kind: "api", method: "PATCH", path: "/api/admin/settings/sale.enabled" } },
   { permission: "hermes:manage", allowRole: "MARKETING_ADMIN", denyRole: "VIEWER", route: { kind: "api", method: "POST", path: "/api/admin/hermes/tasks" } },
 ];
 

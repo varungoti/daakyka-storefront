@@ -5,6 +5,7 @@ import { getSetting } from "@/lib/settings";
 export const metadata = policyMetadata(
   "Privacy Policy",
   `Privacy policy for ${brand.name} operated by ${brand.legalName}.`,
+  "/privacy-policy",
 );
 
 /**

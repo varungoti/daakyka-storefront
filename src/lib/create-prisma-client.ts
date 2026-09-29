@@ -25,7 +25,7 @@ export function buildPoolConfig(databaseUrl: string | undefined): pg.PoolConfig 
     // connection limit (e.g. Supabase's session-pooler client cap —
     // F-074). Use a pooled connection string (e.g. Neon's or PgBouncer)
     // in production rather than raising this.
-    max: Number(process.env.DB_POOL_MAX ?? 5),
+    max: Number(process.env.DB_POOL_MAX ?? 2),
     // Bounds "wait for a free pool slot" and "TCP-connect a new client".
     connectionTimeoutMillis: 5000,
     // Server-side (Postgres GUC) cutoff for a single statement — only

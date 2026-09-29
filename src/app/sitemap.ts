@@ -2,6 +2,7 @@ import type { MetadataRoute } from "next";
 import { collectionPages, seoLandingPages } from "@/data/seo-landing-pages";
 import { getPublishedBlogPosts } from "@/lib/blog";
 import { getCategoryTreeStrict, getProductsStrict } from "@/lib/products/index";
+import { SECTION_LANDING_PATH_BY_CATEGORY_SLUG } from "@/lib/seo/canonical";
 import { siteUrlBase } from "@/lib/seo/json-ld";
 import { isPageEnabled, isSaleEnabled } from "@/lib/settings";
 
@@ -67,15 +68,27 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     "/privacy-policy",
     "/terms",
     "/accessibility",
-    "/science-of-the-scrub",
-    "/scrubs-for-men",
-    "/scrubs-for-women",
-    "/custom-embroidered-scrubs",
-    "/medical-scrubs",
-    "/nurse-uniforms",
+    // release-hardening F-048: "/science-of-the-scrub", "/scrubs-for-men",
+    // "/scrubs-for-women", "/custom-embroidered-scrubs", "/medical-scrubs"
+    // and "/nurse-uniforms" used to be listed here too — every one of them
+    // permanently redirects (next.config.ts's redirects(), or
+    // src/app/science-of-the-scrub/page.tsx) to a /guides/<slug> page that
+    // the seoLandingPages.map block below already adds to this same
+    // sitemap. Submitting both the redirect and its target wastes crawl
+    // budget and (for science-of-the-scrub) briefly listed a URL that
+    // 307'd to /shop, not even a /guides page.
   ];
 
-  const categoryNodes = flattenCategoryNodes(categoryTree);
+  // release-hardening F-101: /category/for-hospitals, /category/school-uniforms
+  // and /category/kids-wear render the exact same product list as the
+  // section landing pages already in staticRoutes above (/for-hospitals,
+  // /school-uniforms, /kids-wear) — category/[slug]/page.tsx's
+  // generateMetadata now canonicalizes these three slugs to their landing
+  // page, so submitting the /category/<slug> URL here as well would
+  // contradict that canonical.
+  const categoryNodes = flattenCategoryNodes(categoryTree).filter(
+    ({ slug }) => !(slug in SECTION_LANDING_PATH_BY_CATEGORY_SLUG),
+  );
   const posts = await getPublishedBlogPosts();
   const products = await getProductsStrict();
 

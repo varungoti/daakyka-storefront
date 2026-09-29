@@ -1,14 +1,21 @@
 import { SectionHeading } from "@/components/ui/section-heading";
 import { fitTips } from "@/data/size-guide";
 import { getSizeChartsForDisplay, type SizeChartForDisplay } from "@/lib/catalog/size-charts";
+import { canonicalPath } from "@/lib/seo/canonical";
+import { baseOpenGraph } from "@/lib/seo/json-ld";
 import { isPageEnabled } from "@/lib/settings";
 import type { Metadata } from "next";
 import Link from "next/link";
 
+// release-hardening F-147/F-151: this used to be only {title, description},
+// so /size-guide inherited the root layout's canonical (the homepage) and
+// its og:title/og:url, despite being listed as its own URL in sitemap.ts.
 export const metadata: Metadata = {
   title: "Size Guide",
   description:
     "Find your perfect fit with DAAKYKA size charts, fit tips, and measurement guidance for hospital, school, and kids' apparel.",
+  alternates: { canonical: canonicalPath("/size-guide") },
+  openGraph: baseOpenGraph("/size-guide"),
 };
 
 const SECTION_LABELS: Record<string, string> = {
