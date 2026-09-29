@@ -10,16 +10,22 @@ on:
 
 jobs:
   deploy:
-    if: ${{ secrets.RAILWAY_TOKEN != '' }}
     runs-on: ubuntu-latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
     steps:
+      - name: Skip when Railway is not configured
+        if: ${{ env.RAILWAY_TOKEN == '' }}
+        run: echo "Railway token is not configured; AR deployment skipped."
+
       - uses: actions/checkout@v4
+        if: ${{ env.RAILWAY_TOKEN != '' }}
 
       - name: Install Railway CLI
+        if: ${{ env.RAILWAY_TOKEN != '' }}
         run: npm install -g @railway/cli
 
       - name: Deploy ar-tryon service
+        if: ${{ env.RAILWAY_TOKEN != '' }}
         working-directory: services/ar-tryon
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: railway up --service ar-tryon --detach
