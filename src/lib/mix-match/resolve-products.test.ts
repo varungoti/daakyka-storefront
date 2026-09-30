@@ -1,6 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { resolveProductVariant } from "@/lib/mix-match/resolve-products";
+import { bottomStyleOptions, topStyleOptions } from "@/data/mix-match";
+import { draftProducts } from "@/data/catalog/draft-catalog";
 import type { Product } from "@/lib/types";
 
 const sampleProduct: Product = {
@@ -52,5 +54,19 @@ describe("resolveProductVariant", () => {
   it("falls back to size-only match", () => {
     const variant = resolveProductVariant(sampleProduct, "M", "Unknown");
     assert.equal(variant?.id, "v-m-lilac");
+  });
+});
+
+describe("mix-and-match catalog choices", () => {
+  it("only offers styles backed by current scrub top and pant products", () => {
+    const categories = new Map(draftProducts.map((product) => [product.slug, product.categorySlug]));
+    for (const option of topStyleOptions) {
+      assert.equal(categories.get(option.productHandle), "scrub-tops", option.label);
+    }
+    for (const option of bottomStyleOptions) {
+      assert.equal(categories.get(option.productHandle), "scrub-pants", option.label);
+    }
+    assert.equal(new Set(topStyleOptions.map((option) => option.productHandle)).size, topStyleOptions.length);
+    assert.equal(new Set(bottomStyleOptions.map((option) => option.productHandle)).size, bottomStyleOptions.length);
   });
 });

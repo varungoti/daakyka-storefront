@@ -9,7 +9,7 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Mix & Match Studio | Virtual Try-On",
   description:
-    "MediaPipe AR virtual try-on for DAAKYKA scrubs. Test every top, bottom, and color on preset avatars.",
+    "Choose real DAAKYKA scrub tops and pants. Virtual try-on is available for photographed garments when rendering is configured.",
   robots: { index: false, follow: false },
 };
 
@@ -30,8 +30,8 @@ export default async function MixMatchStudioPage() {
               Virtual Try-On Studio
             </h1>
             <p className="mt-3 max-w-2xl text-muted">
-              Production test bed for MediaPipe AR try-on. Every catalog product is available here
-              automatically.
+              Choose catalog scrub styles and build a set. Virtual try-on appears when matching
+              product photography and rendering are available.
             </p>
           </div>
           <Link

@@ -1,5 +1,5 @@
-export type TopStyle = "v-neck" | "mandarin" | "round-neck" | "zip-neck";
-export type BottomStyle = "jogger" | "straight" | "cargo" | "shorts";
+export type TopStyle = "v-neck" | "mandarin" | "round-neck";
+export type BottomStyle = "jogger" | "slim" | "cargo";
 export type FabricChoice = "2-way-stretch" | "4-way-stretch" | "eco-flex" | "cooling";
 
 export interface MixMatchConfig {
@@ -15,23 +15,21 @@ export const defaultMixMatchConfig: MixMatchConfig = {
   topStyle: "v-neck",
   bottomStyle: "jogger",
   fabric: "4-way-stretch",
-  color: "Lilac Purple",
+  color: "Navy",
   size: "M",
   embroideryName: "",
 };
 
 export const topStyleOptions: { id: TopStyle; label: string; productHandle: string }[] = [
-  { id: "v-neck", label: "V-Neck", productHandle: "v-neck-top-lilac" },
-  { id: "mandarin", label: "Mandarin", productHandle: "mandarin-collar-sage" },
-  { id: "round-neck", label: "Round Neck", productHandle: "round-neck-white" },
-  { id: "zip-neck", label: "Zip-Neck", productHandle: "zip-neck-lilac" },
+  { id: "v-neck", label: "V-Neck", productHandle: "womens-vneck-scrub-top" },
+  { id: "mandarin", label: "Mandarin", productHandle: "unisex-mandarin-collar-scrub-top" },
+  { id: "round-neck", label: "Round Neck", productHandle: "mens-round-neck-scrub-top" },
 ];
 
 export const bottomStyleOptions: { id: BottomStyle; label: string; productHandle: string }[] = [
-  { id: "jogger", label: "Jogger", productHandle: "jogger-pants-navy" },
-  { id: "straight", label: "Straight", productHandle: "straight-pants-charcoal" },
-  { id: "cargo", label: "Cargo", productHandle: "cargo-pants-teal" },
-  { id: "shorts", label: "Shorts", productHandle: "jogger-pants-navy" },
+  { id: "jogger", label: "Jogger", productHandle: "unisex-jogger-scrub-pants" },
+  { id: "slim", label: "Slim", productHandle: "womens-slim-scrub-pants" },
+  { id: "cargo", label: "Cargo", productHandle: "mens-cargo-scrub-pants" },
 ];
 
 export const fabricOptions: { id: FabricChoice; label: string; tech: string }[] = [
@@ -42,12 +40,12 @@ export const fabricOptions: { id: FabricChoice; label: string; tech: string }[] 
 ];
 
 export const mixMatchColors = [
-  { name: "Lilac Purple", hex: "#C4B5FD" },
-  { name: "Midnight Navy", hex: "#1E3A5F" },
-  { name: "Sage Green", hex: "#86A789" },
-  { name: "Cloud White", hex: "#F5F5F4" },
-  { name: "Charcoal", hex: "#374151" },
-  { name: "Ocean Teal", hex: "#2DD4BF" },
+  { name: "Navy", hex: "#1E3A5F" },
+  { name: "Ceil Blue", hex: "#8FB8DE" },
+  { name: "Wine", hex: "#722F37" },
+  { name: "Hunter Green", hex: "#355E3B" },
+  { name: "Black", hex: "#1F2937" },
+  { name: "White", hex: "#F5F5F4" },
 ];
 
 export const mixMatchSizes = ["XS", "S", "M", "L", "XL", "2XL"];

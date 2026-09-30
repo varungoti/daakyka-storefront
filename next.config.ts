@@ -89,6 +89,10 @@ if (isProduction()) {
 }
 
 const nextConfig: NextConfig = {
+  // Dynamic SEO records must be present in <head> for browser audits and
+  // HTML-only consumers as well as JavaScript-capable crawlers. This trades
+  // some initial response latency for consistent metadata placement.
+  htmlLimitedBots: /.*/,
   experimental: {
     optimizePackageImports: ["lucide-react", "framer-motion"],
   },

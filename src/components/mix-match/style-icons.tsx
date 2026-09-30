@@ -127,14 +127,12 @@ const topIcons: Record<TopStyle, ComponentType<IconProps>> = {
   "v-neck": VNeckIcon,
   mandarin: MandarinIcon,
   "round-neck": RoundNeckIcon,
-  "zip-neck": ZipNeckIcon,
 };
 
 const bottomIcons: Record<BottomStyle, ComponentType<IconProps>> = {
   jogger: JoggerIcon,
-  straight: StraightIcon,
+  slim: StraightIcon,
   cargo: CargoIcon,
-  shorts: ShortsIcon,
 };
 
 const fabricIcons: Record<FabricChoice, ComponentType<IconProps>> = {

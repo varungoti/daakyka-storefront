@@ -23,6 +23,10 @@ module.exports = {
       url: [`${BASE_URL}/`, `${BASE_URL}/shop`, `${BASE_URL}/products/${PRODUCT_HANDLE}`],
       numberOfRuns: 1,
       settings: {
+        // The isolated Docker verification image runs Chromium as root.
+        // LHCI forwards this setting to chrome-launcher; desktop runs keep
+        // Chromium's normal sandbox.
+        ...(process.env.CI === "1" ? { chromeFlags: "--no-sandbox --disable-dev-shm-usage" } : {}),
         formFactor: "mobile",
         screenEmulation: {
           mobile: true,

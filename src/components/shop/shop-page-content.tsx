@@ -167,7 +167,7 @@ interface ShopPageContentProps {
   initialQuery?: string;
   fabricTechEnabled?: boolean;
   mixMatchEnabled?: boolean;
-  /** Overrides the "Shop All Scrubs" hero copy — used by /category/[slug]
+  /** Overrides the default all-apparel hero copy — used by /category/[slug]
    * (Phase C3) to scope this same filterable grid to one category. */
   heading?: ShopPageHeading;
   /** Hides the trust bar / testimonials / feature cards below the grid —
@@ -390,11 +390,11 @@ export function ShopPageContent({
     [filters, query, initialCategory, filterCategories, formatPrice],
   );
 
-  const pageTitle = heading?.title ?? "Shop All Scrubs";
+  const pageTitle = heading?.title ?? "Shop All Apparel & Uniforms";
   const pageEyebrow = heading?.eyebrow ?? "Browse";
   const pageDescription =
     heading?.description ??
-    "Premium medical apparel with advanced filters for color, size, fabric technology, and price — built for long shifts and demanding care environments.";
+    "Explore medical scrubs, hospital apparel, institutional linens, school uniforms and kidswear by category and size.";
   const breadcrumbLabel = heading?.breadcrumbLabel ?? "Shop";
 
   return (

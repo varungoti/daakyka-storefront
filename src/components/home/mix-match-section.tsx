@@ -83,7 +83,7 @@ export function MixMatchSection() {
                 href="/mix-and-match"
                 className={buttonClassNames({ variant: "outline", size: "lg" })}
               >
-                Learn More
+                Explore Mix & Match
               </Link>
             </div>
           </div>

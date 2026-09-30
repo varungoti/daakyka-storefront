@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: daakyka_ci
+      POSTGRES_PASSWORD: disposable-local-ci-password
+      POSTGRES_DB: daakyka_ci
+    tmpfs:
+      - /var/lib/postgresql/data:size=1g
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U daakyka_ci -d daakyka_ci"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  verify:
+    build:
+      context: .
+      dockerfile: Dockerfile.ci
+    image: daakyka-storefront-ci:node22-playwright160
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      CI: "1"
+      CI_SOURCE_SHA: ${CI_SOURCE_SHA:?Run through scripts/local-ci.mjs}
+      DATABASE_URL: postgresql://daakyka_ci:disposable-local-ci-password@postgres:5432/daakyka_ci
+      MIGRATION_DATABASE_URL: postgresql://daakyka_ci:disposable-local-ci-password@postgres:5432/daakyka_ci
+      AUTH_SECRET: disposable-local-ci-auth-secret-at-least-32-chars
+      CREDENTIAL_ENCRYPTION_KEY: 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+      ADMIN_SEED_EMAIL: ci-admin@example.com
+      ADMIN_SEED_PASSWORD: ci-only-admin-password-not-a-real-secret
+      CRON_SECRET: disposable-local-ci-cron-secret
+      NEXT_PUBLIC_SITE_URL: http://127.0.0.1:3000
+      TEST_BASE_URL: http://127.0.0.1:3000
+      PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+      LHCI_BASE_URL: http://127.0.0.1:3000
+      PORT: "3000"
+    shm_size: 1gb
+    volumes:
+      - ./dogfood-output/local-ci:/app/dogfood-output

@@ -86,14 +86,24 @@ describe("smoke — storefront pages", () => {
     assert.equal(status, 200);
   });
 
-  it("Phase A5: /mix-and-match and /fabric-technology 404 by default (admin-toggleable)", async () => {
+  it("Phase A5: optional pages match the current CI or default feature state", async () => {
     // Both pages exist but are disabled by default (SiteSetting
     // pages.mixMatch.enabled / pages.fabricTech.enabled). An admin can
-    // turn either on from /admin/site-controls, at which point this
-    // assertion would need the same override before asserting 200 —
-    // this smoke run exercises the out-of-the-box default.
-    assert.equal(await fetchStatus("/mix-and-match"), 404);
-    assert.equal(await fetchStatus("/fabric-technology"), 404);
+    // turn either on from /admin/site-controls. Local Docker CI explicitly
+    // enables both only in its disposable DB to exercise their browser flows.
+    const expected = process.env.CI_OPTIONAL_PAGES_ENABLED === "1" ? 200 : 404;
+    assert.equal(await fetchStatus("/mix-and-match"), expected);
+    assert.equal(await fetchStatus("/fabric-technology"), expected);
+  });
+
+  it("shop emits a description and names the optional Mix & Match destination", async () => {
+    const response = await fetch(`${BASE}/shop`);
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.match(html, /<meta name="description" content="[^"]+"/);
+    if (process.env.CI_OPTIONAL_PAGES_ENABLED === "1") {
+      assert.match(html, /Explore Mix &amp; Match/);
+    }
   });
 
   it("homepage includes security headers", async () => {

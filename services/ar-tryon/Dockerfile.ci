@@ -1,0 +1,9 @@
+FROM daakyka-ar-tryon:local
+
+USER root
+COPY requirements-dev.txt ./requirements-dev.txt
+RUN pip install --no-cache-dir -r requirements-dev.txt
+COPY tests ./tests
+USER appuser
+
+CMD ["python", "-m", "pytest", "tests", "-q"]

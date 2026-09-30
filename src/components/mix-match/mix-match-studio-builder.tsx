@@ -42,9 +42,10 @@ export function MixMatchStudioBuilder({ products }: MixMatchStudioBuilderProps) 
     () => resolveMixMatchProducts(products, config),
     [products, config],
   );
+  const hasGarmentPhoto = /^https:\/\//.test(resolved.topImage);
 
   const tryOnRequest = useMemo(() => {
-    if (!resolved.topImage) return null;
+    if (!hasGarmentPhoto) return null;
     return {
       gender,
       topImageUrl: resolved.topImage,
@@ -54,10 +55,10 @@ export function MixMatchStudioBuilder({ products }: MixMatchStudioBuilderProps) 
       bottomHandle: resolved.bottomProduct?.handle,
       color: config.color,
     };
-  }, [gender, resolved, config.color]);
+  }, [gender, resolved, config.color, hasGarmentPhoto]);
 
   const { previewUrl, loading: tryOnLoading, result } = useOutfitTryOn(tryOnRequest, {
-    enabled: Boolean(resolved.topImage),
+    enabled: hasGarmentPhoto,
   });
 
   const tintHex = mixMatchColors.find((c) => c.name === config.color)?.hex;
@@ -133,17 +134,17 @@ export function MixMatchStudioBuilder({ products }: MixMatchStudioBuilderProps) 
               Mix, Match & Make It Yours
             </h1>
             <p className="mt-3 text-base leading-relaxed text-muted">
-              CPU-powered AR try-on with MediaPipe pose mapping — every Shopify scrub variant applies
-              instantly on preset avatars.
+              Pair real catalog scrub tops and pants. Virtual try-on is available when garment photos
+              and the rendering service are ready.
             </p>
           </div>
 
           <ul className="space-y-3">
             {[
-              "3D Live Preview",
+              "Catalog-linked styles",
               "Male & Female Models",
-              "Custom Embroidery Preview",
-              "Perfect Fit Guarantee",
+              "Embroidery name preview",
+              "Size and color selection",
             ].map((item) => (
               <li key={item} className="flex items-center gap-3 text-sm font-medium text-ink">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand text-white">
@@ -203,9 +204,15 @@ export function MixMatchStudioBuilder({ products }: MixMatchStudioBuilderProps) 
           modeLabel={
             result?.mode === "ar-tryon"
               ? "AR try-on render"
-              : "Live garment preview"
+              : hasGarmentPhoto ? "Garment photo preview" : "Garment photo unavailable"
           }
         />
+
+        {!hasGarmentPhoto && (
+          <p role="status" className="rounded-xl border border-border bg-surface p-3 text-sm text-muted">
+            Virtual try-on is unavailable for this style until its product photo is uploaded.
+          </p>
+        )}
 
         <div className="space-y-5 xl:sticky xl:top-28">
           <MixMatchControls

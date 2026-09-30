@@ -7,9 +7,9 @@ import { getTestimonials } from "@/lib/testimonials";
 import type { Metadata } from "next";
 
 const DEFAULT_METADATA = {
-  title: "Shop All Scrubs",
+  title: "Shop Apparel & Uniforms",
   description:
-    "Browse premium medical scrubs with advanced filters for color, size, fabric technology, and price.",
+    "Browse DAAKYKA medical scrubs, hospital apparel, institutional linens, school uniforms and kidswear by size and category.",
 };
 
 /** Same admin-override mechanism as src/app/page.tsx's generateMetadata()
@@ -18,8 +18,8 @@ const DEFAULT_METADATA = {
 export async function generateMetadata(): Promise<Metadata> {
   const override = await getSeoOverrideForPath("/shop");
   return {
-    title: override?.title ?? DEFAULT_METADATA.title,
-    description: override?.metaDescription ?? DEFAULT_METADATA.description,
+    title: override?.title?.trim() || DEFAULT_METADATA.title,
+    description: override?.metaDescription?.trim() || DEFAULT_METADATA.description,
     // Canonical is always the bare /shop path, regardless of ?category=/?q=
     // filter query params — those are the same content, not distinct pages.
     alternates: { canonical: canonicalPath("/shop") },

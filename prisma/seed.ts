@@ -797,7 +797,7 @@ async function seedContent(): Promise<void> {
 
   const seoPages = [
     { path: "/", title: "DAAKYKA Apparels | Quality Uniforms & Linens for Pan India", metaDescription: "Expertly designed medical scrubs and institutional uniforms. Pan India delivery by Babaji Enterprises.", h1: "Expertly Designed, Meticulously Crafted", status: "ok" },
-    { path: "/shop", title: "Shop All Scrubs", metaDescription: "Browse premium medical scrubs with filters for color, size, fabric technology, and price.", h1: "Shop All Scrubs", status: "ok" },
+    { path: "/shop", title: "Shop Apparel & Uniforms", metaDescription: "Browse DAAKYKA medical scrubs, hospital apparel, institutional linens, school uniforms and kidswear by size and category.", h1: "Shop All Apparel & Uniforms", status: "ok" },
     { path: "/bulk-orders", title: "Bulk Orders", metaDescription: "Hospital and institutional uniform quotes with logo embroidery and Pan India fulfillment.", h1: "Uniforms for Healthcare Teams", status: "ok" },
   ];
 
