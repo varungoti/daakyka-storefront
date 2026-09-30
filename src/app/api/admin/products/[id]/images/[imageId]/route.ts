@@ -5,9 +5,11 @@ import { readJsonBody } from "@/lib/security/parse-json-body";
 import {
   ProductImageNotFoundError,
   ProductNotFoundError,
+  InvalidProductImageSizeError,
   reorderProductImages,
   removeProductImage,
   setImageColor,
+  setImageSizeScope,
   updateImageAlt,
 } from "@/lib/catalog/products";
 
@@ -17,6 +19,8 @@ interface RouteParams {
 
 const patchSchema = z.object({
   color: z.string().trim().max(60).optional().nullable(),
+  size: z.string().trim().min(1).max(40).optional().nullable(),
+  appliesToAllSizes: z.boolean().optional(),
   alt: z.string().trim().max(300).optional().nullable(),
   reorder: z.enum(["up", "down"]).optional(),
 });
@@ -36,6 +40,12 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid request", issues: parsed.error.issues }, { status: 400 });
   }
+  if (
+    (parsed.data.size === undefined) !== (parsed.data.appliesToAllSizes === undefined) ||
+    (parsed.data.size !== undefined && parsed.data.size !== null && parsed.data.appliesToAllSizes)
+  ) {
+    return NextResponse.json({ error: "A size scope requires both size and appliesToAllSizes, without a conflicting exact size" }, { status: 400 });
+  }
 
   try {
     if (parsed.data.reorder) {
@@ -45,11 +55,17 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     if (parsed.data.color !== undefined) {
       image = await setImageColor(id, imageId, parsed.data.color, session.id);
     }
+    if (parsed.data.size !== undefined && parsed.data.appliesToAllSizes !== undefined) {
+      image = await setImageSizeScope(id, imageId, parsed.data.size, parsed.data.appliesToAllSizes, session.id);
+    }
     if (parsed.data.alt !== undefined) {
       image = await updateImageAlt(id, imageId, parsed.data.alt, session.id);
     }
     return NextResponse.json({ success: true, image });
   } catch (err) {
+    if (err instanceof InvalidProductImageSizeError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
     if (err instanceof ProductNotFoundError || err instanceof ProductImageNotFoundError) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }

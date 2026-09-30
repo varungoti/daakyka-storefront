@@ -48,7 +48,7 @@ export const defaultStorageDeps: StorageDeps = {
 
 export class StorageNotConfiguredForMediaError extends Error {
   constructor() {
-    super("Cloudflare R2 storage is not configured — set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET and R2_PUBLIC_BASE_URL");
+    super("Cloudflare R2 storage is not configured — set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET (or supported CLOUDFLARE_* aliases)");
     this.name = "StorageNotConfiguredForMediaError";
   }
 }

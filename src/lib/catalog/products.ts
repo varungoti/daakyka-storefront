@@ -202,6 +202,13 @@ export class ProductImageNotFoundError extends Error {
   }
 }
 
+export class InvalidProductImageSizeError extends Error {
+  constructor() {
+    super("Image size must be an active size listed for this product");
+    this.name = "InvalidProductImageSizeError";
+  }
+}
+
 export class InvalidCompareAtPriceError extends Error {
   constructor() {
     super("Compare-at price must be greater than the price");
@@ -520,6 +527,7 @@ export async function deleteProduct(id: string, userId: string): Promise<void> {
 export async function publishProduct(id: string, userId: string): Promise<Product> {
   const existing = await db.product.findUnique({ where: { id } });
   if (!existing) throw new ProductNotFoundError(id);
+  if (existing.status === "ARCHIVED") throw new ProductNotPublishableError("Unarchive this product before listing it");
   if (!(await hasActiveVariant(id))) throw new ProductNotPublishableError();
 
   const updated = await db.product.update({ where: { id }, data: { status: "ACTIVE" } });
@@ -532,6 +540,7 @@ export async function publishProduct(id: string, userId: string): Promise<Produc
 export async function unpublishProduct(id: string, userId: string): Promise<Product> {
   const existing = await db.product.findUnique({ where: { id } });
   if (!existing) throw new ProductNotFoundError(id);
+  if (existing.status === "ARCHIVED") throw new ProductNotPublishableError("Unarchive this product before changing its listing");
 
   const updated = await db.product.update({ where: { id }, data: { status: "DRAFT" } });
 
@@ -877,6 +886,30 @@ export async function setImageColor(productId: string, imageId: string, color: s
   return updated;
 }
 
+export async function setImageSizeScope(
+  productId: string,
+  imageId: string,
+  size: string | null,
+  appliesToAllSizes: boolean,
+  userId: string,
+) {
+  const image = await db.productImage.findFirst({ where: { id: imageId, productId }, include: { product: { select: { slug: true } } } });
+  if (!image) throw new ProductImageNotFoundError(imageId);
+  if (size && appliesToAllSizes) throw new InvalidProductImageSizeError();
+  if (size) {
+    const listed = await db.productVariant.findFirst({ where: { productId, size, active: true }, select: { id: true } });
+    if (!listed) throw new InvalidProductImageSizeError();
+  }
+  const updated = await db.productImage.update({
+    where: { id: imageId },
+    data: { size, appliesToAllSizes },
+    include: { media: true },
+  });
+  await logAuditEvent({ userId, action: "update", entity: "product_image", entityId: imageId, metadata: { size, appliesToAllSizes } });
+  revalidateProduct(image.product.slug);
+  return updated;
+}
+
 export async function updateImageAlt(productId: string, imageId: string, alt: string | null, userId: string) {
   const image = await db.productImage.findFirst({ where: { id: imageId, productId }, include: { product: { select: { slug: true } } } });
   if (!image) throw new ProductImageNotFoundError(imageId);
@@ -1196,6 +1229,8 @@ export interface AdminProductDetail {
     url: string;
     alt: string | null;
     color: string | null;
+    size: string | null;
+    appliesToAllSizes: boolean;
     sortOrder: number;
     source: string;
   }[];
@@ -1254,6 +1289,8 @@ export async function getProductForAdmin(id: string): Promise<AdminProductDetail
       url: img.media.url,
       alt: img.alt,
       color: img.color,
+      size: img.size,
+      appliesToAllSizes: img.appliesToAllSizes,
       sortOrder: img.sortOrder,
       source: img.media.source,
     })),

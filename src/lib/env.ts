@@ -198,15 +198,14 @@ export function validateEnv(): void {
     }
 
     const missingR2Vars = [
-      "R2_ACCOUNT_ID",
-      "R2_ACCESS_KEY_ID",
-      "R2_SECRET_ACCESS_KEY",
-      "R2_BUCKET",
-      "R2_PUBLIC_BASE_URL",
-    ].filter((key) => !process.env[key]);
+      ["R2_ACCOUNT_ID", "CLOUDFLARE_ACCOUNT_ID"],
+      ["R2_ACCESS_KEY_ID", "CLOUDFLARE_ACCESS_KEY_ID", "CLOUDFLARE_ACCESS_KEY"],
+      ["R2_SECRET_ACCESS_KEY", "CLOUDFLARE_SECRET_ACCESS_KEY"],
+      ["R2_BUCKET"],
+    ].filter((aliases) => !aliases.some((key) => process.env[key]));
     if (missingR2Vars.length > 0) {
       console.warn(
-        `[env] Cloudflare R2 storage is not fully configured (missing: ${missingR2Vars.join(", ")}) — media upload and AI image storage will report as not configured`,
+        `[env] Cloudflare R2 storage is not fully configured (missing: ${missingR2Vars.map((aliases) => aliases[0]).join(", ")}) — media upload and AI image storage will report as not configured`,
       );
     }
 

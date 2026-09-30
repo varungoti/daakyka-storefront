@@ -11,6 +11,7 @@ import { WishlistButton } from "@/components/wishlist/wishlist-button";
 import { useCart } from "@/context/cart-provider";
 import { useCurrency } from "@/context/currency-provider";
 import type { SizeChartForDisplay } from "@/lib/catalog/size-charts";
+import { selectProductGallery } from "@/lib/catalog/select-product-gallery";
 import { formatDateIST } from "@/lib/format/datetime";
 import { computePercentOff } from "@/lib/pricing/percent-off";
 import { findExactVariant, isSizeAvailableForColor, isVariantInStock, resolveVariant, variantExists } from "@/lib/products/resolve-variant";
@@ -116,17 +117,14 @@ export function ProductDetail({
   // when the primary CTA row has scrolled out of the viewport.
   const ctaRowRef = useRef<HTMLDivElement>(null);
 
-  // Show only photos of the selected colour plus genuinely shared photos.
-  // A missing colourway must never inherit another colour's photograph.
-  const gallery = useMemo<LightboxImage[]>(() => {
-    const colorImages = product.images?.filter((img) => img.color === selectedColor) ?? [];
-    const untaggedImages = product.images?.filter((img) => !img.color) ?? [];
-    const source =
-      colorImages.length > 0 || untaggedImages.length > 0
-        ? [...colorImages, ...untaggedImages]
-        : [{ url: "/placeholder-product.svg", alt: `${product.name} photo unavailable in ${selectedColor}` }];
-    return source.map((img) => ({ url: img.url, alt: img.alt ?? product.name }));
-  }, [product.images, product.name, selectedColor]);
+  const gallerySelection = useMemo(() => selectProductGallery({
+    images: product.images ?? [],
+    productName: product.name,
+    color: selectedColor,
+    size: selectedSize,
+    colorCount: product.colors.length,
+  }), [product.images, product.name, product.colors.length, selectedColor, selectedSize]);
+  const gallery: LightboxImage[] = gallerySelection.images;
 
   // `selectedVariant`: resolveVariant's fallback-if-no-exact-match
   // behaviour — kept only for what's safe to fall back on, price/gallery
@@ -194,7 +192,9 @@ export function ProductDetail({
       <div className="grid gap-12 lg:grid-cols-2">
         <GalleryColumn
           images={gallery}
-          selectedColor={selectedColor}
+          selectionKey={`${selectedColor}::${selectedSize}`}
+          representativeFallback={gallerySelection.representativeFallback}
+          selectedSize={selectedSize}
           productName={product.name}
           onOpenLightbox={setLightboxIndex}
         />
@@ -539,29 +539,34 @@ export function ProductDetail({
 
 function GalleryColumn({
   images,
-  selectedColor,
+  selectionKey,
+  representativeFallback,
+  selectedSize,
   productName,
   onOpenLightbox,
 }: {
   images: LightboxImage[];
-  selectedColor: string;
+  selectionKey: string;
+  representativeFallback: boolean;
+  selectedSize: string;
   productName: string;
   onOpenLightbox: (index: number) => void;
 }) {
   const [activeIndex, setActiveIndex] = useState(0);
 
-  // The gallery swaps when the selected colour changes (filtered to that
-  // colour's images) — reset back to the first image so we never point
+  // The gallery swaps when the selected colour or size changes — reset
+  // back to the first image so we never point
   // at an index the new gallery doesn't have.
-  const [lastColor, setLastColor] = useState(selectedColor);
-  if (selectedColor !== lastColor) {
-    setLastColor(selectedColor);
+  const [lastSelectionKey, setLastSelectionKey] = useState(selectionKey);
+  if (selectionKey !== lastSelectionKey) {
+    setLastSelectionKey(selectionKey);
     setActiveIndex(0);
   }
 
   const active = images[Math.min(activeIndex, images.length - 1)] ?? images[0];
 
   return (
+    <div className="space-y-2">
     <div className="flex flex-col-reverse gap-4 lg:flex-row">
       {images.length > 1 && (
         <div className="flex gap-3 overflow-x-auto pb-1 lg:w-20 lg:flex-col lg:overflow-x-visible lg:overflow-y-auto lg:pb-0">
@@ -606,6 +611,10 @@ function GalleryColumn({
           sizes="(max-width: 1024px) 100vw, 50vw"
         />
       </button>
+    </div>
+    {representativeFallback && (
+      <p className="text-xs text-muted">Representative product image; imagery for size {selectedSize} is being verified.</p>
+    )}
     </div>
   );
 }

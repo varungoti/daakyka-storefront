@@ -61,7 +61,7 @@ export default async function EditProductPage({ params }: { params: Promise<{ id
           seoTitle: product.seoTitle,
           seoDescription: product.seoDescription,
           variants: product.variants,
-          images: product.images.map((img) => ({ id: img.id, mediaId: img.mediaId, url: img.url, alt: img.alt, color: img.color, sortOrder: img.sortOrder })),
+          images: product.images.map((img) => ({ id: img.id, mediaId: img.mediaId, url: img.url, alt: img.alt, color: img.color, size: img.size, appliesToAllSizes: img.appliesToAllSizes, sortOrder: img.sortOrder })),
           orderCount: product.orderCount,
         }}
         categoryOptions={categoryOptions}

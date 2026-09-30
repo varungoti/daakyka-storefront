@@ -9,6 +9,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { FabricTech, Product, ProductColor, ProductImage, ProductVariant } from "@/lib/types";
 import { descriptionToPlainText, descriptionToSafeHtml } from "@/lib/catalog/description-html";
 import { colorPresetIndex, compareSizes } from "@/lib/catalog/size-presets";
+import { selectProductGallery } from "@/lib/catalog/select-product-gallery";
 import { isProduction } from "@/lib/env";
 
 /**
@@ -225,6 +226,8 @@ function mapDbProductToUi(p: DbProduct): Product {
           url: img.media.url,
           alt: img.alt ?? p.name,
           color: img.color ?? undefined,
+          size: img.size ?? undefined,
+          appliesToAllSizes: img.appliesToAllSizes,
         }))
       : [{ url: PLACEHOLDER_PRODUCT_IMAGE, alt: p.name }];
 
@@ -255,7 +258,14 @@ function mapDbProductToUi(p: DbProduct): Product {
         }))
       : [{ name: "Default", hex: "#CBD5E1" }];
 
-  const defaultColorImage = images.find((img) => img.color === defaultColor);
+  const defaultVariant = orderedDbVariants.find((v) => v.color === defaultColor && v.active && v.stock > 0);
+  const defaultCardImage = selectProductGallery({
+    images,
+    productName: p.name,
+    color: defaultColor,
+    size: defaultVariant?.size ?? sizes[0] ?? "",
+    colorCount: colors.length,
+  }).images[0].url;
 
   const reviewCount = p.reviews.length;
   const ratingAverage =
@@ -298,13 +308,13 @@ function mapDbProductToUi(p: DbProduct): Product {
     colors,
     sizes,
     fabricTech: deriveFabricTech(p.tags, p.fabric),
-    image: defaultColorImage?.url ?? images.find((img) => !img.color)?.url ?? PLACEHOLDER_PRODUCT_IMAGE,
+    image: defaultCardImage,
     images,
     badge: p.featured ? "best-seller" : p.isNew ? "new" : undefined,
     gender: p.gender.toLowerCase(),
     variants,
     defaultVariantId:
-      orderedDbVariants.find((v) => v.color === defaultColor && v.active && v.stock > 0)?.id ?? variants[0]?.id,
+      defaultVariant?.id ?? variants[0]?.id,
     // F-028: a DB-backed product with zero variants used to count as
     // "available" (the `variants.length === 0` half of this used to be
     // `true`), so it showed a working Add to Cart that added a fake

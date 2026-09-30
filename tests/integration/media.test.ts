@@ -13,7 +13,7 @@ import {
   StorageNotConfiguredForMediaError,
   type StorageDeps,
 } from "@/lib/media/store";
-import { addProductImage, createProduct } from "@/lib/catalog/products";
+import { addProductImage, createProduct, getProductForAdmin, InvalidProductImageSizeError, setImageSizeScope } from "@/lib/catalog/products";
 import { isR2Configured } from "@/lib/storage/r2";
 import { DELETE as deleteMediaAsset } from "@/app/api/admin/media/[id]/route";
 import {
@@ -30,6 +30,7 @@ import { GET as getMediaList, POST as postMediaUpload } from "@/app/api/admin/me
 import { POST as postMediaGenerate } from "@/app/api/admin/media/generate/route";
 import { withEnv } from "../helpers/env";
 import { findAnyAdminId } from "../helpers/admin-user";
+import { syncGeneratedProductImages, validateReviewedProductViews } from "../../scripts/sync-generated-product-images";
 
 /** An in-memory fake storage backend — no network call ever leaves this process. */
 function makeFakeStorage(overrides: Partial<StorageDeps> = {}): StorageDeps {
@@ -66,6 +67,67 @@ after(async () => {
   if (createdAssetIds.length > 0) {
     await db.mediaAsset.deleteMany({ where: { id: { in: createdAssetIds } } });
   }
+});
+
+describe("product image size applicability (integration)", () => {
+  it("rejects unlisted sizes and persists exact or verified shared scope", async () => {
+    const suffix = randomUUID();
+    const adminId = await findAnyAdminId();
+    const category = await db.category.create({ data: { name: `Image Scope ${suffix}`, slug: `image-scope-${suffix}`, section: "GENERAL" } });
+    const product = await db.product.create({ data: { name: "Scope Test Top", slug: `scope-test-top-${suffix}`, categoryId: category.id, price: 499 } });
+    const media = await db.mediaAsset.create({ data: { key: `test/image-scope-${suffix}.webp`, url: `/cdn/test/image-scope-${suffix}.webp`, usage: "PRODUCT" } });
+    try {
+      await db.productVariant.create({ data: { productId: product.id, sku: `scope-s-${suffix}`, size: "S", color: "Navy", stock: 1 } });
+      const image = await db.productImage.create({ data: { productId: product.id, mediaId: media.id, color: "Navy" } });
+      await assert.rejects(() => setImageSizeScope(product.id, image.id, "XL", false, adminId), InvalidProductImageSizeError);
+      await setImageSizeScope(product.id, image.id, "S", false, adminId);
+      let detail = await getProductForAdmin(product.id);
+      assert.equal(detail!.images[0].size, "S");
+      assert.equal(detail!.images[0].appliesToAllSizes, false);
+      await setImageSizeScope(product.id, image.id, null, true, adminId);
+      detail = await getProductForAdmin(product.id);
+      assert.equal(detail!.images[0].size, null);
+      assert.equal(detail!.images[0].appliesToAllSizes, true);
+    } finally {
+      await db.product.delete({ where: { id: product.id } });
+      await db.mediaAsset.delete({ where: { id: media.id } });
+      await db.category.delete({ where: { id: category.id } });
+    }
+  });
+});
+
+describe("reviewed generated product image sync (integration)", () => {
+  it("links only to the exact referenced colour and does not restore an admin-removed link", async () => {
+    const suffix = randomUUID();
+    const category = await db.category.create({ data: { name: `Generated Images ${suffix}`, slug: `generated-images-${suffix}`, section: "GENERAL" } });
+    const product = await db.product.create({ data: { name: "Test Scrub", slug: `generated-test-scrub-${suffix}`, categoryId: category.id, price: 499, status: "ACTIVE" } });
+    const referenceKey = `media/product/2026/09/${suffix}.webp`;
+    const reference = await db.mediaAsset.create({ data: { key: referenceKey, url: `/cdn/${referenceKey}`, usage: "PRODUCT" } });
+    const hash = "a".repeat(64);
+    const key = `media/product/chatgpt/2026-09-30/generated-test-scrub/navy-side-${hash}.webp`;
+    const entry = validateReviewedProductViews([{ productSlug: product.slug, color: "Navy", view: "side",
+      referenceKey, key, alt: "Navy scrub side illustration", prompt: "Test prompt", model: "ChatGPT Images",
+      width: 1024, height: 1024, applicability: "representative", contentSha256: hash }])[0];
+    try {
+      await db.productVariant.create({ data: { productId: product.id, sku: `generated-test-${suffix}`, size: "S", color: "Navy", stock: 1 } });
+      await assert.rejects(() => syncGeneratedProductImages([entry]), /Reference photo is not linked/);
+      await db.productImage.create({ data: { productId: product.id, mediaId: reference.id, color: "Navy" } });
+      assert.deepEqual(await syncGeneratedProductImages([entry]), { linked: 1, previouslySynced: 0 });
+      const generated = await db.mediaAsset.findUniqueOrThrow({ where: { key } });
+      const link = await db.productImage.findFirstOrThrow({ where: { productId: product.id, mediaId: generated.id } });
+      assert.equal(link.color, "Navy");
+      assert.equal(link.appliesToAllSizes, false);
+      assert.deepEqual(await syncGeneratedProductImages([entry]), { linked: 0, previouslySynced: 1 });
+      await db.productImage.delete({ where: { id: link.id } });
+      assert.deepEqual(await syncGeneratedProductImages([entry]), { linked: 0, previouslySynced: 1 });
+      assert.equal(await db.productImage.count({ where: { productId: product.id, mediaId: generated.id } }), 0);
+    } finally {
+      await db.siteSetting.deleteMany({ where: { key: `generated-product-view:${key}` } });
+      await db.product.delete({ where: { id: product.id } });
+      await db.mediaAsset.deleteMany({ where: { key: { in: [key, referenceKey] } } });
+      await db.category.delete({ where: { id: category.id } });
+    }
+  });
 });
 
 describe("saveMediaAsset (integration, fake storage — no real R2 call)", () => {

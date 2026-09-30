@@ -24,6 +24,36 @@ test.describe("Admin E2E", () => {
     await expect(page.getByRole("heading", { name: /Dashboard/i })).toBeVisible();
   });
 
+  test("product listing switch unlists and relists a public product", async ({ page }) => {
+    await loginAsAdmin(page);
+    await page.goto("/admin/products");
+    const body = await page.evaluate(async () => {
+      const response = await fetch("/api/admin/products?page=1&sort=updated-desc");
+      if (!response.ok) throw new Error(`Admin product list HTTP ${response.status}: ${(await response.text()).slice(0, 300)}`);
+      return response.json() as Promise<{ items: { id: string; slug: string; name: string; status: string }[] }>;
+    });
+    const product = body.items.find((item) => item.status === "ACTIVE");
+    if (!product) throw new Error("No active product on the first admin catalog page");
+    const row = page.locator("tr").filter({ has: page.locator(`a[href="/admin/products/${product.id}"]`) });
+    await expect(row).toBeVisible();
+    const listing = row.getByRole("switch", { name: `Listing for ${product.name}` });
+    await expect(listing).toHaveAttribute("aria-checked", "true");
+    try {
+      await listing.click();
+      await expect(listing).toHaveAttribute("aria-checked", "false");
+      await expect.poll(async () => (await page.request.get(`/products/${product.slug}`)).status()).toBe(404);
+      await listing.click();
+      await expect(listing).toHaveAttribute("aria-checked", "true");
+      await expect.poll(async () => (await page.request.get(`/products/${product.slug}`)).status()).toBe(200);
+    } finally {
+      await page.evaluate(async (id) => {
+        await fetch(`/api/admin/products/${id}/publish`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "publish" }),
+        });
+      }, product.id);
+    }
+  });
+
   test("unauthenticated admin redirects to login", async ({ page }) => {
     await page.context().clearCookies();
     await page.goto("/admin/dashboard");

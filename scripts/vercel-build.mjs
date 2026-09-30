@@ -115,6 +115,11 @@ async function main() {
     // ADMIN_SEED_PASSWORD — see prisma/seed.ts's resolveAdminSeedPassword.
     console.log("\n▶ prisma seed");
     run("npx tsx prisma/seed.ts");
+
+    if (process.env.VERCEL_ENV === "production") {
+      console.log("\n▶ sync reviewed generated product images");
+      run("npx tsx scripts/sync-generated-product-images.ts --apply");
+    }
   } else {
     console.log(
       `\n▶ skipping prisma migrate/seed (VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"}; ` +

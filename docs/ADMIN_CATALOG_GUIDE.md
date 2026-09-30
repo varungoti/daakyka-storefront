@@ -50,13 +50,15 @@ current admin UI and API (`src/app/admin/(panel)/products/**`, `src/components/a
 9. **Save draft** — enabled once Name and Price are filled in. `POST /api/admin/products` (create)
    or `PATCH /api/admin/products/[id]` (edit), followed by `POST /api/admin/products/[id]/variants`
    if there are variant rows to persist. A new product's status is always `DRAFT` until published.
-10. **Publish** — requires `products:publish` (a separate permission from `products:manage` — see
-    [ROLES.md](./ROLES.md)); the button is disabled with a "Requires products:publish" tooltip
-    otherwise. Publishing calls `POST /api/admin/products/[id]/publish` with `{ action: "publish" }`
-    and flips status to `ACTIVE`. The same endpoint handles **Unpublish** (back to `DRAFT`) and
-    **Archive** (`{ action: "archive" }`, status `ARCHIVED`) — archiving only needs
-    `products:manage`, since taking a live product down is treated as ordinary catalog upkeep
-    rather than a launch decision.
+10. **Listing on/off** — the sticky editor bar and the product table (desktop and mobile) have a
+    listing switch. It requires `products:publish` (separate from `products:manage`; see
+    [ROLES.md](./ROLES.md)). On calls `POST /api/admin/products/[id]/publish` with
+    `{ action: "publish" }` and moves a draft to `ACTIVE`; off sends `{ action: "unpublish" }`
+    and moves it back to `DRAFT`. The editor saves pending changes before changing status. A
+    product must have an active variant to list. Unlisting removes it from public catalog reads
+    and its direct product URL while keeping the product, variants, media, and order history.
+    An `ARCHIVED` product has no listing switch: use **Unarchive** to return it to draft first.
+    **Archive** remains a separate `products:manage` action.
 
 ### Field reference and validation (`productInputSchema`, `src/lib/catalog/products.ts`)
 

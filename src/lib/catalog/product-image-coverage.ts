@@ -1,13 +1,11 @@
-/** Lower-bound planning metric by colourway. The current ProductImage model
- * cannot tag a size or prove that these views accurately cover each size;
- * this count must not be presented as the user's per-size release gate. */
+/** Colourway count remains a lower bound; verified size scope is checked separately. */
 export const REQUIRED_IMAGES_PER_COLORWAY = 3;
 
 export interface MediaCoverageProduct {
   slug: string;
   name: string;
   variants: { size: string; color: string; active: boolean }[];
-  images: { mediaId: string; color: string | null }[];
+  images: { mediaId: string; color: string | null; size?: string | null; appliesToAllSizes?: boolean }[];
 }
 
 export interface MediaCoverageGap {
@@ -16,6 +14,14 @@ export interface MediaCoverageGap {
   color: string;
   sizes: string[];
   imageCount: number;
+  missing: number;
+}
+
+export interface SizeImageCoverageGap {
+  slug: string;
+  color: string;
+  size: string;
+  verifiedImageCount: number;
   missing: number;
 }
 
@@ -49,4 +55,30 @@ export function findProductImageCoverageGaps(products: MediaCoverageProduct[]): 
     }
   }
   return gaps.sort((a, b) => a.slug.localeCompare(b.slug) || a.color.localeCompare(b.color));
+}
+
+/** An image counts only when its colour and size applicability were explicitly verified. */
+export function findVerifiedSizeImageCoverageGaps(products: MediaCoverageProduct[]): SizeImageCoverageGap[] {
+  const gaps: SizeImageCoverageGap[] = [];
+  for (const product of products) {
+    const active = product.variants.filter((variant) => variant.active);
+    const colors = new Set(active.map((variant) => variant.color));
+    for (const variant of active) {
+      const mediaIds = new Set(product.images
+        .filter((image) =>
+          (image.color === variant.color || (colors.size === 1 && !image.color)) &&
+          (image.size === variant.size || (!image.size && image.appliesToAllSizes === true)),
+        )
+        .map((image) => image.mediaId));
+      if (mediaIds.size >= REQUIRED_IMAGES_PER_COLORWAY) continue;
+      gaps.push({
+        slug: product.slug,
+        color: variant.color,
+        size: variant.size,
+        verifiedImageCount: mediaIds.size,
+        missing: REQUIRED_IMAGES_PER_COLORWAY - mediaIds.size,
+      });
+    }
+  }
+  return gaps.sort((a, b) => a.slug.localeCompare(b.slug) || a.color.localeCompare(b.color) || a.size.localeCompare(b.size));
 }

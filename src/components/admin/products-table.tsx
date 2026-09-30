@@ -69,6 +69,7 @@ export function ProductsTable({
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [listingBusyId, setListingBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // F-189: a one-off success confirmation (e.g. "12 products archived"),
   // separate from `notice` — that's reserved for errors/skips and renders
@@ -174,6 +175,57 @@ export function ProductsTable({
     }
     setSelected(new Set());
     load();
+  }
+
+  async function toggleListing(item: ProductListItem) {
+    if (!canPublish || item.status === "ARCHIVED" || listingBusyId) return;
+    const action = item.status === "ACTIVE" ? "unpublish" : "publish";
+    setListingBusyId(item.id);
+    setNotice(null);
+    setSuccessNotice(null);
+    try {
+      const response = await fetch(`/api/admin/products/${item.id}/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        setNotice(body?.error ?? `Couldn't change the listing for ${item.name}.`);
+        return;
+      }
+      setItems((current) => current.map((row) => row.id === item.id
+        ? { ...row, status: action === "publish" ? "ACTIVE" : "DRAFT" }
+        : row));
+      setSuccessNotice(`${item.name} is now ${action === "publish" ? "listed" : "unlisted"}.`);
+      await load();
+    } catch {
+      setNotice(`Couldn't change the listing for ${item.name}. Check your connection and try again.`);
+    } finally {
+      setListingBusyId(null);
+    }
+  }
+
+  function listingControl(item: ProductListItem) {
+    if (item.status === "ARCHIVED") return <span className="text-xs text-muted">Archived</span>;
+    const listed = item.status === "ACTIVE";
+    return (
+      <button
+        type="button"
+        role="switch"
+        aria-checked={listed}
+        aria-label={`Listing for ${item.name}`}
+        onClick={() => toggleListing(item)}
+        disabled={!canPublish || listingBusyId !== null || bulkBusy}
+        title={!canPublish ? "Requires products:publish" : listed ? "Unlist this product" : "List this product"}
+        className="inline-flex items-center gap-2 rounded-full border border-border px-2 py-1 text-xs font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <span aria-hidden="true" className={`relative h-5 w-9 rounded-full transition-colors ${listed ? "bg-green-600" : "bg-gray-300"}`}>
+          <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${listed ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+        </span>
+        {listingBusyId === item.id ? "Saving…" : listed ? "On" : "Off"}
+      </button>
+    );
   }
 
   return (
@@ -352,19 +404,20 @@ export function ProductsTable({
               <th className="p-3">Price</th>
               <th className="p-3">Stock</th>
               <th className="p-3">Status</th>
+              <th className="p-3">Listing</th>
               <th className="p-3" />
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={7} className="p-6 text-center text-muted">
+                <td colSpan={canManage ? 8 : 7} className="p-6 text-center text-muted">
                   Loading…
                 </td>
               </tr>
             ) : items.length === 0 ? (
               <tr>
-                <td colSpan={7} className="p-6 text-center text-muted">
+                <td colSpan={canManage ? 8 : 7} className="p-6 text-center text-muted">
                   No products found.
                 </td>
               </tr>
@@ -411,6 +464,7 @@ export function ProductsTable({
                       {item.status}
                     </span>
                   </td>
+                  <td className="p-3">{listingControl(item)}</td>
                   <td className="p-3 text-right">
                     <Link href={`/admin/products/${item.id}`} className="text-xs font-semibold text-brand hover:underline">
                       Edit
@@ -483,7 +537,8 @@ export function ProductsTable({
                   </dd>
                 </div>
               </dl>
-              <div className="mt-3 text-right">
+              <div className="mt-3 flex items-center justify-between gap-3">
+                {listingControl(item)}
                 <Link href={`/admin/products/${item.id}`} className="text-xs font-semibold text-brand hover:underline">
                   Edit
                 </Link>

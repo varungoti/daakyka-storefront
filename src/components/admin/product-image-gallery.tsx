@@ -17,6 +17,8 @@ export interface ProductImageRow {
   url: string;
   alt: string | null;
   color: string | null;
+  size?: string | null;
+  appliesToAllSizes?: boolean;
   sortOrder: number;
 }
 
@@ -84,12 +86,14 @@ export function ProductImageGallery({
   productId,
   images,
   productColors,
+  productSizes,
   aiFields,
   onChange,
 }: {
   productId: string;
   images: ProductImageRow[];
   productColors: string[];
+  productSizes: string[];
   aiFields: { name?: string; category?: string; gender?: string; fabric?: string };
   onChange: (images: ProductImageRow[]) => void;
 }) {
@@ -128,6 +132,8 @@ export function ProductImageGallery({
       url: body.image.media.url,
       alt: body.image.alt,
       color: body.image.color,
+      size: body.image.size,
+      appliesToAllSizes: body.image.appliesToAllSizes,
       sortOrder: body.image.sortOrder,
     };
   }
@@ -289,6 +295,25 @@ export function ProductImageGallery({
     if (!response.ok) {
       updateImage(id, { color: previous });
       setNotice("Couldn't update the colour tag — try again.");
+    }
+  }
+
+  async function setSizeScope(id: string, value: string) {
+    const previous = images.find((img) => img.id === id);
+    if (!previous) return;
+    const size = value === "" || value === "__ALL__" ? null : value;
+    const appliesToAllSizes = value === "__ALL__";
+    updateImage(id, { size, appliesToAllSizes });
+    try {
+      const response = await fetch(`/api/admin/products/${productId}/images/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ size, appliesToAllSizes }),
+      });
+      if (!response.ok) throw new Error("Could not save size applicability");
+    } catch {
+      updateImage(id, { size: previous.size ?? null, appliesToAllSizes: previous.appliesToAllSizes ?? false });
+      setNotice("Couldn't save the image's size applicability — try again.");
     }
   }
 
@@ -526,6 +551,16 @@ export function ProductImageGallery({
                     {color}
                   </option>
                 ))}
+              </select>
+              <select
+                aria-label="Image size applicability"
+                value={img.appliesToAllSizes ? "__ALL__" : img.size ?? ""}
+                onChange={(e) => void setSizeScope(img.id, e.target.value)}
+                className="w-full rounded border border-border p-1 text-xs"
+              >
+                <option value="">Size applicability unverified</option>
+                <option value="__ALL__">All listed sizes — same design verified</option>
+                {productSizes.map((size) => <option key={size} value={size}>Only size {size}</option>)}
               </select>
               <input
                 value={img.alt ?? ""}

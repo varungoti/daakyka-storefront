@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { findProductImageCoverageGaps, REQUIRED_IMAGES_PER_COLORWAY } from "@/lib/catalog/product-image-coverage";
+import { findProductImageCoverageGaps, findVerifiedSizeImageCoverageGaps, REQUIRED_IMAGES_PER_COLORWAY } from "@/lib/catalog/product-image-coverage";
 
 async function main() {
   const products = await db.product.findMany({
@@ -8,10 +8,11 @@ async function main() {
       slug: true,
       name: true,
       variants: { select: { size: true, color: true, active: true } },
-      images: { select: { mediaId: true, color: true } },
+      images: { select: { mediaId: true, color: true, size: true, appliesToAllSizes: true } },
     },
   });
   const gaps = findProductImageCoverageGaps(products);
+  const sizeGaps = findVerifiedSizeImageCoverageGaps(products);
   const missing = gaps.reduce((sum, gap) => sum + gap.missing, 0);
   const affectedVariants = gaps.reduce((sum, gap) => sum + gap.sizes.length, 0);
   const listedSizeVariants = products.reduce(
@@ -20,15 +21,18 @@ async function main() {
   );
   console.log(JSON.stringify({
     requiredImagesPerColorway: REQUIRED_IMAGES_PER_COLORWAY,
-    sizeSpecificCoverageVerified: false,
+    sizeSpecificCoverageVerified: sizeGaps.length === 0,
     listedSizeVariants,
     activeProducts: products.length,
     affectedColorways: gaps.length,
     affectedVariants,
     missingDistinctImages: missing,
+    affectedSizeVariants: sizeGaps.length,
+    missingVerifiedSizeImageSlots: sizeGaps.reduce((sum, gap) => sum + gap.missing, 0),
     gaps,
+    ...(process.argv.includes("--details") ? { sizeGaps } : {}),
   }, null, 2));
-  if (gaps.length > 0) process.exitCode = 1;
+  if (gaps.length > 0 || sizeGaps.length > 0) process.exitCode = 1;
 }
 
 main().catch((error) => {

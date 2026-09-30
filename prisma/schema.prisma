@@ -789,6 +789,8 @@ model ProductImage {
   mediaId   String
   media     MediaAsset @relation(fields: [mediaId], references: [id], onDelete: Cascade)
   color     String?
+  size      String?
+  appliesToAllSizes Boolean @default(false)
   sortOrder Int        @default(0)
   alt       String?
   createdAt DateTime   @default(now())

@@ -21,6 +21,7 @@ import {
   publishProduct,
   replaceVariants,
   unpublishProduct,
+  unarchiveProduct,
   updateProduct,
   VariantOwnershipError,
   VariantStockConflictError,
@@ -34,6 +35,7 @@ import { POST as bulkRoute } from "@/app/api/admin/products/bulk/route";
 import { POST as publishRoute } from "@/app/api/admin/products/[id]/publish/route";
 import { POST as variantsRoute } from "@/app/api/admin/products/[id]/variants/route";
 import { findAnyAdminId } from "../helpers/admin-user";
+import { getProductByHandle, getProductsStrict } from "@/lib/products/index";
 
 /**
  * Phase B1: product admin CRUD, exercised at the library layer
@@ -124,9 +126,24 @@ describe("products admin service (Phase B1)", () => {
 
     const published = await publishProduct(product.id, adminId);
     assert.equal(published.status, "ACTIVE");
+    assert.ok((await getProductsStrict()).some((row) => row.handle === published.slug));
+    assert.ok(await getProductByHandle(published.slug));
 
     const unpublished = await unpublishProduct(product.id, adminId);
     assert.equal(unpublished.status, "DRAFT");
+    assert.ok(!(await getProductsStrict()).some((row) => row.handle === published.slug));
+    assert.equal(await getProductByHandle(published.slug), null);
+
+    const relisted = await publishProduct(product.id, adminId);
+    assert.equal(relisted.status, "ACTIVE");
+    assert.ok((await getProductsStrict()).some((row) => row.handle === published.slug));
+
+    await archiveProduct(product.id, adminId);
+    await assert.rejects(() => publishProduct(product.id, adminId), ProductNotPublishableError);
+    await assert.rejects(() => unpublishProduct(product.id, adminId), ProductNotPublishableError);
+    assert.ok(!(await getProductsStrict()).some((row) => row.handle === published.slug));
+    await unarchiveProduct(product.id, adminId);
+    assert.equal((await db.product.findUnique({ where: { id: product.id } }))?.status, "DRAFT");
   });
 
   it("archiveProduct sets status to ARCHIVED", async () => {

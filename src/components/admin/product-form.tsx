@@ -132,6 +132,7 @@ export function ProductForm({
   const flatCategories = useMemo(() => flattenCategories(categoryOptions), [categoryOptions]);
   const selectedCategory = categoryOptions.find((c) => c.id === categoryId);
   const productColors = useMemo(() => Array.from(new Set(variants.map((v) => v.color))), [variants]);
+  const productSizes = useMemo(() => Array.from(new Set(variants.filter((v) => v.active).map((v) => v.size))), [variants]);
   // F-179: same check ProductVariantEditor already renders inline below the
   // grid — reused here (not duplicated) to also disable Save, so a
   // duplicate/invalid grid can't reach the server at all.
@@ -687,6 +688,7 @@ export function ProductForm({
             productId={productId}
             images={images}
             productColors={productColors}
+            productSizes={productSizes}
             aiFields={{ name, category: selectedCategory?.name, gender, fabric }}
             onChange={setImages}
           />
@@ -840,17 +842,21 @@ export function ProductForm({
             Unarchive
           </button>
         ) : (
-          <span title={canPublish ? "" : "Requires products:publish"}>
-            {status === "ACTIVE" ? (
-              <button type="button" onClick={unpublish} disabled={!canPublish || !productId || busyAction === "unpublish"} className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-muted disabled:cursor-not-allowed disabled:opacity-50">
-                Unpublish
-              </button>
-            ) : (
-              <button type="button" onClick={publish} disabled={!canPublish || !productId || busyAction === "publish"} className="rounded-full bg-brand px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
-                Publish
-              </button>
-            )}
-          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={status === "ACTIVE"}
+            aria-label="Product listing"
+            onClick={status === "ACTIVE" ? unpublish : publish}
+            disabled={!canPublish || !productId || busyAction !== null || saveStatus === "saving"}
+            title={!canPublish ? "Requires products:publish" : !productId ? "Save this product before listing" : status === "ACTIVE" ? "Unlist this product" : "List this product"}
+            className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span aria-hidden="true" className={`relative h-5 w-9 rounded-full transition-colors ${status === "ACTIVE" ? "bg-green-600" : "bg-gray-300"}`}>
+              <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${status === "ACTIVE" ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+            </span>
+            Listing {busyAction === "publish" || busyAction === "unpublish" ? "saving…" : status === "ACTIVE" ? "on" : "off"}
+          </button>
         )}
 
         {isEdit && (

@@ -16,17 +16,32 @@ regular uploads. Source: `src/lib/ai/image-generation.ts`, `src/lib/ai/prompt-pr
 | `R2_ACCESS_KEY_ID` | R2 S3-compatible access key | — |
 | `R2_SECRET_ACCESS_KEY` | R2 S3-compatible secret key | — |
 | `R2_BUCKET` | R2 bucket name | — |
-| `R2_PUBLIC_BASE_URL` | Public base URL images are served from (e.g. a custom domain or `r2.dev` URL) | — |
+| `R2_PUBLIC_BASE_URL` | Optional public bucket/custom domain URL | Unset: private objects are served through same-origin `/cdn/...` |
 
-**None of these are currently set in this environment's `.env`.** Both `isImageGenerationConfigured()`
-(checks `OPENAI_API_KEY`) and `isR2Configured()` (checks all four `R2_*` vars) return `false` today,
-so every AI-generation and image-upload attempt in the admin UI will surface the existing 503
-"not configured" messages rather than actually generating or storing anything — the admin UI is
-built to degrade gracefully in exactly this state (see `SiteImagesGrid`'s doc comment,
-`src/components/admin/site-images-grid.tsx`). Whoever runs this in a real environment must add
-real values for all of the above before generation or image uploads will work. If any of these
-keys was ever pasted in plaintext anywhere (chat, a ticket, a shared doc, a non-`.env` file),
-rotate it before use — don't just paste the same key into `.env` and move on.
+The account/key/secret settings also accept the matching `CLOUDFLARE_*` aliases. Verify each
+deployment's actual environment instead of inferring readiness from a local example file. The
+production bucket is private, so leave `R2_PUBLIC_BASE_URL` unset unless a public domain is
+intentionally configured.
+
+## Reviewed ChatGPT Images catalog backfill
+
+The ChatGPT Images backfill is separate from the admin generation API. Its reviewed source-linked
+manifest is `src/data/media/generated-product-views.json`. Each row records the exact existing
+catalog photo key, product, colour, distinct view, WebP content hash, and AI disclosure. The local
+preparation tools under `scripts/prepare-product-image-references.mjs`,
+`scripts/download-imagegen-references.mjs`, `scripts/prepare-reviewed-imagegen-batch.mjs`, and
+`scripts/upload-reviewed-product-images.mjs` keep generated PNGs in ignored `dogfood-output` and
+upload only inspected, approved results to private R2. Production builds apply the manifest after
+Prisma migrations and the seed through `scripts/sync-generated-product-images.ts`; the sync refuses
+an image when its reference no longer belongs to that exact product colour, and a persistent marker
+prevents a later deploy from restoring a photo an admin removed. Run
+`node scripts/audit-generated-product-manifest.mjs` before deployment to check every source link and
+uploaded CDN response.
+
+These images are **representative AI illustrations**. They are shown with a size-verification notice
+and do not count as verified size photography until a merchant checks that the design is the same
+across the listed sizes or attaches exact-size photos in the product editor. Never substitute a
+different colour's photo for an unpictured colour.
 
 ## Daily generation cap
 
@@ -141,16 +156,15 @@ npm run images:generate -- [--dry-run] [--only=slots|products|categories] [--lim
 - **Run report**: written to `dogfood-output/image-run.json` after a real (`--yes`) run — what was
   generated, what failed, and timestamps.
 
-This is still gated by the same missing credentials as the per-item admin flow: nothing in this
-repository's `.env` currently sets `OPENAI_API_KEY` or the `R2_*` vars, so `--yes` will not
-succeed until those are added (see [Environment variables](#environment-variables) above).
+The batch path needs a configured OpenAI image key and the same R2 credentials as the admin
+upload flow; verify them in the environment where the command will run.
 
 ## Storage (Cloudflare R2)
 
 `src/lib/storage/r2.ts` wraps the S3-compatible R2 API (`@aws-sdk/client-s3`). `uploadObject()` and
-`deleteObject()` require all four `R2_*` env vars (`readR2Env()` returns `null` and callers throw
-`StorageNotConfiguredError` if any are missing) — this is shared by both AI-generated and manually
-uploaded images, since `saveMediaAsset()` is the single write path for both. `publicUrlForKey()`
-builds the served URL from `R2_PUBLIC_BASE_URL` + the object key. A presigned-direct-upload helper
+`deleteObject()` require the four account/key/secret/bucket settings (`readR2Env()` accepts the
+`CLOUDFLARE_*` aliases and returns `null` if any are missing). This is shared by AI-generated and
+manually uploaded images. `publicUrlForKey()` uses `R2_PUBLIC_BASE_URL` when configured, and
+otherwise serves private objects through `/cdn/[...key]`. A presigned-direct-upload helper
 (`getPresignedUploadUrl()`) exists in the module but isn't wired to any admin route yet — uploads
 currently transit the Next.js server function rather than going straight from the browser to R2.

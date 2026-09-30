@@ -44,6 +44,10 @@ export interface ProductImage {
   /** Colour this image belongs to, for a colour-specific gallery. Absent
    * means "shown for every colour" (e.g. a shared placeholder). */
   color?: string;
+  /** Exact pictured size, when the image is size-specific. */
+  size?: string;
+  /** An admin verified that the pictured design applies to every listed size. */
+  appliesToAllSizes?: boolean;
 }
 
 export interface Product {
