@@ -21,7 +21,9 @@ module.exports = {
   ci: {
     collect: {
       url: [`${BASE_URL}/`, `${BASE_URL}/shop`, `${BASE_URL}/products/${PRODUCT_HANDLE}`],
-      numberOfRuns: 1,
+      // A single Docker-host CPU stall can distort Total Blocking Time by >1s.
+      // LHCI selects the representative run from three samples for assertions.
+      numberOfRuns: 3,
       settings: {
         // The isolated Docker verification image runs Chromium as root.
         // LHCI forwards this setting to chrome-launcher; desktop runs keep
