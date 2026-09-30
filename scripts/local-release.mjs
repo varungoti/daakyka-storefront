@@ -44,6 +44,22 @@ async function checkHealth() {
   console.log(`Public health: 5/5 OK; products API: ${products.status}`);
 }
 
+async function checkShopMetadata() {
+  const response = await fetch(new URL("/shop", publicUrl), {
+    cache: "no-store",
+    signal: AbortSignal.timeout(12000),
+  });
+  const head = (await response.text()).split("</head>", 1)[0];
+  if (
+    response.status !== 200 ||
+    !/<meta name="description" content="[^"]+"/.test(head) ||
+    head.includes("Shop All Scrubs")
+  ) {
+    throw new Error("Public /shop metadata is missing or still uses the legacy scrub-only seed");
+  }
+  console.log("Public /shop metadata is present in <head> and does not use the legacy seed.");
+}
+
 if (git(["status", "--porcelain"]).length > 0) {
   throw new Error("Release requires a clean worktree; preserve or commit local changes first");
 }
@@ -62,6 +78,7 @@ if (!deploy) {
 
 await run("Vercel production deployment", "vercel", ["deploy", "--prod", "--yes"]);
 await checkHealth();
+await checkShopMetadata();
 await run("All visible menu categories", "npx", ["tsx", "scripts/audit-live-categories.ts", publicUrl.href]);
 await run("Public sitemap, links, and image targets", "node", ["scripts/audit-public-links.mjs", publicUrl.href]);
 await checkHealth();
