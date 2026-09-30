@@ -615,6 +615,9 @@ function GalleryColumn({
     {representativeFallback && (
       <p className="text-xs text-muted">Representative product image; imagery for size {selectedSize} is being verified.</p>
     )}
+    {images.some((image) => image.alt?.includes("AI-generated colour interpretation")) && (
+      <p className="text-xs text-muted">AI colour interpretation based on another colour of this product. Confirm the shade and design with us before ordering.</p>
+    )}
     </div>
   );
 }

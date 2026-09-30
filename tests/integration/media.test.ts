@@ -97,6 +97,40 @@ describe("product image size applicability (integration)", () => {
 });
 
 describe("reviewed generated product image sync (integration)", () => {
+  it("labels and links a sibling-colour interpretation only when its source belongs to the same product", async () => {
+    const suffix = randomUUID();
+    const category = await db.category.create({ data: { name: `Sibling Images ${suffix}`, slug: `sibling-images-${suffix}`, section: "GENERAL" } });
+    const product = await db.product.create({ data: { name: "Test Scrub", slug: `sibling-test-scrub-${suffix}`, categoryId: category.id, price: 499, status: "ACTIVE" } });
+    const referenceKey = `media/product/2026/09/${suffix}.webp`;
+    const reference = await db.mediaAsset.create({ data: { key: referenceKey, url: `/cdn/${referenceKey}`, usage: "PRODUCT" } });
+    const hash = "b".repeat(64);
+    const key = `media/product/chatgpt/2026-09-30/sibling-test-scrub/hunter-green-side-${hash}.webp`;
+    const entry = validateReviewedProductViews([{ productSlug: product.slug, color: "Hunter Green", referenceColor: "Navy", view: "side",
+      referenceKey, key, alt: "AI-generated colour interpretation of Hunter Green based on Navy catalog reference",
+      prompt: "Test prompt", model: "ChatGPT Images", width: 1024, height: 1024,
+      applicability: "representative", contentSha256: hash }])[0];
+    try {
+      await db.productVariant.createMany({ data: [
+        { productId: product.id, sku: `sibling-navy-${suffix}`, size: "S", color: "Navy", stock: 1 },
+        { productId: product.id, sku: `sibling-green-${suffix}`, size: "S", color: "Hunter Green", stock: 1 },
+      ] });
+      await db.productImage.create({ data: { productId: product.id, mediaId: reference.id, color: "Hunter Green" } });
+      await assert.rejects(() => syncGeneratedProductImages([entry]), /Reference photo is not linked/);
+      await db.productImage.updateMany({ where: { productId: product.id, mediaId: reference.id }, data: { color: "Navy" } });
+      assert.deepEqual(await syncGeneratedProductImages([entry]), { linked: 1, previouslySynced: 0 });
+      const generated = await db.mediaAsset.findUniqueOrThrow({ where: { key } });
+      const link = await db.productImage.findFirstOrThrow({ where: { productId: product.id, mediaId: generated.id } });
+      assert.equal(link.color, "Hunter Green");
+      assert.equal(link.appliesToAllSizes, false);
+      assert.match(generated.alt ?? "", /AI-generated colour interpretation/);
+    } finally {
+      await db.siteSetting.deleteMany({ where: { key: `generated-product-view:${key}` } });
+      await db.product.delete({ where: { id: product.id } });
+      await db.mediaAsset.deleteMany({ where: { key: { in: [key, referenceKey] } } });
+      await db.category.delete({ where: { id: category.id } });
+    }
+  });
+
   it("links only to the exact referenced colour and does not restore an admin-removed link", async () => {
     const suffix = randomUUID();
     const category = await db.category.create({ data: { name: `Generated Images ${suffix}`, slug: `generated-images-${suffix}`, section: "GENERAL" } });

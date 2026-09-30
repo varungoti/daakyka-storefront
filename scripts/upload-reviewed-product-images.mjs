@@ -35,12 +35,15 @@ const rows = JSON.parse(readFileSync(inputPath, "utf8"));
 if (!Array.isArray(rows) || rows.length === 0) throw new Error("Batch must contain image rows");
 const results = [];
 for (const row of rows) {
-  const { productSlug, color, view, referenceKey, file, prompt } = row;
+  const { productSlug, color, view, referenceKey, referenceColor, file, prompt } = row;
   if (![productSlug, color, view, referenceKey, file, prompt].every((item) => typeof item === "string" && item.length > 0)) {
     throw new Error("Each image requires productSlug, color, view, referenceKey, file, and prompt");
   }
   if (!/^media\/product\/\d{4}\/\d{2}\/[a-z0-9-]+\.webp$/.test(referenceKey)) {
     throw new Error(`Invalid catalog reference key for ${productSlug}/${color}`);
+  }
+  if (referenceColor !== undefined && (typeof referenceColor !== "string" || !referenceColor || referenceColor === color)) {
+    throw new Error(`Invalid sibling reference colour for ${productSlug}/${color}`);
   }
   const input = readFileSync(path.resolve(path.dirname(inputPath), file));
   const { data, info } = await sharp(input, { limitInputPixels: 50_000_000 })
@@ -60,8 +63,11 @@ for (const row of rows) {
       if (uploaded.ContentLength !== data.length) throw new Error(`R2 verification failed: ${key}`);
     }
   }
-  results.push({ productSlug, color, view, referenceKey, key,
-    alt: `${row.productName ?? productSlug} in ${color}, ${view} view; AI-generated product illustration based on catalog reference`,
+  results.push({ productSlug, color, view, referenceKey,
+    ...(referenceColor ? { referenceColor } : {}), key,
+    alt: referenceColor
+      ? `${row.productName ?? productSlug} in ${color}, ${view} view; AI-generated colour interpretation based on ${referenceColor} catalog reference, not a verified ${color} product photo`
+      : `${row.productName ?? productSlug} in ${color}, ${view} view; AI-generated product illustration based on catalog reference`,
     prompt, model: "ChatGPT Images", width: info.width, height: info.height,
     applicability: "representative", contentSha256: hash });
   console.log(`${execute ? "uploaded/verified" : "prepared"}: ${key} (${data.length} bytes)`);

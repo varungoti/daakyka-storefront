@@ -10,8 +10,21 @@ for (const row of rows) {
 }
 const failures = [];
 let checkedImages = 0;
+let siblingColourInterpretations = 0;
+async function fetchWithRetry(url, options = {}) {
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const response = await fetch(url, { ...options, signal: AbortSignal.timeout(30000) });
+      if (response.status !== 429 && response.status < 500) return response;
+      lastError = new Error(`${url}: HTTP ${response.status}`);
+    } catch (error) { lastError = error; }
+    if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+  }
+  throw lastError;
+}
 for (const [slug, entries] of grouped) {
-  const response = await fetch(new URL(`/products/${slug}`, base), { signal: AbortSignal.timeout(20000) });
+  const response = await fetchWithRetry(new URL(`/products/${slug}`, base));
   if (!response.ok) { failures.push(`${slug}: product HTTP ${response.status}`); continue; }
   const html = await response.text();
   const match = html.match(/\\"images\\":\[([^\]]*)\]/);
@@ -19,18 +32,19 @@ for (const [slug, entries] of grouped) {
   const images = JSON.parse(`[${match[1].replaceAll('\\"', '"')}]`);
   const colours = new Set(entries.map((entry) => entry.color));
   for (const entry of entries) {
+    const sourceColor = entry.referenceColor ?? entry.color;
+    if (entry.referenceColor) siblingColourInterpretations++;
     if (!images.some((image) => image.url === `/cdn/${entry.referenceKey}` &&
-      (image.color === entry.color || (colours.size === 1 && image.color === null)))) {
+      (image.color === sourceColor || (colours.size === 1 && !entry.referenceColor && image.color === null)))) {
       failures.push(`${slug}/${entry.color}: reference photo not linked`);
       continue;
     }
-    const imageResponse = await fetch(new URL(`/cdn/${entry.key}`, base), {
-      method: "HEAD", signal: AbortSignal.timeout(20000),
-    });
+    const imageResponse = await fetchWithRetry(new URL(`/cdn/${entry.key}`, base), { method: "HEAD" });
     if (!imageResponse.ok || !imageResponse.headers.get("content-type")?.startsWith("image/webp")) {
       failures.push(`${slug}/${entry.color}/${entry.view}: uploaded image HTTP ${imageResponse.status}`);
     } else checkedImages++;
   }
 }
-console.log(JSON.stringify({ products: grouped.size, manifestImages: rows.length, checkedImages, failures }, null, 2));
+console.log(JSON.stringify({ products: grouped.size, manifestImages: rows.length, checkedImages,
+  siblingColourInterpretations, failures }, null, 2));
 if (failures.length) process.exitCode = 1;

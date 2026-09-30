@@ -32,6 +32,20 @@ describe("selectProductGallery", () => {
     assert.equal(result.representativeFallback, true);
   });
 
+  it("shows all three same-colour AI views for each listed size without claiming size verification", () => {
+    const images = ["front", "detail", "side"].map((view) => ({
+      url: `/sky-blue-${view}.webp`, color: "Sky Blue", alt: `AI-generated colour interpretation, ${view}`,
+    }));
+    for (const size of ["2-3Y", "4-5Y", "6-7Y", "8-9Y", "10-11Y"]) {
+      const gallery = selectProductGallery({ productName: "Kids Cotton T-Shirt", color: "Sky Blue", size,
+        colorCount: 4, images });
+      assert.equal(gallery.images.length, 3);
+      assert.equal(gallery.verifiedViews, 0);
+      assert.equal(gallery.representativeFallback, true);
+      assert.ok(gallery.images.every((image) => image.alt.includes("colour interpretation")));
+    }
+  });
+
   it("keeps same-colour representative views alongside an exact-size view", () => {
     const result = selectProductGallery({
       ...base,

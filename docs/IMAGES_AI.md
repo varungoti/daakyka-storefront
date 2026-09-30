@@ -26,22 +26,27 @@ intentionally configured.
 ## Reviewed ChatGPT Images catalog backfill
 
 The ChatGPT Images backfill is separate from the admin generation API. Its reviewed source-linked
-manifest is `src/data/media/generated-product-views.json`. Each row records the exact existing
-catalog photo key, product, colour, distinct view, WebP content hash, and AI disclosure. The local
+manifest is `src/data/media/generated-product-views.json`. Each row records its existing
+catalog reference key, product, target colour, distinct view, WebP content hash, and AI disclosure.
+Most references are the exact product colour. For a target colour with no catalog photo, an
+optional `referenceColor` names the same product's different-colour source, and the generated
+image is visibly labelled as an AI colour interpretation requiring seller verification. The local
 preparation tools under `scripts/prepare-product-image-references.mjs`,
 `scripts/download-imagegen-references.mjs`, `scripts/prepare-reviewed-imagegen-batch.mjs`, and
 `scripts/upload-reviewed-product-images.mjs` keep generated PNGs in ignored `dogfood-output` and
 upload only inspected, approved results to private R2. Production builds apply the manifest after
 Prisma migrations and the seed through `scripts/sync-generated-product-images.ts`; the sync refuses
-an image when its reference no longer belongs to that exact product colour, and a persistent marker
+an image when its reference no longer belongs to that exact product and declared source colour,
+and a persistent marker
 prevents a later deploy from restoring a photo an admin removed. Run
 `node scripts/audit-generated-product-manifest.mjs` before deployment to check every source link and
 uploaded CDN response.
 
 These images are **representative AI illustrations**. They are shown with a size-verification notice
 and do not count as verified size photography until a merchant checks that the design is the same
-across the listed sizes or attaches exact-size photos in the product editor. Never substitute a
-different colour's photo for an unpictured colour.
+across the listed sizes or attaches exact-size photos in the product editor. A sibling-colour
+reference is used only to generate a labelled interpretation, never displayed as if it were a
+photo of the target colour.
 
 ## Daily generation cap
 

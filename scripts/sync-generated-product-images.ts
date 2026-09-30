@@ -10,6 +10,7 @@ export interface ReviewedProductView {
   color: string;
   view: string;
   referenceKey: string;
+  referenceColor?: string;
   key: string;
   alt: string;
   prompt: string;
@@ -30,6 +31,11 @@ export function validateReviewedProductViews(value: unknown): ReviewedProductVie
     }
     if (row.applicability !== "representative" || !Number.isInteger(row.width) || !Number.isInteger(row.height)) {
       throw new Error(`Generated image ${row.key} has invalid applicability or dimensions`);
+    }
+    if (row.referenceColor !== undefined &&
+        (typeof row.referenceColor !== "string" || !row.referenceColor || row.referenceColor === row.color ||
+         !row.alt.includes("AI-generated colour interpretation"))) {
+      throw new Error(`Generated image ${row.key} has invalid sibling-colour provenance`);
     }
     if (!/^media\/product\/chatgpt\/\d{4}-\d{2}-\d{2}\/[a-z0-9-]+\/[a-z0-9-]+-[a-f0-9]{64}\.webp$/.test(row.key) ||
         !/^media\/product\/\d{4}\/\d{2}\/[a-z0-9-]+\.webp$/.test(row.referenceKey) ||
@@ -64,8 +70,9 @@ export async function syncGeneratedProductImages(entries: ReviewedProductView[])
         throw new Error(`Missing active product/colour for generated image: ${entry.productSlug}/${entry.color}`);
       }
       const colours = new Set(product.variants.filter((v) => v.active).map((v) => v.color));
+      const sourceColor = entry.referenceColor ?? entry.color;
       const hasExactReference = product.images.some((image) => image.media.key === entry.referenceKey &&
-        (image.color === entry.color || (colours.size === 1 && image.color === null)));
+        (image.color === sourceColor || (colours.size === 1 && !entry.referenceColor && image.color === null)));
       if (!hasExactReference) {
         throw new Error(`Reference photo is not linked to the exact colour: ${entry.productSlug}/${entry.color}`);
       }
