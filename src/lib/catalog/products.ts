@@ -9,6 +9,7 @@ import type { Product, ProductGender, ProductStatus } from "@/generated/prisma/c
 import { slugify } from "@/lib/catalog/category-validation";
 import { assertUniqueVariants, generateSku } from "@/lib/catalog/product-validation";
 import { prepareDescriptionForStorage } from "@/lib/catalog/description-html";
+import { reclaimMediaAssetIfUnused } from "@/lib/media/store";
 
 /**
  * Phase B1: admin CRUD for `Product`, `ProductVariant`, and `ProductImage`,
@@ -515,6 +516,12 @@ export async function deleteProduct(id: string, userId: string): Promise<void> {
     throw new ProductDeleteBlockedError(orderCount);
   }
 
+  // F-362: remember the gallery's media before the cascade removes the
+  // ProductImage rows, so the now-unreferenced photos can be reclaimed below.
+  const galleryMediaIds = (await db.productImage.findMany({ where: { productId: id }, select: { mediaId: true } })).map(
+    (image) => image.mediaId,
+  );
+
   await db.product.delete({ where: { id } });
 
   await logAuditEvent({
@@ -526,6 +533,17 @@ export async function deleteProduct(id: string, userId: string): Promise<void> {
   });
 
   revalidateProduct(existing.slug, true);
+
+  // F-362: best-effort, after the cascade has removed the ProductImage rows
+  // (the attached-guard would refuse otherwise). Assets another product, a
+  // category, a hero slide or a review still uses are skipped by the guards.
+  for (const mediaId of new Set(galleryMediaIds)) {
+    try {
+      await reclaimMediaAssetIfUnused(mediaId);
+    } catch (error) {
+      console.error("Couldn't reclaim deleted product's image", error);
+    }
+  }
 }
 
 export async function publishProduct(id: string, userId: string): Promise<Product> {
@@ -877,6 +895,16 @@ export async function removeProductImage(productId: string, imageId: string, use
 
   await logAuditEvent({ userId, action: "delete", entity: "product_image", entityId: imageId, metadata: { productId: image.productId } });
   revalidateProduct(image.product.slug);
+
+  // F-362: a photo removed from its only product used to stay in R2 and the
+  // media library forever, still publicly downloadable. Reclaim it now; the
+  // guards leave it alone if it is still attached elsewhere or otherwise in
+  // use, and a failure here must never fail the removal itself.
+  try {
+    await reclaimMediaAssetIfUnused(image.mediaId);
+  } catch (error) {
+    console.error("Couldn't reclaim removed product image", error);
+  }
 }
 
 export async function setImageColor(productId: string, imageId: string, color: string | null, userId: string) {

@@ -289,9 +289,10 @@ function purgeCdnCopy(key: string): void {
  * detach flow or the Site Images grid's replace-only-never-delete model:
  *  - already attached to a product (has a `ProductImage` row) — use
  *    `DELETE /api/admin/products/[id]/images/[imageId]` instead, which
- *    intentionally *keeps* the `MediaAsset` row (see `removeProductImage`
- *    above) so a detached-but-still-uploaded photo can be re-attached
- *    elsewhere; this function is only for a photo nothing has ever used.
+ *    detaches the photo and then (F-362, `removeProductImage`) reclaims the
+ *    `MediaAsset` through `reclaimMediaAssetIfUnused` below once no product
+ *    or other surface uses it any more; this function is only for a photo
+ *    nothing has ever used.
  *  - a manifest slot (`slot` is set) or a category's image — both are only
  *    ever replaced (re-upload/regenerate), never deleted, by design.
  *  - a manifest slot is now freed rather than deleted by `saveMediaAsset`

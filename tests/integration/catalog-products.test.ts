@@ -1070,3 +1070,76 @@ describe("product image helpers are scoped to the product in the URL (F-194)", (
     }
   });
 });
+
+// F-362: a photo removed from its only product (or left behind by a deleted
+// product) used to stay in R2 and the media library forever — still publicly
+// downloadable through /cdn. It is now reclaimed, unless something else
+// (another product, a category, a review, a hero slide) still uses it.
+describe("removed and deleted product photos are reclaimed (F-362)", () => {
+  async function setup() {
+    const suffix = randomUUID();
+    const adminId = await findAnyAdminId();
+    const category = await db.category.create({
+      data: { name: `Reclaim ${suffix}`, slug: `reclaim-${suffix}`, section: "GENERAL" },
+    });
+    async function product(label: string) {
+      return db.product.create({
+        data: { name: `Reclaim ${label}`, slug: `reclaim-${label}-${suffix}`, categoryId: category.id, price: 499 },
+      });
+    }
+    async function media(label: string) {
+      return db.mediaAsset.create({
+        data: { key: `test/reclaim-${label}-${suffix}.webp`, url: `/cdn/test/reclaim-${label}-${suffix}.webp`, usage: "PRODUCT" },
+      });
+    }
+    return { suffix, adminId, category, product, media };
+  }
+
+  it("removing a product's only use of a photo deletes the asset; a photo still attached to another product survives", async () => {
+    const { adminId, category, product, media } = await setup();
+    const productA = await product("a");
+    const productB = await product("b");
+    const sole = await media("sole");
+    const shared = await media("shared");
+    try {
+      const soleImage = await db.productImage.create({ data: { productId: productA.id, mediaId: sole.id } });
+      const sharedOnA = await db.productImage.create({ data: { productId: productA.id, mediaId: shared.id } });
+      await db.productImage.create({ data: { productId: productB.id, mediaId: shared.id } });
+
+      await removeProductImage(productA.id, soleImage.id, adminId);
+      assert.equal(await db.productImage.findUnique({ where: { id: soleImage.id } }), null);
+      assert.equal(await db.mediaAsset.findUnique({ where: { id: sole.id } }), null, "an unreferenced photo must be reclaimed");
+
+      await removeProductImage(productA.id, sharedOnA.id, adminId);
+      assert.equal(await db.productImage.findUnique({ where: { id: sharedOnA.id } }), null);
+      assert.ok(await db.mediaAsset.findUnique({ where: { id: shared.id } }), "a photo another product still uses must survive");
+    } finally {
+      await db.product.deleteMany({ where: { id: { in: [productA.id, productB.id] } } });
+      await db.mediaAsset.deleteMany({ where: { id: { in: [sole.id, shared.id] } } });
+      await db.category.delete({ where: { id: category.id } });
+    }
+  });
+
+  it("deleting a draft product reclaims its gallery photos, except ones another product still uses", async () => {
+    const { adminId, category, product, media } = await setup();
+    const doomed = await product("doomed");
+    const other = await product("other");
+    const only = await media("only");
+    const shared = await media("shared");
+    try {
+      await db.productImage.create({ data: { productId: doomed.id, mediaId: only.id } });
+      await db.productImage.create({ data: { productId: doomed.id, mediaId: shared.id } });
+      await db.productImage.create({ data: { productId: other.id, mediaId: shared.id } });
+
+      await deleteProduct(doomed.id, adminId);
+      assert.equal(await db.product.findUnique({ where: { id: doomed.id } }), null);
+      assert.equal(await db.mediaAsset.findUnique({ where: { id: only.id } }), null, "the deleted product's own photo must be reclaimed");
+      assert.ok(await db.mediaAsset.findUnique({ where: { id: shared.id } }), "a photo another product still uses must survive");
+      assert.equal(await db.productImage.count({ where: { productId: other.id } }), 1);
+    } finally {
+      await db.product.deleteMany({ where: { id: { in: [doomed.id, other.id] } } });
+      await db.mediaAsset.deleteMany({ where: { id: { in: [only.id, shared.id] } } });
+      await db.category.delete({ where: { id: category.id } });
+    }
+  });
+});
