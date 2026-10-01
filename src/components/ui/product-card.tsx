@@ -216,8 +216,15 @@ export function ProductCard({ product, className, loadEagerly = false, compact =
           </h3>
           <p className={cn("text-sm text-muted", compact && "max-sm:text-xs")}>{selectedColor}</p>
         </div>
-        <div className="flex items-end justify-between gap-2">
-          <div className="flex items-baseline gap-2">
+        {/* Both rows may wrap: a phone-width compact card has only ~114px of
+            content (320px viewport), less than price + MRP + rating side by
+            side, and the card is `overflow-hidden`, so anything that didn't
+            fit used to be clipped silently — no scroll bar, no error, just a
+            rating with its number and count missing. The rating itself is
+            condensed to one star below `sm` (see StarRating) so that it fits
+            on a line of its own even at 320px. */}
+        <div className="flex flex-wrap items-end justify-between gap-x-2 gap-y-1">
+          <div className="flex flex-wrap items-baseline gap-x-2">
             <p className={cn("font-display text-xl font-bold text-ink", compact && "max-sm:text-base")}>
               {formatPrice(product.price)}
             </p>
@@ -232,7 +239,7 @@ export function ProductCard({ product, className, loadEagerly = false, compact =
             )}
           </div>
           {product.reviewCount > 0 && (
-            <StarRating rating={product.rating} reviewCount={product.reviewCount} />
+            <StarRating rating={product.rating} reviewCount={product.reviewCount} condenseOnPhone={compact} />
           )}
         </div>
         <span

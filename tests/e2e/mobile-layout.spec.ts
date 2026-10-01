@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
+import { CONDENSED_RATING_HTML } from "./helpers/rated-card-fixture";
 
 /**
  * Release-hardening audit "storefront-mobile-polish" (F-009, F-011, F-021,
@@ -169,6 +170,73 @@ test.describe("Mobile listings (F-021, F-100, F-242)", () => {
     await expect(chip).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Filter", exact: true })).toBeVisible();
   });
+});
+
+/**
+ * F-021 follow-up: a product card in the 2-column phone grid is only ~138px
+ * (320px viewport) to ~166px (375px) wide and `overflow-hidden`, so a row that
+ * doesn't fit isn't scrolled to or reported — it is just cut off. The review
+ * rating (five stars + number + count, ~135px) was exactly that: with the first
+ * approved review on a product, its number and count vanished from every phone
+ * listing. A freshly seeded catalogue has no reviews, so this test cannot rely
+ * on the catalogue to contain a rated card: cards that have no rating get one
+ * added to their price row: the real StarRating markup, with a three-digit
+ * review count as the widest realistic case (see helpers/rated-card-fixture.ts,
+ * which star-rating.test.ts keeps in step with the component). The card's own
+ * price row — the part that has to make room for it — is the real one.
+ */
+test.describe("Mobile listings: rated and sale cards fit their card (F-021)", () => {
+  for (const { width, height } of SMALL_PHONES) {
+    test.describe(`${width}x${height}`, () => {
+      test.use({ viewport: { width, height }, isMobile: true, hasTouch: true });
+
+      test("nothing inside a card extends past the card's edges", async ({ page }) => {
+        await gotoAndSettle(page, "/shop");
+        await expect(page.locator("article").first()).toBeVisible({ timeout: 10000 });
+
+        const result = await page.evaluate((html) => {
+          const cards = Array.from(document.querySelectorAll("article")).slice(0, 24);
+          let rated = 0;
+          const overflowing: { card: string; element: string; text: string; overBy: number }[] = [];
+
+          for (const card of cards) {
+            if (!card.querySelector("svg.lucide-star")) {
+              // The price paragraph's parent is the price group, whose parent
+              // is the row the rating sits in.
+              const priceRow = card.querySelector("p.font-display")?.parentElement?.parentElement;
+              priceRow?.insertAdjacentHTML("beforeend", html);
+            }
+            if (card.querySelector("svg.lucide-star")) rated += 1;
+          }
+
+          for (const card of cards) {
+            const box = card.getBoundingClientRect();
+            for (const el of Array.from(card.querySelectorAll("*"))) {
+              // SVG internals follow their <svg>; photos are `fill`/object-cover
+              // inside their own overflow-hidden frame.
+              if (el.closest("svg") && el.tagName.toLowerCase() !== "svg") continue;
+              if (el.tagName === "IMG") continue;
+              const r = el.getBoundingClientRect();
+              if (r.width === 0 && r.height === 0) continue; // display: none below this breakpoint
+              const overBy = Math.max(r.right - box.right, box.left - r.left);
+              if (overBy > 0.5) {
+                overflowing.push({
+                  card: card.querySelector("h3")?.textContent ?? "?",
+                  element: el.tagName.toLowerCase(),
+                  text: (el.textContent ?? "").trim().slice(0, 30),
+                  overBy: Math.round(overBy),
+                });
+              }
+            }
+          }
+          return { cards: cards.length, rated, overflowing: overflowing.slice(0, 5) };
+        }, CONDENSED_RATING_HTML);
+
+        expect(result.rated, "cards carrying a rating (so this test measures something)").toBeGreaterThan(0);
+        expect(result.overflowing, "elements cut off by the card edge").toEqual([]);
+      });
+    });
+  }
 });
 
 test.describe("Touch targets (F-240)", () => {
