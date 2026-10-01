@@ -4,12 +4,23 @@ import { SectionHeading } from "@/components/ui/section-heading";
 import type { Metadata } from "next";
 import Link from "next/link";
 
-export const metadata: Metadata = {
-  title: "Newsletter Confirmed",
-};
-
 interface NewsletterConfirmedPageProps {
   searchParams: Promise<{ status?: string }>;
+}
+
+// release-hardening F-147/F-045: a one-off landing page for the confirmation
+// email's link — noindex, and the title says "Confirmation Failed" when the
+// <h1> does (it used to say "Newsletter Confirmed" for every status, which
+// is also what the bare, status-less URL showed above a "Confirmation
+// Failed" heading).
+export async function generateMetadata({
+  searchParams,
+}: NewsletterConfirmedPageProps): Promise<Metadata> {
+  const { status } = await searchParams;
+  return {
+    title: status === "ok" ? "Subscription Confirmed" : "Confirmation Failed",
+    robots: { index: false, follow: false },
+  };
 }
 
 export default async function NewsletterConfirmedPage({

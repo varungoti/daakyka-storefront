@@ -7,6 +7,7 @@ import { SiteShell } from "@/components/layout/site-shell";
 import { GlobalJsonLd } from "@/components/seo/global-json-ld";
 import { isIndexingAllowed } from "@/lib/env";
 import { getNavigation } from "@/lib/navigation/get-navigation";
+import { siteVerification } from "@/lib/seo/verification";
 import { getSetting, isPageEnabled, isSaleEnabled } from "@/lib/settings";
 import "./globals.css";
 
@@ -74,17 +75,10 @@ export async function generateMetadata(): Promise<Metadata> {
     robots: allowIndex
       ? { index: true, follow: true }
       : { index: false, follow: false },
-    // F-320: no-ops (Next omits the tag) until the owner sets these from
-    // Search Console / Meta Business Suite — see docs/LAUNCH_CHECKLIST.md.
-    // A DNS TXT record at Hostinger is the simpler route once daakyka.com
-    // points at Vercel, but a meta tag works immediately and doesn't need a
-    // DNS change.
-    verification: {
-      google: process.env.GOOGLE_SITE_VERIFICATION || undefined,
-      other: process.env.FB_DOMAIN_VERIFICATION
-        ? { "facebook-domain-verification": process.env.FB_DOMAIN_VERIFICATION }
-        : undefined,
-    },
+    // F-320: no-ops (Next omits the tag) until the owner sets
+    // GOOGLE_SITE_VERIFICATION / FB_DOMAIN_VERIFICATION from Search Console /
+    // Meta Business Suite — see src/lib/seo/verification.ts.
+    verification: siteVerification(),
   };
 }
 

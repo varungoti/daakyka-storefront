@@ -1,6 +1,8 @@
 import { MixMatchBuilder } from "@/components/mix-match/mix-match-builder";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { getProducts } from "@/lib/products";
+import { canonicalPath } from "@/lib/seo/canonical";
+import { baseOpenGraph } from "@/lib/seo/json-ld";
 import { isPageEnabled } from "@/lib/settings";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
@@ -8,6 +10,8 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Mix & Match",
   description: "Build your perfect scrub set with our 3D visual configurator.",
+  alternates: { canonical: canonicalPath("/mix-and-match") },
+  openGraph: baseOpenGraph("/mix-and-match"),
 };
 
 export default async function MixAndMatchPage() {

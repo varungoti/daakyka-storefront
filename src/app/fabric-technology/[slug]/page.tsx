@@ -1,6 +1,8 @@
 import { ProductCard } from "@/components/ui/product-card";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { getFabricTechPage } from "@/data/fabric-tech";
+import { canonicalPath } from "@/lib/seo/canonical";
+import { baseOpenGraph } from "@/lib/seo/json-ld";
 import type { Product } from "@/lib/types";
 import { getProducts } from "@/lib/products";
 import { isPageEnabled } from "@/lib/settings";
@@ -21,9 +23,13 @@ export async function generateMetadata({ params }: FabricTechDetailPageProps) {
   const { slug } = await params;
   const page = getFabricTechPage(slug);
   if (!page) return { title: "Fabric Technology" };
+  // release-hardening F-156: no canonical here before, so these pages
+  // (listed in the sitemap once the hub is enabled) had none of their own.
   return {
     title: page.title,
     description: page.description,
+    alternates: { canonical: canonicalPath(`/fabric-technology/${slug}`) },
+    openGraph: baseOpenGraph(`/fabric-technology/${slug}`),
   };
 }
 

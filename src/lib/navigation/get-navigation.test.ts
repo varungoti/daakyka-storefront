@@ -82,7 +82,9 @@ describe("buildNavigationFromTree", () => {
     assert.equal(shop.kind, "mega-grid");
     if (shop.kind !== "mega-grid") return;
     const tileSlugs = shop.tiles.map((tile) => tile.href);
-    assert.deepEqual(tileSlugs, ["/category/for-hospitals", "/category/school-uniforms", "/category/kids-wear"]);
+    // F-101: the three sections link to their landing pages, not the
+    // /category/<slug> duplicates that canonicalize to them.
+    assert.deepEqual(tileSlugs, ["/for-hospitals", "/school-uniforms", "/kids-wear"]);
   });
 
   it("splits For Hospitals into Apparel and Linens columns, excluding the linens category itself from Apparel", () => {
@@ -165,12 +167,12 @@ describe("buildNavigationFromTree", () => {
     const nav = buildNavigationFromTree(tree, { saleEnabled: false });
     const shop = findItem(nav.items, "shop");
     if (shop.kind !== "mega-grid") throw new Error("expected mega-grid");
-    const hospitalsTile = shop.tiles.find((t) => t.href === "/category/for-hospitals");
+    const hospitalsTile = shop.tiles.find((t) => t.href === "/for-hospitals");
     assert.deepEqual(hospitalsTile?.image, {
       url: "https://cdn.example.com/hospitals.webp",
       alt: "For Hospitals",
     });
-    const schoolTile = shop.tiles.find((t) => t.href === "/category/school-uniforms");
+    const schoolTile = shop.tiles.find((t) => t.href === "/school-uniforms");
     assert.equal(schoolTile?.image, null);
   });
 });

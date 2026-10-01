@@ -1,4 +1,5 @@
 import { getCategoryTree, type CategoryTreeNode } from "@/lib/products";
+import { sectionLandingPath } from "@/lib/seo/canonical";
 import { isSaleEnabled } from "@/lib/settings";
 
 /**
@@ -66,7 +67,10 @@ function toNavLink(node: CategoryTreeNode): NavLink {
 function toCategoryTile(node: CategoryTreeNode): NavCategoryTile {
   return {
     label: node.name,
-    href: `/category/${node.slug}`,
+    // release-hardening F-101: the three sections have a landing page (what
+    // the top nav's own entries link to) that /category/<slug> merely
+    // duplicates, and canonicalizes to — link straight to the landing page.
+    href: sectionLandingPath(node.slug) ?? `/category/${node.slug}`,
     image: node.image ? { url: node.image.url, alt: node.image.alt ?? node.name } : null,
     children: node.children.filter((child) => child.showInMenu).map(toNavLink),
   };

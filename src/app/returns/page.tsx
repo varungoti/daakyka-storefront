@@ -23,7 +23,7 @@ export default async function ReturnsPage() {
   return (
     <PolicyPage
       title="Returns, Exchanges & Cancellation Policy"
-      description="We want you to love your scrubs. If something isn't right, we're here to help."
+      description="We want you to love what you ordered. If something isn't right, we're here to help."
     >
       <h2 className="mt-2 font-display text-lg font-bold text-ink">Cancelling an order</h2>
       <p>

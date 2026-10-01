@@ -9,7 +9,13 @@ import { db } from "@/lib/db";
 import { getCategoryBySlug, getProductByHandle, getProducts } from "@/lib/products";
 import { getApprovedReviews, getReviewSummary } from "@/lib/reviews";
 import { canonicalPath } from "@/lib/seo/canonical";
-import { baseOpenGraph, breadcrumbJsonLd, productJsonLd, siteUrlBase } from "@/lib/seo/json-ld";
+import {
+  baseOpenGraph,
+  breadcrumbJsonLd,
+  PLACEHOLDER_PRODUCT_IMAGE,
+  productJsonLd,
+  siteUrlBase,
+} from "@/lib/seo/json-ld";
 import { getSetting } from "@/lib/settings";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -56,13 +62,6 @@ async function getReviewEligibility(productId: string): Promise<ReviewEligibilit
 
 const META_DESCRIPTION_MAX_LENGTH = 160;
 
-// Matches src/lib/products/index.ts's own PLACEHOLDER_PRODUCT_IMAGE (not
-// exported — that file is out of scope for this fix) — the fallback shown
-// for a product with zero real images. Neither social cards nor Google's
-// structured-data image guidelines accept an SVG, so it must never be
-// published as og:image or a JSON-LD image (release-hardening F-110).
-const PLACEHOLDER_PRODUCT_IMAGE = "/placeholder-product.svg";
-
 /** Trims to a word boundary rather than mid-word, so a long admin-entered
  * SEO/short description never ends mid-syllable in search results. */
 function truncateAtWordBoundary(text: string, maxLength: number): string {
@@ -107,8 +106,10 @@ export async function generateMetadata({ params }: ProductPageProps) {
   // never setting og:url at all. It also published the SVG placeholder as
   // og:image/JSON-LD image for a product with zero real photos — neither
   // social unfurlers nor Google's structured-data guidelines accept an SVG
-  // there. twitter:title/description now come from openGraph automatically
-  // (see the root layout's doc comment) — no need to repeat them here.
+  // there — such a product falls back to baseOpenGraph's site-wide share
+  // image instead. twitter:title/description/image now come from openGraph
+  // automatically (see the root layout's doc comment) — no need to repeat
+  // them here.
   const hasRealImage = product.image !== PLACEHOLDER_PRODUCT_IMAGE;
 
   return {
@@ -216,7 +217,7 @@ export default async function ProductPage({ params }: ProductPageProps) {
           // F-110/F-320: same variant prices and shipping/returns settings
           // the size picker and the PDP's shipping/returns copy already use
           // (fetched above), so structured data can't disagree with them.
-          shipping: { flatRateInr: flatRate },
+          shipping: { flatRateInr: flatRate, freeAboveInr: freeAbove },
           returnWindowDays,
         })}
       />

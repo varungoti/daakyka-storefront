@@ -2,6 +2,7 @@ import { getPublishedBlogPosts } from "@/lib/blog";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { canonicalPath } from "@/lib/seo/canonical";
+import { baseOpenGraph } from "@/lib/seo/json-ld";
 import { ArrowRight } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -11,6 +12,7 @@ export const metadata: Metadata = {
   title: "Journal",
   description: "Style, fit, and fabric insights from the DAAKYKA editorial team.",
   alternates: { canonical: canonicalPath("/blog") },
+  openGraph: baseOpenGraph("/blog"),
 };
 
 export default async function BlogPage() {

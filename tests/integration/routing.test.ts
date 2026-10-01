@@ -1,6 +1,9 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { generateMetadata as categoryMetadata } from "@/app/category/[slug]/page";
+import { generateMetadata as forHospitalsMetadata } from "@/app/for-hospitals/page";
 import sitemap from "@/app/sitemap";
+import nextConfig from "../../next.config";
 import { getNavigation } from "@/lib/navigation/get-navigation";
 import { getCategoryTree, getProducts, type CategoryTreeNode } from "@/lib/products";
 import { db } from "@/lib/db";
@@ -179,6 +182,58 @@ describe("sitemap.xml URL generation (Phase C3)", () => {
     assert.ok(!disabledEntries.some((entry) => entry.url.endsWith("/sale")));
   });
 
+  // release-hardening F-048: the sitemap used to list six URLs that
+  // next.config.ts (or the page itself) redirect, plus three thin
+  // "Continue to X" collection interstitials — every listed URL should be a
+  // final, indexable 200.
+  it("lists no URL that redirects (F-048)", async () => {
+    const redirects = await nextConfig.redirects!();
+    const redirectSources = new Set(redirects.map((rule) => rule.source));
+    const paths = (await sitemap()).map((entry) => new URL(entry.url).pathname);
+
+    for (const path of paths) {
+      assert.ok(!redirectSources.has(path), `${path} is in the sitemap but next.config.ts redirects it`);
+    }
+    // science-of-the-scrub redirects from the page itself (permanentRedirect),
+    // not next.config.ts, so the generic check above can't see it.
+    assert.ok(!paths.includes("/science-of-the-scrub"));
+    for (const legacy of [
+      "/scrubs-for-men",
+      "/scrubs-for-women",
+      "/custom-embroidered-scrubs",
+      "/medical-scrubs",
+      "/nurse-uniforms",
+    ]) {
+      assert.ok(!paths.includes(legacy), `${legacy} should be listed only as its /guides/ page`);
+      assert.ok(paths.includes(`/guides${legacy}`), `expected /guides${legacy} in the sitemap`);
+    }
+    assert.ok(paths.includes("/collections/best-sellers"), "the one real collection page stays listed");
+    assert.ok(!paths.some((path) => /^\/collections\/(stretch-collection|hospital-teams|bespoke)$/.test(path)));
+  });
+
+  // release-hardening F-156: the fabric-technology detail pages 404 while
+  // the hub is off, and used to be missing from the sitemap even when on.
+  it("lists the fabric-technology detail pages only while the hub is enabled (F-156)", async () => {
+    await setSetting("pages.fabricTech.enabled", false, adminId);
+    const disabled = (await sitemap()).map((entry) => new URL(entry.url).pathname);
+    assert.ok(!disabled.some((path) => path.startsWith("/fabric-technology")));
+
+    await setSetting("pages.fabricTech.enabled", true, adminId);
+    const enabled = (await sitemap()).map((entry) => new URL(entry.url).pathname);
+    assert.ok(enabled.includes("/fabric-technology"));
+    assert.ok(enabled.includes("/fabric-technology/4-way-stretch"));
+  });
+
+  // release-hardening F-155: a blog post that rewrites a same-slug guide
+  // canonicalizes to that guide, so it isn't listed as its own URL.
+  it("leaves blog posts that canonicalize to a guide out of the sitemap (F-155)", async () => {
+    const paths = (await sitemap()).map((entry) => new URL(entry.url).pathname);
+    assert.ok(!paths.includes("/blog/best-colors-for-hospital-uniforms"));
+    assert.ok(!paths.includes("/blog/how-to-choose-medical-scrubs"));
+    assert.ok(paths.includes("/guides/best-colors-for-hospital-uniforms"));
+    assert.ok(paths.includes("/blog/caring-for-performance-scrubs"));
+  });
+
   // F-333: lastModified used to be the sitemap's own build/regeneration
   // time (`const now = new Date()`) for every route except blog posts, so
   // a single deploy or blog edit stamped 59+ unrelated URLs as "changed
@@ -211,5 +266,81 @@ describe("sitemap.xml URL generation (Phase C3)", () => {
     const entry = entries.find((e) => e.url.endsWith(`/products/${product!.slug}`));
     assert.ok(entry, `expected a /products/${product!.slug} sitemap entry`);
     assert.equal(new Date(entry!.lastModified!).toISOString(), product!.updatedAt.toISOString());
+  });
+});
+
+describe("category page metadata (F-098, F-101, F-012)", () => {
+  const SLUG = "scrub-tops";
+  let original: { seoTitle: string | null; seoDescription: string | null };
+
+  before(async () => {
+    await seedCatalog(db, { publish: true });
+    const category = await db.category.findUniqueOrThrow({ where: { slug: SLUG } });
+    original = { seoTitle: category.seoTitle, seoDescription: category.seoDescription };
+  });
+
+  after(async () => {
+    await db.category.update({ where: { slug: SLUG }, data: original });
+  });
+
+  const categoryProps = (slug: string) => ({
+    params: Promise.resolve({ slug }),
+    searchParams: Promise.resolve({}),
+  });
+
+  it("uses the category's name and description until the admin enters SEO fields", async () => {
+    await db.category.update({ where: { slug: SLUG }, data: { seoTitle: null, seoDescription: null } });
+    const metadata = await categoryMetadata(categoryProps(SLUG));
+    assert.equal(metadata.title, "Scrub Tops");
+    assert.equal(typeof metadata.description, "string");
+  });
+
+  it("prefers the admin-entered SEO title and description (F-098)", async () => {
+    await db.category.update({
+      where: { slug: SLUG },
+      data: { seoTitle: "Buy Scrub Tops Online | DAAKYKA", seoDescription: "Hand-written category description." },
+    });
+    const metadata = await categoryMetadata(categoryProps(SLUG));
+    assert.deepEqual(metadata.title, { absolute: "Buy Scrub Tops Online | DAAKYKA" });
+    assert.equal(metadata.description, "Hand-written category description.");
+    assert.equal(metadata.alternates?.canonical, `/category/${SLUG}`);
+    assert.equal(metadata.openGraph?.url, `/category/${SLUG}`);
+  });
+
+  it("applies the admin SEO fields on the section landing page too (F-098)", async () => {
+    const category = await db.category.findUniqueOrThrow({ where: { slug: "for-hospitals" } });
+    try {
+      await db.category.update({
+        where: { slug: "for-hospitals" },
+        data: { seoTitle: "Hospital Scrubs & Linens | DAAKYKA", seoDescription: "Landing page SEO description." },
+      });
+      const metadata = await forHospitalsMetadata();
+      assert.deepEqual(metadata.title, { absolute: "Hospital Scrubs & Linens | DAAKYKA" });
+      assert.equal(metadata.description, "Landing page SEO description.");
+      assert.equal(metadata.alternates?.canonical, "/for-hospitals");
+    } finally {
+      await db.category.update({
+        where: { slug: "for-hospitals" },
+        data: { seoTitle: category.seoTitle, seoDescription: category.seoDescription },
+      });
+    }
+  });
+
+  it("canonicalizes the three section categories to their landing pages (F-101)", async () => {
+    for (const [slug, landing] of [
+      ["for-hospitals", "/for-hospitals"],
+      ["school-uniforms", "/school-uniforms"],
+      ["kids-wear", "/kids-wear"],
+    ]) {
+      const metadata = await categoryMetadata(categoryProps(slug));
+      assert.equal(metadata.alternates?.canonical, landing, `/category/${slug}`);
+      assert.equal(metadata.openGraph?.url, landing, `/category/${slug} og:url`);
+    }
+  });
+
+  it("gives an unknown category a noindex robots tag and no canonical (F-012)", async () => {
+    const metadata = await categoryMetadata(categoryProps("no-such-category"));
+    assert.deepEqual(metadata.robots, { index: false, follow: true });
+    assert.equal(metadata.alternates, undefined);
   });
 });

@@ -2,8 +2,8 @@ import { ShopPageContent } from "@/components/shop/shop-page-content";
 import { getSiteImage } from "@/lib/media/get-site-image";
 import { resolveCategoryHeadingImage } from "@/lib/media/category-heading-image";
 import { getCategoryBySlug, getProducts } from "@/lib/products";
-import { getCategorySeoOverride } from "@/lib/seo/category-seo";
-import { canonicalPath, SECTION_LANDING_PATH_BY_CATEGORY_SLUG } from "@/lib/seo/canonical";
+import { getCategorySeoOverride, resolveCategoryMetadata } from "@/lib/seo/category-seo";
+import { canonicalPath, sectionLandingPath } from "@/lib/seo/canonical";
 import { baseOpenGraph } from "@/lib/seo/json-ld";
 import { getTestimonials } from "@/lib/testimonials";
 import type { Metadata } from "next";
@@ -38,25 +38,24 @@ export async function generateMetadata({ params }: CategoryPageProps): Promise<M
   // description" (category-form.tsx) over the plain name/description when
   // set — see getCategorySeoOverride's doc comment for why this is a
   // second, independent lookup instead of a field on `category`.
-  const seoOverride = await getCategorySeoOverride(slug);
-  const seoTitle = seoOverride?.seoTitle?.trim() || undefined;
-  const description =
-    seoOverride?.seoDescription?.trim() ||
-    category.description ||
-    `Shop ${category.name} from DAAKYKA Apparels — Pan India delivery.`;
+  const { title, description } = resolveCategoryMetadata(
+    {
+      title: category.name,
+      description:
+        category.description ??
+        `Shop ${category.name} from DAAKYKA Apparels — Pan India delivery.`,
+    },
+    await getCategorySeoOverride(slug),
+  );
 
   // release-hardening F-101: /category/for-hospitals, /category/school-uniforms
   // and /category/kids-wear duplicate the section landing pages at
   // /for-hospitals, /school-uniforms, /kids-wear — canonicalize to the
   // landing page for those three slugs instead of self-canonicalizing.
-  const canonical =
-    SECTION_LANDING_PATH_BY_CATEGORY_SLUG[slug] ?? `/category/${slug}`;
+  const canonical = sectionLandingPath(slug) ?? `/category/${slug}`;
 
   return {
-    // `absolute` bypasses the layout's "%s | DAAKYKA Apparels" template —
-    // same reasoning as products/[handle]/page.tsx's generateMetadata: an
-    // admin-authored SEO title may already include the brand name.
-    title: seoTitle ? { absolute: seoTitle } : category.name,
+    title,
     description,
     alternates: { canonical: canonicalPath(canonical) },
     // F-151: og:url wasn't set on any page — see the root layout's doc

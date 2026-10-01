@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { db } from "@/lib/db";
 
 /**
@@ -25,4 +26,28 @@ export async function getCategorySeoOverride(
   } catch {
     return null;
   }
+}
+
+/**
+ * The `<title>`/meta description for a category page: the admin's SEO
+ * title/description when they entered one, else the page's own fallback.
+ * Shared by /category/[slug] and the three section landing pages so they
+ * can't drift apart on the precedence.
+ *
+ * The SEO title is `absolute` — it bypasses the root layout's
+ * "%s | DAAKYKA Apparels" template, same as the PDP's admin SEO title
+ * (products/[handle]/page.tsx): an admin-authored title may already carry
+ * the brand name and must show exactly as typed. The fallback title keeps
+ * the template.
+ */
+export function resolveCategoryMetadata(
+  fallback: { title: string; description: string },
+  override: { seoTitle: string | null; seoDescription: string | null } | null,
+): { title: NonNullable<Metadata["title"]>; description: string } {
+  const seoTitle = override?.seoTitle?.trim();
+  const seoDescription = override?.seoDescription?.trim();
+  return {
+    title: seoTitle ? { absolute: seoTitle } : fallback.title,
+    description: seoDescription || fallback.description,
+  };
 }

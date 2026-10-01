@@ -3,7 +3,7 @@ import { JsonLdScript } from "@/components/seo/json-ld-script";
 import { PageContentSection } from "@/components/ui/page-shell";
 import { formatDateIST } from "@/lib/format/datetime";
 import { baseOpenGraph, breadcrumbJsonLd, siteUrlBase, toAbsoluteUrl } from "@/lib/seo/json-ld";
-import { canonicalPath } from "@/lib/seo/canonical";
+import { blogPostCanonicalPath, canonicalPath } from "@/lib/seo/canonical";
 import { computeReadTime } from "@/lib/seo/read-time";
 import Image from "next/image";
 import Link from "next/link";
@@ -27,15 +27,18 @@ export async function generateMetadata({ params }: BlogPostPageProps) {
     // the root layout's `index, follow`.
     return { title: "Blog", robots: { index: false, follow: true } };
   }
+  // release-hardening F-155: a post that duplicates a same-slug /guides
+  // page canonicalizes to the guide instead of competing with it.
+  const canonical = blogPostCanonicalPath(slug);
   return {
     title: post.title,
     description: post.excerpt,
-    alternates: { canonical: canonicalPath(`/blog/${slug}`) },
+    alternates: { canonical: canonicalPath(canonical) },
     // release-hardening F-151: og:url wasn't set on any page, and a blog
     // post is an article, not a generic "website" — see the root layout's
     // doc comment on why title/description don't need repeating here.
     openGraph: {
-      ...baseOpenGraph(`/blog/${slug}`, "article"),
+      ...baseOpenGraph(canonical, "article"),
       images: [post.image],
       publishedTime: post.publishedAt,
       authors: [post.author],
@@ -64,9 +67,11 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
           description: post.excerpt,
           image: [toAbsoluteUrl(post.image)],
           datePublished: post.publishedAt,
-          author: { "@type": "Organization", name: post.author },
+          // `author` is free text: "DAAKYKA Editorial" is the brand, anything
+          // else an admin typed is a person.
+          author: { "@type": /daakyka/i.test(post.author) ? "Organization" : "Person", name: post.author },
           publisher: { "@type": "Organization", name: "DAAKYKA Apparels", logo: `${base}/icon.svg` },
-          mainEntityOfPage: `${base}/blog/${slug}`,
+          mainEntityOfPage: `${base}${blogPostCanonicalPath(slug)}`,
         }}
       />
       <JsonLdScript

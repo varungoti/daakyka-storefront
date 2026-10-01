@@ -10,6 +10,7 @@ import { getHeroContent, getHeroSlidesContent, getTrustStatsContent } from "@/li
 import { getSiteImages } from "@/lib/media/get-site-image";
 import { getCategoryTree, getProducts } from "@/lib/products";
 import { canonicalPath } from "@/lib/seo/canonical";
+import { baseOpenGraph } from "@/lib/seo/json-ld";
 import { getSeoOverrideForPath } from "@/lib/seo/records";
 import { getSetting, isSaleEnabled } from "@/lib/settings";
 import { getTestimonials } from "@/lib/testimonials";
@@ -42,7 +43,11 @@ const HOME_IMAGE_SLOTS = [
  * here instead — same value as before (canonicalPath("/") === "/"). */
 export async function generateMetadata(): Promise<Metadata> {
   const override = await getSeoOverrideForPath("/");
-  const base: Metadata = { alternates: { canonical: canonicalPath("/") } };
+  const base: Metadata = {
+    alternates: { canonical: canonicalPath("/") },
+    // F-151: og:url, which no page set.
+    openGraph: baseOpenGraph("/"),
+  };
   if (!override) return base;
   return { ...base, title: override.title, description: override.metaDescription };
 }

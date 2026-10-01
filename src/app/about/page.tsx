@@ -4,6 +4,7 @@ import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { brand } from "@/data/brand";
 import { getSiteImages } from "@/lib/media/get-site-image";
 import { canonicalPath } from "@/lib/seo/canonical";
+import { baseOpenGraph } from "@/lib/seo/json-ld";
 import { Award, CheckCircle2, MapPin, Sparkles } from "lucide-react";
 import type { Metadata } from "next";
 import Image from "next/image";
@@ -13,6 +14,7 @@ export const metadata: Metadata = {
   title: "About Us",
   description: `${brand.name} by ${brand.legalName} — ${brand.tagline}. ${brand.subtagline}.`,
   alternates: { canonical: canonicalPath("/about") },
+  openGraph: baseOpenGraph("/about"),
 };
 
 /** First letter of each word in a name, e.g. "Kamal Agarwal" -> "KA" — used

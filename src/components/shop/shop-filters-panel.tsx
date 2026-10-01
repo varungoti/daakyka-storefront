@@ -32,6 +32,11 @@ interface ShopFiltersPanelProps {
   categories: ShopFilterCategory[];
   categoryCounts: Record<string, number>;
   totalCount: number;
+  /** @deprecated No longer rendered (release-hardening F-019): this panel
+   * used to print its own marketing <h1> above the filters, which made every
+   * /shop and /category page carry two H1s. The page's hero band owns the
+   * only H1. Kept so existing callers that still pass `showHeading={false}`
+   * keep compiling — safe to drop from them. */
   showHeading?: boolean;
   /** release-hardening audit F-092: fabric ids at least one loaded product
    * actually has. Omitted (server-render/no data yet) shows every option,
@@ -46,7 +51,6 @@ export function ShopFiltersPanel({
   categories,
   categoryCounts,
   totalCount,
-  showHeading = true,
   availableFabricIds,
 }: ShopFiltersPanelProps) {
   const { formatPrice } = useCurrency();
@@ -66,21 +70,6 @@ export function ShopFiltersPanel({
 
   return (
     <div className="space-y-8">
-      {showHeading && (
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">
-            Shop All
-          </p>
-          <h1 className="mt-2 font-display text-3xl font-bold text-ink">
-            Apparel & Uniforms
-          </h1>
-          <p className="mt-3 text-sm leading-relaxed text-muted">
-            Explore our complete collection of performance-engineered medical
-            apparel.
-          </p>
-        </div>
-      )}
-
       <FilterBlock title="Categories">
         <ul className="space-y-2">
           <li>

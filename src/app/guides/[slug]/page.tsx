@@ -1,7 +1,12 @@
 import { SeoLandingLayout } from "@/components/seo/seo-landing-layout";
-import { seoLandingPages, type SeoLandingPageConfig } from "@/data/seo-landing-pages";
+import {
+  resolveLegacyGuidePath,
+  seoLandingPages,
+  type SeoLandingPageConfig,
+} from "@/data/seo-landing-pages";
 import { getBestSellers, getProductsByCategory } from "@/lib/products";
 import { canonicalPath } from "@/lib/seo/canonical";
+import { baseOpenGraph } from "@/lib/seo/json-ld";
 import { isPageEnabled } from "@/lib/settings";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
@@ -22,16 +27,23 @@ function resolvePageLinks(
   page: SeoLandingPageConfig,
   flags: { fabricTechEnabled: boolean; mixMatchEnabled: boolean },
 ): SeoLandingPageConfig {
-  const shopHref = resolveHref(page.shopHref, flags);
-  const secondaryHref = page.secondaryHref ? resolveHref(page.secondaryHref, flags) : page.secondaryHref;
+  // F-048: link straight to a guide's final /guides/<slug> URL instead of its
+  // legacy path (which 308s there) — that's a rename, not a change of
+  // destination, so the label stays; only a flag-disabled page swaps it.
+  const linkedShopHref = resolveLegacyGuidePath(page.shopHref);
+  const linkedSecondaryHref = page.secondaryHref
+    ? resolveLegacyGuidePath(page.secondaryHref)
+    : page.secondaryHref;
+  const shopHref = resolveHref(linkedShopHref, flags);
+  const secondaryHref = linkedSecondaryHref ? resolveHref(linkedSecondaryHref, flags) : linkedSecondaryHref;
 
   return {
     ...page,
     shopHref,
-    shopLabel: shopHref === page.shopHref ? page.shopLabel : "Shop Now",
+    shopLabel: shopHref === linkedShopHref ? page.shopLabel : "Shop Now",
     secondaryHref,
     secondaryLabel:
-      secondaryHref === page.secondaryHref ? page.secondaryLabel : "Shop Now",
+      secondaryHref === linkedSecondaryHref ? page.secondaryLabel : "Shop Now",
   };
 }
 
@@ -51,6 +63,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     title: page.title,
     description: page.metaDescription,
     alternates: { canonical: canonicalPath(`/guides/${slug}`) },
+    openGraph: baseOpenGraph(`/guides/${slug}`),
   };
 }
 
