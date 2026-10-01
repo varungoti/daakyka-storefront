@@ -1,0 +1,8 @@
+# Security contact for DAAKYKA Apparels (RFC 9116).
+# Report suspected vulnerabilities or data exposure to the address below.
+# Please do not include customer personal data in your report.
+Contact: mailto:daakykaapparels@gmail.com
+Expires: 2027-09-30T00:00:00.000Z
+Preferred-Languages: en
+# Add a "Canonical:" line with the production URL of this file once the custom
+# domain is live. Renew "Expires" every year (see docs/INCIDENT_RESPONSE.md).

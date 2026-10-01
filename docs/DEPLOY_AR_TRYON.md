@@ -4,14 +4,23 @@ CPU-based MediaPipe try-on for `/mix-and-match/studio`. First request can take ~
 
 ## Option A — Quick staging tunnel (dev machine)
 
-When Railway/Render credentials are not ready, wire local Docker to Vercel staging:
+When Railway/Render credentials are not ready, wire local Docker to a Vercel **Preview**:
 
 ```bash
-docker compose up -d ar-tryon
-node scripts/wire-ar-staging.mjs
+# cloudflared must already be installed and on PATH (the script no longer downloads it)
+export AR_TRYON_API_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+node scripts/wire-ar-staging.mjs            # sets Preview AR_TRYON_SERVICE_URL + AR_TRYON_API_KEY
+node scripts/wire-ar-staging.mjs --deploy   # same, then creates a preview deployment (a metered build)
 ```
 
-Keep the script running — the Cloudflare quick tunnel has no uptime guarantee. Use Railway or Render for production.
+The script only ever writes the **Preview** environment and never deploys to production. It
+refuses to open the tunnel unless `AR_TRYON_API_KEY` is set, recreates the local container with that
+key, and checks that an unauthenticated request is rejected. Keep it running: the Cloudflare quick
+tunnel has no uptime guarantee. Use Railway or Render for production.
+
+Production's `AR_TRYON_SERVICE_URL` must only ever point at a durable, authenticated service (Option B
+or C below), or be unset. If it still holds an old quick-tunnel URL from an earlier run, remove it:
+`npx vercel env rm AR_TRYON_SERVICE_URL production` and redeploy.
 
 ## Option B — Railway (recommended for production)
 

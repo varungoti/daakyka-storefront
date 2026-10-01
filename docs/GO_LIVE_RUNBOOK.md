@@ -126,7 +126,7 @@ left unset** — setting it would try to serve images directly from a bucket tha
 
 Required: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` (or the
 `CLOUDFLARE_ACCOUNT_ID`/`CLOUDFLARE_ACCESS_KEY_ID`/`CLOUDFLARE_SECRET_ACCESS_KEY` fallback names —
-`src/lib/storage/r2.ts`'s `readR2Env()` accepts either set; this repo's own `.env` in fact uses the
+`src/lib/storage/r2-env.ts`'s `readR2Env()` accepts either set (the boot-time warning uses the same function, so it can't disagree); this repo's own `.env` in fact uses the
 `CLOUDFLARE_*` names). Without these, uploads and AI generation report a clean 503 "not configured"
 rather than failing — see [IMAGES_AI.md](./IMAGES_AI.md).
 
@@ -220,7 +220,7 @@ see F-346), migrates the production database directly (proving `SUPABASE_DATABAS
 connects before anything reaches Vercel — see F-352), pushes env vars with `vercel env add --force`
 (safe to re-run — see F-345), deploys with `vercel --prod`, then resolves the real production
 hostname via `vercel inspect --format=json` (preferring a custom domain) and checks `/api/health`,
-the homepage (noindex meta, canonical host), and `robots.txt` before declaring it live.
+the homepage (a 200 that contains `DAAKYKA`, no noindex meta, canonical host), and `robots.txt` before declaring it live. A redirect to a Vercel login page, or a 200 that isn't this store's page, aborts instead of reporting "Live".
 
 **What it does NOT do** — these are separate, manual (Phase D/E) steps:
 
@@ -265,6 +265,7 @@ else these are warnings) and `.env.local.example`/`.env.staging.example`.
 | `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET` (or `CLOUDFLARE_*` equivalents) | Upload/AI-generated media returns 503 "not configured" |
 | `R2_PUBLIC_BASE_URL` | Leave unset — see Phase C above. Only set this if the bucket is ever made public. |
 | `OPENAI_API_KEY` | AI image generation returns 503 "not configured" |
+| `ERROR_WEBHOOK_URL` | Optional `https://` webhook that receives a short alert for every server error (see "Monitoring & alerting" below); unset = errors are only logged |
 | `OPENAI_IMAGE_MODEL` | Defaults to the current model in `src/lib/ai/image-generation.ts` |
 | `AI_IMAGE_DAILY_LIMIT` | Defaults to 50 generations/day, site-wide — see [IMAGES_AI.md](./IMAGES_AI.md) |
 | `DB_POOL_MAX` | Defaults to 5 — kept deliberately small per serverless-function instance; raise only if you also move off a connection pooler |
@@ -291,11 +292,145 @@ Homepage Hero/Trust-Stats/Announcement, Offers, and Testimonials (`src/lib/homep
 
 ---
 
+## Monitoring & alerting
+
+What ships in the code (F-234):
+
+- `src/instrumentation.ts` exports `onRequestError`, which calls `src/lib/monitoring/report-error.ts`
+  for every server error (render, route handler, server action, proxy). Each error is written as one
+  structured JSON line to stderr with `"event":"request_error"`, and Vercel keeps it with the other
+  runtime logs. The line carries the path (never the query string), method, route, Next's error
+  digest and a truncated message. Request headers, cookies and bodies are never read.
+- If `ERROR_WEBHOOK_URL` is set to an `https://` URL, the same summary (without the stack) is also
+  POSTed there as JSON with a ready-made `text` field, which Slack, Mattermost and Google Chat
+  incoming webhooks accept directly (or point it at a small relay to Telegram/WhatsApp). Repeats of
+  the same error are sent at most once per 5 minutes per server instance, so a crash loop cannot
+  flood the channel. Leave it unset and the webhook is simply off.
+- Moving to Sentry later is a drop-in: `npm i @sentry/nextjs`, `Sentry.init` in `register()`, and
+  `Sentry.captureRequestError` as `onRequestError`. Nothing else in the app has to change.
+
+What the owner still has to set up (accounts and dashboards, not code):
+
+1. Create the webhook (for example a Slack channel's incoming webhook) and add
+   `ERROR_WEBHOOK_URL` to the Vercel **Production** environment, then redeploy.
+2. An external uptime monitor (UptimeRobot, Better Stack or similar) on `GET /api/health`. That
+   route runs a real database query, so pooler exhaustion such as `EMAXCONNSESSION` shows up as a
+   failure, not just a slow page. Do not point it at `/api/cron/*`.
+3. Optionally a Vercel Log Drain with an alert on 5xx. The same drain is also what satisfies the
+   180-day log retention in [INCIDENT_RESPONSE.md](./INCIDENT_RESPONSE.md#7-log-retention-policy-cert-in-180-days).
+
+## Rolling back a bad deploy
+
+1. **Roll back first, debug second.** `npx vercel rollback` (or Vercel dashboard -> Deployments ->
+   the last good deployment -> Promote to Production) points the production domain at an older
+   build in seconds. It does **not** rebuild, so `scripts/vercel-build.mjs` does not run: the
+   database stays at whatever schema the newer build migrated it to.
+2. **Therefore migrations must be backward compatible for one release** (expand, then contract):
+   - Release N adds the new column or table (nullable, or with a default) and starts writing it.
+   - Release N+1, only after N has been stable, stops reading the old shape.
+   - Release N+2 drops or renames the old column.
+   Never drop, rename or tighten (`NOT NULL`, a new unique index) something the previous release
+   still uses, in the same release that stops using it. Then rolling back one build is always safe
+   against the current schema.
+3. **A bad migration is fixed forward.** Never edit a migration that has been applied, and never run
+   `prisma migrate reset` against production. Write a new migration that corrects it, and for a
+   failed one follow the `prisma migrate resolve` steps printed by `scripts/go-live.mjs`.
+4. **Environment variables come back as they were.** A deployment keeps the env values it was built
+   with, so rolling back also restores older values. If you rotated a secret since then, the rolled
+   back build uses the OLD one; rotate again after promoting, or do not roll back past a rotation.
+5. **Verify after rolling back:** `GET /api/health` is `{"status":"ok"}`, the homepage and a product
+   page load, and an order request goes through (the cart and checkout are the money path).
+6. Then roll forward with a fixed build; re-promote only a deployment that passed
+   `node scripts/local-release.mjs`.
+
+## Backups & restore
+
+The production database is the Supabase project in `ap-northeast-1` (Tokyo). A backup nobody has
+restored is a hope, not a backup, so:
+
+1. **Find out what you have.** Supabase dashboard -> Database -> Backups. Note the plan and the
+   tier: the Free plan has no downloadable backups, Pro has daily backups, point-in-time recovery
+   (PITR) is a paid add-on. Write the answer here: `plan: ____ / backups: ____ / PITR: ____`.
+   Before launch, a paid plan with at least daily backups (PITR preferred, since the store takes
+   orders all day) is strongly recommended. This is an owner decision with a monthly cost.
+2. **Take a manual dump before anything destructive** (a data migration, a bulk catalogue delete, a
+   Supabase password or region change). Use the **session pooler** URL (port 5432, the same string
+   as `MIGRATION_DATABASE_URL`), from a machine with `pg_dump` installed:
+
+   ```bash
+   pg_dump "$MIGRATION_DATABASE_URL" --format=custom --no-owner --file="daakyka-$(date +%F).dump"
+   ```
+
+   Keep the file somewhere private. It contains customer personal data; treat it like production.
+3. **Restore drill (do this once, before launch, then after any schema-changing release).** Create
+   a throwaway Supabase project, restore into it, and compare row counts:
+
+   ```bash
+   pg_restore --no-owner --dbname="<throwaway session pooler URL>" daakyka-YYYY-MM-DD.dump
+   ```
+
+   Then point a local run at it (never at production) and open `/admin/orders`. Delete the
+   throwaway project and the dump when done. Record the date of the last successful drill here:
+   `last drill: ____`.
+4. **Product media is not in the database.** It lives in the Cloudflare R2 bucket `daakyka-media`
+   (not public, served through `/cdn`). R2 has no automatic backup; the originals of reviewed product
+   photos should also be kept outside it, in the owner's own copies.
+
+## Function region
+
+`vercel.json` pins every function to `hnd1` (Tokyo), next to the production database. Before this
+the functions ran in `iad1` (US-East) against a Tokyo database, so every query paid a trans-Pacific
+round trip (about 150 ms each) plus an extra US hop for every dynamic page. With the functions in
+Tokyo, a database round trip drops to a few milliseconds.
+
+- This is the right region for the database where it is today. **If the database ever moves to
+  `ap-south-1` (Mumbai), change `regions` to `["bom1"]` in the same change.** Moving the Supabase
+  project is a separate, higher-risk owner decision (new project, dump and restore, new connection
+  strings); this setting only moves the functions.
+- Do not add per-route `preferredRegion` exports; `vercel.json` is the single source of truth.
+- Check it after a deploy: `curl -sD- -o /dev/null https://<your-domain>/api/health | grep -i x-vercel-id`
+  should show `...::hnd1::...`.
+- `/cdn/...` responses are edge-cached, so images served from the R2 bucket (North America) are
+  barely affected by the move.
+
+## Environment variable hygiene
+
+The app reads only the variables named in this runbook and in `.env.local.example`; everything else
+on Vercel is dead weight that widens the damage of any leak. Production and Preview functions get
+every variable scoped to them, and a Preview is built from any pushed branch, so keep Preview to
+what a Preview truly needs (a staging `DATABASE_URL`) and never give it production credentials.
+
+Remove these from **both** Production and Preview. Nothing in `src/`, `prisma/` or `scripts/`
+reads them (F-233):
+
+| Variable | Why it is safe to remove |
+|---|---|
+| `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SECRET_KEY`, `SUPABASE_JWKS_URL` | The app talks to Postgres through `DATABASE_URL` only; there is no Supabase client library. `SUPABASE_SECRET_KEY` is a service-role key that bypasses row-level security. |
+| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_S3_API_ENDPOINT` | Account-scoped token and an endpoint the app deliberately derives itself from the account id (`src/lib/storage/r2.ts`). |
+
+Then, once an admin image upload and a `/cdn/<key>` image both work with the `R2_*` names alone
+(`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` all set in Production),
+remove the duplicate `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_ACCESS_KEY_ID` and
+`CLOUDFLARE_SECRET_ACCESS_KEY`, and keep the `R2_*` set on **Production only** (a Preview that holds
+the production bucket's keys can delete production media; see F-302 in `src/lib/storage/r2.ts`).
+The `CLOUDFLARE_*` fallback in the code stays, because the local `.env` still uses those names.
+
+```bash
+npx vercel env ls production        # review first
+npx vercel env rm SUPABASE_SECRET_KEY production --yes
+npx vercel env rm SUPABASE_SECRET_KEY preview --yes
+# ...repeat for each name above, then redeploy so running functions stop receiving them
+```
+
+Environment changes only apply to new deployments; existing preview deployments keep the old
+values until they are deleted or redeployed. If preview URLs were ever shared outside the team,
+also rotate the Supabase service key and revoke the Cloudflare API token.
+
 ## Verification commands
 
 | Command | When |
 |---------|------|
-| `npm run verify:101` | Before every merge to staging/main |
+| `npm run verify:101` | Before every merge to staging/main. Pass `--kill-port` (or `KILL_PORT=1`) to let it stop a leftover process on its port; it refuses otherwise |
 | `npm run check:deploy-env -- --production` | Before promoting env vars — checks the current shell, not Vercel itself; see the caveat in A2 |
 | `npm run probe:deploy -- --staging` | After staging deploy |
 | `npm run verify:staging -- --dogfood` | Full remote QA |

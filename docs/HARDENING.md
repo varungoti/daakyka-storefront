@@ -129,7 +129,7 @@ npm run audit:lighthouse
 
 ## Still manual / credential-gated
 
-- Sentry DSN (optional — not wired yet)
+- Error alerting: `onRequestError` logs every server error and posts to `ERROR_WEBHOOK_URL` when set; a Sentry DSN is optional and not wired (see GO_LIVE_RUNBOOK.md, "Monitoring & alerting")
 - Distributed rate limiting (Redis) for multi-instance production
 - Razorpay live-mode keys (checkout works today via the order-request fallback without them)
 - Brevo/WATI live sends

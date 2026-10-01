@@ -137,7 +137,9 @@ async function main() {
     await check("robots.txt disallows indexing on staging", async () => {
       const response = await fetch(`${base}/robots.txt`);
       const text = await response.text();
-      if (!/disallow:\s*\//i.test(text)) {
+      // Anchored to a bare `Disallow: /` line: `Disallow: /admin` alone
+      // must not count as "indexing is blocked".
+      if (!/^\s*disallow:\s*\/\s*$/im.test(text)) {
         throw new Error("robots.txt does not disallow /");
       }
     });

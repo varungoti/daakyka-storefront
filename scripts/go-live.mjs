@@ -446,8 +446,15 @@ try {
   homepageHtml = await response.text();
   console.log(`  -> ${response.status} ${response.statusText}, ${homepageHtml.length} bytes`);
   if (response.status !== 200) die(`the deployed site answered ${response.status}.`);
+  // F-309: this used to only warn. A 200 that isn't this store's homepage
+  // (a Vercel login page, a generic error shell, another project's site) must
+  // not be reported as "Live".
   if (!/DAAKYKA/i.test(homepageHtml)) {
-    console.log("  WARNING: response did not contain 'DAAKYKA' — check the page manually.");
+    die(
+      `the homepage at ${deployedUrl} answered 200 but does not contain "DAAKYKA" — this is not the ` +
+        "store's own page (a Vercel login/protection page or an error shell, most likely). Check the " +
+        "resolved URL and the deployment in the Vercel dashboard before announcing a launch.",
+    );
   }
 } catch (error) {
   die(`could not reach the deployed site: ${error.message}`);

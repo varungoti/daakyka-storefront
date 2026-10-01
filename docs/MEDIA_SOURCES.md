@@ -27,7 +27,8 @@ before removing it).
   component), whichever is available first.
 - **Priority for everything else:** Pexels / Unsplash IDs verified as **medical scrubs, scrub
   suits, or clinical uniforms** — not generic portraits or hospital equipment-only shots.
-- Replace catalog URLs with `cdn.shopify.com` when live SKU photography is connected.
+- Live SKU photography is served from the R2-backed `/cdn/...` route (see `image-manifest.ts`), not
+  from Shopify's CDN. `cdn.shopify.com` is deliberately **not** an allowed image host (F-307).
 
 ## Catalog structure
 
@@ -46,10 +47,12 @@ before removing it).
 
 Remote hosts in `next.config.ts` (sourced from `src/lib/security/image-hosts.ts`, the single
 source of truth for both `images.remotePatterns` and CSP `img-src`): `images.pexels.com`,
-`images.unsplash.com`, `cdn.shopify.com`, plus the R2 public host when `R2_PUBLIC_BASE_URL` is set
+`images.unsplash.com`, plus the R2 public host when `R2_PUBLIC_BASE_URL` is set
 (it currently isn't — see [GO_LIVE_RUNBOOK.md](./GO_LIVE_RUNBOOK.md)). `daakyka.com` was removed
 from this list on 2026-09-20 (see Policy above) — don't re-add it without first re-verifying the
-domain actually serves the paths you intend to hotlink.
+domain actually serves the paths you intend to hotlink. `cdn.shopify.com` was removed under F-307: it is
+a multi-tenant host where any merchant can publish a file, so allowlisting the bare hostname let anyone
+make the image optimizer fetch it.
 
 ## Updating images
 

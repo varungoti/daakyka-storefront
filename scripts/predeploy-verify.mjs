@@ -4,9 +4,10 @@
  *
  * Usage: npm run verify:predeploy
  */
-import { spawn, spawnSync, execSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
+import { ensurePortFree, killPort, wantsKillPort } from "./lib/kill-port.mjs";
 
 const PORT = process.env.PORT ?? "3000";
 const BASE = `http://localhost:${PORT}`;
@@ -31,33 +32,6 @@ const env = {
   ADMIN_SEED_PASSWORD: process.env.ADMIN_SEED_PASSWORD ?? generatedAdminPassword,
   CRON_SECRET: process.env.CRON_SECRET ?? "predeploy-cron-secret",
 };
-
-function killPort(port) {
-  try {
-    if (process.platform === "win32") {
-      const output = execSync(`netstat -ano | findstr :${port}`, {
-        encoding: "utf8",
-        stdio: ["pipe", "pipe", "ignore"],
-      });
-      const pids = new Set();
-      for (const line of output.split("\n")) {
-        const match = line.trim().match(/\s+(\d+)\s*$/);
-        if (match && match[1] !== "0") pids.add(match[1]);
-      }
-      for (const pid of pids) {
-        try {
-          execSync(`taskkill /PID ${pid} /F`, { stdio: "ignore" });
-        } catch {
-          /* ignore */
-        }
-      }
-    } else {
-      execSync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`, { stdio: "ignore", shell: true });
-    }
-  } catch {
-    /* port already free */
-  }
-}
 
 function run(command, args, label) {
   console.log(`\n==> ${label}`);
@@ -85,7 +59,9 @@ let exitCode = 1;
 try {
   await mkdir("dogfood-output", { recursive: true });
 
-  killPort(PORT);
+  // F-309: refuse to start over something else already listening on the port
+  // (re-run with --kill-port / KILL_PORT=1 to let this script stop it).
+  ensurePortFree(PORT, { allowKill: wantsKillPort() });
 
   run("npm", ["run", "db:setup"], "Database setup");
   run("npm", ["run", "verify"], "Lint, unit, integration, build");
@@ -106,8 +82,10 @@ try {
     console.log("\nPre-deploy verification passed.");
     exitCode = 0;
   } finally {
-    // Delay port cleanup so process.exit(0) is not overridden on Windows
-    setTimeout(() => killPort(PORT), 500);
+    // Stop the server this run started. Safe to do synchronously: only the
+    // socket LISTENING on this exact port is killed (never this process or
+    // its own client connections), and the port was verified free above.
+    killPort(PORT);
   }
 } catch (err) {
   console.error(err instanceof Error ? err.message : err);
