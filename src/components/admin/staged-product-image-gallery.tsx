@@ -8,6 +8,7 @@ import {
   addStagedImages,
   moveStagedImage,
   removeStagedImage,
+  stageLibraryAssets,
   updateStagedImage,
   type StagedImage,
 } from "@/lib/admin/staged-images";
@@ -184,9 +185,13 @@ export function StagedProductImageGallery({
    * asset never duplicates it — it's already a persisted `MediaAsset`, so
    * staging it is exactly the same "point at this id" bookkeeping as
    * staging a freshly generated candidate above, just tagged `origin:
-   * "library"` so `remove()` below knows not to delete it. */
-  function addLibraryAsset(asset: { id: string; url: string; alt: string | null }) {
-    onChange(addStagedImage(images, { mediaAssetId: asset.id, url: asset.url, alt: asset.alt ?? aiFields.name ?? "", color: null, origin: "library" }));
+   * "library"` so `remove()` below knows not to delete it.
+   *
+   * F-192: takes the whole multi-select batch and stages it with a single
+   * `onChange` — see stageLibraryAssets in staged-images.ts for why one
+   * call per picked asset would keep only the last one. */
+  function addLibraryAssets(assets: { id: string; url: string; alt: string | null }[]) {
+    onChange(stageLibraryAssets(images, assets, aiFields.name ?? ""));
     setPickerOpen(false);
   }
 
@@ -244,10 +249,12 @@ export function StagedProductImageGallery({
 
       {pickerOpen && (
         <MediaLibraryBrowser
-          title="Choose a product image"
+          title="Choose product images"
           defaultUsage="PRODUCT"
+          multiple
           onClose={() => setPickerOpen(false)}
-          onSelect={addLibraryAsset}
+          onSelect={(asset) => addLibraryAssets([asset])}
+          onSelectMany={addLibraryAssets}
         />
       )}
 

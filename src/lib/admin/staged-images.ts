@@ -54,6 +54,37 @@ export function addStagedImages(list: readonly StagedImage[], images: readonly S
   return [...list, ...images];
 }
 
+/**
+ * F-192: stages every asset picked in one media-library "Add N images"
+ * confirm (or the single-pick fallback, as a one-element array) and returns
+ * the whole new list, so the caller makes exactly *one* `onChange` call per
+ * batch. Calling `onChange(addStagedImage(images, ...))` once per picked
+ * asset would rebuild each list from the same `images` prop the handler
+ * closed over, and the parent's setState would keep only the last pick —
+ * the same trap ProductImageGallery's `attachPicksSequentially` guards
+ * against.
+ *
+ * Skips any asset whose id is already staged (or repeated within `assets`):
+ * `mediaAssetId` is a staged image's identity (and its React key), so a
+ * duplicate would make remove/update/reorder hit both copies, and "Remove"
+ * on a fresh upload re-picked from the library would delete the asset the
+ * other copy still points at.
+ */
+export function stageLibraryAssets(
+  list: readonly StagedImage[],
+  assets: readonly { id: string; url: string; alt: string | null }[],
+  fallbackAlt: string,
+): StagedImage[] {
+  const seen = new Set(list.map((img) => img.mediaAssetId));
+  const added: StagedImage[] = [];
+  for (const asset of assets) {
+    if (seen.has(asset.id)) continue;
+    seen.add(asset.id);
+    added.push({ mediaAssetId: asset.id, url: asset.url, alt: asset.alt ?? fallbackAlt, color: null, origin: "library" });
+  }
+  return addStagedImages(list, added);
+}
+
 export function removeStagedImage(list: readonly StagedImage[], mediaAssetId: string): StagedImage[] {
   return list.filter((img) => img.mediaAssetId !== mediaAssetId);
 }

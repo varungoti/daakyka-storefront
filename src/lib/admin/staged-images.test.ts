@@ -5,6 +5,7 @@ import {
   addStagedImages,
   moveStagedImage,
   removeStagedImage,
+  stageLibraryAssets,
   updateStagedImage,
   type StagedImage,
 } from "./staged-images";
@@ -30,6 +31,43 @@ describe("addStagedImage / addStagedImages", () => {
       next.map((i) => i.mediaAssetId),
       ["a", "b", "c"],
     );
+  });
+});
+
+describe("stageLibraryAssets (F-192 multi-pick)", () => {
+  function asset(id: string, alt: string | null = null) {
+    return { id, url: `https://example.test/${id}.webp`, alt };
+  }
+
+  it("stages every picked asset in one returned list — not just the last one", () => {
+    const next = stageLibraryAssets([img("a")], [asset("b"), asset("c"), asset("d")], "");
+    assert.deepEqual(
+      next.map((i) => i.mediaAssetId),
+      ["a", "b", "c", "d"],
+    );
+  });
+
+  it("tags picks as origin 'library' and falls back to the given alt only when the asset has none", () => {
+    const [kept, fallback] = stageLibraryAssets([], [asset("b", "Front view"), asset("c")], "Scrub top");
+    assert.deepEqual(kept, { mediaAssetId: "b", url: "https://example.test/b.webp", alt: "Front view", color: null, origin: "library" });
+    assert.equal(fallback.alt, "Scrub top");
+    assert.equal(fallback.origin, "library");
+  });
+
+  it("skips assets already staged (including fresh uploads) and repeats within the batch", () => {
+    const list = [img("a", { origin: "new" })];
+    const next = stageLibraryAssets(list, [asset("a"), asset("b"), asset("b")], "");
+    assert.deepEqual(
+      next.map((i) => i.mediaAssetId),
+      ["a", "b"],
+    );
+    assert.equal(next[0].origin, "new", "the existing entry must not be replaced by a library copy");
+  });
+
+  it("does not mutate the input array", () => {
+    const list = [img("a")];
+    stageLibraryAssets(list, [asset("b")], "");
+    assert.deepEqual(list, [img("a")]);
   });
 });
 
