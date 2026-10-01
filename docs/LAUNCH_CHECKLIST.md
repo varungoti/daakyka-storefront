@@ -112,7 +112,15 @@ Full detail, including the stock-decrement/idempotency design: [PAYMENTS_RAZORPA
 
 - [ ] Submit sitemap: `https://daakyka.com/sitemap.xml`
 - [ ] Verify `robots.txt` allows crawling (and that `NEXT_PUBLIC_ALLOW_INDEXING` isn't left `false`)
-- [ ] Google Search Console property verified
+- [ ] Google Search Console property verified — either route works:
+  - **DNS TXT record (recommended):** once `daakyka.com` points at Vercel, add a *Domain* property in
+    Search Console and paste the TXT record it gives you at Hostinger. No code change or redeploy.
+  - **Meta tag:** set `GOOGLE_SITE_VERIFICATION` (the `content` value of Search Console's "HTML tag"
+    method) in the Vercel env and redeploy. For Meta Business Suite domain verification set
+    `FB_DOMAIN_VERIFICATION` the same way. Both are optional and render nothing when unset.
+- [ ] `NEXT_PUBLIC_SITE_URL` is the real `https://` domain (not a `*.vercel.app` alias) before indexing is switched on
+- [ ] Product feed for Google Merchant Center / Meta Commerce: **not built yet** (product pages already carry
+  shipping and return-policy structured data); plan it as a later growth task
 - [ ] Rich Results Test on homepage, product, guide page
 - [ ] All schema checks green in `/admin/seo`
 
