@@ -6,7 +6,7 @@ import {
   auditEntityHref,
   auditEntityLabel,
   buildAuditWhere,
-  formatAuditMetadata,
+  formatAuditMetadataForRole,
   parseAuditFilters,
   shortenAuditId,
 } from "@/lib/admin/audit-log-view";
@@ -173,7 +173,10 @@ export default async function AdminAuditLogsPage({ searchParams }: PageProps) {
               // deleted (userId is onDelete: SetNull).
               const actorLabel = log.user?.name ?? log.actorEmail ?? "System";
               const entityHref = auditEntityHref(session.role, log.entity, log.entityId);
-              const metadata = formatAuditMetadata(log.metadata);
+              // The record's changed values are only shown to a role that
+              // could open the record itself — audit:view alone (VIEWER,
+              // SEO_MANAGER) gets the who/what/when, not the contents.
+              const metadata = formatAuditMetadataForRole(session.role, log.entity, log.metadata);
               return (
                 <tr key={log.id} className="border-b border-border/70 align-top">
                   {/* F-060: server-rendered in the process timezone

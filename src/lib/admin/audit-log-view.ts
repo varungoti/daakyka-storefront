@@ -167,6 +167,12 @@ export function shortenAuditId(entityId: string): string {
 
 interface EntityLinkRule {
   permission: Permission | Permission[];
+  /** What the role needs to see the *contents* of the audited record's
+   * changes (the "Details" disclosure), when that is weaker than what the
+   * record's own page requires — e.g. `products:view` lets a role read the
+   * product list, though only `products:manage` opens the editor. Defaults
+   * to `permission`. */
+  detailsPermission?: Permission | Permission[];
   /** Admin URL for this entity; null when there is nothing to open. */
   href: (entityId: string | null) => string | null;
 }
@@ -174,26 +180,44 @@ interface EntityLinkRule {
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 /** A link to one record's own admin page, e.g. `/admin/products/<id>`. */
-function detailPage(base: string, permission: Permission | Permission[]): EntityLinkRule {
-  return { permission, href: (entityId) => (entityId && SAFE_ID.test(entityId) ? `${base}/${entityId}` : null) };
+function detailPage(
+  base: string,
+  permission: Permission | Permission[],
+  detailsPermission?: Permission | Permission[],
+): EntityLinkRule {
+  return {
+    permission,
+    detailsPermission,
+    href: (entityId) => (entityId && SAFE_ID.test(entityId) ? `${base}/${entityId}` : null),
+  };
 }
 
 /** A link to the entity's list page — for records with no detail page of
  * their own, or whose entityId isn't a record id (a setting key). */
-function listPage(href: string, permission: Permission | Permission[]): EntityLinkRule {
-  return { permission, href: () => href };
+function listPage(
+  href: string,
+  permission: Permission | Permission[],
+  detailsPermission?: Permission | Permission[],
+): EntityLinkRule {
+  return { permission, detailsPermission, href: () => href };
+}
+
+function holdsAny(role: AdminRole, permission: Permission | Permission[]): boolean {
+  return Array.isArray(permission)
+    ? permission.some((candidate) => hasPermission(role, candidate))
+    : hasPermission(role, permission);
 }
 
 // Each rule's permission is the one the target page itself enforces, so a
 // link is only ever shown to a role that can actually open it — the same
 // dead-end F-162 removed from the product list.
 const ENTITY_LINKS: Record<string, EntityLinkRule> = {
-  product: detailPage("/admin/products", "products:manage"),
+  product: detailPage("/admin/products", "products:manage", "products:view"),
   product_image: listPage("/admin/products", "products:view"),
-  product_variants: detailPage("/admin/products", "products:manage"),
+  product_variants: detailPage("/admin/products", "products:manage", "products:view"),
   category: detailPage("/admin/categories", "categories:manage"),
   size_chart: detailPage("/admin/size-charts", "categories:manage"),
-  media_asset: listPage("/admin/media", "media:manage"),
+  media_asset: listPage("/admin/media", "media:manage", "media:view"),
   order: detailPage("/admin/orders", "orders:view"),
   customer: detailPage("/admin/customers", "customers:view"),
   review: listPage("/admin/reviews", "reviews:moderate"),
@@ -211,6 +235,7 @@ const ENTITY_LINKS: Record<string, EntityLinkRule> = {
   customer_segment: detailPage("/admin/segments", "engagement:manage"),
   message_template: detailPage("/admin/templates", "engagement:manage"),
   customer_journey: listPage("/admin/journeys", "journeys:manage"),
+  newsletter_subscriber: listPage("/admin/engagement/subscribers", "engagement:manage"),
   contact_enquiry: listPage("/admin/contact-enquiries", "bulk-orders:manage"),
   bulk_order_lead: listPage("/admin/bulk-orders", "bulk-orders:manage"),
   admin_notification: listPage("/admin/notifications", "bulk-orders:manage"),
@@ -223,10 +248,23 @@ const ENTITY_LINKS: Record<string, EntityLinkRule> = {
 export function auditEntityHref(role: AdminRole, entity: string, entityId: string | null): string | null {
   const rule = Object.hasOwn(ENTITY_LINKS, entity) ? ENTITY_LINKS[entity] : undefined;
   if (!rule) return null;
-  const allowed = Array.isArray(rule.permission)
-    ? rule.permission.some((permission) => hasPermission(role, permission))
-    : hasPermission(role, rule.permission);
-  return allowed ? rule.href(entityId) : null;
+  return holdsAny(role, rule.permission) ? rule.href(entityId) : null;
+}
+
+/** Whether `role` may read *what changed* on an audited record — not just
+ * that something happened. `audit:view` is held by roles that can open
+ * none of the audited records (VIEWER, SEO_MANAGER), yet the metadata
+ * written beside an audit row carries the record's own data: a discount
+ * code, a customer's email typed into an order-export search, an order's
+ * tracking number or payment reference, an invited admin's email. So the
+ * details are shown only to a role that holds the permission the record's
+ * own admin page needs (or, for products and media, the read-only
+ * permission that lists them). An entity this module has no rule for is
+ * never shown — fail closed. */
+export function canViewAuditDetails(role: AdminRole, entity: string): boolean {
+  const rule = Object.hasOwn(ENTITY_LINKS, entity) ? ENTITY_LINKS[entity] : undefined;
+  if (!rule) return false;
+  return holdsAny(role, rule.detailsPermission ?? rule.permission);
 }
 
 // ---------------------------------------------------------------------
@@ -273,4 +311,17 @@ export function formatAuditMetadata(raw: string | null | undefined): string | nu
     return null;
   }
   return text.length > MAX_METADATA_CHARS ? `${text.slice(0, MAX_METADATA_CHARS)}\n…` : text;
+}
+
+/** The "Details" text for one audit row as `role` may see it: null when the
+ * role isn't allowed the record's contents (see `canViewAuditDetails`) or
+ * there is nothing to show. The page goes through this rather than
+ * `formatAuditMetadata` directly so the permission check can't be left
+ * out of a row. */
+export function formatAuditMetadataForRole(
+  role: AdminRole,
+  entity: string,
+  raw: string | null | undefined,
+): string | null {
+  return canViewAuditDetails(role, entity) ? formatAuditMetadata(raw) : null;
 }
