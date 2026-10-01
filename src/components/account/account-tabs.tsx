@@ -7,7 +7,7 @@ import { INDIAN_PHONE_HINT, INDIAN_PINCODE_HINT, normalizeIndianPhone, normalize
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export interface CustomerInfo {
   id: string;
@@ -93,7 +93,11 @@ export function AddressesTab({ initialAddresses }: { initialAddresses: AddressIn
 
   return (
     <div className="space-y-6">
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && (
+        <p className="text-sm text-red-600" role="alert">
+          {error}
+        </p>
+      )}
       <div className="grid gap-4 md:grid-cols-2">
         {addresses.map((address) => (
           <div key={address.id} className="rounded-2xl border border-border p-5">
@@ -164,6 +168,13 @@ function AddressForm({
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // F-145: after a failed submit, move focus to the first invalid field.
+  useEffect(() => {
+    if (Object.keys(fieldErrors).length === 0) return;
+    formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [fieldErrors]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -239,28 +250,65 @@ function AddressForm({
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl border border-border p-6">
+    <form ref={formRef} onSubmit={handleSubmit} className="space-y-4 rounded-2xl border border-border p-6">
+      {/* F-145: autoComplete tokens (and tel/numeric keyboards) so a phone
+          offers saved addresses and the right keypad. The label field is the
+          shopper's own nickname for the address ("Home", "Ward 3"), so it
+          opts out of autofill. */}
       <div className="grid gap-4 md:grid-cols-2">
-        <TextField label="Label" name="label" defaultValue={address?.label ?? ""} />
+        <TextField label="Label" name="label" autoComplete="off" defaultValue={address?.label ?? ""} />
         <TextField
           label="Recipient's Full Name *"
           name="recipientName"
           required
           minLength={2}
+          autoComplete="name"
           defaultValue={address?.recipientName ?? ""}
           error={fieldErrors.recipientName}
         />
       </div>
-      <TextField label="Phone" name="phone" type="tel" defaultValue={address?.phone ?? ""} error={fieldErrors.phone} />
-      <TextField label="Address Line 1 *" name="line1" required defaultValue={address?.line1 ?? ""} />
-      <TextField label="Address Line 2" name="line2" defaultValue={address?.line2 ?? ""} />
+      <TextField
+        label="Phone"
+        name="phone"
+        type="tel"
+        autoComplete="tel"
+        defaultValue={address?.phone ?? ""}
+        error={fieldErrors.phone}
+      />
+      <TextField
+        label="Address Line 1 *"
+        name="line1"
+        required
+        autoComplete="address-line1"
+        defaultValue={address?.line1 ?? ""}
+      />
+      <TextField
+        label="Address Line 2"
+        name="line2"
+        autoComplete="address-line2"
+        defaultValue={address?.line2 ?? ""}
+      />
       <div className="grid gap-4 md:grid-cols-3">
-        <TextField label="City *" name="city" required defaultValue={address?.city ?? ""} />
-        <TextField label="State *" name="state" required defaultValue={address?.state ?? ""} />
+        <TextField
+          label="City *"
+          name="city"
+          required
+          autoComplete="address-level2"
+          defaultValue={address?.city ?? ""}
+        />
+        <TextField
+          label="State *"
+          name="state"
+          required
+          autoComplete="address-level1"
+          defaultValue={address?.state ?? ""}
+        />
         <TextField
           label="Postal Code *"
           name="postalCode"
           required
+          inputMode="numeric"
+          autoComplete="postal-code"
           defaultValue={address?.postalCode ?? ""}
           error={fieldErrors.postalCode}
         />
@@ -274,7 +322,11 @@ function AddressForm({
         />
         Set as default address
       </label>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && (
+        <p className="text-sm text-red-600" role="alert">
+          {error}
+        </p>
+      )}
       <div className="flex gap-3">
         <Button type="submit" disabled={status === "loading"}>
           {status === "loading" ? "Saving..." : "Save Address"}
@@ -293,6 +345,8 @@ function TextField({
   type = "text",
   required,
   minLength,
+  autoComplete,
+  inputMode,
   defaultValue,
   hint,
   error,
@@ -302,6 +356,8 @@ function TextField({
   type?: string;
   required?: boolean;
   minLength?: number;
+  autoComplete?: string;
+  inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   defaultValue?: string;
   hint?: string;
   error?: string;
@@ -319,6 +375,8 @@ function TextField({
         type={type}
         required={required}
         minLength={minLength}
+        autoComplete={autoComplete}
+        inputMode={inputMode}
         defaultValue={defaultValue}
         aria-invalid={Boolean(error)}
         aria-describedby={[hintId, errorId].filter(Boolean).join(" ") || undefined}
@@ -455,6 +513,13 @@ export function ProfileTab({ customer }: { customer: CustomerInfo }) {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [passwordStatus, setPasswordStatus] = useState<"idle" | "loading" | "error" | "saved">("idle");
   const [passwordError, setPasswordError] = useState("");
+  const profileFormRef = useRef<HTMLFormElement>(null);
+
+  // F-145: after a failed submit, move focus to the first invalid field.
+  useEffect(() => {
+    if (Object.keys(fieldErrors).length === 0) return;
+    profileFormRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [fieldErrors]);
 
   const handleProfileSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -554,7 +619,11 @@ export function ProfileTab({ customer }: { customer: CustomerInfo }) {
 
   return (
     <div className="space-y-10">
-      <form onSubmit={handleProfileSubmit} className="max-w-md space-y-4 rounded-2xl border border-border p-6">
+      <form
+        ref={profileFormRef}
+        onSubmit={handleProfileSubmit}
+        className="max-w-md space-y-4 rounded-2xl border border-border p-6"
+      >
         <h3 className="font-display text-lg font-bold text-ink">Profile Details</h3>
         <p className="text-sm text-muted">
           {customer.email} {customer.emailVerified ? "· Verified" : "· Not yet verified"}
@@ -567,6 +636,7 @@ export function ProfileTab({ customer }: { customer: CustomerInfo }) {
           name="name"
           required
           minLength={2}
+          autoComplete="name"
           defaultValue={customer.name}
           error={fieldErrors.name}
         />
@@ -574,6 +644,7 @@ export function ProfileTab({ customer }: { customer: CustomerInfo }) {
           label="Phone"
           name="phone"
           type="tel"
+          autoComplete="tel"
           defaultValue={customer.phone ?? ""}
           hint={INDIAN_PHONE_HINT}
           error={fieldErrors.phone}
@@ -583,7 +654,11 @@ export function ProfileTab({ customer }: { customer: CustomerInfo }) {
             {error}
           </p>
         )}
-        {status === "saved" && <p className="text-sm text-trust">Profile updated.</p>}
+        {status === "saved" && (
+          <p className="text-sm text-trust-ink" role="status">
+            Profile updated.
+          </p>
+        )}
         <Button type="submit" disabled={status === "loading"}>
           {status === "loading" ? "Saving..." : "Save Changes"}
         </Button>
@@ -632,8 +707,16 @@ export function ProfileTab({ customer }: { customer: CustomerInfo }) {
             className="w-full rounded-2xl border border-border px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
           />
         </div>
-        {passwordStatus === "error" && <p className="text-sm text-red-600">{passwordError}</p>}
-        {passwordStatus === "saved" && <p className="text-sm text-trust">Password updated.</p>}
+        {passwordStatus === "error" && (
+          <p className="text-sm text-red-600" role="alert">
+            {passwordError}
+          </p>
+        )}
+        {passwordStatus === "saved" && (
+          <p className="text-sm text-trust-ink" role="status">
+            Password updated.
+          </p>
+        )}
         <Button type="submit" disabled={passwordStatus === "loading"}>
           {passwordStatus === "loading" ? "Updating..." : "Update Password"}
         </Button>

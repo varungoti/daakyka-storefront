@@ -4,6 +4,7 @@ import { marketingMedia } from "@/data/media/catalog";
 import { placeholderForAspect } from "@/data/media/image-manifest";
 import type { HeroSlideContent } from "@/lib/homepage";
 import { buttonClassNames } from "@/components/ui/button";
+import { publicImageAlt } from "@/lib/media/public-alt";
 import { cn } from "@/lib/utils";
 import { ArrowRight, ChevronLeft, ChevronRight, Pause, Play, Star } from "lucide-react";
 import Image from "next/image";
@@ -393,7 +394,7 @@ export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, rating
                       <div className="relative h-[88%] w-[46%] overflow-hidden rounded-[1.5rem] hero-model-frame shadow-[0_20px_50px_rgba(138,52,125,0.15)]">
                         <Image
                           src={secondaryImage.url}
-                          alt={secondaryImage.alt || ""}
+                          alt={publicImageAlt(secondaryImage.alt)}
                           fill
                           className="object-cover object-top"
                           sizes="(max-width: 1024px) 42vw, 18vw"
@@ -402,7 +403,10 @@ export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, rating
                       <div className="relative h-[94%] w-[48%] overflow-hidden rounded-[1.5rem] hero-model-frame shadow-[0_24px_60px_rgba(138,52,125,0.2)]">
                         <Image
                           src={mainImage.url}
-                          alt={mainImage.alt || (index === 0 ? "Healthcare team in DAAKYKA scrubs" : "")}
+                          alt={publicImageAlt(
+                            mainImage.alt,
+                            index === 0 ? "Healthcare team in DAAKYKA scrubs" : "",
+                          )}
                           fill
                           preload={index === 0}
                           fetchPriority={index === 0 ? "high" : undefined}

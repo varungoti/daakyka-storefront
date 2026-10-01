@@ -123,7 +123,7 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
                     href={whatsappHref(contactWhatsapp, brand.web.whatsappMessage)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="mt-3 inline-flex text-sm font-semibold text-trust hover:underline"
+                    className="mt-3 inline-flex text-sm font-semibold text-trust-ink hover:underline"
                   >
                     Open WhatsApp →
                   </Link>
@@ -165,7 +165,7 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
                 href={brand.web.domain}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-brand hover:underline"
+                className="text-brand underline underline-offset-2"
               >
                 daakyka.com
               </a>

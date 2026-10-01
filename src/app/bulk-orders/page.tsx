@@ -37,6 +37,7 @@ export default async function BulkOrdersPage() {
           title="Uniforms for Institutions & Teams"
           description="Department-wise uniform planning, logo embroidery, color standardization, and bulk pricing for hospitals, schools, sports teams, and corporate offices."
           align="center"
+          titleAs="h1"
         />
         <div className="mt-10 grid gap-4 md:grid-cols-3">
           <BenefitCard icon={Building2} title="Institutional Programs" text="Standardized uniforms across departments and locations with brand consistency." />
@@ -67,7 +68,7 @@ export default async function BulkOrdersPage() {
                 href={whatsappHref(contactWhatsapp, brand.web.whatsappMessage)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-4 inline-flex items-center gap-2 rounded-md bg-trust px-4 py-3 text-sm font-semibold text-white hover:opacity-90"
+                className="mt-4 inline-flex items-center gap-2 rounded-md bg-trust-ink px-4 py-3 text-sm font-semibold text-white hover:opacity-90"
               >
                 <MessageCircle size={18} />
                 Chat on WhatsApp
@@ -101,7 +102,7 @@ function BenefitCard({
   return (
     <div className="rounded-2xl border border-border bg-surface p-6 text-center">
       <Icon className="mx-auto mb-3 text-brand" size={28} />
-      <h3 className="font-display font-bold text-ink">{title}</h3>
+      <h2 className="font-display font-bold text-ink">{title}</h2>
       <p className="mt-2 text-sm text-muted">{text}</p>
     </div>
   );

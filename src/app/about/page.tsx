@@ -53,6 +53,7 @@ export default async function AboutPage() {
           title={`${brand.tagline}. ${brand.subtagline}.`}
           description={brand.description}
           align="center"
+          titleAs="h1"
         />
         <div className="mt-8 flex flex-wrap items-center justify-center gap-4 text-sm text-muted">
           <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-4 py-2">

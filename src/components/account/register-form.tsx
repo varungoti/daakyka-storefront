@@ -6,7 +6,7 @@ import { HONEYPOT_FIELD_NAME } from "@/lib/validation/honeypot";
 import { INDIAN_PHONE_HINT, normalizeIndianPhone } from "@/lib/validation/india";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /** F-132: the field names customerRegisterSchema (src/lib/validation/
  * schemas.ts) can report a `details.fieldErrors` entry for. */
@@ -20,6 +20,14 @@ export function RegisterForm({ returnTo }: { returnTo: string }) {
   // F-042: an existing account gets its own message with real sign-in/
   // reset-password links, rather than the generic dead-end error text.
   const [emailTaken, setEmailTaken] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // F-241: after a failed submit, move focus to the first field the server
+  // (or the client-side check) marked invalid — same as checkout does.
+  useEffect(() => {
+    if (Object.keys(fieldErrors).length === 0) return;
+    formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [fieldErrors]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -92,7 +100,11 @@ export function RegisterForm({ returnTo }: { returnTo: string }) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-border bg-surface-elevated p-8">
+    <form
+      ref={formRef}
+      onSubmit={handleSubmit}
+      className="space-y-4 rounded-3xl border border-border bg-surface-elevated p-8"
+    >
       <HoneypotField />
       <Field
         label="Full Name *"

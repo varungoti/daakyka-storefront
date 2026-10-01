@@ -72,7 +72,7 @@ export default async function AccountOrderDetailPage({
     if (!rateLimit.ok) {
       return (
         <div className="mx-auto max-w-3xl px-4 py-24 text-center">
-          <h1 className="font-display text-2xl font-bold text-ink">Too many requests</h1>
+          <h2 className="font-display text-2xl font-bold text-ink">Too many requests</h2>
           <p className="mt-2 text-muted">You&rsquo;ve checked this a few too many times in a row — please wait a minute and try again.</p>
         </div>
       );
@@ -134,7 +134,7 @@ export default async function AccountOrderDetailPage({
 
       <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-bold text-ink">{order.number}</h1>
+          <h2 className="font-display text-2xl font-bold text-ink">{order.number}</h2>
           <p className="text-sm text-muted">
             Placed {placedDate} · {paymentSummary}
           </p>

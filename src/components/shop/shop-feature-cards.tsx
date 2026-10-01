@@ -1,6 +1,6 @@
 import { marketingMedia } from "@/data/media/catalog";
 import { MixMatchSection } from "@/components/home/mix-match-section";
-import { Button } from "@/components/ui/button";
+import { buttonClassNames } from "@/components/ui/button";
 import { ArrowRight, Crown, Sparkles } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -80,11 +80,12 @@ function FeatureCard({
           </div>
           <h3 className="font-display text-2xl font-bold">{title}</h3>
           <p className="mt-3 text-sm leading-relaxed opacity-80">{description}</p>
-          <Link href={href} className="mt-6">
-            <Button variant={dark ? "luxury" : "primary"}>
-              {cta}
-              <ArrowRight size={16} />
-            </Button>
+          <Link
+            href={href}
+            className={buttonClassNames({ variant: dark ? "luxury" : "primary", className: "mt-6 w-fit" })}
+          >
+            {cta}
+            <ArrowRight size={16} />
           </Link>
         </div>
       </div>

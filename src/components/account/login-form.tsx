@@ -91,7 +91,7 @@ export function LoginForm({ returnTo }: { returnTo: string }) {
         />
       </div>
       {error && (
-        <p className="text-sm text-red-600">
+        <p className="text-sm text-red-600" role="alert">
           {error}
           {locked && (
             <>

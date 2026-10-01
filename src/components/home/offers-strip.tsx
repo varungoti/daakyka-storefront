@@ -11,7 +11,9 @@ export async function OffersStrip() {
       <div className="mx-auto max-w-[1320px] px-4 lg:px-8">
         <div className="mb-4 flex items-center gap-2">
           <Tag size={18} className="text-brand" />
-          <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">Current Offers</p>
+          {/* An h2 (not a styled <p>) so the offer names below, which are h3s,
+              have a parent heading — heading-order. */}
+          <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-brand">Current Offers</h2>
         </div>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {offers.map((offer) => (

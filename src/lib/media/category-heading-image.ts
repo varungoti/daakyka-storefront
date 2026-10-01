@@ -1,4 +1,5 @@
 import type { SiteImage } from "@/lib/media/get-site-image";
+import { publicImageAlt } from "@/lib/media/public-alt";
 import type { CategoryTreeNode } from "@/lib/products";
 
 /**
@@ -24,5 +25,5 @@ export function resolveCategoryHeadingImage(
 ): SiteImage | null {
   if (slotImage) return slotImage;
   if (!category.image) return null;
-  return { url: category.image.url, alt: category.image.alt ?? category.name };
+  return { url: category.image.url, alt: publicImageAlt(category.image.alt, category.name) };
 }

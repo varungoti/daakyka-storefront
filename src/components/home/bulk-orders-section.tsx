@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { buttonClassNames } from "@/components/ui/button";
 import { brand } from "@/data/brand";
 import {
   ArrowRight,
@@ -47,16 +47,12 @@ export function BulkOrdersSection() {
                 standardization, and bulk pricing for hospitals, schools, and corporate teams.
               </p>
               <div className="flex flex-wrap gap-3 pt-1">
-                <Link href="/bulk-orders">
-                  <Button size="lg">
-                    Request a Quote
-                    <ArrowRight size={18} />
-                  </Button>
+                <Link href="/bulk-orders" className={buttonClassNames({ size: "lg" })}>
+                  Request a Quote
+                  <ArrowRight size={18} />
                 </Link>
-                <Link href="/for-hospitals">
-                  <Button variant="outline" size="lg">
-                    Institutional Solutions
-                  </Button>
+                <Link href="/for-hospitals" className={buttonClassNames({ variant: "outline", size: "lg" })}>
+                  Institutional Solutions
                 </Link>
               </div>
             </div>

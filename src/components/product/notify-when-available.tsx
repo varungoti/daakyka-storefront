@@ -49,7 +49,7 @@ export function NotifyWhenAvailable({ variantId }: NotifyWhenAvailableProps) {
 
   if (status === "done") {
     return (
-      <p className="mt-2 rounded-lg bg-trust/10 px-4 py-3 text-sm font-medium text-trust">
+      <p className="mt-2 rounded-lg bg-trust/10 px-4 py-3 text-sm font-medium text-trust-ink">
         We&apos;ll email you as soon as this is back in stock.
       </p>
     );

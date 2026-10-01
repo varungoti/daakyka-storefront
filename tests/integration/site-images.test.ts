@@ -65,6 +65,27 @@ describe("getSiteImage", () => {
     assert.deepEqual(result, { url: asset.url, alt: "" });
   });
 
+  // F-087: scripts/generate-images.ts stores the manifest slot label as a
+  // generated asset's alt ("Contact — Banner"), which names an admin slot,
+  // not the photo — it must never reach a shopper's screen reader.
+  it("treats an internal slot label stored as the alt as no alt text", async () => {
+    const slot = `e2-test.slot-label-alt.${randomUUID()}`;
+    const asset = await db.mediaAsset.create({
+      data: {
+        key: `media/section/test/${randomUUID()}.webp`,
+        url: "https://fake-r2.test/slot-label.webp",
+        alt: "Homepage Band — For Hospitals",
+        usage: "BANNER",
+        source: "AI",
+        slot,
+      },
+    });
+    createdAssetIds.push(asset.id);
+
+    const result = await getSiteImage(slot);
+    assert.deepEqual(result, { url: asset.url, alt: "" });
+  });
+
   it("getSiteImages resolves several slots in one call, missing ones as null", async () => {
     const slot = `e2-test.batch.${randomUUID()}`;
     const missingSlot = `e2-test.batch-missing.${randomUUID()}`;

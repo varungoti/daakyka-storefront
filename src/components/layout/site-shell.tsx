@@ -71,14 +71,16 @@ export function SiteShell({
           their existing on-screen layout. globals.css carries a
           structural (tag/role-based) @media print fallback for the same
           elements as defense-in-depth. */}
-      <div className="print:hidden">
+      {/* aside, not div, so the announcement strip and the floating
+          WhatsApp button below sit inside a landmark (axe "region"). */}
+      <aside aria-label="Announcements" className="print:hidden">
         <UtilityBar
           messages={announcementMessages}
           phone={contactPhone}
           whatsapp={contactWhatsapp}
           bulkCtaEnabled={bulkCtaEnabled}
         />
-      </div>
+      </aside>
       <div className="print:hidden">
         <Header navigation={navigation} />
       </div>
@@ -96,9 +98,9 @@ export function SiteShell({
           contactAddress={contactAddress}
         />
       </div>
-      <div className="print:hidden">
+      <aside aria-label="WhatsApp" className="print:hidden">
         <WhatsAppFab whatsapp={contactWhatsapp} />
-      </div>
+      </aside>
       <div className="print:hidden">
         <CartDrawer />
       </div>

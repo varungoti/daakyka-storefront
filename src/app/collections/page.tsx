@@ -26,6 +26,7 @@ export default function CollectionsPage() {
           title="Shop Collections"
           description="Curated groups to help you find the right products faster."
           align="center"
+          titleAs="h1"
         />
       </PageHeroBand>
 

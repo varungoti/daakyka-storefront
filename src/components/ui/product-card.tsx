@@ -84,6 +84,13 @@ export function ProductCard({ product, className, loadEagerly = false, compact =
     <article
       className={cn(
         "product-card-surface group hover:border-brand hover:shadow-sm relative overflow-hidden rounded-3xl border border-border transition-colors",
+        // F-239: the name/price link spans the card edge to edge, so the global
+        // :focus-visible outline (drawn outside the link) is clipped on the
+        // left and right by this card's overflow-hidden and only showed as two
+        // stray horizontal lines. A box-shadow ring on the card itself isn't
+        // clipped by its own overflow, so the ring follows the link's focus
+        // instead (the link drops its own outline, see its className).
+        "has-[[data-card-link]:focus-visible]:ring-2 has-[[data-card-link]:focus-visible]:ring-brand has-[[data-card-link]:focus-visible]:ring-offset-2",
         className,
       )}
     >
@@ -198,8 +205,11 @@ export function ProductCard({ product, className, loadEagerly = false, compact =
 
       <Link
         href={`/products/${product.handle}`}
+        data-card-link=""
         className={cn(
-          "block space-y-3 px-5 pb-2",
+          // `!`: globals.css's unlayered :focus-visible outline otherwise beats
+          // the (layered) outline-none utility.
+          "block space-y-3 px-5 pb-2 focus-visible:outline-none!",
           product.colors.length > 1 ? "pt-3" : "pt-4",
           compact && "max-sm:space-y-2 max-sm:px-3 max-sm:pb-3",
           compact && (product.colors.length > 1 ? "max-sm:pt-2" : "max-sm:pt-3"),

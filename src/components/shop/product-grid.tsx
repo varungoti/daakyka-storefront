@@ -96,6 +96,10 @@ export function ProductGrid({
 
   return (
     <div>
+      {/* Product cards title themselves with an h3, but on /shop and the
+          category listings the only heading above the grid is the page's h1
+          — axe's heading-order (a skipped level) fired on every card. */}
+      {showToolbar && <h2 className="sr-only">Products</h2>}
       {showToolbar && (
         <div className="hover:border-brand hover:shadow-sm transition-colors mb-4 flex flex-col gap-3 rounded-2xl border border-border bg-surface-elevated px-4 py-3 sm:mb-6 sm:gap-4 sm:px-5 sm:py-4">
           {onSearchQueryChange && (
@@ -103,13 +107,18 @@ export function ProductGrid({
               type="search"
               value={searchQuery ?? ""}
               onChange={(event) => onSearchQueryChange(event.target.value)}
+              aria-label="Search within results"
               placeholder="Search within results..."
               className="w-full rounded-full border border-border px-4 py-2.5 text-sm outline-none focus:border-brand"
             />
           )}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-          <p className="text-sm text-muted">
-            <span className="font-semibold text-ink">{totalCount} Products</span>
+          {/* role="status": the count changes when a filter is applied, which
+              is otherwise silent to a screen reader. */}
+          <p role="status" className="text-sm text-muted">
+            <span className="font-semibold text-ink">
+              {totalCount} {totalCount === 1 ? "Product" : "Products"}
+            </span>
           </p>
           {/* F-011/F-242: on a phone, Filter and Sort share one row (each
               half the card's width, "Sort by:" shown to screen readers only)

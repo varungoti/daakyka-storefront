@@ -783,7 +783,7 @@ function ReviewsSection({
       )}
 
       {submitted && (
-        <p className="mt-3 rounded-lg bg-trust/10 px-4 py-3 text-sm font-medium text-trust">
+        <p className="mt-3 rounded-lg bg-trust/10 px-4 py-3 text-sm font-medium text-trust-ink">
           Thanks — your review is awaiting moderation.
         </p>
       )}

@@ -69,6 +69,7 @@ export function ShopFiltersPanel({
           <li>
             <button
               type="button"
+              aria-pressed={!filters.category}
               onClick={() => onChange({ ...filters, category: undefined })}
               className={cn(
                 "flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm transition",
@@ -85,6 +86,7 @@ export function ShopFiltersPanel({
             <li key={category.slug}>
               <button
                 type="button"
+                aria-pressed={filters.category === category.slug}
                 onClick={() => onChange({ ...filters, category: category.slug })}
                 className={cn(
                   "flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm transition",
@@ -108,12 +110,13 @@ export function ShopFiltersPanel({
               key={color.name}
               type="button"
               aria-label={color.name}
+              aria-pressed={filters.colors.includes(color.name)}
               onClick={() => toggle("colors", color.name)}
               className={cn(
                 "h-8 w-8 rounded-full border-2 transition",
                 filters.colors.includes(color.name)
                   ? "border-brand ring-2 ring-offset-2 ring-brand/40 scale-110"
-                  : "border-transparent hover:scale-105",
+                  : "border-border hover:scale-105",
               )}
               style={{ backgroundColor: color.hex }}
             />
@@ -127,6 +130,7 @@ export function ShopFiltersPanel({
             <button
               key={size}
               type="button"
+              aria-pressed={filters.sizes.includes(size)}
               onClick={() => toggle("sizes", size)}
               className={cn(
                 "rounded-lg border px-2 py-2 text-xs font-semibold transition",

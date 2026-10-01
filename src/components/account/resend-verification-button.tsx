@@ -42,7 +42,7 @@ export function ResendVerificationButton({
 
   if (status === "sent") {
     return (
-      <p className={className ?? "text-sm font-medium text-trust"}>
+      <p className={className ?? "text-sm font-medium text-trust-ink"}>
         If that email needs verifying, a new link is on its way — check your inbox.
       </p>
     );

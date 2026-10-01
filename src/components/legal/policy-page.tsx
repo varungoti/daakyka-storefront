@@ -15,7 +15,13 @@ export function PolicyPage({ title, description, children }: PolicyPageProps) {
   return (
     <>
       <PageHeroBand innerClassName="max-w-3xl text-center">
-        <SectionHeading eyebrow="Customer Care" title={title} description={description} align="center" />
+        <SectionHeading
+          eyebrow="Customer Care"
+          title={title}
+          description={description}
+          align="center"
+          titleAs="h1"
+        />
       </PageHeroBand>
       <PageContentSection innerClassName="max-w-3xl">
         <div className="prose-policy space-y-4 text-sm leading-relaxed text-muted">{children}</div>

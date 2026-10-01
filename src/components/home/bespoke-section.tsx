@@ -11,7 +11,10 @@ const features = [
   { icon: Sparkles, label: "Institutional Order Support" },
 ];
 
-export function BespokeSection() {
+/** `headingAs="h1"` is for /shop/bespoke, where this band is the page's hero;
+ * the homepage and /our-story already have their own h1, so h2 stays the
+ * default. */
+export function BespokeSection({ headingAs: HeadingTag = "h2" }: { headingAs?: "h1" | "h2" }) {
   return (
     <section className="relative overflow-hidden py-0">
       <div className="fabric-wave absolute inset-0" />
@@ -43,9 +46,9 @@ export function BespokeSection() {
             <p className="text-xs font-bold uppercase tracking-[0.25em] text-electric-violet">
               DAAKYKA Bespoke
             </p>
-            <h2 className="mt-3 font-display text-4xl font-semibold leading-tight md:text-5xl">
+            <HeadingTag className="mt-3 font-display text-4xl font-semibold leading-tight md:text-5xl">
               Made to Order for Your Team
-            </h2>
+            </HeadingTag>
             <p className="mt-4 max-w-lg text-base leading-relaxed text-white/75">
               Tell us the garment, fit, fabric, colour and quantity your organisation
               needs. Our team will discuss the available options and prepare a quote.

@@ -4,9 +4,11 @@ import { useCurrency } from "@/context/currency-provider";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { matchProducts } from "@/lib/search/match-products";
 import type { Product } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { Search, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 
@@ -15,12 +17,33 @@ interface SearchDialogProps {
   onClose: () => void;
 }
 
+const RESULTS_ID = "search-results";
+const optionId = (productId: string) => `search-option-${productId}`;
+
+// F-083: where a shopper with no matches can go next. Only routes that
+// exist and are live today — no Mix & Match / Try-On.
+const BROWSE_SHORTCUTS = [
+  { href: "/for-hospitals", label: "Hospital range" },
+  { href: "/school-uniforms", label: "School uniforms" },
+  { href: "/kids-wear", label: "Kids wear" },
+  { href: "/sale", label: "Sale" },
+] as const;
+
 export function SearchDialog({ open, onClose }: SearchDialogProps) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
+  // F-083: index of the result highlighted with the arrow keys, -1 for none.
+  // Real DOM focus never leaves the input (combobox pattern) — the
+  // highlighted option is exposed through aria-activedescendant instead.
+  const [activeIndex, setActiveIndex] = useState(-1);
   const { formatPrice } = useCurrency();
-  const panelRef = useFocusTrap<HTMLDivElement>(open, onClose, { lockScroll: true });
+  const close = () => {
+    setActiveIndex(-1);
+    onClose();
+  };
+  const panelRef = useFocusTrap<HTMLDivElement>(open, close, { lockScroll: true });
 
   useEffect(() => {
     if (!open) return;
@@ -47,6 +70,41 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
     return matchProducts(products, query).slice(0, 8);
   }, [products, query]);
 
+  const showResults = !loading && results.length > 0;
+  const activeProduct = showResults && activeIndex >= 0 ? results[activeIndex] : undefined;
+
+  useEffect(() => {
+    if (!activeProduct) return;
+    document.getElementById(optionId(activeProduct.id))?.scrollIntoView({ block: "nearest" });
+  }, [activeProduct]);
+
+  // F-083: Enter used to do nothing (the input wasn't in a form). With a
+  // result highlighted it opens that product; otherwise it runs the full
+  // search, same destination as the "Search all products" link below.
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (activeProduct) {
+      close();
+      router.push(`/products/${activeProduct.handle}`);
+      return;
+    }
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    close();
+    router.push(`/shop?q=${encodeURIComponent(trimmed)}`);
+  };
+
+  const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!showResults) return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex(activeIndex + 1 >= results.length ? 0 : activeIndex + 1);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex(activeIndex <= 0 ? results.length - 1 : activeIndex - 1);
+    }
+  };
+
   return (
     <AnimatePresence>
       {open && (
@@ -58,7 +116,7 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={onClose}
+            onClick={close}
           />
           <motion.div
             ref={panelRef}
@@ -71,41 +129,91 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -12, scale: 0.98 }}
           >
-            <div className="flex items-center gap-3 border-b border-border px-5 py-4">
-              <Search className="text-brand" size={20} />
+            <form
+              role="search"
+              onSubmit={handleSubmit}
+              className="flex items-center gap-3 border-b border-border px-5 py-4"
+            >
+              <Search className="text-brand" size={20} aria-hidden="true" />
+              {/* No `autoFocus`: React applies it during commit, before
+                  useFocusTrap's effect records document.activeElement, so
+                  the hook saw this input as the "previously focused" element
+                  and closing the dialog never returned focus to the header
+                  Search button (F-238). The hook focuses the first
+                  focusable element — this input — itself. */}
               <input
-                autoFocus
                 type="search"
+                role="combobox"
+                aria-label="Search products"
+                aria-autocomplete="list"
+                aria-expanded={showResults}
+                aria-controls={RESULTS_ID}
+                aria-activedescendant={activeProduct ? optionId(activeProduct.id) : undefined}
+                autoComplete="off"
+                enterKeyHint="search"
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setActiveIndex(-1);
+                }}
+                onKeyDown={handleInputKeyDown}
                 placeholder="Search scrubs, colors, fabrics..."
                 className="flex-1 bg-transparent text-base outline-none placeholder:text-muted"
               />
               <button
                 type="button"
-                onClick={onClose}
+                onClick={close}
                 className="rounded-full p-2 hover:bg-lilac/50"
                 aria-label="Close search"
               >
                 <X size={18} />
               </button>
-            </div>
+            </form>
 
             <div className="max-h-[420px] overflow-y-auto p-4">
               {loading ? (
-                <p className="px-2 py-8 text-center text-sm text-muted">Searching...</p>
-              ) : results.length === 0 ? (
-                <p className="px-2 py-8 text-center text-sm text-muted">
-                  No products found for &ldquo;{query}&rdquo;
+                <p role="status" className="px-2 py-8 text-center text-sm text-muted">
+                  Searching...
                 </p>
-              ) : (
-                <ul className="space-y-2">
-                  {results.map((product) => (
-                    <li key={product.id}>
+              ) : results.length === 0 ? (
+                <div role="status" className="px-2 py-6 text-center">
+                  <p className="text-sm text-muted">No products found for &ldquo;{query}&rdquo;</p>
+                  <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-muted">
+                    Or browse
+                  </p>
+                  <div className="mt-2 flex flex-wrap justify-center gap-2">
+                    {BROWSE_SHORTCUTS.map((shortcut) => (
                       <Link
+                        key={shortcut.href}
+                        href={shortcut.href}
+                        onClick={close}
+                        className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-ink transition hover:border-brand hover:text-brand"
+                      >
+                        {shortcut.label}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                // Combobox/listbox pattern (F-083): the <a> itself is the
+                // option, out of the Tab order (`tabIndex={-1}`) because the
+                // arrow keys move through them while focus stays in the
+                // input — the <li> is presentational, since a listbox may
+                // only own options.
+                <ul id={RESULTS_ID} role="listbox" aria-label="Search results" className="space-y-2">
+                  {results.map((product) => (
+                    <li key={product.id} role="presentation">
+                      <Link
+                        id={optionId(product.id)}
+                        role="option"
+                        aria-selected={activeProduct?.id === product.id}
+                        tabIndex={-1}
                         href={`/products/${product.handle}`}
-                        onClick={onClose}
-                        className="flex items-center gap-4 rounded-2xl px-3 py-3 transition hover:bg-lilac/40"
+                        onClick={close}
+                        className={cn(
+                          "flex items-center gap-4 rounded-2xl px-3 py-3 transition hover:bg-lilac/40",
+                          activeProduct?.id === product.id && "bg-lilac/40",
+                        )}
                       >
                         <div className="relative h-16 w-14 shrink-0 overflow-hidden rounded-xl bg-lilac/30">
                           <Image
@@ -136,8 +244,8 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
                   rather than a dead end. */}
               {!loading && query.trim() && (
                 <Link
-                  href={`/shop?q=${encodeURIComponent(query)}`}
-                  onClick={onClose}
+                  href={`/shop?q=${encodeURIComponent(query.trim())}`}
+                  onClick={close}
                   className="mt-4 block rounded-2xl bg-lilac/40 px-4 py-3 text-center text-sm font-semibold text-brand hover:bg-lilac/60"
                 >
                   Search all products for &ldquo;{query}&rdquo;

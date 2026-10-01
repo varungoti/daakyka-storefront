@@ -1,10 +1,11 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { FocusedStatus } from "@/components/ui/focused-status";
 import { HoneypotField } from "@/components/ui/honeypot-field";
 import { HONEYPOT_FIELD_NAME } from "@/lib/validation/honeypot";
 import { retryAfterMessage } from "@/lib/security/retry-after";
-import { useState } from "react";
+import { useId, useState } from "react";
 
 export function NewsletterSignup({ source = "footer" }: { source?: string }) {
   const [email, setEmail] = useState("");
@@ -15,6 +16,8 @@ export function NewsletterSignup({ source = "footer" }: { source?: string }) {
   // the response — which meant a 429 (rate limited) showed "Please enter
   // a valid email" even for a perfectly valid, already-confirmed address.
   const [errorMessage, setErrorMessage] = useState("");
+  // Not a fixed id: the form can render more than once per page.
+  const errorId = useId();
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -63,12 +66,19 @@ export function NewsletterSignup({ source = "footer" }: { source?: string }) {
   };
 
   if (status === "success") {
+    // F-241: announced + focused; text-trust-ink (not text-trust, ~2.9:1 on
+    // this tint) for AA contrast.
     return (
-      <div className="rounded-2xl bg-trust/10 px-5 py-4 text-sm font-medium text-trust">
+      <FocusedStatus className="rounded-2xl bg-trust/10 px-5 py-4 text-sm font-medium text-trust-ink">
         Almost there! Check your inbox to confirm your subscription.
-      </div>
+      </FocusedStatus>
     );
   }
+
+  // The only client-side error raised before a request is sent is the
+  // missing consent tick (every other failure comes back with consent already
+  // given), so "error and no consent" is exactly "the consent error".
+  const consentInvalid = status === "error" && !consentGiven;
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-3">
@@ -79,6 +89,8 @@ export function NewsletterSignup({ source = "footer" }: { source?: string }) {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           placeholder="Enter your email"
+          aria-label="Email address"
+          autoComplete="email"
           required
           className="min-w-[260px] rounded-full border border-border bg-surface-input px-5 py-3 text-sm text-ink outline-none focus:border-brand focus:ring-2 focus:ring-brand/20"
         />
@@ -91,6 +103,8 @@ export function NewsletterSignup({ source = "footer" }: { source?: string }) {
           type="checkbox"
           checked={consentGiven}
           onChange={(e) => setConsentGiven(e.target.checked)}
+          aria-invalid={consentInvalid}
+          aria-describedby={consentInvalid ? errorId : undefined}
           className="mt-0.5"
         />
         <span>
@@ -98,7 +112,11 @@ export function NewsletterSignup({ source = "footer" }: { source?: string }) {
           time.
         </span>
       </label>
-      {status === "error" && <p className="text-sm text-red-600">{errorMessage}</p>}
+      {status === "error" && (
+        <p id={errorId} role="alert" className="text-sm text-red-600">
+          {errorMessage}
+        </p>
+      )}
     </form>
   );
 }

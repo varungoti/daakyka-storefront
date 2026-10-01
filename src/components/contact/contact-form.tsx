@@ -1,10 +1,11 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { FocusedStatus } from "@/components/ui/focused-status";
 import { HoneypotField } from "@/components/ui/honeypot-field";
 import { HONEYPOT_FIELD_NAME } from "@/lib/validation/honeypot";
 import { retryAfterMessage } from "@/lib/security/retry-after";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export function ContactForm({
   defaultType = "GENERAL",
@@ -14,6 +15,23 @@ export function ContactForm({
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const formRef = useRef<HTMLFormElement>(null);
+  // F-241: set by "Send Another Message" so the re-rendered form takes
+  // focus — the button that was clicked is unmounted with the success box.
+  const refocusForm = useRef(false);
+
+  useEffect(() => {
+    if (status !== "idle" || !refocusForm.current) return;
+    refocusForm.current = false;
+    (formRef.current?.elements.namedItem("name") as HTMLElement | null)?.focus();
+  }, [status]);
+
+  // F-241: after a failed submit, move focus to the first field the server
+  // (or the client-side check) marked invalid — same as checkout does.
+  useEffect(() => {
+    if (Object.keys(fieldErrors).length === 0) return;
+    formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [fieldErrors]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -75,20 +93,30 @@ export function ContactForm({
 
   if (status === "success") {
     return (
-      <div className="rounded-3xl border border-trust/30 bg-trust/10 p-8 text-center">
+      <FocusedStatus className="rounded-3xl border border-trust/30 bg-trust/10 p-8 text-center">
         <h2 className="font-display text-xl font-bold text-ink">Message Sent</h2>
         <p className="mt-2 text-sm text-muted">
           Our team at Babaji Enterprises will respond within 1–2 business days.
         </p>
-        <Button className="mt-4" onClick={() => setStatus("idle")}>
+        <Button
+          className="mt-4"
+          onClick={() => {
+            refocusForm.current = true;
+            setStatus("idle");
+          }}
+        >
           Send Another Message
         </Button>
-      </div>
+      </FocusedStatus>
     );
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-border bg-surface-elevated p-8">
+    <form
+      ref={formRef}
+      onSubmit={handleSubmit}
+      className="space-y-4 rounded-3xl border border-border bg-surface-elevated p-8"
+    >
       <HoneypotField />
       <div className="grid gap-4 md:grid-cols-2">
         <Field label="Full Name *" name="name" required minLength={2} maxLength={120} error={fieldErrors.name} />
