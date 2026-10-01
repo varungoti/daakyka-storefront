@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { resolveCdnObjectKey } from "@/lib/storage/cdn-key";
+import { CDN_CACHE_TAG, cdnCacheTagForKey, resolveCdnObjectKey } from "@/lib/storage/cdn-key";
 
 /**
  * F5 (docs/audit-2026-09-19/security.md): /cdn/[...key] used to run its
@@ -74,5 +74,23 @@ describe("resolveCdnObjectKey", () => {
   it("rejects malformed percent-encoding instead of throwing", () => {
     assert.doesNotThrow(() => resolveCdnObjectKey(["100%off"]));
     assert.equal(resolveCdnObjectKey(["100%off"]), null);
+  });
+});
+
+// F-362: /cdn responses are tagged so a deleted object's cached copy can be
+// purged at Vercel's CDN. A tag must stay under 256 UTF-8 bytes and can't
+// contain the comma that delimits tags in the Vercel-Cache-Tag header.
+describe("cdnCacheTagForKey (F-362)", () => {
+  it("is distinct per object and namespaced under the shared tag", () => {
+    const a = cdnCacheTagForKey("media/product/2026/09/aaaaaaaa-0000-4000-8000-000000000001.webp");
+    const b = cdnCacheTagForKey("media/product/2026/09/aaaaaaaa-0000-4000-8000-000000000002.webp");
+    assert.notEqual(a, b);
+    assert.ok(a.startsWith(`${CDN_CACHE_TAG}:`));
+  });
+
+  it("fits Vercel's tag limits for a real generated key", () => {
+    const tag = cdnCacheTagForKey("media/review/2026/09/3f2a8c1e-7b44-4d0e-9a55-0c6b1d2e3f40.webp");
+    assert.ok(Buffer.byteLength(tag, "utf8") <= 256);
+    assert.ok(!tag.includes(","));
   });
 });

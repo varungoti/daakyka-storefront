@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { deflateSync } from "node:zlib";
 import sharp from "sharp";
 import { InvalidImageError, MAX_INPUT_PIXELS, MAX_LONG_EDGE, processImage } from "@/lib/media/process-image";
@@ -125,6 +126,45 @@ describe("processImage", () => {
   // every upload route can map to a clear 400 instead.
   it("throws InvalidImageError — not sharp's raw error — for bytes that aren't a readable image", async () => {
     await assert.rejects(() => processImage(Buffer.from("this is not an image")), InvalidImageError);
+  });
+
+  // F-187: a text file renamed to a.jpg (declared image/jpeg) and a truncated
+  // download are the two ways a "valid-looking" upload used to 500.
+  it("throws InvalidImageError for a renamed text file and for a truncated JPEG", async () => {
+    await assert.rejects(() => processImage(Buffer.from("just some notes, not a jpeg\n".repeat(50))), InvalidImageError);
+
+    const jpeg = await sharp(randomBytes(600 * 400 * 3), { raw: { width: 600, height: 400, channels: 3 } })
+      .jpeg()
+      .toBuffer();
+    await assert.rejects(() => processImage(jpeg.subarray(0, Math.floor(jpeg.length * 0.6))), InvalidImageError);
+  });
+
+  // F-187: the route only sees the *declared* MIME type, so an SVG sent as
+  // image/jpeg used to be accepted and rasterised by librsvg.
+  it("rejects formats that aren't JPEG/PNG/WebP/AVIF even though sharp can decode them (SVG, GIF)", async () => {
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="red"/></svg>');
+    // Sanity check that sharp itself would have decoded it, so this test
+    // proves the sniff — not a decode failure — is what rejects it.
+    assert.equal((await sharp(svg).metadata()).format, "svg");
+    await assert.rejects(() => processImage(svg), InvalidImageError);
+
+    const gif = await sharp({ create: { width: 20, height: 20, channels: 3, background: { r: 1, g: 2, b: 3 } } })
+      .gif()
+      .toBuffer();
+    await assert.rejects(() => processImage(gif), InvalidImageError);
+  });
+
+  it("accepts real JPEG, WebP and AVIF input (AVIF reports itself as heif/av1 to sharp)", async () => {
+    const base = { create: { width: 64, height: 48, channels: 3 as const, background: { r: 9, g: 99, b: 199 } } };
+    for (const [name, input] of [
+      ["jpeg", await sharp(base).jpeg().toBuffer()],
+      ["webp", await sharp(base).webp().toBuffer()],
+      ["avif", await sharp(base).avif().toBuffer()],
+    ] as const) {
+      const result = await processImage(input);
+      assert.equal(result.width, 64, `${name} width`);
+      assert.equal(result.height, 48, `${name} height`);
+    }
   });
 
   // F-359: a 16000x16000 declared PNG is 256 megapixels — comfortably under

@@ -9,11 +9,13 @@ import {
   MediaAssetAttachedError,
   MediaAssetInUseError,
   MediaAssetNotFoundError,
+  reclaimMediaAssetIfUnused,
   saveMediaAsset,
   StorageNotConfiguredForMediaError,
   type StorageDeps,
 } from "@/lib/media/store";
 import { addProductImage, createProduct, getProductForAdmin, InvalidProductImageSizeError, setImageSizeScope } from "@/lib/catalog/products";
+import { InvalidImageError } from "@/lib/media/process-image";
 import { isR2Configured } from "@/lib/storage/r2";
 import { DELETE as deleteMediaAsset } from "@/app/api/admin/media/[id]/route";
 import {
@@ -191,6 +193,26 @@ describe("saveMediaAsset (integration, fake storage — no real R2 call)", () =>
     const row = await db.mediaAsset.findUnique({ where: { id: asset.id } });
     assert.ok(row);
     assert.equal(row?.alt, "Test product photo");
+  });
+
+  // F-187: POST /api/admin/media maps InvalidImageError to a 400 (see its
+  // catch block) — this is the layer under it that this harness (which
+  // can't fabricate an admin session) can exercise. A renamed text file and
+  // an SVG sent as image/jpeg must fail *before* anything is uploaded or
+  // recorded, never as an unmapped sharp error (an opaque 500).
+  it("rejects a renamed non-image file and an SVG with InvalidImageError, uploading and recording nothing", async () => {
+    let uploads = 0;
+    const storage = makeFakeStorage({ upload: async () => { uploads += 1; } });
+    const before = await db.mediaAsset.count();
+
+    const notAnImage = Buffer.from("this is a text file renamed to a.jpg\n".repeat(20));
+    const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8"/></svg>');
+    for (const buffer of [notAnImage, svg]) {
+      await assert.rejects(() => saveMediaAsset({ buffer, usage: "PRODUCT", source: MediaSource.UPLOAD }, storage), InvalidImageError);
+    }
+
+    assert.equal(uploads, 0, "nothing may reach storage");
+    assert.equal(await db.mediaAsset.count(), before, "no MediaAsset row may be created");
   });
 
   it("throws StorageNotConfiguredForMediaError — the exact error the upload route maps to 503 — when storage isn't configured", async () => {
@@ -613,5 +635,42 @@ describe("admin media routes without a session", () => {
       response.status === 401 || response.status === 403,
       `expected 401 or 403, got ${response.status}`,
     );
+  });
+});
+
+// F-362: the best-effort wrapper that rejected review photos / removed
+// product photos go through — every guard of deleteUnattachedMediaAsset
+// still applies, but "still needed" and "already gone" become a false
+// return instead of an exception that would fail the triggering action.
+describe("reclaimMediaAssetIfUnused (F-362)", () => {
+  it("deletes an unreferenced asset (R2 object + row) and resolves true", async () => {
+    const removedKeys: string[] = [];
+    const storage = makeFakeStorage({ remove: async (key) => { removedKeys.push(key); } });
+    const asset = await saveMediaAsset({ buffer: await tinyPngBuffer(), usage: "PRODUCT", source: MediaSource.UPLOAD }, storage);
+
+    assert.equal(await reclaimMediaAssetIfUnused(asset.id, storage), true);
+    assert.deepEqual(removedKeys, [asset.key]);
+    assert.equal(await db.mediaAsset.findUnique({ where: { id: asset.id } }), null);
+  });
+
+  it("resolves false — without throwing or touching storage — for a missing id", async () => {
+    let removeCalls = 0;
+    const storage = makeFakeStorage({ remove: async () => { removeCalls += 1; } });
+    assert.equal(await reclaimMediaAssetIfUnused(`missing-${randomUUID()}`, storage), false);
+    assert.equal(removeCalls, 0);
+  });
+
+  it("resolves false and keeps the asset when it's still in use (a manifest slot)", async () => {
+    let removeCalls = 0;
+    const storage = makeFakeStorage({ remove: async () => { removeCalls += 1; } });
+    const asset = await saveMediaAsset(
+      { buffer: await tinyPngBuffer(), usage: "SECTION", source: MediaSource.UPLOAD, slot: `reclaim-test-${randomUUID()}` },
+      storage,
+    );
+    createdAssetIds.push(asset.id);
+
+    assert.equal(await reclaimMediaAssetIfUnused(asset.id, storage), false);
+    assert.equal(removeCalls, 0);
+    assert.ok(await db.mediaAsset.findUnique({ where: { id: asset.id } }));
   });
 });

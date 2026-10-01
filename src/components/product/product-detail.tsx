@@ -13,6 +13,7 @@ import { useCurrency } from "@/context/currency-provider";
 import type { SizeChartForDisplay } from "@/lib/catalog/size-charts";
 import { selectProductGallery } from "@/lib/catalog/select-product-gallery";
 import { formatDateIST } from "@/lib/format/datetime";
+import { prepareImageForUpload } from "@/lib/media/prepare-upload";
 import { computePercentOff } from "@/lib/pricing/percent-off";
 import { findExactVariant, isSizeAvailableForColor, isVariantInStock, resolveVariant, variantExists } from "@/lib/products/resolve-variant";
 import { NotifyWhenAvailable } from "@/components/product/notify-when-available";
@@ -995,12 +996,18 @@ function ReviewForm({
     setUploading(true);
     setError(null);
     try {
+      // F-178: shrink a large phone photo in the browser first — Vercel
+      // rejects a request body over 4.5MB before the route runs (a
+      // non-JSON 413), and this route's own cap is 4MB.
+      const prepared = await prepareImageForUpload(file);
       const form = new FormData();
-      form.append("file", file);
+      form.append("file", prepared);
       const response = await fetch("/api/reviews/photos", { method: "POST", body: form });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.error ?? "Photo upload failed");
+        throw new Error(
+          data.error ?? (response.status === 413 ? "That photo is too large to upload" : "Photo upload failed"),
+        );
       }
       const data = (await response.json()) as { id: string; url: string };
       setPhotos((prev) => [...prev, { id: data.id, url: data.url }]);

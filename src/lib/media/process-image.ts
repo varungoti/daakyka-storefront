@@ -48,6 +48,25 @@ export class InvalidImageError extends Error {
 }
 
 /**
+ * F-187: the upload routes only check the *declared* MIME type, which the
+ * client chooses, so a renamed text file or an SVG sent as `image/jpeg`
+ * used to reach sharp. The former threw into an opaque 500 (before
+ * InvalidImageError existed); the latter decoded happily and got
+ * rasterised (sharp renders SVG), i.e. an attacker-chosen document was
+ * parsed by librsvg. Sniffing the real container from the bytes closes
+ * both: only these formats may be stored. sharp reports AVIF as
+ * `format: "heif"` with `compression: "av1"` (HEIC proper is `heif` +
+ * `hevc`, which prebuilt sharp can't decode anyway), hence the special
+ * case below.
+ */
+const ALLOWED_INPUT_FORMATS = new Set(["jpeg", "png", "webp"]);
+
+function isAllowedInputFormat(meta: { format?: string; compression?: string }): boolean {
+  if (meta.format && ALLOWED_INPUT_FORMATS.has(meta.format)) return true;
+  return meta.format === "heif" && meta.compression === "av1";
+}
+
+/**
  * Normalizes any uploaded or AI-generated image before it goes to R2:
  * - `rotate()` with no arguments reads the EXIF `Orientation` tag, applies
  *   the corresponding rotation/flip, then removes the tag — so the output
@@ -62,7 +81,15 @@ export class InvalidImageError extends Error {
  */
 export async function processImage(input: Buffer): Promise<ProcessedImage> {
   try {
-    const { data, info } = await sharp(input, { limitInputPixels: MAX_INPUT_PIXELS })
+    const image = sharp(input, { limitInputPixels: MAX_INPUT_PIXELS });
+    // Header-only read (no pixel decode), so this costs nothing for a real
+    // photo, and the same instance is reused for the pipeline below.
+    const meta = await image.metadata();
+    if (!isAllowedInputFormat(meta)) {
+      throw new Error(`Unsupported image format: ${meta.format ?? "unknown"}`);
+    }
+
+    const { data, info } = await image
       .rotate()
       .resize({
         width: MAX_LONG_EDGE,

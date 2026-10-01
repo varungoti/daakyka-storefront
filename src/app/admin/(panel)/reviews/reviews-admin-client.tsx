@@ -370,15 +370,22 @@ function ReviewRow({
   // confirm() — unpublishing or restoring changes what's already live/dead
   // on a product page, so a moderator gets one chance to back out of a
   // misclick.
+  // F-362: rejecting (or unpublishing) a review deletes its photos from
+  // storage so they stop being publicly downloadable — which Restore can't
+  // undo — so the two confirms that already exist say so.
   function handleReject() {
-    if (review.status === "APPROVED" && !window.confirm("Unpublish this review from the product page?")) {
+    const photoNote = review.photos.length > 0 ? " Its photos will be permanently deleted." : "";
+    if (review.status === "APPROVED" && !window.confirm(`Unpublish this review from the product page?${photoNote}`)) {
       return;
     }
     onReject();
   }
 
   function handleApprove() {
-    if (review.status === "REJECTED" && !window.confirm("Restore and publish this review?")) {
+    if (
+      review.status === "REJECTED" &&
+      !window.confirm("Restore and publish this review? Any photos it had were deleted when it was rejected.")
+    ) {
       return;
     }
     onApprove();

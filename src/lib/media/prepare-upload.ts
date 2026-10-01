@@ -44,6 +44,11 @@ const SKIP_COMPRESSION_MAX_BYTES = 3.5 * 1024 * 1024;
 
 const SKIPPABLE_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
 
+/** Output formats to try, best first. WebP matches what the server stores;
+ * JPEG is the fallback for a browser that can't encode WebP (see
+ * encodeWithinBudget). */
+const ENCODE_TYPES = ["image/webp", "image/jpeg"] as const;
+
 /** Pure decision of whether a file needs client-side compression at all —
  * exported so this (unlike the actual canvas/bitmap work below, which
  * needs a browser) is unit-testable without a DOM. */
@@ -66,6 +71,42 @@ export function computeTargetDimensions(
   return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
 }
 
+/** Asks the browser to encode the current image as `type` at `quality`
+ * (0-1), resolving to null when it can't produce a blob at all. */
+export type BlobEncoder = (type: string, quality: number) => Promise<Blob | null>;
+
+/**
+ * Picks the first (best) format/quality combination that fits
+ * `maxBytes`, stepping quality down within a format before moving to the
+ * next one. Returns the smallest blob that did encode when nothing fits
+ * (the caller decides whether that still beats the original), or null
+ * when the browser couldn't encode anything.
+ *
+ * Pure in the sense that matters — the actual canvas is behind `encode` —
+ * so it's unit-testable with a fake encoder. The check that matters most
+ * is `blob.type !== type`: `canvas.toBlob` does NOT fail for a format the
+ * browser can't encode, it silently hands back a PNG instead (Safari/iOS
+ * has no WebP encoder). A lossless 2400px PNG photo is routinely 5-9MB —
+ * worse than the original — and a quality parameter does nothing for PNG,
+ * so treating that as "WebP worked" would defeat the whole point on
+ * exactly the phones this exists for. Such a type is skipped instead.
+ */
+export async function encodeWithinBudget(
+  encode: BlobEncoder,
+  maxBytes: number = CLIENT_TARGET_BYTES,
+): Promise<{ blob: Blob; type: string } | null> {
+  let smallest: { blob: Blob; type: string } | null = null;
+  for (const type of ENCODE_TYPES) {
+    for (const quality of QUALITY_STEPS) {
+      const blob = await encode(type, quality);
+      if (!blob || blob.size === 0 || blob.type !== type) break; // this format isn't encodable here
+      if (blob.size <= maxBytes) return { blob, type };
+      if (!smallest || blob.size < smallest.blob.size) smallest = { blob, type };
+    }
+  }
+  return smallest;
+}
+
 function canEncodeToBlob(): boolean {
   return typeof document !== "undefined" && typeof HTMLCanvasElement !== "undefined";
 }
@@ -74,16 +115,16 @@ function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality: number):
   return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
 }
 
-function withWebpExtension(name: string): string {
+function withExtension(name: string, type: string): string {
   const base = name.replace(/\.[^./\\]+$/, "");
-  return `${base || "image"}.webp`;
+  return `${base || "image"}.${type === "image/jpeg" ? "jpg" : "webp"}`;
 }
 
 /**
- * Downscales/re-encodes `file` to WebP in the browser when it's large
- * enough to be worth it, resolving to the original `file` unchanged
- * whenever that isn't possible (see the file doc comment above for why
- * that's always a safe fallback).
+ * Downscales/re-encodes `file` in the browser when it's large enough to be
+ * worth it, resolving to the original `file` unchanged whenever that isn't
+ * possible (see the file doc comment above for why that's always a safe
+ * fallback).
  *
  * Decodes with `createImageBitmap(file, { imageOrientation: "from-image"
  * })` so EXIF rotation (very common on phone photos) is applied before the
@@ -113,19 +154,23 @@ export async function prepareImageForUpload(file: File): Promise<File> {
     if (!ctx) return file;
     ctx.drawImage(bitmap, 0, 0, width, height);
 
-    for (const quality of QUALITY_STEPS) {
-      const blob = await canvasToBlob(canvas, "image/webp", quality);
-      if (!blob || blob.size === 0) {
-        // WebP encode unsupported (older Safari) or produced nothing —
-        // give up rather than uploading a broken/empty file.
-        return file;
+    let flattened = false;
+    const result = await encodeWithinBudget(async (type, quality) => {
+      if (type === "image/jpeg" && !flattened) {
+        // JPEG has no alpha channel — transparent pixels would come out
+        // black. Paint white *behind* what's already drawn, once.
+        ctx.globalCompositeOperation = "destination-over";
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, width, height);
+        ctx.globalCompositeOperation = "source-over";
+        flattened = true;
       }
-      const isLastStep = quality === QUALITY_STEPS[QUALITY_STEPS.length - 1];
-      if (blob.size <= CLIENT_TARGET_BYTES || isLastStep) {
-        return new File([blob], withWebpExtension(file.name), { type: "image/webp" });
-      }
-    }
-    return file;
+      return canvasToBlob(canvas, type, quality);
+    });
+    // Nothing encodable, or the best attempt is no smaller than what we
+    // already have: leave the original alone.
+    if (!result || result.blob.size >= file.size) return file;
+    return new File([result.blob], withExtension(file.name, result.type), { type: result.type });
   } finally {
     bitmap.close();
   }

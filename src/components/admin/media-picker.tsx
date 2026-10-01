@@ -79,6 +79,8 @@ export function MediaPicker({
       const body = await response.json();
       onChange({ id: body.asset.id, url: body.asset.url, alt: body.asset.alt ?? null });
       setMode("closed");
+    } catch {
+      setNotice("Upload failed — check your connection and try again.");
     } finally {
       setUploading(false);
     }

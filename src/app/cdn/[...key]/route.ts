@@ -1,4 +1,4 @@
-import { resolveCdnObjectKey } from "@/lib/storage/cdn-key";
+import { CDN_CACHE_TAG, cdnCacheTagForKey, resolveCdnObjectKey } from "@/lib/storage/cdn-key";
 import { getObject } from "@/lib/storage/r2";
 
 /**
@@ -18,10 +18,17 @@ import { getObject } from "@/lib/storage/r2";
  * scripts/cleanup-orphaned-media.ts). A year-long edge cache meant a
  * rejected photo, or a deleted product's, kept being served from cache
  * long after the R2 object and DB row were gone. `max-age=300` bounds that
- * window to a few minutes instead. This still doesn't *purge* the edge
- * cache the instant something is deleted — that needs a Vercel-side
- * invalidation call this app doesn't currently make — so it's a partial
- * fix: it shrinks the exposure window a lot without eliminating it.
+ * window to a few minutes: that TTL, not the purge below, is the guarantee.
+ *
+ * Every response is also tagged (`Vercel-Cache-Tag`, see
+ * https://vercel.com/docs/caching/cdn-cache/purge) with a per-object tag
+ * plus one shared `cdn-media` tag, which makes it purgeable: the delete
+ * path (deleteUnattachedMediaAsset in src/lib/media/store.ts) purges the
+ * object's own tag on a best-effort basis, and an operator can purge
+ * `cdn-media` from the Vercel dashboard for an emergency takedown.
+ * Note `images.minimumCacheTTL` (next.config.ts) is 30 days, so the
+ * optimised `/_next/image` variants of a storefront-rendered photo outlive
+ * this TTL — those are purged per source image, not by these tags.
  *
  * Traversal/double-decode validation lives in resolveCdnObjectKey() —
  * see that module's doc comment for the F5 fix (double-encoded segments
@@ -43,6 +50,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ key
   const headers = new Headers({
     "Content-Type": object.contentType,
     "Cache-Control": "public, max-age=300, must-revalidate",
+    "Vercel-Cache-Tag": `${CDN_CACHE_TAG},${cdnCacheTagForKey(key)}`,
   });
   if (object.contentLength !== undefined) headers.set("Content-Length", String(object.contentLength));
   if (object.etag) headers.set("ETag", object.etag);

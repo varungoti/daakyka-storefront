@@ -31,6 +31,12 @@ export interface FileUploadOutcome {
  * more. */
 const MAX_RETRY_WAIT_MS = 15_000;
 
+const NETWORK_ERROR_MESSAGE = "Couldn't reach the server — check your connection and try again";
+/** Not a real HTTP status: marks a request that never got a response at
+ * all. 599 is unassigned, so it can't collide with anything a server here
+ * actually sends, and is still a valid `Response` status to construct. */
+const NETWORK_ERROR_STATUS = 599;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -53,13 +59,30 @@ export async function uploadFilesSequentially(
 ): Promise<FileUploadOutcome[]> {
   const outcomes: FileUploadOutcome[] = [];
 
+  // A thrown `send` (the browser's fetch rejects on a dropped connection)
+  // used to abort the whole loop: files already uploaded earlier in the
+  // batch never got attached (orphaned in storage), the rest never ran,
+  // and the caller saw an unhandled rejection instead of any message.
+  // Turned into a per-file failed outcome instead, so every other file
+  // still gets its turn and the admin is told which one(s) failed.
+  const safeSend = async (file: File): Promise<Response> => {
+    try {
+      return await send(file);
+    } catch {
+      return new Response(JSON.stringify({ error: NETWORK_ERROR_MESSAGE }), {
+        status: NETWORK_ERROR_STATUS,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  };
+
   for (const file of files) {
-    let response = await send(file);
+    let response = await safeSend(file);
     let retriedAfterRateLimit = false;
 
     if (response.status === 429) {
       await sleep(retryDelayMs(response));
-      response = await send(file);
+      response = await safeSend(file);
       retriedAfterRateLimit = true;
     }
 

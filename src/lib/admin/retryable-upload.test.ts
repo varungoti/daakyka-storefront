@@ -123,3 +123,21 @@ describe("summarizeFailuresByMessage (F-324)", () => {
     assert.equal(summary, "Upload failed. (a.png, c.png) Storage not configured. (b.png)");
   });
 });
+
+describe("uploadFilesSequentially network failures", () => {
+  it("records a thrown send as a failed outcome and still uploads the remaining files", async () => {
+    const calls: string[] = [];
+    const outcomes = await uploadFilesSequentially([file("a.png"), file("offline.png"), file("c.png")], async (f) => {
+      calls.push(f.name);
+      if (f.name === "offline.png") throw new TypeError("Failed to fetch");
+      return okResponse();
+    });
+
+    assert.deepEqual(calls, ["a.png", "offline.png", "c.png"]);
+    assert.deepEqual(
+      outcomes.map((o) => o.response.ok),
+      [true, false, true],
+    );
+    assert.match(await uploadErrorMessage(outcomes[1].response), /check your connection/);
+  });
+});
