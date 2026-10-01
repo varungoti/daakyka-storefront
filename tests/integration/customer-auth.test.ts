@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { resetRateLimits } from "@/lib/security/rate-limit";
 import { hashPassword, verifyPassword } from "@/lib/customer-auth/password";
 import { hashToken, invalidateOutstandingTokens, issueCustomerToken } from "@/lib/customer-auth/tokens";
+import { updateCustomerProfile } from "@/lib/customer-auth/profile";
 import { createAddressForCustomer, deleteAddressAndPromoteDefault, loadOwnAddress } from "@/lib/customer-auth/addresses";
 import { AccountLockedError, recordFailedLogin, resetLoginFailures } from "@/lib/customer-auth/lockout";
 import { verifyCurrentPassword } from "@/lib/customer-auth/verify-current-password";
@@ -872,6 +873,62 @@ describe("customer accounts (Phase D1)", () => {
       // sessionVersion must only have been bumped once — not once per
       // request that got past the old read-only pre-check.
       assert.equal(updated!.sessionVersion, customer.sessionVersion + 1);
+    });
+  });
+
+  // F-133: PATCH /api/account/profile can't be called with a session cookie
+  // from this harness (see the note at the top of this file), so the shared
+  // logic it now delegates to is exercised directly.
+  describe("updateCustomerProfile (F-133)", () => {
+    it("revokes every outstanding RESET token when the password changes", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: {
+          email: `profile-pw-${unique}@example.com`,
+          name: "Profile Password Test",
+          passwordHash: await hashPassword("old-password-123"),
+        },
+      });
+      createdCustomerIds.push(customer.id);
+
+      // An emailed reset link that is still unused when the customer changes
+      // their password another way.
+      const outstanding = await issueCustomerToken(customer.id, "RESET");
+
+      await updateCustomerProfile(customer.id, { passwordHash: await hashPassword("new-password-456") });
+
+      const resetResponse = await postResetPassword(
+        jsonRequest("http://localhost/api/account/reset-password", "POST", {
+          token: outstanding.raw,
+          newPassword: "attacker-chosen-789",
+        }),
+      );
+      assert.equal(resetResponse.status, 400, "a reset link issued before a password change must stop working");
+
+      const updated = await db.customer.findUnique({ where: { id: customer.id } });
+      assert.equal(await verifyPassword("new-password-456", updated!.passwordHash), true);
+      assert.equal(updated!.sessionVersion, customer.sessionVersion + 1);
+    });
+
+    it("leaves outstanding RESET tokens alone for a name/phone-only edit", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: {
+          email: `profile-name-${unique}@example.com`,
+          name: "Profile Name Test",
+          passwordHash: await hashPassword("old-password-123"),
+        },
+      });
+      createdCustomerIds.push(customer.id);
+      const { raw } = await issueCustomerToken(customer.id, "RESET");
+
+      const updated = await updateCustomerProfile(customer.id, { name: "Renamed Customer" });
+      assert.equal(updated.name, "Renamed Customer");
+
+      const token = await db.customerToken.findUnique({ where: { tokenHash: hashToken(raw) } });
+      assert.equal(token?.usedAt, null, "a name-only edit must not burn the reset link");
+      const after = await db.customer.findUnique({ where: { id: customer.id } });
+      assert.equal(after!.sessionVersion, customer.sessionVersion, "and must not log other sessions out");
     });
   });
 

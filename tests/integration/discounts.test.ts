@@ -578,6 +578,24 @@ describe("admin discount CRUD", () => {
     assert.equal(updated.active, false);
     assert.equal(Number(updated.value), 150);
   });
+
+  // F-038: a code saved BEFORE the rules existed (a fat-fingered 150%) is
+  // exactly the one the owner needs to switch off. The merged check must not
+  // re-validate its untouched, already-bad fields on an unrelated patch — a
+  // bare { active: false } used to be a 400 that left the code live.
+  it("still lets an already-invalid legacy code be deactivated, while refusing to keep it over 100", async () => {
+    const admin = await findAnyAdminId();
+    const legacy = await createTestDiscount(admin, { type: "PERCENTAGE", value: 150 });
+
+    const deactivated = await updateDiscount(legacy.id, { active: false }, admin);
+    assert.equal(deactivated.active, false);
+    assert.equal(Number(deactivated.value), 150, "an unrelated patch must not rewrite the stored value");
+
+    await assert.rejects(() => updateDiscount(legacy.id, { value: 120 }, admin), DiscountValidationError);
+
+    const fixed = await updateDiscount(legacy.id, { value: 15 }, admin);
+    assert.equal(Number(fixed.value), 15);
+  });
 });
 
 describe("createOrderFromCart still rejects an empty cart with a discount code present", () => {

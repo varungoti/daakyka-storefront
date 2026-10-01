@@ -13,15 +13,20 @@ import {
   performBulkAction,
   ProductCategoryNotFoundError,
   ProductDeleteBlockedError,
+  ProductImageNotFoundError,
   ProductNotDraftError,
   ProductNotFoundError,
   ProductNotPublishableError,
   ProductSlugConflictError,
   ProductStatusPermissionError,
   publishProduct,
+  removeProductImage,
+  reorderProductImages,
   replaceVariants,
+  setImageColor,
   unpublishProduct,
   unarchiveProduct,
+  updateImageAlt,
   updateProduct,
   VariantOwnershipError,
   VariantStockConflictError,
@@ -1012,5 +1017,56 @@ describe("products admin routes without a session", () => {
     });
     const response = await bulkRoute(request);
     assert.ok(response.status === 401 || response.status === 403);
+  });
+});
+
+// F-194: the image PATCH/DELETE helpers used to look the image up by imageId
+// alone, so /products/{A}/images/{imageOfB} silently edited or removed
+// product B's image (and revalidated B) while the URL claimed to act on A.
+describe("product image helpers are scoped to the product in the URL (F-194)", () => {
+  it("refuses to change or remove another product's image, and leaves it untouched", async () => {
+    const suffix = randomUUID();
+    const adminId = await findAnyAdminId();
+    const category = await db.category.create({
+      data: { name: `Image Scope ${suffix}`, slug: `image-owner-scope-${suffix}`, section: "GENERAL" },
+    });
+    const productA = await db.product.create({
+      data: { name: "Image Owner A", slug: `image-owner-a-${suffix}`, categoryId: category.id, price: 499 },
+    });
+    const productB = await db.product.create({
+      data: { name: "Image Owner B", slug: `image-owner-b-${suffix}`, categoryId: category.id, price: 499 },
+    });
+    const mediaA = await db.mediaAsset.create({
+      data: { key: `test/image-owner-a-${suffix}.webp`, url: `/cdn/test/image-owner-a-${suffix}.webp`, usage: "PRODUCT" },
+    });
+    const mediaB = await db.mediaAsset.create({
+      data: { key: `test/image-owner-b-${suffix}.webp`, url: `/cdn/test/image-owner-b-${suffix}.webp`, usage: "PRODUCT" },
+    });
+    try {
+      const imageA = await db.productImage.create({ data: { productId: productA.id, mediaId: mediaA.id, color: "Navy", alt: "A" } });
+      const imageB = await db.productImage.create({ data: { productId: productB.id, mediaId: mediaB.id, color: "Navy", alt: "B" } });
+
+      // Every helper, called with product A's id and product B's image id.
+      await assert.rejects(() => setImageColor(productA.id, imageB.id, "Red", adminId), ProductImageNotFoundError);
+      await assert.rejects(() => updateImageAlt(productA.id, imageB.id, "hijacked", adminId), ProductImageNotFoundError);
+      await assert.rejects(() => removeProductImage(productA.id, imageB.id, adminId), ProductImageNotFoundError);
+      await assert.rejects(() => reorderProductImages(productA.id, imageB.id, "up", adminId), ProductImageNotFoundError);
+
+      const untouched = await db.productImage.findUniqueOrThrow({ where: { id: imageB.id } });
+      assert.equal(untouched.color, "Navy");
+      assert.equal(untouched.alt, "B");
+
+      // The matching product/image pair still works.
+      const recoloured = await setImageColor(productA.id, imageA.id, "Red", adminId);
+      assert.equal(recoloured.color, "Red");
+      const renamed = await updateImageAlt(productA.id, imageA.id, "A renamed", adminId);
+      assert.equal(renamed.alt, "A renamed");
+      await removeProductImage(productA.id, imageA.id, adminId);
+      assert.equal(await db.productImage.findUnique({ where: { id: imageA.id } }), null);
+    } finally {
+      await db.product.deleteMany({ where: { id: { in: [productA.id, productB.id] } } });
+      await db.mediaAsset.deleteMany({ where: { id: { in: [mediaA.id, mediaB.id] } } });
+      await db.category.delete({ where: { id: category.id } });
+    }
   });
 });

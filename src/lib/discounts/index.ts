@@ -438,16 +438,28 @@ export async function updateDiscount(
   if (!existing) throw new DiscountNotFoundForAdminError(id);
 
   // F-038: validate the record as it will exist AFTER this patch, not just
-  // the fields the caller happened to send.
-  const merged = {
-    type: input.type ?? existing.type,
-    value: input.value ?? Number(existing.value),
-    startsAt: input.startsAt !== undefined ? input.startsAt : existing.startsAt,
-    endsAt: input.endsAt !== undefined ? input.endsAt : existing.endsAt,
-  };
-  const issues: { path: (string | number)[]; message: string }[] = [];
-  validateDiscountRules(merged, (issue) => issues.push(issue));
-  if (issues.length > 0) throw new DiscountValidationError(issues);
+  // the fields the caller happened to send — but only when the patch touches
+  // a field those rules cover. A code saved before the rules existed (a 150%
+  // PERCENTAGE code, an end date before its start) must still be deactivable
+  // or renameable: re-validating the untouched, already-bad fields would
+  // return a 400 for a bare `{ active: false }` and leave the owner unable to
+  // switch off the very code that is giving goods away.
+  if (
+    input.type !== undefined ||
+    input.value !== undefined ||
+    input.startsAt !== undefined ||
+    input.endsAt !== undefined
+  ) {
+    const merged = {
+      type: input.type ?? existing.type,
+      value: input.value ?? Number(existing.value),
+      startsAt: input.startsAt !== undefined ? input.startsAt : existing.startsAt,
+      endsAt: input.endsAt !== undefined ? input.endsAt : existing.endsAt,
+    };
+    const issues: { path: (string | number)[]; message: string }[] = [];
+    validateDiscountRules(merged, (issue) => issues.push(issue));
+    if (issues.length > 0) throw new DiscountValidationError(issues);
+  }
 
   const data: Prisma.DiscountUpdateInput = {};
   if (input.code !== undefined) data.code = normalizeDiscountCode(input.code);
