@@ -1,0 +1,23 @@
+# F-308: keeps the SHA-pinned GitHub Actions in .github/workflows current, and
+# routes npm security advisories to pull requests.
+#
+# Dependabot *security* updates are a repository setting (Settings > Advanced
+# Security > Dependabot security updates), not something this file turns on --
+# the owner has to enable that once in GitHub. When enabled, they honour the
+# npm entry below.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    # 0 turns off routine version-bump PRs for npm (they would be noisy for a
+    # Prisma/Next app that upgrades deliberately); security-advisory PRs have
+    # their own separate limit and are unaffected.
+    open-pull-requests-limit: 0

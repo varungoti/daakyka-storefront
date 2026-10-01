@@ -1,11 +1,31 @@
 name: Storefront Verify
 
+# F-075: `release-*` is listed so a release branch (release-hardening and
+# its successors) is verified on every push, not only once it has merged
+# into master/main. HEAD of release-hardening had never been CI-checked
+# when this was missing.
 on:
   push:
-    branches: [main, master, staging]
+    branches: [main, master, staging, "release-*"]
   pull_request:
-    branches: [main, master, staging]
+    branches: [main, master, staging, "release-*"]
   workflow_dispatch:
+    inputs:
+      probe_base_url:
+        description: "Deployed URL for the live probe job, e.g. a Vercel preview or production URL. Leave empty to skip the probe."
+        required: false
+        type: string
+      probe_expects_noindex:
+        description: "Also require robots.txt to disallow crawling (--staging). Only for a staging or preview deployment, never production."
+        required: false
+        type: boolean
+        default: false
+
+# F-308: least privilege. Nothing here pushes, comments or publishes. The
+# repository default is already read-only, but this file should not depend
+# on that setting staying that way.
+permissions:
+  contents: read
 
 # Shared across every job below so the database is always seeded with the
 # same admin credentials the e2e specs then log in with. This value is
@@ -36,9 +56,13 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # F-308: no job pushes, so don't leave GITHUB_TOKEN in .git/config
+          # for `npm ci` lifecycle scripts to read.
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm
@@ -88,9 +112,13 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # F-308: no job pushes, so don't leave GITHUB_TOKEN in .git/config
+          # for `npm ci` lifecycle scripts to read.
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm
@@ -153,13 +181,22 @@ jobs:
         env:
           LHCI_BASE_URL: http://localhost:3000
 
-  staging-probe:
+  # F-075: this job used to probe the production URL with --staging, which
+  # requires robots.txt to disallow crawling. It passed only while production
+  # was deliberately noindexed and would have started failing the moment
+  # indexing was switched on at launch. The target is now an explicit input
+  # and --staging is opt-in.
+  live-probe:
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.probe_base_url != ''
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # F-308: no job pushes, so don't leave GITHUB_TOKEN in .git/config
+          # for `npm ci` lifecycle scripts to read.
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
           cache: npm
@@ -167,7 +204,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Probe live staging
-        run: npm run probe:deploy -- --staging
+      - name: Probe deployed site
+        # Inputs reach the shell only through env, never interpolated into
+        # the script text.
+        run: |
+          if [ "$PROBE_EXPECTS_NOINDEX" = "true" ]; then
+            npm run probe:deploy -- --staging
+          else
+            npm run probe:deploy
+          fi
         env:
-          TEST_BASE_URL: https://storefront-nu-woad.vercel.app
+          TEST_BASE_URL: ${{ inputs.probe_base_url }}
+          PROBE_EXPECTS_NOINDEX: ${{ inputs.probe_expects_noindex }}

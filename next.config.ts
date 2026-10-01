@@ -32,6 +32,16 @@ const FABRIC_SEO_FALLBACK_DESTINATIONS: Record<string, string> = {
 // remote <script src="https://evil.example">, framing the site
 // (frame-ancestors, redundant with X-Frame-Options for older
 // browsers), <object>/<embed>, and form submissions to another origin.
+//
+// F-221: re-evaluated for 'unsafe-inline' in script-src and left in place on
+// purpose. Next 16 only applies a nonce to dynamically rendered pages (see
+// node_modules/next/dist/docs/01-app/02-guides/content-security-policy.md,
+// "Static vs Dynamic Rendering with CSP"): every page would have to become
+// dynamic, which turns off static/ISR caching and CDN caching storefront-wide
+// and is incompatible with Partial Prerendering. That trade is not worth
+// making for this launch; revisit it together with a move off static pages.
+// The /cdn media responses get their own much stricter CSP below instead,
+// since they never need to run script at all.
 const trustedImageHosts = getTrustedImageHosts();
 const imageSources = trustedImageHosts.map((host) => `https://${host}`).join(" ");
 const contentSecurityPolicy = [
@@ -59,6 +69,13 @@ const contentSecurityPolicy = [
   "form-action 'self'",
   "object-src 'none'",
 ].join("; ");
+
+// F-221: /cdn/... only ever serves image bytes from R2, so if someone opens
+// one directly as a document it gets a policy that allows nothing: no
+// script, no subresources, no framing, sandboxed. (A later header rule for the
+// same key overrides an earlier one, so this entry must stay AFTER the
+// catch-all in headers() below.)
+const cdnContentSecurityPolicy = "default-src 'none'; frame-ancestors 'none'; sandbox";
 
 const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
@@ -89,6 +106,8 @@ if (isProduction()) {
 }
 
 const nextConfig: NextConfig = {
+  // F-221: don't advertise the framework in an `X-Powered-By: Next.js` header.
+  poweredByHeader: false,
   // Dynamic SEO records must be present in <head> for browser audits and
   // HTML-only consumers as well as JavaScript-capable crawlers. This trades
   // some initial response latency for consistent metadata placement.
@@ -142,6 +161,10 @@ const nextConfig: NextConfig = {
       {
         source: "/(.*)",
         headers: securityHeaders,
+      },
+      {
+        source: "/cdn/:path*",
+        headers: [{ key: "Content-Security-Policy", value: cdnContentSecurityPolicy }],
       },
     ];
   },

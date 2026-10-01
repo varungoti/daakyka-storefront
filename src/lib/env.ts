@@ -2,6 +2,7 @@
 // from this file through its own transpile-config pipeline, which doesn't
 // resolve tsconfig path aliases the way the main Next.js app build does.
 import { isInsecureSeedPassword } from "./auth/seed-defaults";
+import { isR2EnvConfigured } from "./storage/r2-env";
 
 function isShopifyConfigured(): boolean {
   return Boolean(
@@ -197,15 +198,16 @@ export function validateEnv(): void {
       );
     }
 
-    const missingR2Vars = [
-      ["R2_ACCOUNT_ID", "CLOUDFLARE_ACCOUNT_ID"],
-      ["R2_ACCESS_KEY_ID", "CLOUDFLARE_ACCESS_KEY_ID", "CLOUDFLARE_ACCESS_KEY"],
-      ["R2_SECRET_ACCESS_KEY", "CLOUDFLARE_SECRET_ACCESS_KEY"],
-      ["R2_BUCKET"],
-    ].filter((aliases) => !aliases.some((key) => process.env[key]));
-    if (missingR2Vars.length > 0) {
+    // F-237: asks the very same reader isR2Configured() uses (R2_* with
+    // CLOUDFLARE_* fallbacks, R2_PUBLIC_BASE_URL deliberately not part of
+    // it), so this can warn only when uploads genuinely cannot work. It used
+    // to keep its own copy of that list and warned on every production build
+    // where R2 was fine.
+    if (!isR2EnvConfigured()) {
       console.warn(
-        `[env] Cloudflare R2 storage is not fully configured (missing: ${missingR2Vars.map((aliases) => aliases[0]).join(", ")}) — media upload and AI image storage will report as not configured`,
+        "[env] Cloudflare R2 storage is not configured (needs R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, " +
+          "R2_SECRET_ACCESS_KEY and R2_BUCKET, or the CLOUDFLARE_* equivalents) — media upload " +
+          "and AI image storage will report as not configured",
       );
     }
 

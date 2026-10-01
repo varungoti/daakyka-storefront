@@ -1,6 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { isIndexingAllowed, validateEnv } from "@/lib/env";
+import { isR2EnvConfigured } from "@/lib/storage/r2-env";
+import { isR2Configured } from "@/lib/storage/r2";
 import {
   checkRateLimit,
   getClientIp,
@@ -127,6 +129,89 @@ describe("env validation", () => {
           !warnings.some((args) => String(args[0]).includes("BREVO_API_KEY is not set")),
           "did not expect a BREVO_API_KEY warning when it is configured",
         );
+      },
+    );
+  });
+
+  // F-237: the boot-time R2 warning fired on every production build even
+  // though uploads worked (it wanted R2_PUBLIC_BASE_URL, which the bucket
+  // deliberately leaves unset, and ignored the CLOUDFLARE_* fallback names).
+  // It now asks the same reader isR2Configured() uses, so it can only warn
+  // when uploads genuinely can't work.
+  const r2Cleared = {
+    R2_ACCOUNT_ID: undefined,
+    R2_ACCESS_KEY_ID: undefined,
+    R2_SECRET_ACCESS_KEY: undefined,
+    R2_BUCKET: undefined,
+    R2_PUBLIC_BASE_URL: undefined,
+    CLOUDFLARE_ACCOUNT_ID: undefined,
+    CLOUDFLARE_ACCESS_KEY_ID: undefined,
+    CLOUDFLARE_ACCESS_KEY: undefined,
+    CLOUDFLARE_SECRET_ACCESS_KEY: undefined,
+    CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64"),
+  };
+
+  async function r2WarningsFor(vars: Record<string, string | undefined>): Promise<string[]> {
+    const warnings: string[] = [];
+    await withEnv({ ...validProductionEnv, ...r2Cleared, ...vars }, () => {
+      const originalWarn = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warnings.push(String(args[0]));
+      };
+      try {
+        assert.doesNotThrow(() => validateEnv());
+      } finally {
+        console.warn = originalWarn;
+      }
+    });
+    return warnings.filter((message) => message.includes("R2"));
+  }
+
+  it("does not warn about R2 when the R2_* names are set and R2_PUBLIC_BASE_URL is deliberately unset", async () => {
+    const warnings = await r2WarningsFor({
+      R2_ACCOUNT_ID: "acct",
+      R2_ACCESS_KEY_ID: "key",
+      R2_SECRET_ACCESS_KEY: "secret",
+      R2_BUCKET: "bucket",
+    });
+    assert.deepEqual(warnings, []);
+  });
+
+  it("does not warn about R2 when only the CLOUDFLARE_* fallback names carry the credentials", async () => {
+    const warnings = await r2WarningsFor({
+      CLOUDFLARE_ACCOUNT_ID: "acct",
+      CLOUDFLARE_ACCESS_KEY_ID: "key",
+      CLOUDFLARE_SECRET_ACCESS_KEY: "secret",
+      R2_BUCKET: "bucket",
+    });
+    assert.deepEqual(warnings, []);
+  });
+
+  it("warns about R2 when uploads genuinely cannot work (no bucket)", async () => {
+    const warnings = await r2WarningsFor({
+      R2_ACCOUNT_ID: "acct",
+      R2_ACCESS_KEY_ID: "key",
+      R2_SECRET_ACCESS_KEY: "secret",
+    });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /R2 storage is not configured/);
+  });
+
+  it("agrees with isR2Configured() for the same environment", async () => {
+    await withEnv({ ...r2Cleared, CLOUDFLARE_ACCESS_KEY: "legacy-key-name" }, () => {
+      assert.equal(isR2EnvConfigured(), false);
+    });
+    await withEnv(
+      {
+        ...r2Cleared,
+        R2_ACCOUNT_ID: "acct",
+        CLOUDFLARE_ACCESS_KEY: "legacy-key-name",
+        CLOUDFLARE_SECRET_ACCESS_KEY: "secret",
+        R2_BUCKET: "bucket",
+      },
+      () => {
+        assert.equal(isR2EnvConfigured(), true);
+        assert.equal(isR2Configured(), true);
       },
     );
   });

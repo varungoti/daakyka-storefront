@@ -55,6 +55,10 @@ yarn-error.log*
 # dogfood artifacts (screenshots, reports)
 /dogfood-output/
 
+# F-310: Playwright's default output dirs, in case a run ever falls back to them
+/playwright-report/
+/test-results/
+
 # F-303: internal-only docs (security audit detail, etc.) that must never
 # be served from the public repo — see docs/internal/README.md. Keeping
 # this local-only is the relocation half of F-303; whether the whole repo
@@ -69,8 +73,6 @@ yarn-error.log*
 next-env.d.ts
 
 /src/generated/prisma
-
-.vercel
 
 __pycache__/
 *.pyc
