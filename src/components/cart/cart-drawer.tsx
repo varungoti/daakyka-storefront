@@ -213,11 +213,12 @@ export function CartDrawer() {
                             </p>
                           )}
                           <div className="mt-auto flex items-center justify-between pt-3">
-                            {/* F-240: the steppers measured 22x22 — the pill
-                                keeps its visual size, but each button is now
-                                a 32px hit area (`grid h-8 w-8`). */}
+                            {/* F-240: the steppers measured 22x22 — each button
+                                is now a 32px hit area (`grid h-8 w-8`), with
+                                the pill's padding and gap tightened so it
+                                stays about the same width as before. */}
                             {!isUnavailable && (
-                              <div className="flex items-center gap-2 rounded-full border border-border px-1 py-0.5">
+                              <div className="flex items-center gap-0.5 rounded-full border border-border px-1 py-0.5">
                                 <button
                                   type="button"
                                   aria-label="Decrease quantity"
@@ -250,7 +251,7 @@ export function CartDrawer() {
                             <button
                               type="button"
                               onClick={() => removeLine(line.id)}
-                              className="min-h-8 px-2 text-xs font-semibold text-muted hover:text-brand"
+                              className="min-h-8 text-xs font-semibold text-muted hover:text-brand"
                               disabled={isLoading}
                             >
                               Remove

@@ -2,7 +2,7 @@
 
 import { ProductCard } from "@/components/ui/product-card";
 import type { Product } from "@/lib/types";
-import type { SortOption } from "@/lib/shop/filters";
+import { SHOP_PAGE_SIZE, type SortOption } from "@/lib/shop/filters";
 import { SlidersHorizontal, X } from "lucide-react";
 import { useState } from "react";
 
@@ -14,13 +14,6 @@ export interface ActiveFilterChip {
   label: string;
   onRemove: () => void;
 }
-
-// F-021/F-242: how many cards render before a "Load more" step. 24 is 6
-// rows at the desktop `xl:grid-cols-4` width and 12 rows at the mobile
-// 2-column width — long enough that "Load more" isn't the very first
-// thing a shopper sees, short enough that /shop's ~57 products don't ship
-// ~45,000px of DOM up front.
-const PAGE_SIZE = 24;
 
 interface ProductGridProps {
   products: Product[];
@@ -41,6 +34,14 @@ interface ProductGridProps {
    * more. Also drives the mobile Filter button's active-count badge.
    * Omitted on grids with no filter UI at all (e.g. /sale). */
   activeFilters?: ActiveFilterChip[];
+  /** F-021: how many cards to render before the first "Load more" — the
+   * caller passes what it read back from the URL (`?show=`) so that coming
+   * back from a product page restores the list the shopper had expanded
+   * instead of collapsing it to one page. Defaults to one page. */
+  initialVisibleCount?: number;
+  /** Called with the new total each time "Load more" reveals another page,
+   * so the caller can keep it in the URL (see `initialVisibleCount`). */
+  onVisibleCountChange?: (count: number) => void;
 }
 
 export function ProductGrid({
@@ -54,6 +55,8 @@ export function ProductGrid({
   onSearchQueryChange,
   onClearFilters,
   activeFilters,
+  initialVisibleCount,
+  onVisibleCountChange,
 }: ProductGridProps) {
   const [internalSort, setInternalSort] = useState<SortOption>("featured");
   const sort = controlledSort ?? internalSort;
@@ -72,24 +75,29 @@ export function ProductGrid({
   // (see filterProducts/useMemo there), so comparing it to the previous
   // render's identity — the React-docs-recommended "adjust state during
   // rendering" pattern, not a `useEffect` — resets the page size back to
-  // the first PAGE_SIZE items whenever the underlying list actually
+  // the first SHOP_PAGE_SIZE items whenever the underlying list actually
   // changes, without a wasted extra render or a `react-hooks/*` lint
-  // exemption. Plain pagination that changes with the URL is a separate
-  // question this doesn't take on (see fix guidance's own "optional" note
-  // in F-021/F-242's audit finding).
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  // exemption. (The URL's `?show=` goes with it: applyFilters in
+  // ShopPageContent drops it on every facet/sort/search change.)
+  const [visibleCount, setVisibleCount] = useState(initialVisibleCount ?? SHOP_PAGE_SIZE);
   const [lastProducts, setLastProducts] = useState(products);
   if (products !== lastProducts) {
     setLastProducts(products);
-    setVisibleCount(PAGE_SIZE);
+    setVisibleCount(SHOP_PAGE_SIZE);
   }
   const visibleProducts = products.slice(0, visibleCount);
   const hasMore = visibleCount < products.length;
 
+  const loadMore = () => {
+    const next = visibleCount + SHOP_PAGE_SIZE;
+    setVisibleCount(next);
+    onVisibleCountChange?.(next);
+  };
+
   return (
     <div>
       {showToolbar && (
-        <div className="hover:border-brand hover:shadow-sm transition-colors mb-6 flex flex-col gap-4 rounded-2xl border border-border bg-surface-elevated px-5 py-4">
+        <div className="hover:border-brand hover:shadow-sm transition-colors mb-4 flex flex-col gap-3 rounded-2xl border border-border bg-surface-elevated px-4 py-3 sm:mb-6 sm:gap-4 sm:px-5 sm:py-4">
           {onSearchQueryChange && (
             <input
               type="search"
@@ -99,32 +107,18 @@ export function ProductGrid({
               className="w-full rounded-full border border-border px-4 py-2.5 text-sm outline-none focus:border-brand"
             />
           )}
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <p className="text-sm text-muted">
             <span className="font-semibold text-ink">{totalCount} Products</span>
           </p>
-          {/* F-011: `flex-wrap` plus `min-w-0` on the shrinkable children —
-              this row's min-content (label + select + Filter button) was
-              wider than a 360px card, and none of them could wrap or
-              shrink, so the toolbar card ran past the viewport's right
-              edge. */}
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex min-w-0 items-center gap-2 text-sm text-muted">
-              Sort by:
-              <select
-                value={sort}
-                onChange={(event) =>
-                  handleSortChange(event.target.value as SortOption)
-                }
-                className="min-w-0 max-w-full rounded-full border border-border bg-surface-elevated px-4 py-2 text-sm text-ink outline-none focus:border-brand"
-              >
-                <option value="featured">Featured</option>
-                <option value="price-asc">Price: Low to High</option>
-                <option value="price-desc">Price: High to Low</option>
-                <option value="newest">Newest</option>
-                <option value="rating">Best Rating</option>
-              </select>
-            </label>
+          {/* F-011/F-242: on a phone, Filter and Sort share one row (each
+              half the card's width, "Sort by:" shown to screen readers only)
+              instead of three stacked rows; from `sm` up it's the same
+              inline label + select + button as before. `min-w-0` on the
+              shrinkable children is what keeps this row from running past a
+              360px viewport — its min-content (label + select + Filter
+              button) used to be wider than the card itself. */}
+          <div className="flex items-center gap-2 sm:gap-3">
             {onOpenFilters && (
               <button
                 type="button"
@@ -134,7 +128,7 @@ export function ProductGrid({
                     ? `Filter, ${activeFilters.length} active`
                     : "Filter"
                 }
-                className="relative inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-semibold lg:hidden"
+                className="relative inline-flex min-w-0 flex-1 items-center justify-center gap-2 rounded-full border border-border px-3 py-2 text-sm font-semibold sm:flex-none sm:px-4 lg:hidden"
               >
                 <SlidersHorizontal size={16} />
                 Filter
@@ -147,6 +141,25 @@ export function ProductGrid({
                 )}
               </button>
             )}
+            <label className="flex min-w-0 flex-1 items-center gap-2 text-sm text-muted sm:flex-none">
+              {/* `max-sm:sr-only` rather than `sr-only sm:not-sr-only`:
+                  globals.css has its own unlayered `.sr-only` that a
+                  layered `not-sr-only` can't undo. */}
+              <span className="max-sm:sr-only">Sort by:</span>
+              <select
+                value={sort}
+                onChange={(event) =>
+                  handleSortChange(event.target.value as SortOption)
+                }
+                className="min-w-0 max-w-full flex-1 rounded-full border border-border bg-surface-elevated px-3 py-2 text-sm text-ink outline-none focus:border-brand sm:flex-none sm:px-4"
+              >
+                <option value="featured">Featured</option>
+                <option value="price-asc">Price: Low to High</option>
+                <option value="price-desc">Price: High to Low</option>
+                <option value="newest">Newest</option>
+                <option value="rating">Best Rating</option>
+              </select>
+            </label>
           </div>
           </div>
 
@@ -172,7 +185,7 @@ export function ProductGrid({
                 <button
                   type="button"
                   onClick={onClearFilters}
-                  className="text-xs font-semibold text-muted underline-offset-2 hover:text-brand hover:underline"
+                  className="px-2 py-1.5 text-xs font-semibold text-muted underline-offset-2 hover:text-brand hover:underline"
                 >
                   Clear all
                 </button>
@@ -224,7 +237,7 @@ export function ProductGrid({
               // loadEagerly doc and docs/PERFORMANCE.md. Not re-measured
               // for index 1 as part of this fix (needs the same Lighthouse
               // profiling, not a guess) — left as-is deliberately.
-              <ProductCard key={product.id} product={product} loadEagerly={index === 0} />
+              <ProductCard key={product.id} product={product} loadEagerly={index === 0} compact />
             ))}
           </div>
 
@@ -235,7 +248,7 @@ export function ProductGrid({
               </p>
               <button
                 type="button"
-                onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
+                onClick={loadMore}
                 className="inline-flex items-center justify-center rounded-full border border-border bg-surface-elevated px-6 py-2.5 text-sm font-semibold text-ink transition hover:border-brand hover:text-brand"
               >
                 Load more

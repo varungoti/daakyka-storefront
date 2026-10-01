@@ -18,6 +18,8 @@ import {
   filterProducts,
   parseShopFiltersFromSearchParams,
   parseShopSearchQuery,
+  parseShopVisibleCount,
+  withShopVisibleCount,
   type ShopFilters,
 } from "@/lib/shop/filters";
 import type { CategoryTreeNode } from "@/lib/products";
@@ -47,10 +49,11 @@ function buildCategoryDescendants(categories: CategoryTreeNode[]): Record<string
   return map;
 }
 
-/** A route-level immutable category scope may be supplied by a caller.
- * Query-string `?category=` is always a removable facet; category pages
- * already receive products limited to the route slug from the server.
- * Pulled out
+/** Whether the selected category is a facet the shopper picked (and so gets
+ * a removable chip / counts as an active filter), as opposed to
+ * `initialCategory`, a route-level scope a caller may pin the whole page to
+ * (it never counts, and "Clear all" resets back to it). A query-string
+ * `?category=` on a page with no pin is always a removable facet. Pulled out
  * as a pure function so it's unit-testable without rendering the component
  * (this repo has no jsdom/React Testing Library — see
  * shop-page-content.test.ts). */
@@ -225,6 +228,11 @@ export function ShopPageContent({
     () => parseShopSearchQuery(searchParams) || initialQuery || "",
   );
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  // F-021: how many cards "Load more" had revealed when this page was
+  // entered (`?show=`) — read once, on mount, because ProductGrid owns the
+  // live count from there on. This is what makes Back from a product page
+  // (which remounts this component) land on the same expanded list.
+  const [initialVisibleCount] = useState(() => parseShopVisibleCount(searchParams));
 
   // Re-derives filters/query on browser back/forward, which change the
   // URL directly (via popstate) without going through this component's
@@ -306,6 +314,14 @@ export function ShopPageContent({
     }
   };
 
+  /** Keeps `?show=` in step with ProductGrid's "Load more" — always a
+   * `replaceState` (revealing more cards isn't a history step of its own). */
+  const handleVisibleCountChange = (count: number) => {
+    if (!syncUrl) return;
+    const qs = withShopVisibleCount(window.location.search, count).toString();
+    window.history.replaceState(null, "", qs ? `${pathname}?${qs}` : pathname);
+  };
+
   const setFilters = (next: ShopFilters, meta?: { transient?: boolean }) =>
     applyFilters(next, query, meta);
 
@@ -374,21 +390,19 @@ export function ShopPageContent({
   // guessing what's still applied. Each `onRemove` goes through the same
   // `setFilters`/`setQuery` choke point as every other facet change, so
   // history stays a normal `pushState`, not a special transient write.
-  const activeFilterChips = useMemo<ActiveFilterChip[]>(
-    () =>
-      buildActiveFilterChips({
-        filters,
-        query,
-        initialCategory,
-        categoryName: (slug) => filterCategories.find((c) => c.slug === slug)?.name ?? slug,
-        fabricLabel: (id) => fabricFilters.find((f) => f.id === id)?.label ?? id,
-        formatPrice,
-        setFilters,
-        setQuery,
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- setFilters/setQuery close over `filters`/`query` themselves and are recreated every render; including them would just re-run this on every render for no reason.
-    [filters, query, initialCategory, filterCategories, formatPrice],
-  );
+  // Rebuilt every render on purpose (a handful of small objects): the
+  // callbacks close over this render's `filters`/`query`, so memoising
+  // them would only add a stale-closure risk.
+  const activeFilterChips = buildActiveFilterChips({
+    filters,
+    query,
+    initialCategory,
+    categoryName: (slug) => filterCategories.find((c) => c.slug === slug)?.name ?? slug,
+    fabricLabel: (id) => fabricFilters.find((f) => f.id === id)?.label ?? id,
+    formatPrice,
+    setFilters,
+    setQuery,
+  });
 
   const pageTitle = heading?.title ?? "Shop All Apparel & Uniforms";
   const pageEyebrow = heading?.eyebrow ?? "Browse";
@@ -438,7 +452,12 @@ export function ShopPageContent({
       </section>
 
       <section className="pt-4 pb-12 md:py-14">
-        <div className="mx-auto grid grid-cols-1 gap-10 px-4 lg:grid-cols-[280px_minmax(0,1fr)] lg:px-8">
+        {/* F-011: an explicit `grid-cols-1` (`minmax(0,1fr)`) rather than the
+            implicit `auto` track this used to have below `lg`, so the grid
+            column can shrink below the toolbar's min-content instead of
+            growing to it — that's what pushed /shop and /category 7px past
+            a 360px viewport. */}
+        <div className="mx-auto grid max-w-[1320px] grid-cols-1 gap-10 px-4 lg:grid-cols-[280px_minmax(0,1fr)] lg:px-8">
           <div className="hidden lg:block">
             <ShopFiltersPanel
               filters={filters}
@@ -459,6 +478,8 @@ export function ShopPageContent({
             onSearchQueryChange={setQuery}
             onClearFilters={hasActiveFilters ? clearAllFilters : undefined}
             activeFilters={activeFilterChips}
+            initialVisibleCount={initialVisibleCount}
+            onVisibleCountChange={handleVisibleCountChange}
           />
         </div>
       </section>

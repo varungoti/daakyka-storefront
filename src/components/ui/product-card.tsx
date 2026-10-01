@@ -29,6 +29,17 @@ interface ProductCardProps {
    * next/image's own deprecated `priority` prop (see the `preload` prop
    * this sets below). */
   loadEagerly?: boolean;
+  /** F-021/F-242: set by the 2-column mobile listing grid (ProductGrid) —
+   * below `sm` the card is only ~170px wide there, so it gets tighter
+   * padding and smaller type, drops the "View Product" text and Quick Add
+   * (six size chips plus an "Add" button wrap badly at that width, and the
+   * whole photo already links to the PDP, which has its own full-size
+   * add-to-cart), and asks next/image for a half-viewport-wide image
+   * instead of a full-width one. Grids that still render one full-width
+   * card per row on a phone (collection pages, the PDP's related row, ...)
+   * leave this off and keep the full-size card. From `sm` up it changes
+   * nothing. */
+  compact?: boolean;
 }
 
 /**
@@ -48,7 +59,7 @@ interface ProductCardProps {
  *    ones.
  * No button-inside-anchor or anchor-inside-button remains.
  */
-export function ProductCard({ product, className, loadEagerly = false }: ProductCardProps) {
+export function ProductCard({ product, className, loadEagerly = false, compact = false }: ProductCardProps) {
   const { formatPrice } = useCurrency();
   // release-hardening audit F-016: `product.image` and `product.colorName`
   // are now the same colour (see mapDbProductToUi's `defaultColor`) —
@@ -96,14 +107,23 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
               quality={75}
               unoptimized={displayImage.endsWith(".svg")}
               className="object-cover transition-transform duration-500 group-hover:scale-105"
-              sizes="(max-width: 640px) 50vw, (max-width: 1280px) 50vw, 25vw"
+              sizes={
+                compact
+                  ? "(max-width: 1279px) 50vw, 25vw"
+                  : "(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
+              }
               preload={loadEagerly}
               fetchPriority={loadEagerly ? "high" : undefined}
             />
           </div>
         </Link>
 
-        <div className="pointer-events-none absolute left-2 top-2 flex flex-col gap-2 sm:left-4 sm:top-4">
+        <div
+          className={cn(
+            "pointer-events-none absolute left-4 top-4 flex flex-col gap-2",
+            compact && "max-sm:left-2 max-sm:top-2",
+          )}
+        >
           {soldOut && (
             <Badge variant="bestseller" className="pointer-events-auto bg-ink text-white">
               Sold out
@@ -132,11 +152,14 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
           )}
         </div>
 
-        <WishlistButton product={product} className="absolute right-2 top-2 z-10 sm:right-4 sm:top-4" />
+        <WishlistButton
+          product={product}
+          className={cn("absolute right-4 top-4 z-10", compact && "max-sm:right-2 max-sm:top-2")}
+        />
       </div>
 
       {product.colors.length > 1 && (
-        <div className="flex items-center gap-1 px-3 pt-3 sm:gap-2 sm:px-5 sm:pt-4">
+        <div className={cn("flex items-center gap-2 px-5 pt-4", compact && "max-sm:gap-1 max-sm:px-3 max-sm:pt-3")}>
           {product.colors.slice(0, 5).map((color) => (
             // F-240: the visible swatch stays 16px (`span` below), but the
             // button itself is a 24px hit area — axe's target-size audit
@@ -152,6 +175,10 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
                 // even after the photo changed to a different one.
                 setSelectedColor(color.name);
                 const match = product.images?.find((img) => img.color === color.name);
+                // A colour with no photo of its own shows the placeholder
+                // rather than leaving the previous colour's photo under the
+                // new colour's name — same rule as the PDP gallery
+                // (selectProductGallery).
                 setDisplayImage(match?.url ?? "/placeholder-product.svg");
               }}
               aria-pressed={selectedColor === color.name}
@@ -172,24 +199,33 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
       <Link
         href={`/products/${product.handle}`}
         className={cn(
-          "block space-y-2 px-3 pb-2 sm:space-y-3 sm:px-5",
-          product.colors.length > 1 ? "pt-2 sm:pt-3" : "pt-3 sm:pt-4",
+          "block space-y-3 px-5 pb-2",
+          product.colors.length > 1 ? "pt-3" : "pt-4",
+          compact && "max-sm:space-y-2 max-sm:px-3 max-sm:pb-3",
+          compact && (product.colors.length > 1 ? "max-sm:pt-2" : "max-sm:pt-3"),
         )}
       >
         <div>
-          <h3 className="font-display text-sm font-semibold leading-snug text-ink group-hover:text-brand sm:text-lg">
+          <h3
+            className={cn(
+              "font-display text-lg font-semibold leading-snug text-ink group-hover:text-brand",
+              compact && "max-sm:text-sm",
+            )}
+          >
             {product.name}
           </h3>
-          <p className="text-xs text-muted sm:text-sm">{selectedColor}</p>
+          <p className={cn("text-sm text-muted", compact && "max-sm:text-xs")}>{selectedColor}</p>
         </div>
         <div className="flex items-end justify-between gap-2">
           <div className="flex items-baseline gap-2">
-            <p className="font-display text-base font-bold text-ink sm:text-xl">{formatPrice(product.price)}</p>
+            <p className={cn("font-display text-xl font-bold text-ink", compact && "max-sm:text-base")}>
+              {formatPrice(product.price)}
+            </p>
             {product.compareAtPrice !== undefined && product.compareAtPrice > product.price && (
               // F-313: labelled "MRP", same as the PDP — an unlabelled
               // strikethrough price next to a "% Off" badge is exactly the
               // pattern counsel flagged as a misleading-reference-price risk.
-              <p className="text-xs text-muted sm:text-sm">
+              <p className={cn("text-sm text-muted", compact && "max-sm:text-xs")}>
                 <span aria-hidden="true">MRP </span>
                 <s>{formatPrice(product.compareAtPrice)}</s>
               </p>
@@ -199,7 +235,12 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
             <StarRating rating={product.rating} reviewCount={product.reviewCount} />
           )}
         </div>
-        <span className="hidden text-xs font-semibold uppercase tracking-wide text-brand group-hover:underline sm:inline-block">
+        <span
+          className={cn(
+            "inline-block text-xs font-semibold uppercase tracking-wide text-brand group-hover:underline",
+            compact && "max-sm:hidden",
+          )}
+        >
           View Product
         </span>
       </Link>
@@ -207,12 +248,10 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
       {/* F-006: sold-out products get the badge above, not a Quick Add
           that can only ever fail at checkout — the PDP link still gets
           them to "Notify me when available".
-          F-021/F-242: hidden below `sm` — at the ~170px width a 2-column
-          mobile card gets, six size chips plus an "Add" button wrap onto
-          several lines; the whole photo is now a link to the PDP, which
-          has its own full-size add-to-cart. */}
+          F-021/F-242: a `compact` card (2-column phone grid) hides this
+          below `sm` — see that prop's doc comment. */}
       {!soldOut && (
-        <div className="hidden px-5 pb-5 sm:block">
+        <div className={cn("px-5 pb-5", compact && "max-sm:hidden")}>
           <QuickAddPanel product={product} selectedColor={selectedColor} />
         </div>
       )}
@@ -222,7 +261,8 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
 
 /**
  * "Quick add": a size picker + add-to-cart action that appears on
- * hover/focus on desktop (`md:` breakpoint) and stays visible on mobile.
+ * hover/focus on desktop (`md:` breakpoint) and stays visible on mobile
+ * (except on a `compact` card below `sm` — see where it's rendered above).
  * Deliberately kept as a sibling of the product `<Link>` (see the a11y
  * note above) so its buttons never nest inside an anchor.
  */

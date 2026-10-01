@@ -153,6 +153,7 @@ export function countByCategory(products: Product[]) {
 //   sale    - boolean flag ("1" or absent)  ?sale=1
 //   stock   - boolean flag ("1" or absent)  ?stock=1
 //   sort    - existing SortOption union     ?sort=price-asc
+//   show    - how many cards "Load more" has revealed (F-021): ?show=48
 //   category, q - unchanged, pre-existing
 //
 // Parsing is defensive end to end: every value is validated against an
@@ -307,6 +308,48 @@ function setOrDelete(params: URLSearchParams, key: string, value: string | undef
   else params.delete(key);
 }
 
+/** How many product cards a listing renders before its first "Load more"
+ * (F-021/F-242: /shop used to render every product at once — about 45,000px
+ * of mobile scroll for ~57 products). 24 is 6 rows at the desktop
+ * `xl:grid-cols-4` width and 12 rows at the 2-column phone width. */
+export const SHOP_PAGE_SIZE = 24;
+
+/** Upper bound for a `?show=` value read back from the URL, so a hand-edited
+ * or hostile link can't make the grid render an unbounded number of cards. */
+const MAX_VISIBLE_COUNT = 480;
+
+/**
+ * Parses `?show=` — how many cards a shopper had "Load more"d to — so that
+ * going back from a product page (which remounts the listing) restores the
+ * same list instead of collapsing it to the first page and leaving the
+ * browser's restored scroll position pointing at the wrong place. Anything
+ * missing, non-numeric or not larger than one page is just the first page;
+ * anything larger is rounded up to a whole number of pages and capped.
+ */
+export function parseShopVisibleCount(
+  params: SearchParamsLike | null | undefined,
+  pageSize: number = SHOP_PAGE_SIZE,
+): number {
+  const raw = safeGet(params, "show");
+  if (!raw) return pageSize;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= pageSize) return pageSize;
+  return Math.ceil(Math.min(parsed, MAX_VISIBLE_COUNT) / pageSize) * pageSize;
+}
+
+/** Returns a clone of `current` with `?show=` set to `count` — or removed
+ * when `count` is just the first page, so an untouched listing never grows
+ * a query string. Every other param is left as it was. */
+export function withShopVisibleCount(
+  current: string,
+  count: number,
+  pageSize: number = SHOP_PAGE_SIZE,
+): URLSearchParams {
+  const params = new URLSearchParams(current);
+  setOrDelete(params, "show", count > pageSize ? String(count) : undefined);
+  return params;
+}
+
 /**
  * Applies `filters` + `query` onto a clone of `current`, setting or
  * deleting each synced key as needed and leaving every other param (utm_*
@@ -346,6 +389,9 @@ export function applyShopFiltersToSearchParams(
     "sort",
     filters.sort !== defaultShopFilters.sort ? filters.sort : undefined,
   );
+  // Any facet/sort/search change starts the listing over on its first page
+  // (see ProductGrid), so a stale `?show=` must not outlive it.
+  params.delete("show");
 
   return params;
 }

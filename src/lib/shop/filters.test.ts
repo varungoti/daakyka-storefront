@@ -7,6 +7,9 @@ import {
   filterProducts,
   parseShopFiltersFromSearchParams,
   parseShopSearchQuery,
+  parseShopVisibleCount,
+  SHOP_PAGE_SIZE,
+  withShopVisibleCount,
   type ShopFilters,
 } from "@/lib/shop/filters";
 import { PRICE_FILTER_MAX_INR, PRICE_FILTER_MIN_INR } from "@/lib/currency/config";
@@ -566,6 +569,17 @@ describe("applyShopFiltersToSearchParams", () => {
     assert.equal(Array.from(params.keys()).length, 1);
   });
 
+  it("drops a stale ?show= — any filter, sort or search change starts the list over on page one", () => {
+    const params = applyShopFiltersToSearchParams(
+      new URLSearchParams({ show: "48", utm_source: "newsletter" }),
+      { ...defaultShopFilters, onSale: true },
+      "",
+    );
+    assert.equal(params.get("show"), null);
+    assert.equal(params.get("sale"), "1");
+    assert.equal(params.get("utm_source"), "newsletter");
+  });
+
   it("round-trips with parseShopFiltersFromSearchParams", () => {
     const original: ShopFilters = {
       category: "bottoms",
@@ -580,6 +594,68 @@ describe("applyShopFiltersToSearchParams", () => {
     const params = applyShopFiltersToSearchParams(new URLSearchParams(), original, "joggers");
     assert.deepEqual(parseShopFiltersFromSearchParams(params), original);
     assert.equal(parseShopSearchQuery(params), "joggers");
+  });
+});
+
+// F-021/F-242: /shop's "Load more" keeps how far a shopper got in ?show= so
+// that Back from a product page (which remounts the listing) restores it.
+describe("parseShopVisibleCount / withShopVisibleCount", () => {
+  it("is one page when ?show= is absent, so an untouched listing is unchanged", () => {
+    assert.equal(parseShopVisibleCount(new URLSearchParams()), SHOP_PAGE_SIZE);
+    assert.equal(parseShopVisibleCount(null), SHOP_PAGE_SIZE);
+    assert.equal(parseShopVisibleCount(undefined), SHOP_PAGE_SIZE);
+  });
+
+  it("reads back a valid whole number of pages", () => {
+    assert.equal(parseShopVisibleCount(new URLSearchParams({ show: "48" })), 48);
+    assert.equal(parseShopVisibleCount(new URLSearchParams({ show: "72" })), 72);
+  });
+
+  it("rounds a hand-edited value up to a whole page", () => {
+    assert.equal(parseShopVisibleCount(new URLSearchParams({ show: "30" })), 48);
+  });
+
+  it("falls back to one page for junk, zero, negative or too-small values", () => {
+    for (const show of ["", "abc", "NaN", "Infinity", "-48", "0", "1", String(SHOP_PAGE_SIZE)]) {
+      assert.equal(parseShopVisibleCount(new URLSearchParams({ show })), SHOP_PAGE_SIZE, `show=${show}`);
+    }
+  });
+
+  it("caps a hostile value instead of letting the grid render an unbounded list", () => {
+    const capped = parseShopVisibleCount(new URLSearchParams({ show: "1000000" }));
+    assert.ok(capped <= 480 + SHOP_PAGE_SIZE, `got ${capped}`);
+    assert.equal(capped % SHOP_PAGE_SIZE, 0);
+  });
+
+  it("honours a custom page size", () => {
+    assert.equal(parseShopVisibleCount(new URLSearchParams({ show: "20" }), 10), 20);
+    assert.equal(parseShopVisibleCount(new URLSearchParams({ show: "15" }), 10), 20);
+  });
+
+  it("never throws on a non-conforming params object", () => {
+    const hostile = {
+      get() {
+        throw new Error("boom");
+      },
+    };
+    assert.equal(parseShopVisibleCount(hostile), SHOP_PAGE_SIZE);
+  });
+
+  it("writes ?show= once the list is longer than a page, leaving every other param alone", () => {
+    const params = withShopVisibleCount("category=for-hospitals&utm_source=newsletter", 48);
+    assert.equal(params.get("show"), "48");
+    assert.equal(params.get("category"), "for-hospitals");
+    assert.equal(params.get("utm_source"), "newsletter");
+  });
+
+  it("removes ?show= again at one page, so an untouched listing never grows a query string", () => {
+    assert.equal(withShopVisibleCount("show=48", SHOP_PAGE_SIZE).toString(), "");
+    assert.equal(withShopVisibleCount("", SHOP_PAGE_SIZE).toString(), "");
+  });
+
+  it("round-trips with parseShopVisibleCount", () => {
+    const params = withShopVisibleCount("", 72);
+    assert.equal(parseShopVisibleCount(params), 72);
   });
 });
 
