@@ -3,6 +3,9 @@ import { CampaignForm } from "@/components/admin/campaign-form";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "New Campaign" };
 
 export default async function NewCampaignPage() {
   const session = await getSession();

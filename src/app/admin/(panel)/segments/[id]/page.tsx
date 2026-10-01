@@ -3,6 +3,9 @@ import { SegmentForm } from "@/components/admin/segment-form";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { getSegmentForAdmin, SegmentNotFoundError } from "@/lib/engagement/segments";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Edit Segment" };
 
 export default async function EditSegmentPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();

@@ -9,6 +9,9 @@ import { getSetting } from "@/lib/settings";
 import { brand } from "@/data/brand";
 import type { ShippingAddressInput } from "@/lib/validation/schemas";
 import { InvoicePrintButton } from "@/components/admin/invoice-print-button";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Invoice" };
 
 // F-195: was `maximumFractionDigits: 0`, which silently rounded paise off
 // a printed financial document — a real order can have a fractional total

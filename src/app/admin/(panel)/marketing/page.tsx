@@ -2,6 +2,9 @@ import { redirect } from "next/navigation";
 import { MarketingHubTabs } from "@/components/admin/marketing-hub-tabs";
 import { hasPermission, type Permission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Marketing" };
 
 /**
  * F-10 (docs/audit-2026-09-19/admin-ux.md): which permission each Marketing

@@ -5,6 +5,9 @@ import { getSession } from "@/lib/auth/session";
 import { listOffersForAdmin } from "@/lib/offers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Offers" };
 
 export default async function AdminOffersPage() {
   const session = await getSession();

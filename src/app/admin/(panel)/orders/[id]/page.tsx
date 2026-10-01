@@ -11,6 +11,9 @@ import { formatInrExact } from "@/lib/currency/admin-money";
 import { formatDateTimeIST } from "@/lib/format/datetime";
 import type { OrderStatus } from "@/generated/prisma/client";
 import type { ShippingAddressInput } from "@/lib/validation/schemas";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Order" };
 
 // F-202 fix: was `maximumFractionDigits: 0`, which silently rounded a
 // paise total (any percentage-discount order) to the nearest whole rupee

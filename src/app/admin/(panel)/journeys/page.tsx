@@ -4,6 +4,9 @@ import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Journeys" };
 
 export default async function AdminJourneysPage() {
   const session = await getSession();

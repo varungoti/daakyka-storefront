@@ -5,6 +5,9 @@ import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Campaigns" };
 
 // F-217: mirrors campaigns/[id]/route.ts's DELETE guard — a campaign
 // that's sending or already sent is a record of what went out, not

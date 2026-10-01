@@ -15,6 +15,9 @@ import {
   type CredentialProvider,
 } from "@/lib/integrations/credential-store";
 import { getIntegrationStatuses } from "@/lib/integrations/status";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Integrations" };
 
 // Only these providers have the DB-backed enable/disable toggle
 // (src/lib/integrations/enabled.ts); Razorpay's "readiness" is derived

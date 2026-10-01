@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { createLoadGuard, debounce, normalizeSearchTerm } from "@/lib/admin/list-query";
+import { productRowLinks } from "@/lib/admin/product-links";
 
 interface ProductListItem {
   id: string;
@@ -228,6 +229,37 @@ export function ProductsTable({
     );
   }
 
+  // F-162: the editor link only exists for a role that can open the editor
+  // (see src/lib/admin/product-links.ts) — a view-only role used to get an
+  // "Edit" link on every row that just bounced to the dashboard.
+  function productName(item: ProductListItem) {
+    const { nameHref } = productRowLinks(item, canManage);
+    return nameHref ? (
+      <Link href={nameHref} className="font-semibold text-ink hover:underline">
+        {item.name}
+      </Link>
+    ) : (
+      <span className="font-semibold text-ink">{item.name}</span>
+    );
+  }
+
+  function productAction(item: ProductListItem) {
+    const { action } = productRowLinks(item, canManage);
+    if (!action) return null;
+    const className = "text-xs font-semibold text-brand hover:underline";
+    return action.external ? (
+      <a href={action.href} target="_blank" rel="noopener" className={className}>
+        {action.label}
+        <span className="sr-only"> {item.name} on the storefront (opens in a new tab)</span>
+      </a>
+    ) : (
+      <Link href={action.href} className={className}>
+        {action.label}
+        <span className="sr-only"> {item.name}</span>
+      </Link>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -435,9 +467,7 @@ export function ProductsTable({
                         {item.thumbnailUrl ? <Image src={item.thumbnailUrl} alt={item.name} fill className="object-cover" sizes="48px" /> : null}
                       </div>
                       <div>
-                        <Link href={`/admin/products/${item.id}`} className="font-semibold text-ink hover:underline">
-                          {item.name}
-                        </Link>
+                        {productName(item)}
                         {item.hasAiImage ? <span className="ml-2 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-semibold text-brand">AI image</span> : null}
                       </div>
                     </div>
@@ -465,11 +495,7 @@ export function ProductsTable({
                     </span>
                   </td>
                   <td className="p-3">{listingControl(item)}</td>
-                  <td className="p-3 text-right">
-                    <Link href={`/admin/products/${item.id}`} className="text-xs font-semibold text-brand hover:underline">
-                      Edit
-                    </Link>
-                  </td>
+                  <td className="p-3 text-right">{productAction(item)}</td>
                 </tr>
               ))
             )}
@@ -503,9 +529,7 @@ export function ProductsTable({
                   {item.thumbnailUrl ? <Image src={item.thumbnailUrl} alt={item.name} fill className="object-cover" sizes="56px" /> : null}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <Link href={`/admin/products/${item.id}`} className="font-semibold text-ink hover:underline">
-                    {item.name}
-                  </Link>
+                  {productName(item)}
                   {item.hasAiImage ? <span className="ml-2 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-semibold text-brand">AI image</span> : null}
                   <p className="text-xs text-muted">{item.categoryName}</p>
                 </div>
@@ -539,9 +563,7 @@ export function ProductsTable({
               </dl>
               <div className="mt-3 flex items-center justify-between gap-3">
                 {listingControl(item)}
-                <Link href={`/admin/products/${item.id}`} className="text-xs font-semibold text-brand hover:underline">
-                  Edit
-                </Link>
+                {productAction(item)}
               </div>
             </div>
           ))

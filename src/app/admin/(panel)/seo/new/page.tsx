@@ -2,6 +2,9 @@ import { redirect } from "next/navigation";
 import { SeoRecordForm } from "@/components/admin/seo-record-form";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "New SEO Override" };
 
 export default async function NewSeoRecordPage() {
   const session = await getSession();

@@ -3,6 +3,9 @@ import { DiscountForm } from "@/components/admin/discount-form";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { DiscountNotFoundForAdminError, getDiscountForAdmin } from "@/lib/discounts";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Edit Discount" };
 
 /** yyyy-mm-dd for an HTML `<input type="date">`.
  *

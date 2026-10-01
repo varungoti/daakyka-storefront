@@ -5,6 +5,9 @@ import { buildProductInsights, summarizeInsights } from "@/lib/intelligence/prod
 import { getProductSource, getProducts } from "@/lib/products";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Intelligence" };
 
 export default async function AdminIntelligencePage() {
   const session = await getSession();

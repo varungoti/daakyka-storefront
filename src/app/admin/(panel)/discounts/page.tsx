@@ -4,6 +4,9 @@ import { DiscountToggle } from "@/components/admin/discount-toggle";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { listDiscountsForAdmin } from "@/lib/discounts";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Discount Codes" };
 
 function formatInr(amount: number): string {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);

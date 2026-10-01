@@ -2,6 +2,9 @@ import { redirect } from "next/navigation";
 import { ProductImportForm } from "@/components/admin/product-import-form";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Import Products" };
 
 export default async function ProductImportPage() {
   const session = await getSession();

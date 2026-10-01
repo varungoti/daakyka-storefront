@@ -2,6 +2,9 @@ import { redirect } from "next/navigation";
 import { TestimonialForm } from "@/components/admin/testimonial-form";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "New Testimonial" };
 
 export default async function NewTestimonialPage() {
   const session = await getSession();

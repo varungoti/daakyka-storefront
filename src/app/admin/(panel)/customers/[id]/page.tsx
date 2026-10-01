@@ -5,6 +5,9 @@ import { getSession } from "@/lib/auth/session";
 import { CustomerNotFoundError, getCustomerForAdmin } from "@/lib/customers/admin-customers";
 import { CustomerActiveToggle } from "@/components/admin/customer-active-toggle";
 import { formatInrExact } from "@/lib/currency/admin-money";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Customer" };
 
 // F-202 fix (release-hardening admin-order-list-detail-ux): was
 // `maximumFractionDigits: 0`, which silently rounded a customer's

@@ -6,8 +6,12 @@ import { getDashboardWidgetVisibility } from "@/lib/dashboard/widget-visibility"
 import { getSubscriberCounts } from "@/lib/dashboard/subscriber-metrics";
 import { getOrdersTodayStats } from "@/lib/orders/dashboard-metrics";
 import { getPendingReviewCount } from "@/lib/reviews/pending-count";
+import { auditActionLabel, auditEntityLabel } from "@/lib/admin/audit-log-view";
 import { formatDateTimeIST } from "@/lib/format/datetime";
 import { requireAdminPage } from "@/lib/auth/require-admin-page";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Dashboard" };
 
 export default async function AdminDashboardPage() {
   // F-062: the dashboard had no session check of its own — it relied
@@ -195,7 +199,8 @@ export default async function AdminDashboardPage() {
                 {recentLogs.map((log) => (
                   <li key={log.id} className="rounded-xl border border-border px-4 py-3 text-sm">
                     <p className="font-semibold text-ink">
-                      {log.action} · {log.entity}
+                      {/* F-167: "update · site_setting" -> "Update · Site setting". */}
+                      {auditActionLabel(log.action)} · {auditEntityLabel(log.entity)}
                     </p>
                     {/* F-060: server-rendered in the process timezone
                         previously — UTC on Vercel, 5.5h behind IST — now

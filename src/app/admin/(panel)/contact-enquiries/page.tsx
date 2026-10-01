@@ -1,22 +1,31 @@
 import { ContactEnquiryStatusSelect } from "@/components/admin/contact-enquiry-status-select";
+import { AdminPager } from "@/components/admin/pager";
+import { adminListHref, firstParam, getPageWindow, parsePageParam, type RawSearchParam } from "@/lib/admin/pagination";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { formatDateIST } from "@/lib/format/datetime";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { z } from "zod";
+import type { Metadata } from "next";
 
-// F-049: `page` is a user-controlled URL query param — Zod per this
-// repo's "Zod for any new input" convention. `.catch(1)` rather than
-// throwing: an out-of-range or garbage page number is cosmetic here, not
-// a security concern, so it just falls back to page 1. Mirrors
-// src/app/account/(dashboard)/orders/page.tsx's identical pattern.
-const pageParamSchema = z.coerce.number().int().min(1).max(100_000).catch(1);
+export const metadata: Metadata = { title: "Contact Enquiries" };
+
 const PAGE_SIZE = 50;
 
+// F-201: the status values ContactEnquiryStatusSelect / the PATCH route
+// accept — the page filter is limited to the same set (anything else in a
+// `?status=` URL just means "all").
+const STATUS_FILTERS = [
+  { value: "NEW", label: "New" },
+  { value: "CONTACTED", label: "Contacted" },
+  { value: "CLOSED", label: "Closed" },
+] as const;
+
+const REPLY_SUBJECT = encodeURIComponent("Re: your enquiry to DAAKYKA");
+
 interface PageProps {
-  searchParams: Promise<{ page?: string }>;
+  searchParams: Promise<{ page?: RawSearchParam; status?: RawSearchParam }>;
 }
 
 export default async function AdminContactEnquiriesPage({ searchParams }: PageProps) {
@@ -25,26 +34,56 @@ export default async function AdminContactEnquiriesPage({ searchParams }: PagePr
     redirect("/admin/dashboard");
   }
 
-  const { page: rawPage } = await searchParams;
-  const page = pageParamSchema.parse(rawPage);
+  const rawParams = await searchParams;
+  const requestedPage = parsePageParam(rawParams.page);
+  const rawStatus = firstParam(rawParams.status);
+  const statusFilter = STATUS_FILTERS.find((filter) => filter.value === rawStatus)?.value;
+  const where = statusFilter ? { status: statusFilter } : {};
 
   // F-049: this used to load every row with no `take` at all (274+ rows
-  // and growing, unpaginated).
-  const [enquiries, total] = await Promise.all([
-    db.contactEnquiry.findMany({
-      orderBy: { createdAt: "desc" },
-      skip: (page - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
-    }),
-    db.contactEnquiry.count(),
+  // and growing, unpaginated). F-201: and a status filter, so the owner
+  // can work through just the NEW ones instead of paging past handled rows.
+  const [total, statusGroups] = await Promise.all([
+    db.contactEnquiry.count({ where }),
+    db.contactEnquiry.groupBy({ by: ["status"], _count: { _all: true } }),
   ]);
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pageWindow = getPageWindow(requestedPage, total, PAGE_SIZE);
+  const enquiries = await db.contactEnquiry.findMany({
+    where,
+    orderBy: { createdAt: "desc" },
+    skip: pageWindow.skip,
+    take: pageWindow.take,
+  });
+  const countFor = (status: string) => statusGroups.find((group) => group.status === status)?._count._all ?? 0;
+  const allCount = statusGroups.reduce((sum, group) => sum + group._count._all, 0);
+  const hrefForPage = (page: number) => adminListHref("/admin/contact-enquiries", { status: statusFilter, page });
+  const emptyMessage = statusFilter ? "No enquiries with this status." : "No contact enquiries yet.";
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="font-display text-3xl font-bold text-ink">Contact Enquiries</h1>
         <p className="text-muted">General, institutional, and support messages from the contact form.</p>
+      </div>
+
+      <div className="flex flex-wrap gap-2 text-xs font-semibold" role="group" aria-label="Filter by status">
+        <Link
+          href="/admin/contact-enquiries"
+          aria-current={statusFilter ? undefined : "true"}
+          className={`rounded-full border px-3 py-1.5 ${statusFilter ? "border-border text-muted hover:bg-lilac/40" : "border-brand bg-brand/10 text-brand"}`}
+        >
+          All ({allCount})
+        </Link>
+        {STATUS_FILTERS.map((filter) => (
+          <Link
+            key={filter.value}
+            href={adminListHref("/admin/contact-enquiries", { status: filter.value })}
+            aria-current={statusFilter === filter.value ? "true" : undefined}
+            className={`rounded-full border px-3 py-1.5 ${statusFilter === filter.value ? "border-brand bg-brand/10 text-brand" : "border-border text-muted hover:bg-lilac/40"}`}
+          >
+            {filter.label} ({countFor(filter.value)})
+          </Link>
+        ))}
       </div>
 
       {/* F-049: below `md`, the table's Message column ran off a 375px
@@ -57,7 +96,10 @@ export default async function AdminContactEnquiriesPage({ searchParams }: PagePr
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="font-semibold text-ink">{enquiry.name}</p>
-                <a href={`mailto:${enquiry.email}`} className="block truncate text-sm text-brand hover:underline">
+                <a
+                  href={`mailto:${enquiry.email}?subject=${REPLY_SUBJECT}`}
+                  className="block truncate text-sm text-brand hover:underline"
+                >
                   {enquiry.email}
                 </a>
                 {enquiry.phone && (
@@ -79,9 +121,7 @@ export default async function AdminContactEnquiriesPage({ searchParams }: PagePr
           </div>
         ))}
         {enquiries.length === 0 && (
-          <p className="rounded-2xl border border-border bg-surface p-8 text-center text-muted">
-            No contact enquiries yet.
-          </p>
+          <p className="rounded-2xl border border-border bg-surface p-8 text-center text-muted">{emptyMessage}</p>
         )}
       </div>
 
@@ -101,7 +141,7 @@ export default async function AdminContactEnquiriesPage({ searchParams }: PagePr
               <tr key={enquiry.id} className="border-b border-border/70 align-top">
                 <td className="px-4 py-4">
                   <p className="font-semibold text-ink">{enquiry.name}</p>
-                  <a href={`mailto:${enquiry.email}`} className="text-brand hover:underline">
+                  <a href={`mailto:${enquiry.email}?subject=${REPLY_SUBJECT}`} className="text-brand hover:underline">
                     {enquiry.email}
                   </a>
                   {enquiry.phone && (
@@ -127,32 +167,17 @@ export default async function AdminContactEnquiriesPage({ searchParams }: PagePr
             ))}
           </tbody>
         </table>
-        {enquiries.length === 0 && (
-          <p className="p-8 text-center text-muted">No contact enquiries yet.</p>
-        )}
+        {enquiries.length === 0 && <p className="p-8 text-center text-muted">{emptyMessage}</p>}
       </div>
 
-      {totalPages > 1 && (
-        <nav className="flex items-center justify-between pt-2 text-sm" aria-label="Contact enquiry pagination">
-          {page > 1 ? (
-            <Link href={`/admin/contact-enquiries?page=${page - 1}`} className="font-semibold text-brand hover:underline">
-              ← Previous
-            </Link>
-          ) : (
-            <span />
-          )}
-          <span className="text-muted">
-            Page {page} of {totalPages} · {total} total
-          </span>
-          {page < totalPages ? (
-            <Link href={`/admin/contact-enquiries?page=${page + 1}`} className="font-semibold text-brand hover:underline">
-              Next →
-            </Link>
-          ) : (
-            <span />
-          )}
-        </nav>
-      )}
+      <AdminPager
+        page={pageWindow.page}
+        totalPages={pageWindow.totalPages}
+        total={pageWindow.total}
+        noun="enquiries"
+        hrefForPage={hrefForPage}
+        label="Contact enquiry pagination"
+      />
     </div>
   );
 }

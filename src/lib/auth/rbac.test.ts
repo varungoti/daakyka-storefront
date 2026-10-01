@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { hasPermission, formatRole, adminRoles, type Permission } from "@/lib/auth/rbac";
+import { productRowLinks } from "@/lib/admin/product-links";
 import type { AdminRole } from "@/generated/prisma/client";
 
 describe("RBAC", () => {
@@ -173,5 +174,68 @@ describe("RBAC", () => {
         }
       });
     }
+  });
+});
+
+// F-162: the products list is open to products:view, but the editor behind
+// each row needs products:manage and silently bounces everyone else to the
+// dashboard. productRowLinks decides what a row links to for a viewer — it
+// must never hand a role an /admin/products/<id> link that role can't open.
+describe("product list links per role (F-162)", () => {
+  const liveProduct = { id: "cmugsi0g300llh4ohwgss2d14", slug: "classic-scrub-top", status: "ACTIVE" };
+  const draftProduct = { id: "cmugsi0g300llh4ohwgss2d15", slug: "draft-scrub-top", status: "DRAFT" };
+
+  it("SEO_MANAGER can see the product list but not the editor", () => {
+    assert.equal(hasPermission("SEO_MANAGER", "products:view"), true);
+    assert.equal(hasPermission("SEO_MANAGER", "products:manage"), false);
+  });
+
+  it("SEO_MANAGER gets no editor link: the name is plain text and a live product offers a storefront View link", () => {
+    const links = productRowLinks(liveProduct, hasPermission("SEO_MANAGER", "products:manage"));
+    assert.equal(links.nameHref, null);
+    assert.deepEqual(links.action, { label: "View", href: "/products/classic-scrub-top", external: true });
+  });
+
+  it("SEO_MANAGER gets no link at all for a draft product (it has no public page to open)", () => {
+    const links = productRowLinks(draftProduct, hasPermission("SEO_MANAGER", "products:manage"));
+    assert.equal(links.nameHref, null);
+    assert.equal(links.action, null);
+  });
+
+  it("a role with products:manage gets the editor on the name and an Edit action", () => {
+    const links = productRowLinks(liveProduct, hasPermission("CATALOG_MANAGER", "products:manage"));
+    assert.equal(links.nameHref, `/admin/products/${liveProduct.id}`);
+    assert.deepEqual(links.action, { label: "Edit", href: `/admin/products/${liveProduct.id}`, external: false });
+  });
+
+  it("no role is ever linked to an admin product page it can't open", () => {
+    for (const role of adminRoles) {
+      if (!hasPermission(role, "products:view")) continue;
+      const canManage = hasPermission(role, "products:manage");
+      for (const product of [liveProduct, draftProduct]) {
+        const links = productRowLinks(product, canManage);
+        const hrefs = [links.nameHref, links.action?.href].filter((href): href is string => Boolean(href));
+        for (const href of hrefs) {
+          if (href.startsWith("/admin/products/")) {
+            assert.equal(canManage, true, `${role} was linked to ${href} without products:manage`);
+          }
+        }
+      }
+    }
+  });
+});
+
+// F-292: /admin/media is open to media:manage, but POST /api/admin/media/
+// generate needs ai:generate. The "Generate with AI" button is gated on the
+// second permission, so the mismatch below is exactly the case it exists for.
+describe("site image generation permission (F-292)", () => {
+  it("CONTENT_EDITOR can manage media but not generate AI images", () => {
+    assert.equal(hasPermission("CONTENT_EDITOR", "media:manage"), true);
+    assert.equal(hasPermission("CONTENT_EDITOR", "ai:generate"), false);
+  });
+
+  it("CATALOG_MANAGER can both manage media and generate AI images", () => {
+    assert.equal(hasPermission("CATALOG_MANAGER", "media:manage"), true);
+    assert.equal(hasPermission("CATALOG_MANAGER", "ai:generate"), true);
   });
 });

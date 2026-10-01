@@ -3,6 +3,9 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Legacy Orders" };
 
 /**
  * Phase D4: the pre-D4 `/admin/orders` page, kept verbatim (same query,

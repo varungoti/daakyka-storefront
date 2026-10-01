@@ -3,6 +3,9 @@ import { TestimonialForm } from "@/components/admin/testimonial-form";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { getTestimonialForAdmin, TestimonialNotFoundError } from "@/lib/testimonials";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Edit Testimonial" };
 
 export default async function EditTestimonialPage({
   params,

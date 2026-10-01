@@ -5,6 +5,9 @@ import { db } from "@/lib/db";
 import { getUndeliveredEmailCount } from "@/lib/engagement/outbox";
 import { redirect } from "next/navigation";
 import { OrdersTable } from "@/components/admin/orders-table";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Orders" };
 
 /**
  * Phase D4: native-order admin, replacing the old Shopify-`OrderEvent`

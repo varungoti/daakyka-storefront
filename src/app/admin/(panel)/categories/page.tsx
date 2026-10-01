@@ -4,6 +4,9 @@ import { CategoryTree } from "@/components/admin/category-tree";
 import { categorySectionValues, listCategoriesForAdmin, SECTION_LABELS } from "@/lib/catalog/categories";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Categories" };
 
 export default async function AdminCategoriesPage() {
   const session = await getSession();

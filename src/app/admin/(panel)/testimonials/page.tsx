@@ -5,6 +5,9 @@ import { getAllTestimonialsForAdmin } from "@/lib/testimonials";
 import Image from "next/image";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Testimonials" };
 
 export default async function AdminTestimonialsPage() {
   const session = await getSession();

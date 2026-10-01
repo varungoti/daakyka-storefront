@@ -18,6 +18,9 @@ import {
 import { isWiredSeoPath } from "@/lib/seo/wired-paths";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "SEO" };
 
 export default async function AdminSeoPage() {
   const session = await getSession();

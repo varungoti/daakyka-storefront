@@ -4,6 +4,9 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { getAllHomepageSections, getHeroContent, getHeroSlidesContentForAdmin } from "@/lib/homepage";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Homepage" };
 
 export default async function AdminHomepagePage() {
   const session = await getSession();

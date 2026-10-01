@@ -6,6 +6,9 @@ import type { Prisma } from "@/generated/prisma/client";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Newsletter Subscribers" };
 
 /**
  * F-153: there was no admin page at all for the newsletter list — the

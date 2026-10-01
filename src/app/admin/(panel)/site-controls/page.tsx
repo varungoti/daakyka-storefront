@@ -9,6 +9,9 @@ import {
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { getSetting, getSettingUpdatedAt, type SettingKey } from "@/lib/settings";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Site Controls" };
 
 /** F-343: loads every setting key's `updatedAt` alongside its value in one
  * pass, so each editor/toggle below can send it back on save and get a 409

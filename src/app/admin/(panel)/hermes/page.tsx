@@ -8,6 +8,9 @@ import { canApproveHermesApproval } from "@/lib/hermes/approval-permissions";
 import { getHermesMode, isHermesInlineRuntime, isHermesRuntimeConfigured } from "@/lib/hermes/client";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Hermes" };
 
 export default async function AdminHermesPage() {
   const session = await getSession();

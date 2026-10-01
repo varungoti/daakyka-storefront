@@ -442,7 +442,11 @@ export function AdminShell({
             used to print the whole sidebar and header around it — hamburger,
             "Admin Panel", the signed-in admin's name and "View Storefront" —
             on a lavender page background, above the actual document. */}
-        <aside className="hidden w-64 shrink-0 border-r border-border bg-surface p-6 lg:block print:hidden">
+        {/* F-171: `lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto` keeps the
+            sidebar (and Sign Out) on screen while a long page — audit logs,
+            orders — scrolls; it used to scroll away with the page. It
+            scrolls inside itself when the nav is taller than the window. */}
+        <aside className="hidden w-64 shrink-0 border-r border-border bg-surface p-6 lg:sticky lg:top-0 lg:block lg:h-screen lg:overflow-y-auto print:hidden">
           <GuardedLink href="/admin/dashboard" className="font-display text-xl font-extrabold text-brand">
             DAAKYKA Admin
           </GuardedLink>

@@ -3,6 +3,9 @@ import { getSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
 import { CustomersTable } from "@/components/admin/customers-table";
 import { GuestBuyersTable } from "@/components/admin/guest-buyers-table";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Customers" };
 
 export default async function AdminCustomersPage() {
   const session = await getSession();

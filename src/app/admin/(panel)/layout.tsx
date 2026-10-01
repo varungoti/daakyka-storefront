@@ -9,7 +9,11 @@ import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Admin",
+  // F-171: every admin tab used to read "Admin | DAAKYKA Apparels". Each
+  // page now exports its own `title` (e.g. "Orders"), which this template
+  // turns into "Orders · Admin" — a page with no title of its own still
+  // gets the plain default.
+  title: { template: "%s · Admin", default: "Admin" },
   robots: { index: false, follow: false },
 };
 
@@ -37,6 +41,9 @@ export default async function AdminPanelLayout({
         <p className="mt-4 text-sm leading-relaxed text-muted">
           Your session is fine — this isn&apos;t a login problem. Please try again in a moment.
         </p>
+        {/* A plain <a>, not <Link>: a full page load is the point — it
+            re-runs this layout's DB-backed session check from scratch. */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
         <a
           href="/admin/dashboard"
           className="mt-8 rounded-md bg-brand px-6 py-3 text-sm font-semibold text-white transition hover:bg-brand/90"

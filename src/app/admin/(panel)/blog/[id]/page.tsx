@@ -4,6 +4,9 @@ import { parseBlogContent } from "@/lib/blog/content";
 import { db } from "@/lib/db";
 import { formatIstDateOnly } from "@/lib/format/datetime";
 import { notFound } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Edit Article" };
 
 interface PageProps {
   params: Promise<{ id: string }>;

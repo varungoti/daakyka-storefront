@@ -4,6 +4,9 @@ import { getSession } from "@/lib/auth/session";
 import { listTemplatesForAdmin } from "@/lib/engagement/templates";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Templates" };
 
 export default async function TemplatesPage() {
   const session = await getSession();
