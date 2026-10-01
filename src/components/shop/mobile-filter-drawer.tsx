@@ -94,7 +94,6 @@ export function MobileFilterDrawer({
                 categories={categories}
                 categoryCounts={categoryCounts}
                 totalCount={totalCount}
-                showHeading={false}
                 availableFabricIds={availableFabricIds}
               />
             </div>

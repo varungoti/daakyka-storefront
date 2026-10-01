@@ -243,27 +243,32 @@ export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, rating
                 {/* F-085: on a phone each CTA is `flex-1` — two short labels
                     share a row, longer ones stack full-width — and a
                     little smaller than the desktop `lg` size. */}
+                {/* F-370: homepage content is schema-validated on read, but a
+                    partial slide must still degrade to a working link rather
+                    than throw and take the whole homepage down. */}
                 <div className="flex flex-wrap gap-3 sm:gap-4">
                   <Link
-                    href={slide.primaryCta.href}
+                    href={slide.primaryCta?.href || "/shop"}
                     className={buttonClassNames({
                       size: "lg",
                       className: "min-w-[170px] flex-1 px-5 py-3.5 text-sm sm:flex-none sm:px-8 sm:py-4 sm:text-base",
                     })}
                   >
-                    {slide.primaryCta.label}
+                    {slide.primaryCta?.label || "Shop now"}
                     <ArrowRight size={18} aria-hidden="true" />
                   </Link>
-                  <Link
-                    href={slide.secondaryCta.href}
-                    className={buttonClassNames({
-                      variant: "outline",
-                      size: "lg",
-                      className: "min-w-[170px] flex-1 px-5 py-3.5 text-sm sm:flex-none sm:px-8 sm:py-4 sm:text-base",
-                    })}
-                  >
-                    {slide.secondaryCta.label}
-                  </Link>
+                  {slide.secondaryCta?.href && slide.secondaryCta?.label ? (
+                    <Link
+                      href={slide.secondaryCta.href}
+                      className={buttonClassNames({
+                        variant: "outline",
+                        size: "lg",
+                        className: "min-w-[170px] flex-1 px-5 py-3.5 text-sm sm:flex-none sm:px-8 sm:py-4 sm:text-base",
+                      })}
+                    >
+                      {slide.secondaryCta.label}
+                    </Link>
+                  ) : null}
                 </div>
               </div>
             ))}

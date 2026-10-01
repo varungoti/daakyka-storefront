@@ -32,12 +32,6 @@ interface ShopFiltersPanelProps {
   categories: ShopFilterCategory[];
   categoryCounts: Record<string, number>;
   totalCount: number;
-  /** @deprecated No longer rendered (release-hardening F-019): this panel
-   * used to print its own marketing <h1> above the filters, which made every
-   * /shop and /category page carry two H1s. The page's hero band owns the
-   * only H1. Kept so existing callers that still pass `showHeading={false}`
-   * keep compiling — safe to drop from them. */
-  showHeading?: boolean;
   /** release-hardening audit F-092: fabric ids at least one loaded product
    * actually has. Omitted (server-render/no data yet) shows every option,
    * same as before this fix — only a defined, non-empty product list can
