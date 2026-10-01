@@ -177,7 +177,9 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
                 </p>
               ) : results.length === 0 ? (
                 <div role="status" className="px-2 py-6 text-center">
-                  <p className="text-sm text-muted">No products found for &ldquo;{query}&rdquo;</p>
+                  <p className="text-sm text-muted">
+                    {query.trim() ? <>No products found for &ldquo;{query}&rdquo;</> : "No products to suggest right now."}
+                  </p>
                   <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-muted">
                     Or browse
                   </p>
@@ -241,16 +243,30 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
               {/* F-082: shown even with zero results (not just `results.length
                   > 0`) — the dialog only shows up to 8 matches, and this is
                   the shopper's one-click way out of "No products found"
-                  rather than a dead end. */}
-              {!loading && query.trim() && (
-                <Link
-                  href={`/shop?q=${encodeURIComponent(query.trim())}`}
-                  onClick={close}
-                  className="mt-4 block rounded-2xl bg-lilac/40 px-4 py-3 text-center text-sm font-semibold text-brand hover:bg-lilac/60"
-                >
-                  Search all products for &ldquo;{query}&rdquo;
-                </Link>
-              )}
+                  rather than a dead end.
+                  F-083 (review): also shown with an empty query, as "Browse
+                  all products". The suggestions list scrolls (max-h + overflow)
+                  and its options are `tabIndex={-1}` (arrow-key combobox), so
+                  without this link the scroll region had no Tab-focusable
+                  descendant — axe `scrollable-region-focusable` (WCAG 2.1.1). */}
+              {!loading &&
+                (query.trim() ? (
+                  <Link
+                    href={`/shop?q=${encodeURIComponent(query.trim())}`}
+                    onClick={close}
+                    className="mt-4 block rounded-2xl bg-lilac/40 px-4 py-3 text-center text-sm font-semibold text-brand hover:bg-lilac/60"
+                  >
+                    Search all products for &ldquo;{query}&rdquo;
+                  </Link>
+                ) : (
+                  <Link
+                    href="/shop"
+                    onClick={close}
+                    className="mt-4 block rounded-2xl bg-lilac/40 px-4 py-3 text-center text-sm font-semibold text-brand hover:bg-lilac/60"
+                  >
+                    Browse all products
+                  </Link>
+                ))}
             </div>
           </motion.div>
         </>

@@ -89,7 +89,10 @@ export function ProductCard({ product, className, loadEagerly = false, compact =
         // left and right by this card's overflow-hidden and only showed as two
         // stray horizontal lines. A box-shadow ring on the card itself isn't
         // clipped by its own overflow, so the ring follows the link's focus
-        // instead (the link drops its own outline, see its className).
+        // instead. Forced-colors mode (Windows High Contrast) strips
+        // box-shadow, so the link also keeps an inset, transparent outline —
+        // invisible normally, painted in a system colour there (see its
+        // className).
         "has-[[data-card-link]:focus-visible]:ring-2 has-[[data-card-link]:focus-visible]:ring-brand has-[[data-card-link]:focus-visible]:ring-offset-2",
         className,
       )}
@@ -207,9 +210,14 @@ export function ProductCard({ product, className, loadEagerly = false, compact =
         href={`/products/${product.handle}`}
         data-card-link=""
         className={cn(
-          // `!`: globals.css's unlayered :focus-visible outline otherwise beats
-          // the (layered) outline-none utility.
-          "block space-y-3 px-5 pb-2 focus-visible:outline-none!",
+          // Focus indicator: the card ring above in normal mode. Forced-colors
+          // mode strips box-shadow, so an inset outline (-2px, so the card's
+          // overflow-hidden can't clip it) is kept with a transparent colour:
+          // normal rendering shows nothing, forced-colors repaints it in a
+          // system colour. Never `outline-none` here — that leaves forced-colors
+          // users with no focus indicator at all. `!`: globals.css's unlayered
+          // :focus-visible outline otherwise beats these (layered) utilities.
+          "block space-y-3 px-5 pb-2 focus-visible:outline-2! focus-visible:-outline-offset-2! focus-visible:outline-transparent!",
           product.colors.length > 1 ? "pt-3" : "pt-4",
           compact && "max-sm:space-y-2 max-sm:px-3 max-sm:pb-3",
           compact && (product.colors.length > 1 ? "max-sm:pt-2" : "max-sm:pt-3"),

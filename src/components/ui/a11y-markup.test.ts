@@ -123,3 +123,37 @@ describe("policy-page inline links (F-056)", () => {
     assert.match(rule[1], /text-decoration-line:\s*underline/);
   });
 });
+
+describe("focus indicators and tab stops (F-239, F-083 review follow-ups)", () => {
+  it("the product-card link keeps an outline that forced-colors mode can paint", () => {
+    // Forced-colors mode (Windows High Contrast) strips box-shadow, so the
+    // card's ring is invisible there. `outline-none` on the link would leave
+    // no focus indicator at all; the inset transparent outline is repainted
+    // in a system colour instead.
+    const source = readFileSync("src/components/ui/product-card.tsx", "utf8");
+    const link = source.slice(source.indexOf(`data-card-link=""`));
+    assert.ok(!/focus-visible:outline-none/.test(link), "the name/price link must not drop its outline");
+    for (const utility of [
+      "focus-visible:outline-2!",
+      "focus-visible:-outline-offset-2!",
+      "focus-visible:outline-transparent!",
+    ]) {
+      assert.ok(link.includes(utility), `expected ${utility} on the name/price link`);
+    }
+    // ...and the ring that shows in normal mode is still on the card.
+    assert.match(source, /has-\[\[data-card-link\]:focus-visible\]:ring-2/);
+  });
+
+  it("the search dialog always renders a Tab-focusable link inside its scrolling suggestions region", () => {
+    // The options are tabIndex -1 (arrow keys move through them), so without
+    // a link in the scroll region axe's scrollable-region-focusable fires
+    // for the freshly opened, empty-query dialog.
+    const source = readFileSync("src/components/search/search-dialog.tsx", "utf8");
+    const region = source.slice(source.indexOf("max-h-[420px] overflow-y-auto"));
+    assert.ok(region.includes("Browse all products"), "empty query needs a 'Browse all products' link");
+    assert.match(region, /href="\/shop"/);
+    assert.ok(region.includes("Search all products for"), "typed query keeps its 'Search all products' link");
+    // The fallback link must not be gated on a query being typed.
+    assert.ok(!/\{!loading && query\.trim\(\) && \(/.test(region));
+  });
+});

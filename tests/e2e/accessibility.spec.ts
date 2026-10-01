@@ -244,7 +244,47 @@ test.describe("Accessibility sweep 1", () => {
     await page.keyboard.press("Tab");
     await expect(link).toBeFocused();
     expect(await article.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe("none");
-    expect(await link.evaluate((el) => getComputedStyle(el).outlineStyle)).toBe("none");
+    // The link's own outline is inset and transparent: nothing visible in
+    // normal rendering (the card ring is the indicator), but still an
+    // outline for forced-colors mode — see the next test.
+    const outline = await link.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return { style: style.outlineStyle, width: style.outlineWidth, offset: style.outlineOffset, color: style.outlineColor };
+    });
+    expect(outline.style).not.toBe("none");
+    expect(outline.width).toBe("2px");
+    expect(outline.offset).toBe("-2px");
+    expect(outline.color).toBe("rgba(0, 0, 0, 0)");
+  });
+
+  // F-239 (review): Windows High Contrast strips box-shadow, so the card ring
+  // vanishes there; the link's transparent inset outline is what gets painted.
+  test("keyboard focus on a product card stays visible in forced-colors mode (F-239)", async ({ page }) => {
+    await page.emulateMedia({ forcedColors: "active" });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await gotoAndSettle(page, "/shop");
+    const article = page.locator("article").first();
+    const link = article.locator("a[data-card-link]");
+    await link.focus();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    await expect(link).toBeFocused();
+    const painted = await link.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return {
+        style: style.outlineStyle,
+        width: parseFloat(style.outlineWidth),
+        color: style.outlineColor,
+        // The box-shadow ring really is gone in this mode, so the outline is
+        // the only indicator.
+        cardShadow: getComputedStyle(el.closest("article") as Element).boxShadow,
+      };
+    });
+    expect(painted.cardShadow).toBe("none");
+    expect(painted.style).not.toBe("none");
+    expect(painted.width).toBeGreaterThanOrEqual(2);
+    // Forced colors repaints the transparent colour in a system colour.
+    expect(painted.color).not.toBe("rgba(0, 0, 0, 0)");
   });
 
   test("colour swatches on a product card are at least 24px (F-022)", async ({ page }) => {
@@ -358,6 +398,56 @@ test.describe("Accessibility sweep 1", () => {
     const dialog = page.getByRole("dialog", { name: "Search products" });
     await expect(dialog.getByRole("link", { name: /Search all products for/ })).toBeVisible();
     await expect(dialog.getByRole("link", { name: "Kids wear" })).toBeVisible();
+  });
+
+  // F-083 (review): the freshly opened dialog lists suggestions in a scrolling
+  // region whose options are arrow-key only (tabindex -1). With no query there
+  // was no Tab-focusable descendant, so axe's scrollable-region-focusable
+  // (WCAG 2.1.1) fired. Every state of the dialog is scanned.
+  test("predictive search: the empty-query suggestions region is keyboard reachable", async ({ page }) => {
+    for (const viewport of [
+      { width: 1280, height: 800 },
+      { width: 375, height: 812 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await gotoAndSettle(page, "/");
+      await page.locator("header").getByRole("button", { name: "Search", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Search products" });
+      await expect(dialog.getByRole("option").first()).toBeVisible();
+
+      // The suggestion list sits in a scrolling region (max-height +
+      // overflow-y-auto), and the Tab stop that makes it keyboard reachable
+      // lives inside that same region.
+      const region = dialog.locator("div.overflow-y-auto");
+      const overflows = await region.evaluate((el) => el.scrollHeight > el.clientHeight);
+      const browse = region.getByRole("link", { name: "Browse all products" });
+      await expect(browse).toBeVisible();
+      await expect(browse).toHaveAttribute("href", "/shop");
+
+      // Tab order: input -> Close search -> Browse all products.
+      await expect(dialog.getByRole("combobox")).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(dialog.getByRole("button", { name: "Close search" })).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(browse).toBeFocused();
+
+      const results = await new AxeBuilder({ page })
+        .include('[role="dialog"]')
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa", "best-practice"])
+        .analyze();
+      expect(results.violations, `overflows=${overflows} ${describeViolations(results.violations)}`).toEqual([]);
+
+      // The same region with a query typed (links to /shop?q=) and with no matches.
+      await dialog.getByRole("combobox").fill("scrub");
+      await expect(dialog.getByRole("link", { name: /Search all products for/ })).toBeVisible();
+      await dialog.getByRole("combobox").fill("zzqxnomatch");
+      await expect(dialog.getByText("No products found")).toBeVisible();
+      const noResults = await new AxeBuilder({ page })
+        .include('[role="dialog"]')
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa", "best-practice"])
+        .analyze();
+      expect(noResults.violations, describeViolations(noResults.violations)).toEqual([]);
+    }
   });
 
   // F-241
