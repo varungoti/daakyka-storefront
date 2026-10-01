@@ -4,7 +4,12 @@ import {
   applyShopFiltersToSearchParams,
   countByCategory,
   defaultShopFilters,
+  deriveColorFacet,
+  derivePriceFacet,
+  deriveShopFacets,
+  deriveSizeFacet,
   filterProducts,
+  isFacetToken,
   parseShopFiltersFromSearchParams,
   parseShopSearchQuery,
   parseShopVisibleCount,
@@ -12,7 +17,7 @@ import {
   withShopVisibleCount,
   type ShopFilters,
 } from "@/lib/shop/filters";
-import { PRICE_FILTER_MAX_INR, PRICE_FILTER_MIN_INR } from "@/lib/currency/config";
+import { draftProducts } from "@/data/catalog/draft-catalog";
 import type { Product } from "@/lib/types";
 
 const mockProducts: Product[] = [
@@ -187,19 +192,48 @@ describe("countByCategory", () => {
   });
 });
 
-describe("defaultShopFilters (v1 5.5 fix)", () => {
-  it("defaults priceMax to the top of the filter's own range, so nothing is hidden until the shopper narrows it", () => {
-    assert.equal(defaultShopFilters.priceMax, PRICE_FILTER_MAX_INR);
-    // A product priced above the old lower "default max" (8999) must
-    // still be visible by default.
-    const expensiveProduct: Product = {
-      ...mockProducts[0],
-      id: "expensive",
-      handle: "expensive",
-      price: 10499,
-    };
-    const result = filterProducts([expensiveProduct], defaultShopFilters);
+describe("defaultShopFilters (v1 5.5 / F-094 fix)", () => {
+  it("defaults priceMax to 'no limit', so nothing is hidden until the shopper narrows it", () => {
+    assert.equal(defaultShopFilters.priceMax, Number.POSITIVE_INFINITY);
+    // However dear a product is, it must still be visible by default —
+    // the old fixed default (10,999) hid anything above it.
+    for (const price of [10499, 10999.5, 250_000]) {
+      const expensiveProduct: Product = {
+        ...mockProducts[0],
+        id: "expensive",
+        handle: "expensive",
+        price,
+      };
+      const result = filterProducts([expensiveProduct], defaultShopFilters);
+      assert.equal(result.length, 1, `a product priced ${price} must be listed by default`);
+    }
+  });
+});
+
+describe("filterProducts: colour and size matching is case-insensitive", () => {
+  const navyShirt: Product = {
+    ...mockProducts[0],
+    id: "navy-shirt",
+    handle: "navy-shirt",
+    colors: [{ name: "navy", hex: "#1E3A5F" }],
+    sizes: ["2-3Y", "xl"],
+  };
+
+  it("matches a colour whatever its case or surrounding whitespace", () => {
+    for (const wanted of ["Navy", "NAVY", " navy "]) {
+      const result = filterProducts([navyShirt], { ...defaultShopFilters, colors: [wanted] });
+      assert.equal(result.length, 1, `colors=${JSON.stringify(wanted)}`);
+    }
+  });
+
+  it("matches a size whatever its case", () => {
+    const result = filterProducts([navyShirt], { ...defaultShopFilters, sizes: ["XL"] });
     assert.equal(result.length, 1);
+  });
+
+  it("still excludes a product that doesn't have the colour or size", () => {
+    assert.equal(filterProducts([navyShirt], { ...defaultShopFilters, colors: ["Maroon"] }).length, 0);
+    assert.equal(filterProducts([navyShirt], { ...defaultShopFilters, sizes: ["3XL"] }).length, 0);
   });
 });
 
@@ -371,25 +405,54 @@ describe("parseShopFiltersFromSearchParams: price range", () => {
     assert.equal(parseShopFiltersFromSearchParams(new URLSearchParams({ price: "5500" })).priceMax, 5500);
   });
 
-  it("falls back to the default max for a non-numeric price", () => {
+  it("falls back to the default (no limit) for a non-numeric price", () => {
     assert.equal(
       parseShopFiltersFromSearchParams(new URLSearchParams({ price: "not-a-number" })).priceMax,
-      PRICE_FILTER_MAX_INR,
+      defaultShopFilters.priceMax,
     );
   });
 
-  it("clamps a price above the filter's max instead of discarding the whole param", () => {
+  // F-094: a price below the old fixed slider minimum (2,499) used to be
+  // silently raised to it, so "under INR 500" could not even be expressed.
+  it("keeps a low price as given instead of clamping it up to a fixed minimum", () => {
+    for (const [raw, expected] of [
+      ["149", 149],
+      ["500", 500],
+      ["1", 1],
+    ] as const) {
+      assert.equal(
+        parseShopFiltersFromSearchParams(new URLSearchParams({ price: raw })).priceMax,
+        expected,
+        `price=${raw}`,
+      );
+    }
+  });
+
+  it("keeps a high price as given instead of clamping it to a fixed maximum", () => {
     assert.equal(
-      parseShopFiltersFromSearchParams(new URLSearchParams({ price: "999999999" })).priceMax,
-      PRICE_FILTER_MAX_INR,
+      parseShopFiltersFromSearchParams(new URLSearchParams({ price: "25000" })).priceMax,
+      25000,
     );
   });
 
-  it("clamps a negative price up to the filter's min", () => {
-    assert.equal(
-      parseShopFiltersFromSearchParams(new URLSearchParams({ price: "-500" })).priceMax,
-      PRICE_FILTER_MIN_INR,
-    );
+  it("treats an absurdly large price as no limit rather than echoing it back", () => {
+    for (const raw of ["999999999", "1e12", "Infinity"]) {
+      assert.equal(
+        parseShopFiltersFromSearchParams(new URLSearchParams({ price: raw })).priceMax,
+        defaultShopFilters.priceMax,
+        `price=${raw}`,
+      );
+    }
+  });
+
+  it("treats a zero or negative price as garbage, not as a cap that hides everything", () => {
+    for (const raw of ["0", "-500", "-0.4"]) {
+      assert.equal(
+        parseShopFiltersFromSearchParams(new URLSearchParams({ price: raw })).priceMax,
+        defaultShopFilters.priceMax,
+        `price=${raw}`,
+      );
+    }
   });
 
   it("rounds a decimal price", () => {
@@ -398,17 +461,53 @@ describe("parseShopFiltersFromSearchParams: price range", () => {
 });
 
 describe("parseShopFiltersFromSearchParams: defensive parsing (unknown/malformed/hostile input)", () => {
-  it("drops unknown or script/SQLi-lookalike tokens but keeps the valid ones alongside them", () => {
+  it("drops markup/SQLi-punctuation tokens but keeps the valid ones alongside them", () => {
     const filters = parseShopFiltersFromSearchParams(
       new URLSearchParams([
-        ["colors", "Midnight Navy,Not A Real Color,<script>alert(1)</script>"],
-        ["sizes", "M,XXXXL,DROP TABLE"],
+        ["colors", "Navy,<script>alert(1)</script>,x'; DROP TABLE colors; --"],
+        ["sizes", "M,<img src=x onerror=alert(1)>,2-3Y"],
         ["fabrics", "4-way-stretch,not-a-fabric"],
       ]),
     );
-    assert.deepEqual(filters.colors, ["Midnight Navy"]);
-    assert.deepEqual(filters.sizes, ["M"]);
+    assert.deepEqual(filters.colors, ["Navy"]);
+    assert.deepEqual(filters.sizes, ["M", "2-3Y"]);
     assert.deepEqual(filters.fabrics, ["4-way-stretch"]);
+  });
+
+  // F-015/F-095: colours and sizes were checked against a fixed list of seed
+  // names (Midnight Navy, XXS-5XL), so no real colour or size could ever be
+  // deep-linked: ?colors=Navy and ?sizes=2-3Y were silently dropped.
+  it("accepts the colours and sizes the catalogue really has, not just a fixed list", () => {
+    const filters = parseShopFiltersFromSearchParams(
+      new URLSearchParams([
+        ["colors", "Navy,Hunter Green,Ceil Blue,Pale Sky"],
+        ["sizes", "2-3Y,10-11Y,28,Standard,Made to Measure,King"],
+      ]),
+    );
+    assert.deepEqual(filters.colors, ["Navy", "Hunter Green", "Ceil Blue", "Pale Sky"]);
+    assert.deepEqual(filters.sizes, ["2-3Y", "10-11Y", "28", "Standard", "Made to Measure", "King"]);
+  });
+
+  it("de-duplicates colours and sizes case-insensitively, keeping the first spelling", () => {
+    const filters = parseShopFiltersFromSearchParams(
+      new URLSearchParams([
+        ["colors", "Navy,navy, NAVY "],
+        ["sizes", "xl,XL"],
+      ]),
+    );
+    assert.deepEqual(filters.colors, ["Navy"]);
+    assert.deepEqual(filters.sizes, ["xl"]);
+  });
+
+  it("drops a colour or size longer than any real one", () => {
+    const filters = parseShopFiltersFromSearchParams(
+      new URLSearchParams([
+        ["colors", `Navy,${"a".repeat(41)}`],
+        ["sizes", `M,${"1".repeat(41)}`],
+      ]),
+    );
+    assert.deepEqual(filters.colors, ["Navy"]);
+    assert.deepEqual(filters.sizes, ["M"]);
   });
 
   it("ignores an unknown/hostile sort value and falls back to the default", () => {
@@ -441,7 +540,7 @@ describe("parseShopFiltersFromSearchParams: defensive parsing (unknown/malformed
   it("caps an absurdly long multi-value list instead of processing it unbounded", () => {
     const hostileList = Array.from({ length: 5000 }, (_, i) => `x${i}`).join(",");
     const filters = parseShopFiltersFromSearchParams(new URLSearchParams([["colors", hostileList]]));
-    assert.equal(filters.colors.length, 0, "none of the generated tokens are real colors");
+    assert.ok(filters.colors.length <= 25, `kept ${filters.colors.length} of 5000 tokens`);
   });
 
   it("caps a pathologically long category string instead of crashing", () => {
@@ -467,7 +566,7 @@ describe("parseShopFiltersFromSearchParams: defensive parsing (unknown/malformed
   it("never throws for one query string combining every kind of hostile value at once", () => {
     const junk = new URLSearchParams([
       ["colors", "<script>alert(1)</script>,Midnight Navy"],
-      ["sizes", Array.from({ length: 500 }, (_, i) => `bad${i}`).join(",")],
+      ["sizes", Array.from({ length: 500 }, (_, i) => `<bad${i}>`).join(",")],
       ["fabrics", "'; DROP TABLE fabrics; --"],
       ["price", "NaN"],
       ["sale", "DROP"],
@@ -480,7 +579,7 @@ describe("parseShopFiltersFromSearchParams: defensive parsing (unknown/malformed
     assert.deepEqual(filters.colors, ["Midnight Navy"]);
     assert.equal(filters.sizes.length, 0);
     assert.deepEqual(filters.fabrics, []);
-    assert.equal(filters.priceMax, PRICE_FILTER_MAX_INR);
+    assert.equal(filters.priceMax, defaultShopFilters.priceMax);
     assert.equal(filters.onSale, false);
     assert.equal(filters.inStock, false);
     assert.equal(filters.sort, "featured");
@@ -690,5 +789,440 @@ describe("parsed URL filters integrate correctly with filterProducts", () => {
     const filters = parseShopFiltersFromSearchParams(params);
     assert.doesNotThrow(() => filterProducts(mockProducts, filters));
     assert.equal(filterProducts(mockProducts, filters).length, mockProducts.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Facets derived from the live catalogue (F-015 colour, F-094 price, F-095 size)
+// ---------------------------------------------------------------------------
+
+function shopProduct(overrides: Partial<Product> & { id: string }): Product {
+  return {
+    handle: overrides.id,
+    name: overrides.id,
+    colorName: "Navy",
+    price: 999,
+    rating: 0,
+    reviewCount: 0,
+    category: "scrub-tops",
+    colors: [{ name: "Navy", hex: "#1E3A5F" }],
+    sizes: ["M"],
+    fabricTech: [],
+    image: "/img.jpg",
+    ...overrides,
+  };
+}
+
+describe("isFacetToken", () => {
+  it("accepts the colour and size names the catalogue really uses", () => {
+    for (const value of [
+      "Navy",
+      "Ceil Blue",
+      "Hunter Green",
+      "XL",
+      "2XL",
+      "10-11Y",
+      "28",
+      "Made to Measure",
+      "Black/White",
+      "Blue (Light)",
+    ]) {
+      assert.equal(isFacetToken(value), true, value);
+    }
+  });
+
+  it("rejects markup, list separators, empty and over-long values", () => {
+    for (const value of ["", "<script>", "a,b", "x;y", "'; DROP", "a\nb", "a".repeat(41)]) {
+      assert.equal(isFacetToken(value), false, JSON.stringify(value));
+    }
+  });
+});
+
+describe("deriveColorFacet", () => {
+  it("lists each real colour once, counting products rather than variants, most common first", () => {
+    const products = [
+      shopProduct({
+        id: "a",
+        colors: [
+          { name: "Navy", hex: "#1E3A5F" },
+          { name: "White", hex: "#F5F5F4" },
+        ],
+      }),
+      shopProduct({ id: "b", colors: [{ name: "Navy", hex: "#1E3A5F" }] }),
+      // A product listing the same colour twice still counts once.
+      shopProduct({
+        id: "c",
+        colors: [
+          { name: "Navy", hex: "#1E3A5F" },
+          { name: "Navy", hex: "#1E3A5F" },
+        ],
+      }),
+      shopProduct({
+        id: "d",
+        colors: [
+          { name: "Maroon", hex: "#7B1E2E" },
+          { name: "White", hex: "#F5F5F4" },
+        ],
+      }),
+    ];
+    assert.deepEqual(
+      deriveColorFacet(products).map((c) => [c.name, c.count]),
+      [
+        ["Navy", 3],
+        ["White", 2],
+        ["Maroon", 1],
+      ],
+    );
+  });
+
+  it("merges spellings that differ only by case or whitespace, showing the most common one", () => {
+    const products = [
+      shopProduct({ id: "a", colors: [{ name: "Navy", hex: "#1E3A5F" }] }),
+      shopProduct({ id: "b", colors: [{ name: "navy ", hex: "#1E3A5F" }] }),
+      shopProduct({ id: "c", colors: [{ name: "Navy", hex: "#1E3A5F" }] }),
+    ];
+    assert.deepEqual(deriveColorFacet(products), [{ name: "Navy", hex: "#1e3a5f", count: 3 }]);
+  });
+
+  it("skips the 'Default' placeholder colour of a product with no variants", () => {
+    const products = [
+      shopProduct({ id: "a", colors: [{ name: "Default", hex: "#CBD5E1" }] }),
+      shopProduct({ id: "b", colors: [{ name: "Navy", hex: "#1E3A5F" }] }),
+    ];
+    assert.deepEqual(
+      deriveColorFacet(products).map((c) => c.name),
+      ["Navy"],
+    );
+  });
+
+  it("skips a colour name the URL could not carry, so every option survives a reload", () => {
+    const products = [
+      shopProduct({
+        id: "a",
+        colors: [
+          { name: "Black, Red", hex: "#000000" },
+          { name: "Navy", hex: "#1E3A5F" },
+        ],
+      }),
+    ];
+    assert.deepEqual(
+      deriveColorFacet(products).map((c) => c.name),
+      ["Navy"],
+    );
+  });
+
+  it("uses the most common real hex, ignoring the grey placeholder and malformed values", () => {
+    const products = [
+      shopProduct({ id: "a", colors: [{ name: "Navy", hex: "#CBD5E1" }] }),
+      shopProduct({ id: "b", colors: [{ name: "Navy", hex: "not-a-hex" }] }),
+      shopProduct({ id: "c", colors: [{ name: "Navy", hex: "#1F2A44" }] }),
+      shopProduct({ id: "d", colors: [{ name: "Navy", hex: "#1F2A44" }] }),
+      shopProduct({ id: "e", colors: [{ name: "Navy", hex: "#000080" }] }),
+    ];
+    assert.equal(deriveColorFacet(products)[0].hex, "#1f2a44");
+  });
+
+  it("falls back to the shared palette's hex for a known name, then a neutral grey", () => {
+    const products = [
+      shopProduct({
+        id: "a",
+        colors: [
+          { name: "Navy", hex: "#CBD5E1" },
+          { name: "Some Custom Colour", hex: "#CBD5E1" },
+        ],
+      }),
+    ];
+    const byName = Object.fromEntries(deriveColorFacet(products).map((c) => [c.name, c.hex]));
+    assert.equal(byName["Navy"], "#1E3A5F");
+    assert.equal(byName["Some Custom Colour"], "#CBD5E1");
+  });
+
+  it("is empty for no products", () => {
+    assert.deepEqual(deriveColorFacet([]), []);
+  });
+});
+
+describe("deriveSizeFacet", () => {
+  it("lists each real size once, in the catalogue's canonical order", () => {
+    const products = [
+      shopProduct({ id: "adult", sizes: ["2XL", "S", "M", "XL", "L"] }),
+      shopProduct({ id: "kids", sizes: ["10-11Y", "2-3Y", "4-5Y"] }),
+      shopProduct({ id: "school", sizes: ["28", "22", "24"] }),
+      shopProduct({ id: "linen", sizes: ["King", "Single", "Double", "Standard"] }),
+      shopProduct({ id: "adult-2", sizes: ["M", "L"] }),
+    ];
+    assert.deepEqual(
+      deriveSizeFacet(products).map((s) => s.value),
+      ["S", "M", "L", "XL", "2XL", "2-3Y", "4-5Y", "10-11Y", "22", "24", "28", "Single", "Double", "King", "Standard"],
+    );
+  });
+
+  it("counts products per size and merges case-only duplicates", () => {
+    const products = [
+      shopProduct({ id: "a", sizes: ["M", "L"] }),
+      shopProduct({ id: "b", sizes: ["m"] }),
+      shopProduct({ id: "c", sizes: ["M", "M"] }),
+    ];
+    assert.deepEqual(deriveSizeFacet(products), [
+      { value: "M", count: 3 },
+      { value: "L", count: 1 },
+    ]);
+  });
+
+  it("never offers a size the products don't have (no XXS/XS/4XL/5XL)", () => {
+    const sizes = deriveSizeFacet([shopProduct({ id: "a", sizes: ["S", "M", "L"] })]).map((s) => s.value);
+    for (const phantom of ["XXS", "XS", "4XL", "5XL"]) assert.ok(!sizes.includes(phantom), phantom);
+  });
+
+  it("skips a size the URL could not carry", () => {
+    const sizes = deriveSizeFacet([shopProduct({ id: "a", sizes: ["M", "S,M", "<b>L</b>"] })]);
+    assert.deepEqual(
+      sizes.map((s) => s.value),
+      ["M"],
+    );
+  });
+});
+
+describe("derivePriceFacet", () => {
+  it("spans the cheapest to the dearest product, ending on a whole number of steps", () => {
+    const facet = derivePriceFacet([
+      shopProduct({ id: "a", price: 149 }),
+      shopProduct({ id: "b", price: 999 }),
+      shopProduct({ id: "c", price: 2990 }),
+    ]);
+    assert.ok(facet);
+    assert.equal(facet.min, 149);
+    assert.ok(facet.max >= 2990, `max ${facet.max} must reach the dearest product`);
+    assert.ok(facet.max - 2990 < facet.step, "max must not overshoot by a whole step");
+    assert.equal((facet.max - facet.min) % facet.step, 0, "the top stop must be reachable");
+  });
+
+  it("rounds a fractional cheapest price up, so that product is still listed at the lowest stop", () => {
+    const facet = derivePriceFacet([
+      shopProduct({ id: "a", price: 149.5 }),
+      shopProduct({ id: "b", price: 500 }),
+    ]);
+    assert.ok(facet);
+    assert.equal(facet.min, 150);
+  });
+
+  it("scales the step to the span, rather than a fixed 1 or 1000", () => {
+    const narrow = derivePriceFacet([shopProduct({ id: "a", price: 100 }), shopProduct({ id: "b", price: 180 })]);
+    const wide = derivePriceFacet([shopProduct({ id: "a", price: 500 }), shopProduct({ id: "b", price: 90_000 })]);
+    assert.ok(narrow && wide);
+    assert.ok(narrow.step < wide.step);
+  });
+
+  it("is null when there is no range to narrow (no products, one price, or unusable prices)", () => {
+    assert.equal(derivePriceFacet([]), null);
+    assert.equal(derivePriceFacet([shopProduct({ id: "a", price: 500 })]), null);
+    assert.equal(
+      derivePriceFacet([shopProduct({ id: "a", price: 500 }), shopProduct({ id: "b", price: 500 })]),
+      null,
+    );
+    assert.equal(
+      derivePriceFacet([shopProduct({ id: "a", price: Number.NaN }), shopProduct({ id: "b", price: -5 })]),
+      null,
+    );
+  });
+});
+
+describe("deriveShopFacets", () => {
+  const products = [
+    shopProduct({
+      id: "scrub",
+      category: "scrub-tops",
+      price: 799,
+      colors: [
+        { name: "Navy", hex: "#1E3A5F" },
+        { name: "Wine", hex: "#722F37" },
+      ],
+      sizes: ["S", "M", "L"],
+    }),
+    shopProduct({
+      id: "kids",
+      category: "kids-shirts",
+      price: 349,
+      colors: [
+        { name: "Navy", hex: "#1E3A5F" },
+        { name: "Sky Blue", hex: "#AEE1F9" },
+      ],
+      sizes: ["2-3Y", "4-5Y"],
+    }),
+    shopProduct({
+      id: "linen",
+      category: "bedsheets",
+      price: 1999,
+      colors: [{ name: "White", hex: "#F5F5F4" }],
+      sizes: ["Single", "King"],
+    }),
+  ];
+  const descendants = {
+    "for-kids": ["for-kids", "kids-shirts"],
+    "for-hospitals": ["for-hospitals", "scrub-tops", "bedsheets"],
+  };
+
+  it("derives everything from all products when no category is selected", () => {
+    const facets = deriveShopFacets(products);
+    assert.deepEqual(facets.colors.map((c) => c.name).sort(), ["Navy", "Sky Blue", "White", "Wine"]);
+    assert.deepEqual(
+      facets.sizes.map((s) => s.value),
+      ["S", "M", "L", "2-3Y", "4-5Y", "Single", "King"],
+    );
+    assert.ok(facets.price);
+    assert.equal(facets.price.min, 349);
+  });
+
+  it("scopes colours and sizes to the selected category and its sub-categories", () => {
+    const kids = deriveShopFacets(products, { category: "for-kids", categoryDescendants: descendants });
+    assert.deepEqual(
+      kids.sizes.map((s) => s.value),
+      ["2-3Y", "4-5Y"],
+    );
+    assert.deepEqual(kids.colors.map((c) => c.name).sort(), ["Navy", "Sky Blue"]);
+
+    const hospitals = deriveShopFacets(products, {
+      category: "for-hospitals",
+      categoryDescendants: descendants,
+    });
+    assert.deepEqual(
+      hospitals.sizes.map((s) => s.value),
+      ["S", "M", "L", "Single", "King"],
+    );
+  });
+
+  it("falls back to an exact-slug match without a descendants map, like filterProducts", () => {
+    const facets = deriveShopFacets(products, { category: "bedsheets" });
+    assert.deepEqual(
+      facets.sizes.map((s) => s.value),
+      ["Single", "King"],
+    );
+  });
+
+  it("keeps the price range over all products when a category is selected, so the slider doesn't jump", () => {
+    const all = deriveShopFacets(products).price;
+    const kids = deriveShopFacets(products, { category: "kids-shirts" }).price;
+    assert.deepEqual(kids, all);
+  });
+});
+
+// The package's acceptance test: run the derivation over the real launch
+// catalogue (the data the DB is seeded from) and check every option against
+// the products themselves.
+describe("shop facets over the real launch catalogue (F-015, F-094, F-095)", () => {
+  const products: Product[] = draftProducts.map((draft) => {
+    const colors = new Map<string, string>();
+    for (const variant of draft.variants) {
+      if (!colors.has(variant.color)) colors.set(variant.color, variant.colorHex);
+    }
+    return shopProduct({
+      id: draft.slug,
+      category: draft.categorySlug,
+      price: draft.price,
+      colors: [...colors].map(([name, hex]) => ({ name, hex })),
+      sizes: [...new Set(draft.variants.map((variant) => variant.size))],
+    });
+  });
+  const facets = deriveShopFacets(products);
+  const lower = (value: string) => value.trim().toLowerCase();
+
+  it("has a real catalogue to check against", () => {
+    assert.ok(products.length >= 20, `only ${products.length} products`);
+  });
+
+  it("offers exactly the colours at least one product has, with no seed-era swatches", () => {
+    const real = new Set(draftProducts.flatMap((p) => p.variants.map((v) => lower(v.color))));
+    const offered = new Set(facets.colors.map((c) => lower(c.name)));
+    assert.deepEqual([...offered].sort(), [...real].sort());
+    for (const seedColor of [
+      "Lilac Purple",
+      "Midnight Navy",
+      "Sage Green",
+      "Cloud White",
+      "Rose Blush",
+      "Ocean Teal",
+      "Warm Sand",
+    ]) {
+      assert.ok(!offered.has(lower(seedColor)), `${seedColor} is not a catalogue colour`);
+    }
+  });
+
+  it("offers exactly the sizes at least one product has: kids, school and linen sizes present, phantom sizes absent", () => {
+    const real = new Set(draftProducts.flatMap((p) => p.variants.map((v) => lower(v.size))));
+    const offered = new Set(facets.sizes.map((s) => lower(s.value)));
+    assert.deepEqual([...offered].sort(), [...real].sort());
+    for (const phantom of ["xxs", "xs", "4xl", "5xl"]) {
+      assert.equal(offered.has(phantom), real.has(phantom), phantom);
+    }
+    assert.ok(
+      facets.sizes.some((s) => /^\d+-\d+y$/i.test(s.value)),
+      "an age-band size is offered",
+    );
+    assert.ok(
+      facets.sizes.some((s) => /^\d+$/.test(s.value)),
+      "a numeric school size is offered",
+    );
+  });
+
+  it("gives every colour and size option a count that matches what choosing it returns", () => {
+    for (const color of facets.colors) {
+      const matched = filterProducts(products, { ...defaultShopFilters, colors: [color.name] });
+      assert.ok(matched.length > 0, `${color.name} must not lead to an empty list`);
+      assert.equal(matched.length, color.count, `${color.name} count`);
+    }
+    for (const size of facets.sizes) {
+      const matched = filterProducts(products, { ...defaultShopFilters, sizes: [size.value] });
+      assert.ok(matched.length > 0, `${size.value} must not lead to an empty list`);
+      assert.equal(matched.length, size.count, `${size.value} size count`);
+    }
+  });
+
+  it("derives the price range from the real minimum and maximum price", () => {
+    const prices = products.map((p) => p.price);
+    const cheapest = Math.min(...prices);
+    const dearest = Math.max(...prices);
+    assert.ok(facets.price, "the catalogue spans a price range");
+    assert.equal(facets.price.min, Math.ceil(cheapest));
+    assert.ok(facets.price.max >= dearest);
+    assert.ok(facets.price.max - dearest < facets.price.step);
+  });
+
+  it("makes every URL a facet click writes round-trip back to the same selection", () => {
+    for (const color of facets.colors) {
+      const url = applyShopFiltersToSearchParams("", { ...defaultShopFilters, colors: [color.name] }, "");
+      assert.deepEqual(parseShopFiltersFromSearchParams(url).colors, [color.name], color.name);
+    }
+    for (const size of facets.sizes) {
+      const url = applyShopFiltersToSearchParams("", { ...defaultShopFilters, sizes: [size.value] }, "");
+      assert.deepEqual(parseShopFiltersFromSearchParams(url).sizes, [size.value], size.value);
+    }
+  });
+
+  it("a deep link to a real colour narrows the list instead of showing no products (F-015)", () => {
+    const top = facets.colors[0];
+    const filters = parseShopFiltersFromSearchParams(new URLSearchParams({ colors: top.name.toLowerCase() }));
+    const result = filterProducts(products, filters);
+    assert.equal(result.length, top.count);
+    assert.ok(result.length > 0 && result.length <= products.length);
+  });
+
+  it("a low ?price= really narrows the list (F-094)", () => {
+    assert.ok(facets.price);
+    const cap = facets.price.min + facets.price.step * 4;
+    const filters = parseShopFiltersFromSearchParams(new URLSearchParams({ price: String(cap) }));
+    assert.equal(filters.priceMax, cap);
+    const result = filterProducts(products, filters);
+    assert.ok(result.length < products.length, "the cap hides the dearer products");
+    assert.ok(result.every((p) => p.price <= cap));
+    assert.equal(result.length, products.filter((p) => p.price <= cap).length);
+  });
+});
+
+describe("price filter URL round-trip with the 'no limit' default", () => {
+  it("never writes ?price= for the default, and round-trips a real cap", () => {
+    assert.equal(applyShopFiltersToSearchParams("", defaultShopFilters, "").get("price"), null);
+    const capped = applyShopFiltersToSearchParams("", { ...defaultShopFilters, priceMax: 500 }, "");
+    assert.equal(capped.get("price"), "500");
+    assert.equal(parseShopFiltersFromSearchParams(capped).priceMax, 500);
   });
 });

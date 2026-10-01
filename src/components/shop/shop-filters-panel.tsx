@@ -1,16 +1,13 @@
 "use client";
 
 import { useCurrency } from "@/context/currency-provider";
+import { fabricFilters } from "@/data/navigation";
 import {
-  colorFilters,
-  fabricFilters,
-  sizeFilters,
-} from "@/data/navigation";
-import {
-  PRICE_FILTER_MAX_INR,
-  PRICE_FILTER_MIN_INR,
-} from "@/lib/currency/config";
-import type { ShopFilters } from "@/lib/shop/filters";
+  defaultShopFilters,
+  normalizeFacetValue,
+  type ShopFacets,
+  type ShopFilters,
+} from "@/lib/shop/filters";
 import { cn } from "@/lib/utils";
 
 export interface ShopFilterCategory {
@@ -37,7 +34,16 @@ interface ShopFiltersPanelProps {
    * same as before this fix — only a defined, non-empty product list can
    * ever narrow the list, never widen a false "nothing matches" state. */
   availableFabricIds?: ReadonlySet<string>;
+  /** release-hardening F-015/F-094/F-095: the colours, sizes and price range
+   * the loaded products really have (`deriveShopFacets`). The Color, Size and
+   * Price Range blocks are drawn from this and nothing else — omitted, they
+   * are hidden rather than falling back to a fixed list that matches no real
+   * product. */
+  facets?: ShopFacets;
 }
+
+/** A facet with fewer than two choices narrows nothing, so it isn't drawn. */
+const MIN_FACET_OPTIONS = 2;
 
 export function ShopFiltersPanel({
   filters,
@@ -46,21 +52,37 @@ export function ShopFiltersPanel({
   categoryCounts,
   totalCount,
   availableFabricIds,
+  facets,
 }: ShopFiltersPanelProps) {
   const { formatPrice } = useCurrency();
   const visibleFabricFilters = availableFabricIds
     ? fabricFilters.filter((fabric) => availableFabricIds.has(fabric.id))
     : fabricFilters;
 
+  const colorOptions = facets?.colors ?? [];
+  const sizeOptions = facets?.sizes ?? [];
+  const priceFacet = facets?.price ?? null;
+
+  // Colours and sizes match case-insensitively (filterProducts), so a
+  // `?colors=navy` link shows the "Navy" swatch as pressed and unticks it.
+  const isSelected = (key: "colors" | "sizes" | "fabrics", value: string) =>
+    filters[key].some((item) => normalizeFacetValue(item) === normalizeFacetValue(value));
+
   const toggle = (key: "colors" | "sizes" | "fabrics", value: string) => {
     const current = filters[key];
     onChange({
       ...filters,
-      [key]: current.includes(value)
-        ? current.filter((item) => item !== value)
+      [key]: isSelected(key, value)
+        ? current.filter((item) => normalizeFacetValue(item) !== normalizeFacetValue(value))
         : [...current, value],
     });
   };
+
+  // The slider's top stop means "no limit" (the default), so a finite cap is
+  // always a lower stop. A `?price=` outside the range is shown at the
+  // nearest end; the active-filter chip still names the real value.
+  const priceIsCapped = Number.isFinite(filters.priceMax);
+  const priceLabel = priceIsCapped ? `Up to ${formatPrice(filters.priceMax)}` : "Any price";
 
   return (
     <div className="space-y-8">
@@ -103,47 +125,66 @@ export function ShopFiltersPanel({
         </ul>
       </FilterBlock>
 
-      <FilterBlock title="Color">
-        <div className="grid grid-cols-4 gap-3">
-          {colorFilters.map((color) => (
-            <button
-              key={color.name}
-              type="button"
-              aria-label={color.name}
-              aria-pressed={filters.colors.includes(color.name)}
-              onClick={() => toggle("colors", color.name)}
-              className={cn(
-                "h-8 w-8 rounded-full border-2 transition",
-                filters.colors.includes(color.name)
-                  ? "border-brand ring-2 ring-offset-2 ring-brand/40 scale-110"
-                  : "border-border hover:scale-105",
-              )}
-              style={{ backgroundColor: color.hex }}
-            />
-          ))}
-        </div>
-      </FilterBlock>
+      {colorOptions.length >= MIN_FACET_OPTIONS && (
+        <FilterBlock title="Color">
+          {/* Name and count sit beside each swatch: with real colours like
+              Sky Blue, Ceil Blue and Pale Sky a bare dot is ambiguous. */}
+          <div className="flex flex-wrap gap-2">
+            {colorOptions.map((color) => {
+              const selected = isSelected("colors", color.name);
+              return (
+                <button
+                  key={color.name}
+                  type="button"
+                  aria-label={`${color.name}, ${color.count} ${color.count === 1 ? "product" : "products"}`}
+                  aria-pressed={selected}
+                  onClick={() => toggle("colors", color.name)}
+                  className={cn(
+                    "flex min-h-9 items-center gap-2 rounded-full border py-1 pl-1.5 pr-3 text-xs font-semibold transition",
+                    selected
+                      ? "border-brand bg-brand/10 text-brand"
+                      : "border-border text-ink hover:border-brand/40",
+                  )}
+                >
+                  <span
+                    aria-hidden
+                    className="h-5 w-5 shrink-0 rounded-full border border-ink/15"
+                    style={{ backgroundColor: color.hex }}
+                  />
+                  {color.name}
+                  <span className="font-normal text-muted">{color.count}</span>
+                </button>
+              );
+            })}
+          </div>
+        </FilterBlock>
+      )}
 
-      <FilterBlock title="Size">
-        <div className="grid grid-cols-5 gap-2">
-          {sizeFilters.map((size) => (
-            <button
-              key={size}
-              type="button"
-              aria-pressed={filters.sizes.includes(size)}
-              onClick={() => toggle("sizes", size)}
-              className={cn(
-                "rounded-lg border px-2 py-2 text-xs font-semibold transition",
-                filters.sizes.includes(size)
-                  ? "border-brand bg-brand/10 text-brand"
-                  : "border-border text-ink hover:border-brand/40",
-              )}
-            >
-              {size}
-            </button>
-          ))}
-        </div>
-      </FilterBlock>
+      {sizeOptions.length >= MIN_FACET_OPTIONS && (
+        <FilterBlock title="Size">
+          <div className="flex flex-wrap gap-2">
+            {sizeOptions.map((size) => {
+              const selected = isSelected("sizes", size.value);
+              return (
+                <button
+                  key={size.value}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => toggle("sizes", size.value)}
+                  className={cn(
+                    "min-h-9 min-w-11 rounded-lg border px-3 py-1.5 text-xs font-semibold transition",
+                    selected
+                      ? "border-brand bg-brand/10 text-brand"
+                      : "border-border text-ink hover:border-brand/40",
+                  )}
+                >
+                  {size.value}
+                </button>
+              );
+            })}
+          </div>
+        </FilterBlock>
+      )}
 
       {visibleFabricFilters.length > 0 && (
         <FilterBlock title="Fabric Technology">
@@ -166,30 +207,44 @@ export function ShopFiltersPanel({
         </FilterBlock>
       )}
 
-      <FilterBlock title="Price Range">
-        <input
-          type="range"
-          aria-label="Maximum price"
-          aria-valuetext={`${formatPrice(filters.priceMax)}+`}
-          min={PRICE_FILTER_MIN_INR}
-          max={PRICE_FILTER_MAX_INR}
-          value={filters.priceMax}
-          onChange={(event) =>
-            // Fires on every drag tick — always transient (replace), never
-            // push, or dragging the slider would flood browser history.
-            onChange(
-              { ...filters, priceMax: Number(event.target.value) },
-              { transient: true },
-            )
-          }
-          className="w-full accent-brand"
-        />
-        <div className="mt-2 flex justify-between text-xs text-muted">
-          <span>{formatPrice(PRICE_FILTER_MIN_INR)}</span>
-          <span className="font-semibold text-brand">{formatPrice(filters.priceMax)}+</span>
-          <span>{formatPrice(PRICE_FILTER_MAX_INR)}+</span>
-        </div>
-      </FilterBlock>
+      {priceFacet && (
+        <FilterBlock title="Price Range">
+          <input
+            type="range"
+            aria-label="Maximum price"
+            aria-valuetext={priceLabel}
+            min={priceFacet.min}
+            max={priceFacet.max}
+            step={priceFacet.step}
+            value={
+              priceIsCapped
+                ? Math.min(priceFacet.max, Math.max(priceFacet.min, filters.priceMax))
+                : priceFacet.max
+            }
+            onChange={(event) => {
+              const next = Number(event.target.value);
+              // Fires on every drag tick — always transient (replace), never
+              // push, or dragging the slider would flood browser history.
+              // Dragging to the top stop clears the cap instead of pinning
+              // it at the dearest product's price, so a dearer product added
+              // later is never hidden by the default.
+              onChange(
+                {
+                  ...filters,
+                  priceMax: next >= priceFacet.max ? defaultShopFilters.priceMax : next,
+                },
+                { transient: true },
+              );
+            }}
+            className="w-full accent-brand"
+          />
+          <div className="mt-2 flex justify-between text-xs text-muted">
+            <span>{formatPrice(priceFacet.min)}</span>
+            <span className="font-semibold text-brand">{priceLabel}</span>
+            <span>{formatPrice(priceFacet.max)}+</span>
+          </div>
+        </FilterBlock>
+      )}
 
       <FilterBlock title="Availability">
         <div className="space-y-2">
