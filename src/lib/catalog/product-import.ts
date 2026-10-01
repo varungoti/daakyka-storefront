@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import type { ProductGender } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
 import { PRODUCTS_CACHE_TAG, CATEGORIES_CACHE_TAG } from "@/lib/products";
 import { revalidateTag } from "next/cache";
 import {
@@ -23,9 +24,10 @@ import { prepareDescriptionForStorage } from "@/lib/catalog/description-html";
  * on re-run with the same slugs).
  */
 
+// F-032: immediate ({ expire: 0 }) — see src/lib/cache/admin-revalidate.ts.
 function safeRevalidate(tag: string) {
   try {
-    revalidateTag(tag, "max");
+    revalidateTag(tag, ADMIN_REVALIDATE_PROFILE);
   } catch {
     // No static generation store in this context.
   }

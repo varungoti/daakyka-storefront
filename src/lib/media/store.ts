@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { revalidateTag } from "next/cache";
+import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
 import { db } from "@/lib/db";
 import type { MediaAsset, MediaSource, MediaUsage } from "@/generated/prisma/client";
 import { MEDIA_CACHE_TAG } from "@/lib/media/get-site-image";
@@ -158,10 +159,11 @@ export async function saveMediaAsset(
 
   if (input.slot) {
     try {
-      // "max": the recommended profile (see next/cache's revalidateTag
-      // docs) — stale-while-revalidate, matching the settings module's
-      // SETTINGS_CACHE_TAG invalidation in src/lib/settings/index.ts.
-      revalidateTag(MEDIA_CACHE_TAG, "max");
+      // F-214: immediate ({ expire: 0 }), not the stale-while-revalidate "max" —
+      // a site image the owner just uploaded must show on their next reload,
+      // not one reload later. Same profile as the settings module's
+      // SETTINGS_CACHE_TAG invalidation (src/lib/settings/index.ts).
+      revalidateTag(MEDIA_CACHE_TAG, ADMIN_REVALIDATE_PROFILE);
     } catch {
       // No static generation store in this context (unit tests, scripts,
       // the fake-storage integration tests) — nothing to revalidate.

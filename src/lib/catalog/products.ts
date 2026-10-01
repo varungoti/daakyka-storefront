@@ -1,6 +1,7 @@
 import { revalidateTag } from "next/cache";
 import { z } from "zod";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
 import { db } from "@/lib/db";
 import { CATEGORIES_CACHE_TAG, PRODUCTS_CACHE_TAG, productCacheTag } from "@/lib/products";
 import { Prisma } from "@/generated/prisma/client";
@@ -265,9 +266,12 @@ export class VariantStockConflictError extends Error {
 // Cache
 // ---------------------------------------------------------------------------
 
+// F-032: ADMIN_REVALIDATE_PROFILE ({ expire: 0 }), not "max" — every caller
+// here is an admin write, and "max" served the OLD price / a just-unpublished
+// product to the next request (the owner checking their own change).
 function safeRevalidate(tag: string) {
   try {
-    revalidateTag(tag, "max");
+    revalidateTag(tag, ADMIN_REVALIDATE_PROFILE);
   } catch {
     // No static generation store in this context (unit/integration tests,
     // one-off scripts) — nothing to revalidate.

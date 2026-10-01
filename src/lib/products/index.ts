@@ -146,9 +146,27 @@ function deriveFabricTech(tags: string[], fabric: string | null): FabricTech[] {
   return [...result];
 }
 
-// F-031: see the doc comment where this is used, in mapDbProductToUi's
-// `variants` mapping below.
-const PUBLIC_STOCK_DISPLAY_CAP = 20;
+// F-031: the most on-hand stock a client-facing variant ever reports. See
+// publicStockCeiling below.
+export const PUBLIC_STOCK_DISPLAY_CAP = 20;
+
+/**
+ * What `ProductVariant.stock` reports to clients — a purchasable CEILING, not
+ * the real on-hand count. The PDP's RSC payload and /api/products serialize
+ * whatever is in the UI product object, so the exact stock of every variant of
+ * every product used to be public: a competitor could track sell-through
+ * across the whole catalog (Shopify hides quantities by default). Capping
+ * keeps the field useful for its only real UI purposes — "is this DB-tracked
+ * at all" (the `typeof stock === "number"` checks in add-to-cart-button.tsx /
+ * product-detail.tsx) and sizing the quantity stepper (F-108) — without
+ * revealing the count once there is comfortably more on hand than a single
+ * order would need. `available` is still derived from the real stock, and
+ * checkout re-validates the real stock server-side (create-order.ts), so this
+ * is display-only and can never cause an oversell.
+ */
+export function publicStockCeiling(stock: number): number {
+  return Math.min(Math.max(stock, 0), PUBLIC_STOCK_DISPLAY_CAP);
+}
 
 function mapDbProductToUi(p: DbProduct): Product {
   // release-hardening audit F-024: Postgres has no defined row order for
@@ -193,20 +211,9 @@ function mapDbProductToUi(p: DbProduct): Product {
       { name: "Size", value: v.size },
       { name: "Color", value: v.color },
     ],
-    // F-031: this `stock` figure reaches the client (the PDP's RSC payload
-    // and /api/products both serialize whatever's in this object), so the
-    // real on-hand count for every variant of every product used to be
-    // public — a competitor could track exact sell-through across the
-    // whole catalog. `available` above is unaffected (still derived from
-    // the real `v.stock`). Capping keeps this field meaningful for its
-    // only real UI purposes — "is this DB-tracked at all" (the
-    // `typeof stock === "number"` check in add-to-cart-button.tsx /
-    // product-detail.tsx) and sizing the quantity stepper — without
-    // revealing the exact count once there's comfortably more on hand
-    // than any single order would need. Checkout re-validates the real
-    // stock server-side regardless (src/lib/orders/create-order.ts), so
-    // this is display-only and never risks overselling.
-    stock: Math.min(v.stock, PUBLIC_STOCK_DISPLAY_CAP),
+    // F-031: a capped ceiling, never the real on-hand count — see
+    // publicStockCeiling. `available` above still uses the real `v.stock`.
+    stock: publicStockCeiling(v.stock),
     size: v.size,
     color: v.color,
     colorHex: v.colorHex ?? undefined,

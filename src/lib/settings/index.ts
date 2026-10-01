@@ -2,6 +2,7 @@ import { revalidateTag, unstable_cache } from "next/cache";
 import { z } from "zod";
 import { brand } from "@/data/brand";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
 import { db } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -210,7 +211,10 @@ export async function setSetting<K extends SettingKey>(
   });
 
   try {
-    revalidateTag(SETTINGS_CACHE_TAG, "max");
+    // F-214: immediate ({ expire: 0 }), not "max" — a saved setting (shipping
+    // fee, announcement, contact details) must show on the very next read,
+    // and create-order.ts prices shipping from these same cached reads.
+    revalidateTag(SETTINGS_CACHE_TAG, ADMIN_REVALIDATE_PROFILE);
   } catch {
     // No static generation store in this context (unit tests, scripts) —
     // nothing to revalidate.

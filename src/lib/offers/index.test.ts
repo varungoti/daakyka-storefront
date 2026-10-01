@@ -3,12 +3,14 @@ import assert from "node:assert/strict";
 import { OFFERS_CACHE_TAG, OfferNotFoundError, revalidateOffersCache } from "@/lib/offers/index";
 
 describe("revalidateOffersCache", () => {
-  it("invokes the revalidate function with the offers tag and the 'max' profile", () => {
-    const calls: Array<[string, string]> = [];
+  // F-214: "max" is stale-while-revalidate, so the owner's first reload after
+  // Save still showed the old content. { expire: 0 } forces a fresh read.
+  it("invokes the revalidate function with the offers tag and an immediate ({ expire: 0 }) profile", () => {
+    const calls: Array<[string, string | { expire?: number }]> = [];
     revalidateOffersCache((tag, profile) => {
       calls.push([tag, profile]);
     });
-    assert.deepEqual(calls, [[OFFERS_CACHE_TAG, "max"]]);
+    assert.deepEqual(calls, [[OFFERS_CACHE_TAG, { expire: 0 }]]);
   });
 
   it("swallows an error thrown by the revalidate function instead of throwing", () => {

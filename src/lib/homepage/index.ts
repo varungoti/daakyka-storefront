@@ -1,4 +1,6 @@
 import { revalidateTag, unstable_cache } from "next/cache";
+import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
+import type { RevalidateProfile } from "@/lib/cache/admin-revalidate";
 import { db } from "@/lib/db";
 import { getSiteImage } from "@/lib/media/get-site-image";
 import { homepageSectionSchemas, isHomepageSectionKey } from "@/lib/validation/schemas";
@@ -314,7 +316,7 @@ export async function getHeroSlidesContentForAdmin(): Promise<HeroSlidesContent>
  * revalidateTag).
  */
 export function revalidateHomepageCache(
-  revalidate: (tag: string, profile: string | { expire?: number }) => void = revalidateTag,
+  revalidate: (tag: string, profile: RevalidateProfile) => void = revalidateTag,
 ): void {
   try {
     // F-214 fix: "max" is stale-while-revalidate (node_modules/next/dist/docs/
@@ -324,7 +326,7 @@ export function revalidateHomepageCache(
     // showed the old hero/offer/etc. `{ expire: 0 }` is the documented way
     // to force the next read to be fresh instead of stale (updateTag isn't
     // available here — this runs from Route Handlers, not Server Actions).
-    revalidate(HOMEPAGE_CACHE_TAG, { expire: 0 });
+    revalidate(HOMEPAGE_CACHE_TAG, ADMIN_REVALIDATE_PROFILE);
   } catch {
     // No static generation store in this context (unit tests, scripts) —
     // nothing to revalidate. Same defensive pattern as
