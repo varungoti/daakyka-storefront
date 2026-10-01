@@ -182,7 +182,27 @@ export function descriptionToPlainText(value: string | null | undefined): string
   // "<p>One</p><p>Two</p>" reads as "One Two" rather than "OneTwo" once
   // the tags themselves are gone.
   const withBoundaries = value.replace(/<\/(p|div|li|h3|h4|blockquote)>|<br\s*\/?>/gi, " ");
-  return sanitizeHtml(withBoundaries, { allowedTags: [], allowedAttributes: {} })
-    .replace(/\s+/g, " ")
-    .trim();
+  const stripped = sanitizeHtml(withBoundaries, { allowedTags: [], allowedAttributes: {} });
+  return decodeTextEntities(stripped).replace(/\s+/g, " ").trim();
+}
+
+/**
+ * F-105: sanitize-html decodes the entities in its input and then
+ * re-encodes `&`, `<` and `>` in the text it returns, so a stripped
+ * "Poly &amp; cotton" came back still entity-encoded — and every consumer
+ * of the plain-text projection (React text nodes, Next's meta tags,
+ * JSON-LD) escapes on its own, double-encoding it ("Poly &amp;amp; cotton").
+ * Undo exactly that re-encoding. One pass, so "&amp;lt;" decodes to the
+ * literal text "&lt;" rather than being decoded twice into "<". Never feed
+ * the result to `dangerouslySetInnerHTML` — it is plain text, not HTML.
+ */
+const SANITIZED_TEXT_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+};
+
+function decodeTextEntities(text: string): string {
+  return text.replace(/&(amp|lt|gt|quot);/g, (_match, name: string) => SANITIZED_TEXT_ENTITIES[name]);
 }

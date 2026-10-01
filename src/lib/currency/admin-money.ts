@@ -9,11 +9,10 @@
  * dashboard showing "₹530" for an order actually charged ₹530.10 is
  * showing the admin the wrong number, not just a cosmetic rounding.
  *
- * Deliberately separate from `formatCurrencyAmount` in
- * src/lib/currency/convert.ts, which is the storefront's multi-currency
- * (INR/USD) display formatter and must keep INR's existing
- * `maximumFractionDigits: 0` behaviour there — this is INR-only, admin-only,
- * and always exact.
+ * Separate from `formatCurrencyAmount` in src/lib/currency/convert.ts, the
+ * storefront's multi-currency (INR/USD) display formatter (which since F-127
+ * also shows paise when there are any) — this one is INR-only, admin-only,
+ * and can force ".00" via `alwaysShowPaise`.
  */
 export function formatInrExact(amount: number, options: { alwaysShowPaise?: boolean } = {}): string {
   // Round to the nearest paisa first — floating-point line-item math

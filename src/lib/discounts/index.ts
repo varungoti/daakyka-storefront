@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { Prisma, type Discount as DiscountRow, type DiscountType } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { formatCurrencyAmount } from "@/lib/currency/convert";
 import { validateDiscountRules, type DiscountInput, type DiscountUpdateInput } from "@/lib/validation/schemas";
 
 /**
@@ -110,8 +111,12 @@ export class DiscountMinSubtotalError extends Error {
     public readonly minSubtotal: number,
     public readonly shortfall: number,
   ) {
+    // F-127: `toFixed(0)` rounded the shortfall to the nearest rupee, so a
+    // ₹199.99 cart against a ₹1,000 minimum said "Add ₹800 more" when
+    // ₹800.01 is needed. The shared formatter keeps the paise (and drops them
+    // when there are none) exactly like the totals the shopper is looking at.
     super(
-      `Add ₹${shortfall.toFixed(0)} more to your cart to use this code (minimum order ₹${minSubtotal.toFixed(0)})`,
+      `Add ${formatCurrencyAmount(shortfall, "INR")} more to your cart to use this code (minimum order ${formatCurrencyAmount(minSubtotal, "INR")})`,
     );
     this.name = "DiscountMinSubtotalError";
   }

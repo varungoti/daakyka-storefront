@@ -3,6 +3,7 @@ import { OrderStatusBadge } from "@/components/account/order-status-badge";
 import { OrderTimelineView } from "@/components/account/order-timeline";
 import { OrderTrackingCard } from "@/components/account/order-tracking-card";
 import { brand } from "@/data/brand";
+import { formatCurrencyAmount } from "@/lib/currency/convert";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import { checkOrderPageRateLimit, getAuthorizedOrder } from "@/lib/orders/get-order";
 import { formatReceiptDate, getReceiptPaymentSummary } from "@/lib/orders/receipt";
@@ -25,12 +26,10 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
+// F-127: was `maximumFractionDigits: 0`, which rounded a stored 638.97 total
+// to "₹639" while the customer is charged (and emailed) ₹638.97.
 function formatInr(amount: number): string {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(amount);
+  return formatCurrencyAmount(amount, "INR");
 }
 
 /**

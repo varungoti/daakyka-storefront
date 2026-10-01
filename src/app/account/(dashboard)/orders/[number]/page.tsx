@@ -4,6 +4,7 @@ import { OrderStatusBadge } from "@/components/account/order-status-badge";
 import { OrderTimelineView } from "@/components/account/order-timeline";
 import { OrderTrackingCard } from "@/components/account/order-tracking-card";
 import { brand } from "@/data/brand";
+import { formatCurrencyAmount } from "@/lib/currency/convert";
 import { db } from "@/lib/db";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import { getAuthorizedOrder } from "@/lib/orders/get-order";
@@ -20,10 +21,10 @@ import { notFound, redirect } from "next/navigation";
 
 export const metadata: Metadata = { title: "Order Details" };
 
+// F-127: was `maximumFractionDigits: 0`, which rounded a stored 638.97 total
+// to "₹639" while the customer is charged (and emailed) ₹638.97.
 function formatInr(amount: number): string {
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(
-    amount,
-  );
+  return formatCurrencyAmount(amount, "INR");
 }
 
 // Own key namespace (not get-order.ts's `order-page:` bucket used by the

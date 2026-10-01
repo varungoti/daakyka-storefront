@@ -186,6 +186,23 @@ describe("resolveDiscount", () => {
     assert.ok(error instanceof DiscountMinSubtotalError);
     assert.equal((error as DiscountMinSubtotalError).minSubtotal, 2000);
     assert.equal((error as DiscountMinSubtotalError).shortfall, 500);
+    assert.equal(
+      (error as DiscountMinSubtotalError).message,
+      "Add ₹500 more to your cart to use this code (minimum order ₹2,000)",
+    );
+  });
+
+  // F-127: the shortfall used to go through `toFixed(0)`, so 800.01 read "Add ₹800 more".
+  it("keeps the paise in the minimum-order shortfall message (F-127)", async () => {
+    const admin = await findAnyAdminId();
+    const discount = await createTestDiscount(admin, { minSubtotal: 1000 });
+    const error = await resolveDiscount(discount.code, 199.99, "buyer@example.com").catch((e) => e);
+    assert.ok(error instanceof DiscountMinSubtotalError);
+    assert.equal((error as DiscountMinSubtotalError).shortfall, 800.01);
+    assert.equal(
+      (error as DiscountMinSubtotalError).message,
+      "Add ₹800.01 more to your cart to use this code (minimum order ₹1,000)",
+    );
   });
 
   it("is case-insensitive and trims whitespace", async () => {

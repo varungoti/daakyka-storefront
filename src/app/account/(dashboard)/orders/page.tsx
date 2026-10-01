@@ -1,5 +1,6 @@
 import { EmptyState } from "@/components/account/account-tabs";
 import { OrderStatusBadge } from "@/components/account/order-status-badge";
+import { formatCurrencyAmount } from "@/lib/currency/convert";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import { formatDateIST } from "@/lib/format/datetime";
 import { listOrdersForCustomer } from "@/lib/orders/customer-orders";
@@ -16,10 +17,10 @@ export const metadata: Metadata = { title: "My Orders" };
 // concern, so it should just fall back to page 1 instead of 500ing.
 const pageParamSchema = z.coerce.number().int().min(1).max(100_000).catch(1);
 
+// F-127: was `maximumFractionDigits: 0`, which rounded a stored 638.97 total
+// to "₹639" while the customer is charged (and emailed) ₹638.97.
 function formatInr(amount: number): string {
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(
-    amount,
-  );
+  return formatCurrencyAmount(amount, "INR");
 }
 
 /**
