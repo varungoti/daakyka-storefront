@@ -14,6 +14,8 @@ import { GET as getCronCampaigns } from "@/app/api/cron/campaigns/route";
 import { POST as postProductView } from "@/app/api/analytics/product-view/route";
 import { POST as postContact } from "@/app/api/contact/route";
 import { POST as postBulkOrder } from "@/app/api/bulk-orders/route";
+import { POST as postCartAbandon } from "@/app/api/cart/abandon/route";
+import { createLocalCartId } from "@/lib/cart/service";
 import { POST as postShopifyWebhook } from "@/app/api/webhooks/shopify/orders/route";
 import { checkRateLimit, resetRateLimits } from "@/lib/security/rate-limit";
 
@@ -257,6 +259,70 @@ describe("API integration", () => {
         }),
       );
       assert.equal(response.status, 413);
+    });
+  });
+
+  // F-122: every cart used to carry the id "local-cart", and this route dedupes
+  // on cartId for an hour, so only the first shopper's abandonment in any hour
+  // was ever recorded, store-wide.
+  describe("POST /api/cart/abandon (F-122)", () => {
+    const createdCartIds: string[] = [];
+
+    function abandonRequest(cartId: string) {
+      return new Request("http://localhost/api/cart/abandon", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cartId,
+          subtotal: 899,
+          itemCount: 1,
+          items: [{ title: "Scrub Top", quantity: 1 }],
+        }),
+      });
+    }
+
+    after(async () => {
+      await db.cartAbandonmentEvent.deleteMany({ where: { cartId: { in: createdCartIds } } }).catch(() => {});
+      await resetRateLimits(["cart-abandon"]);
+    });
+
+    it("records one event per real cart, so two shoppers in the same hour both count", async () => {
+      await resetRateLimits(["cart-abandon"]);
+      const cartA = createLocalCartId();
+      const cartB = createLocalCartId();
+      createdCartIds.push(cartA, cartB);
+
+      const first = await postCartAbandon(abandonRequest(cartA));
+      const second = await postCartAbandon(abandonRequest(cartB));
+      assert.equal(first.status, 200);
+      assert.equal(second.status, 200);
+      const firstBody = (await first.json()) as { id: string; message: string };
+      const secondBody = (await second.json()) as { id: string; message: string };
+      assert.equal(firstBody.message, "Abandonment recorded");
+      assert.equal(secondBody.message, "Abandonment recorded");
+      assert.notEqual(firstBody.id, secondBody.id);
+      assert.equal(await db.cartAbandonmentEvent.count({ where: { cartId: { in: [cartA, cartB] } } }), 2);
+    });
+
+    it("still dedupes the same cart within the hour", async () => {
+      await resetRateLimits(["cart-abandon"]);
+      const cartId = createLocalCartId();
+      createdCartIds.push(cartId);
+      const first = await postCartAbandon(abandonRequest(cartId));
+      const again = await postCartAbandon(abandonRequest(cartId));
+      assert.equal(((await first.json()) as { message: string }).message, "Abandonment recorded");
+      assert.equal(((await again.json()) as { message: string }).message, "Already recorded");
+      assert.equal(await db.cartAbandonmentEvent.count({ where: { cartId } }), 1);
+    });
+
+    it("rejects the retired shared 'local-cart' id and other non-cart ids", async () => {
+      await resetRateLimits(["cart-abandon"]);
+      const before = await db.cartAbandonmentEvent.count({ where: { cartId: "local-cart" } });
+      for (const cartId of ["local-cart", "not-a-cart", "local-123"]) {
+        const response = await postCartAbandon(abandonRequest(cartId));
+        assert.equal(response.status, 400, cartId);
+      }
+      assert.equal(await db.cartAbandonmentEvent.count({ where: { cartId: "local-cart" } }), before);
     });
   });
 

@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     // consent fix.
     const CONFIRMATION_RESPONSE = { ok: true, message: "Check your inbox to confirm your subscription." } as const;
 
-    if (isHoneypotTripped(bodyResult.data)) {
+    if (isHoneypotTripped(bodyResult.data, "newsletter")) {
       return NextResponse.json(CONFIRMATION_RESPONSE);
     }
 

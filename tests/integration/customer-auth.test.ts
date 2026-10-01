@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import { resetRateLimits } from "@/lib/security/rate-limit";
+import { HONEYPOT_FIELD_NAME } from "@/lib/validation/honeypot";
 import { hashPassword, verifyPassword } from "@/lib/customer-auth/password";
 import { hashToken, invalidateOutstandingTokens, issueCustomerToken } from "@/lib/customer-auth/tokens";
 import { updateCustomerProfile } from "@/lib/customer-auth/profile";
@@ -143,7 +144,7 @@ describe("customer accounts (Phase D1)", () => {
           email,
           password: "password123",
           consentGiven: true,
-          company_website: "http://spam.example",
+          [HONEYPOT_FIELD_NAME]: "http://spam.example",
         }),
       );
       assert.equal(response.status, 201);

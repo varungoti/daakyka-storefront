@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     const bodyResult = await readJsonBody(request);
     if (!bodyResult.ok) return bodyResult.response;
 
-    if (isHoneypotTripped(bodyResult.data)) {
+    if (isHoneypotTripped(bodyResult.data, "forgot-password")) {
       return NextResponse.json(GENERIC_RESPONSE);
     }
 
