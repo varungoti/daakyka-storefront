@@ -84,16 +84,14 @@ export default async function AccountOrderDetailPage({
   const address = order.shippingAddress as unknown as ShippingAddressInput;
   // F-141 fix: see getOrderTimeline's doc comment — only matters for a
   // RAZORPAY order that never captured a payment.
-  // F-199 fix: shippedAt/deliveredAt are real columns, used only for the
-  // (now reachable) RETURNED and post-shipping REFUNDED cases.
-  const timeline = getOrderTimeline(
-    order.status,
-    order.paymentMethod,
-    order.razorpayPaymentId !== null,
-    order.shippedAt !== null,
-    order.deliveredAt !== null,
-    order.paidAt !== null,
-  );
+  // F-300 fix: the real timestamp columns date each step (in IST) and
+  // decide which post-shipping steps a returned/refunded order can claim.
+  const timeline = getOrderTimeline(order.status, order.paymentMethod, order.razorpayPaymentId !== null, {
+    placedAt: order.createdAt,
+    paidAt: order.paidAt,
+    shippedAt: order.shippedAt,
+    deliveredAt: order.deliveredAt,
+  });
   // F-300 fix: "Write a review" is hidden once the customer already has
   // one for that product (Review has @@unique([productId, customerId])) —
   // one batched query for every product this delivered order shipped,
@@ -141,7 +139,7 @@ export default async function AccountOrderDetailPage({
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <OrderStatusBadge status={order.status} paymentMethod={order.paymentMethod} />
+          <OrderStatusBadge status={order.status} paymentMethod={order.paymentMethod} paid={order.paidAt !== null} />
           <OrderPrintButton />
         </div>
       </div>
@@ -211,6 +209,8 @@ export default async function AccountOrderDetailPage({
                           variantTitle={item.variantLabel}
                           price={item.variant.price !== null ? Number(item.variant.price) : Number(item.variant.product.price)}
                           image={item.imageUrl}
+                          quantity={item.quantity}
+                          stock={item.variant.stock}
                         />
                       )}
                     </div>

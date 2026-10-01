@@ -3,7 +3,11 @@ import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import type { Order, OrderStatus, PaymentMethod } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
-import { assertValidOrderStatusTransition, orderStatusTimestampField } from "@/lib/orders/status-transitions";
+import {
+  assertValidOrderStatusTransition,
+  orderHoldsReservedStock,
+  orderStatusTimestampField,
+} from "@/lib/orders/status-transitions";
 import { buildOrdersCsv, formatOrderCsvRows, ORDER_EXPORT_COLUMNS, type OrderCsvRow } from "@/lib/orders/csv";
 import { applyPaidSideEffects, releaseOrderInventory } from "@/lib/orders/payment-transitions";
 import { revalidateProductStockForVariants } from "@/lib/products";
@@ -89,6 +93,13 @@ export const orderStatusValues = [
 ] as const satisfies readonly OrderStatus[];
 
 export const paymentMethodValues = ["RAZORPAY", "ORDER_REQUEST"] as const satisfies readonly PaymentMethod[];
+
+/**
+ * F-199 fix: how an ORDER_REQUEST payment was actually received when an
+ * admin records it (there is no online payment step to say). Kept in the
+ * audit trail rather than a column — see updateOrderAdmin's `payment`.
+ */
+export const paymentRecordMethodValues = ["UPI", "BANK_TRANSFER", "CASH", "COD", "OTHER"] as const;
 
 export const orderListSortValues = ["createdAt-desc", "createdAt-asc", "total-desc", "total-asc"] as const;
 export type OrderListSort = (typeof orderListSortValues)[number];
@@ -639,6 +650,9 @@ export interface OrderHistoryEntry {
   adminNotesUpdated: boolean;
   manualPaidTransition: boolean;
   restockedUnits: number | null;
+  /** F-199 fix: how an admin recorded an order-request payment — see
+   * updateOrderAdmin's `payment` input. */
+  paymentRecorded: { method: string; reference: string | null } | null;
 }
 
 /**
@@ -685,8 +699,16 @@ export async function getOrderHistory(orderId: string): Promise<OrderHistoryEntr
       adminNotesUpdated: metadata.adminNotesUpdated === true,
       manualPaidTransition: metadata.manualPaidTransition === true,
       restockedUnits: typeof metadata.restockedUnits === "number" ? metadata.restockedUnits : null,
+      paymentRecorded: parsePaymentRecorded(metadata.paymentRecorded),
     };
   });
+}
+
+function parsePaymentRecorded(value: unknown): OrderHistoryEntry["paymentRecorded"] {
+  if (!value || typeof value !== "object") return null;
+  const { method, reference } = value as { method?: unknown; reference?: unknown };
+  if (typeof method !== "string") return null;
+  return { method, reference: typeof reference === "string" && reference ? reference : null };
 }
 
 // ---------------------------------------------------------------------------
@@ -703,6 +725,19 @@ export const orderUpdateSchema = z
     // RAZORPAY order to CANCELLED/REFUNDED — see
     // RefundAcknowledgementRequiredError's doc comment.
     acknowledgeExternalRefund: z.boolean().optional(),
+    // F-199 fix: how/where an admin received the money when recording an
+    // order-request's payment (status -> PAID) — kept in the order's audit
+    // trail, shown in its History. Only valid together with `status: "PAID"`.
+    payment: z
+      .object({
+        method: z.enum(paymentRecordMethodValues),
+        reference: z.string().trim().min(1).max(120).optional(),
+      })
+      .optional(),
+    // F-199 fix: only valid together with `status: "RETURNED"` — puts the
+    // returned goods back into sellable stock. Opt-in because a returned
+    // parcel isn't necessarily resellable until someone has looked at it.
+    restockReturnedItems: z.boolean().optional(),
     // F-339 fix: the `updatedAt` the caller's page/form was loaded with.
     // When present, updateOrderAdmin rejects the whole update with
     // OrderUpdateConflictError if the order has changed since — e.g. a
@@ -714,6 +749,14 @@ export const orderUpdateSchema = z
   })
   .refine((data) => data.status !== undefined || data.trackingNumber !== undefined || data.courier !== undefined || data.adminNotes !== undefined, {
     message: "At least one field (status, trackingNumber, courier, adminNotes) is required",
+  })
+  .refine((data) => data.payment === undefined || data.status === "PAID", {
+    message: "Payment details can only be recorded together with status PAID",
+    path: ["payment"],
+  })
+  .refine((data) => data.restockReturnedItems === undefined || data.status === "RETURNED", {
+    message: "restockReturnedItems can only be sent together with status RETURNED",
+    path: ["restockReturnedItems"],
   });
 
 export type OrderUpdateInput = z.infer<typeof orderUpdateSchema>;
@@ -752,6 +795,8 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
   // that never actually shipped. (It's a no-op when there's no redemption
   // to release, e.g. no discount was ever applied.)
   let restockItems: { variantId: string; quantity: number }[] | null = null;
+  // False only for a RETURNED order's opt-in restock — see below.
+  let releaseDiscountWithStock = true;
   // F-036 fix: an admin marking a RAZORPAY order PENDING_PAYMENT -> PAID
   // by hand (e.g. reconciling a payment the webhook never delivered) used
   // to skip stock/discount entirely — the order could then ship with
@@ -810,21 +855,23 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
       data[timestampField] = new Date();
     }
 
-    // Only unshipped cancellations/refunds release reserved stock. Returned
-    // goods stay outside sellable inventory until they have been inspected;
-    // a refund by itself does not establish that they can be sold again.
-    const stockCommitted =
-      (existing.paymentMethod === "ORDER_REQUEST" && existing.status === "PROCESSING") ||
-      (existing.paymentMethod === "RAZORPAY" &&
-        (existing.status === "PAID" ||
-          existing.status === "PROCESSING"));
-    if (
+    // Only an order that hasn't shipped yet releases its reserved stock
+    // (and discount redemption) when it's cancelled or refunded — see
+    // orderHoldsReservedStock. Once it has shipped, a refund alone never
+    // makes the goods sellable again; the admin says so explicitly with
+    // `restockReturnedItems` when moving it to RETURNED (the stock only —
+    // the discount redemption stays spent, the customer did use the code).
+    // RETURNED can only be entered once (nothing leads back into it), and
+    // the compare-and-swap below makes that single transition the only
+    // place this restock can ever run, so it can't double up.
+    const releasesReservedStock =
       (input.status === "CANCELLED" || input.status === "REFUNDED") &&
-      stockCommitted
-    ) {
+      orderHoldsReservedStock(existing.paymentMethod, existing.status);
+    if (releasesReservedStock || (input.status === "RETURNED" && input.restockReturnedItems)) {
       restockItems = existing.items
         .filter((item): item is typeof item & { variantId: string } => item.variantId !== null)
         .map((item) => ({ variantId: item.variantId, quantity: item.quantity }));
+      releaseDiscountWithStock = releasesReservedStock;
     }
 
     if (
@@ -872,7 +919,11 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
         await applyPaidSideEffects(tx, existing);
       }
       if (restockItems) {
-        const release = await releaseOrderInventory(tx, { id, discountId: existing.discountId, items: restockItems });
+        const release = await releaseOrderInventory(tx, {
+          id,
+          discountId: releaseDiscountWithStock ? existing.discountId : null,
+          items: restockItems,
+        });
         restockedUnits = release.restockedUnits;
       }
       return tx.order.findUniqueOrThrow({ where: { id } });
@@ -905,6 +956,14 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
       ...(input.courier !== undefined ? { courier: input.courier } : {}),
       ...(input.adminNotes !== undefined ? { adminNotesUpdated: true } : {}),
       ...(isManualPaidTransition ? { manualPaidTransition: true } : {}),
+      ...(statusChanged && input.status === "PAID" && input.payment
+        ? {
+            paymentRecorded: {
+              method: input.payment.method,
+              ...(input.payment.reference ? { reference: input.payment.reference } : {}),
+            },
+          }
+        : {}),
       ...(restockedUnits > 0 ? { restockedUnits } : {}),
     },
   });

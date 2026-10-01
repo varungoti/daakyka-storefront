@@ -71,7 +71,7 @@ export default async function AccountOrdersPage({
               </p>
             </div>
             <div className="flex items-center gap-4">
-              <OrderStatusBadge status={order.status} paymentMethod={order.paymentMethod} />
+              <OrderStatusBadge status={order.status} paymentMethod={order.paymentMethod} paid={order.paidAt !== null} />
               <p className="font-display text-lg font-bold text-ink">{formatInr(order.total)}</p>
             </div>
           </div>

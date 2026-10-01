@@ -8,6 +8,16 @@ interface Props {
   entries: OrderHistoryEntry[];
 }
 
+/** F-199 fix: labels for admin-orders.ts's paymentRecordMethodValues; an
+ * unrecognised value (a future method) falls back to its raw text. */
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  UPI: "UPI",
+  BANK_TRANSFER: "bank transfer",
+  CASH: "cash",
+  COD: "cash on delivery",
+  OTHER: "other method",
+};
+
 function describeEntry(entry: OrderHistoryEntry): string {
   const parts: string[] = [];
   if (entry.fromStatus && entry.toStatus) {
@@ -20,6 +30,10 @@ function describeEntry(entry: OrderHistoryEntry): string {
     }
     if (entry.manualPaidTransition) {
       parts.push("(marked paid manually)");
+    }
+    if (entry.paymentRecorded) {
+      const { method, reference } = entry.paymentRecorded;
+      parts.push(`(payment received via ${PAYMENT_METHOD_LABELS[method] ?? method}${reference ? ` · ref ${reference}` : ""})`);
     }
   } else if (entry.trackingNumber || entry.courier) {
     parts.push(`Tracking updated: ${entry.courier ?? "—"} ${entry.trackingNumber ?? ""}`.trim());

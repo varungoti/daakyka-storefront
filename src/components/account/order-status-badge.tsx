@@ -17,8 +17,8 @@ const STATUS_META: Record<OrderStatus, { label: string; className: string }> = {
   DELIVERED: { label: "Delivered", className: "bg-green-100 text-green-800" },
   CANCELLED: { label: "Cancelled", className: "bg-red-100 text-red-700" },
   REFUNDED: { label: "Refunded", className: "bg-gray-200 text-gray-700" },
-  // F-199 fix: reachable now (a shipped/delivered order can be returned —
-  // see status-transitions.ts).
+  // F-199 fix: a shipped/delivered order can now be returned — see
+  // status-transitions.ts.
   RETURNED: { label: "Returned", className: "bg-orange-100 text-orange-700" },
 };
 
@@ -34,17 +34,32 @@ const STATUS_META: Record<OrderStatus, { label: string; className: string }> = {
  * ORDER_REQUEST order, so both read as "Order Received" here — pulled out
  * as its own function so it's directly unit-testable without rendering
  * anything (order-status-badge.test.ts).
+ *
+ * F-199 fix: once an admin has recorded the order-request's payment
+ * (`paid`, from `Order.paidAt`) it *is* confirmed — the timeline then
+ * shows "Order confirmed", so an order that went PAID -> back to
+ * PROCESSING reads plain "Processing" here too rather than "Order
+ * Received" again.
  */
-export function getOrderStatusLabel(status: OrderStatus, paymentMethod: PaymentMethod): string {
-  if (paymentMethod === "ORDER_REQUEST" && (status === "PENDING_PAYMENT" || status === "PROCESSING")) {
+export function getOrderStatusLabel(status: OrderStatus, paymentMethod: PaymentMethod, paid = false): string {
+  if (paymentMethod === "ORDER_REQUEST" && !paid && (status === "PENDING_PAYMENT" || status === "PROCESSING")) {
     return "Order Received";
   }
   return STATUS_META[status].label;
 }
 
-export function OrderStatusBadge({ status, paymentMethod }: { status: OrderStatus; paymentMethod: PaymentMethod }) {
+export function OrderStatusBadge({
+  status,
+  paymentMethod,
+  paid = false,
+}: {
+  status: OrderStatus;
+  paymentMethod: PaymentMethod;
+  /** Whether `Order.paidAt` is set — see getOrderStatusLabel. */
+  paid?: boolean;
+}) {
   const meta = STATUS_META[status];
-  const label = getOrderStatusLabel(status, paymentMethod);
+  const label = getOrderStatusLabel(status, paymentMethod, paid);
 
   return (
     <span

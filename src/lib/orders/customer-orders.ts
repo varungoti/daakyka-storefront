@@ -34,6 +34,10 @@ export interface CustomerOrderListItem {
   trackingNumber: string | null;
   courier: string | null;
   createdAt: Date;
+  /** F-199 fix: lets the list badge tell an ORDER_REQUEST order whose
+   * payment an admin has recorded from one still awaiting confirmation —
+   * see getOrderStatusLabel. */
+  paidAt: Date | null;
 }
 
 export interface ListOrdersForCustomerResult {
@@ -103,6 +107,7 @@ export async function listOrdersForCustomer(
       trackingNumber: row.trackingNumber,
       courier: row.courier,
       createdAt: row.createdAt,
+      paidAt: row.paidAt,
     })),
     total,
     page,

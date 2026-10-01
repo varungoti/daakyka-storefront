@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { getOrderTimeline } from "@/lib/orders/timeline";
+import { getOrderStatusHero, getOrderTimeline } from "@/lib/orders/timeline";
 import { orderStatusValues } from "@/lib/orders/admin-orders";
 import type { OrderStatus } from "@/generated/prisma/client";
 
@@ -78,10 +78,25 @@ describe("getOrderTimeline", () => {
     assert.equal(confirmedStep?.state, "complete");
   });
 
-  it("PROCESSING + ORDER_REQUEST shows confirmation after payment was recorded", () => {
-    const timeline = getOrderTimeline("PROCESSING", "ORDER_REQUEST", false, false, false, true);
+  // F-199 fix: an admin can now record an order-request's payment
+  // (PROCESSING -> PAID), after which it may go back to PROCESSING to be
+  // packed — `paidAt` is what tells that order from one never confirmed.
+  it("F-199: PROCESSING + ORDER_REQUEST shows confirmation after payment was recorded (paidAt set)", () => {
+    const paidAt = new Date("2026-09-30T08:00:00Z");
+    const timeline = getOrderTimeline("PROCESSING", "ORDER_REQUEST", true, { paidAt });
     assert.equal(timeline.steps.find((step) => step.id === "confirmed")?.state, "complete");
     assert.equal(timeline.steps.find((step) => step.id === "shipped")?.state, "current");
+    assert.equal(timeline.steps.find((step) => step.id === "confirmed")?.at, paidAt);
+    assert.doesNotMatch(JSON.stringify(timeline), /contact you/i);
+  });
+
+  it("F-199: PAID + ORDER_REQUEST (payment just recorded) reads as confirmed and getting ready — never 'awaiting confirmation'", () => {
+    const timeline = getOrderTimeline("PAID", "ORDER_REQUEST", true, { paidAt: new Date() });
+    assert.deepEqual(
+      timeline.steps.map((s) => s.state),
+      ["complete", "current", "upcoming", "upcoming"],
+    );
+    assert.doesNotMatch(timeline.steps[1].label, /awaiting/i);
   });
 
   it("SHIPPED marks delivered as the current (final) step", () => {
@@ -109,7 +124,7 @@ describe("getOrderTimeline", () => {
     assert.equal(timeline.terminal!.tone, "cancelled");
   });
 
-  it("REFUNDED asserts placed+confirmed as fact (only reachable from PAID) and renders a terminal banner", () => {
+  it("REFUNDED with no shipping timestamps asserts only placed+confirmed (the PAID -> REFUNDED journey) and renders a terminal banner", () => {
     const timeline = getOrderTimeline("REFUNDED", "RAZORPAY");
     assert.equal(timeline.steps.length, 2);
     assert.deepEqual(
@@ -133,8 +148,11 @@ describe("getOrderTimeline", () => {
     assert.match(timeline.terminal!.label, /returned/i);
   });
 
-  it("RETURNED additionally asserts 'delivered' complete when wasDelivered is true (DELIVERED -> RETURNED, not SHIPPED -> RETURNED)", () => {
-    const timeline = getOrderTimeline("RETURNED", "RAZORPAY", true, true, true);
+  it("RETURNED additionally asserts 'delivered' complete when deliveredAt is set (DELIVERED -> RETURNED, not SHIPPED -> RETURNED)", () => {
+    const timeline = getOrderTimeline("RETURNED", "RAZORPAY", true, {
+      shippedAt: new Date("2026-09-20T10:00:00Z"),
+      deliveredAt: new Date("2026-09-24T10:00:00Z"),
+    });
     assert.deepEqual(
       timeline.steps.map((s) => s.id),
       ["placed", "confirmed", "shipped", "delivered"],
@@ -142,22 +160,25 @@ describe("getOrderTimeline", () => {
     assert.ok(timeline.steps.every((s) => s.state === "complete"));
   });
 
-  // F-199 fix: REFUNDED is now also reachable from RETURNED (shipped, and
-  // possibly delivered, before being sent back) — not only from PAID.
-  it("REFUNDED includes shipped/delivered steps only when wasShipped/wasDelivered say so", () => {
+  // F-199 fix: REFUNDED is now also reachable from SHIPPED, DELIVERED and
+  // RETURNED (shipped, and possibly delivered, before being refunded) — not
+  // only from PAID.
+  it("REFUNDED includes shipped/delivered steps only when shippedAt/deliveredAt say so", () => {
+    const shippedAt = new Date("2026-09-20T10:00:00Z");
+    const deliveredAt = new Date("2026-09-24T10:00:00Z");
     const neverShipped = getOrderTimeline("REFUNDED", "RAZORPAY");
     assert.deepEqual(
       neverShipped.steps.map((s) => s.id),
       ["placed", "confirmed"],
     );
 
-    const shippedNotDelivered = getOrderTimeline("REFUNDED", "RAZORPAY", true, true, false);
+    const shippedNotDelivered = getOrderTimeline("REFUNDED", "RAZORPAY", true, { shippedAt });
     assert.deepEqual(
       shippedNotDelivered.steps.map((s) => s.id),
       ["placed", "confirmed", "shipped"],
     );
 
-    const shippedAndDelivered = getOrderTimeline("REFUNDED", "RAZORPAY", true, true, true);
+    const shippedAndDelivered = getOrderTimeline("REFUNDED", "RAZORPAY", true, { shippedAt, deliveredAt });
     assert.deepEqual(
       shippedAndDelivered.steps.map((s) => s.id),
       ["placed", "confirmed", "shipped", "delivered"],
@@ -168,7 +189,8 @@ describe("getOrderTimeline", () => {
   it("never claims a step happened that the transition matrix contradicts (CANCELLED vs REFUNDED asymmetry)", () => {
     // CANCELLED is reachable *before* payment (PENDING_PAYMENT -> CANCELLED
     // per ORDER_STATUS_TRANSITIONS), so it must not claim "confirmed"
-    // happened. REFUNDED is only reachable from PAID, so it may.
+    // happened. REFUNDED is only reachable from a paid order (PAID,
+    // SHIPPED, DELIVERED or RETURNED), so it may.
     const cancelled = getOrderTimeline("CANCELLED", "RAZORPAY");
     const refunded = getOrderTimeline("REFUNDED", "RAZORPAY");
     assert.ok(!cancelled.steps.some((s) => s.id === "confirmed"));
@@ -205,6 +227,39 @@ describe("getOrderTimeline", () => {
     assert.match(orderRequestCancelled.terminal!.description, /refund/i);
   });
 
+  // F-300 fix: the timeline used to carry no dates at all.
+  it("F-300: dates each completed step from the order's real timestamps, and never dates an incomplete one", () => {
+    const placedAt = new Date("2026-09-18T05:00:00Z");
+    const paidAt = new Date("2026-09-18T05:10:00Z");
+    const shippedAt = new Date("2026-09-20T10:00:00Z");
+    const deliveredAt = new Date("2026-09-24T10:00:00Z");
+
+    const delivered = getOrderTimeline("DELIVERED", "RAZORPAY", true, { placedAt, paidAt, shippedAt, deliveredAt });
+    assert.deepEqual(
+      delivered.steps.map((s) => s.at),
+      [placedAt, paidAt, shippedAt, deliveredAt],
+    );
+
+    const shipped = getOrderTimeline("SHIPPED", "RAZORPAY", true, { placedAt, paidAt, shippedAt });
+    assert.deepEqual(
+      shipped.steps.map((s) => s.at),
+      [placedAt, paidAt, shippedAt, undefined],
+      "the current (not yet reached) delivered step must carry no date",
+    );
+
+    // Even if a caller hands over a later timestamp, an upcoming/current
+    // step is never dated.
+    const processing = getOrderTimeline("PROCESSING", "RAZORPAY", true, { placedAt, paidAt, shippedAt });
+    assert.equal(processing.steps.find((s) => s.id === "shipped")?.at, undefined);
+  });
+
+  it("F-300: omitting the milestones leaves every step undated (existing callers read exactly as before)", () => {
+    for (const status of orderStatusValues) {
+      const timeline = getOrderTimeline(status, "RAZORPAY");
+      assert.ok(timeline.steps.every((s) => s.at === undefined), `${status} should have no dated steps by default`);
+    }
+  });
+
   it("exhaustively covers the real prisma OrderStatus enum (fails loudly if the schema adds a new value)", () => {
     const covered = new Set<OrderStatus>([
       "PENDING_PAYMENT",
@@ -220,5 +275,56 @@ describe("getOrderTimeline", () => {
       assert.ok(covered.has(status), `${status} is in the schema but not in this test's coverage set`);
     }
     assert.equal(covered.size, orderStatusValues.length, "test coverage set and schema enum are out of sync");
+  });
+});
+
+/**
+ * F-120 fix: the heading at the top of the guest order page used to read
+ * "Order confirmed" for every status.
+ */
+describe("getOrderStatusHero", () => {
+  it("covers every OrderStatus for both payment methods", () => {
+    for (const status of orderStatusValues) {
+      for (const paymentMethod of ["RAZORPAY", "ORDER_REQUEST"] as const) {
+        const hero = getOrderStatusHero(status, paymentMethod);
+        assert.ok(hero.label.length > 0, `${status}/${paymentMethod} should have a heading`);
+      }
+    }
+  });
+
+  it("F-120: a cancelled order never reads 'Order confirmed' (either payment method)", () => {
+    for (const paymentMethod of ["RAZORPAY", "ORDER_REQUEST"] as const) {
+      const hero = getOrderStatusHero("CANCELLED", paymentMethod);
+      assert.equal(hero.label, "Order cancelled");
+      assert.equal(hero.icon, "cancelled");
+    }
+  });
+
+  it("F-120: refunded and returned orders read as such, not as success", () => {
+    assert.deepEqual(getOrderStatusHero("REFUNDED", "RAZORPAY"), { icon: "refunded", label: "Order refunded" });
+    assert.deepEqual(getOrderStatusHero("RETURNED", "ORDER_REQUEST"), { icon: "refunded", label: "Order returned" });
+  });
+
+  it("F-120: an unpaid order never reads 'Order confirmed'", () => {
+    assert.equal(getOrderStatusHero("PENDING_PAYMENT", "RAZORPAY").label, "Awaiting payment");
+    assert.equal(getOrderStatusHero("PENDING_PAYMENT", "ORDER_REQUEST").label, "Order received");
+    // create-order.ts starts ORDER_REQUEST orders in PROCESSING — still
+    // nothing our team has confirmed until payment is recorded.
+    assert.equal(getOrderStatusHero("PROCESSING", "ORDER_REQUEST").label, "Order received");
+    assert.equal(getOrderStatusHero("PROCESSING", "ORDER_REQUEST", false).label, "Order received");
+  });
+
+  it("an order-request reads 'Order confirmed' once its payment has been recorded", () => {
+    assert.equal(getOrderStatusHero("PROCESSING", "ORDER_REQUEST", true).label, "Order confirmed");
+    assert.equal(getOrderStatusHero("PAID", "ORDER_REQUEST", true).label, "Order confirmed");
+  });
+
+  it("a RAZORPAY order in PROCESSING is confirmed (it can only get there through PAID)", () => {
+    assert.equal(getOrderStatusHero("PROCESSING", "RAZORPAY").label, "Order confirmed");
+  });
+
+  it("shipped and delivered orders say so", () => {
+    assert.deepEqual(getOrderStatusHero("SHIPPED", "RAZORPAY"), { icon: "truck", label: "Order shipped" });
+    assert.equal(getOrderStatusHero("DELIVERED", "ORDER_REQUEST").label, "Order delivered");
   });
 });

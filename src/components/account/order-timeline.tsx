@@ -1,4 +1,5 @@
 import { CheckCircle2, Circle, RotateCcw, XCircle } from "lucide-react";
+import { formatDateIST } from "@/lib/format/datetime";
 import { cn } from "@/lib/utils";
 import type { OrderTimeline } from "@/lib/orders/timeline";
 
@@ -41,6 +42,9 @@ export function OrderTimelineView({ timeline }: { timeline: OrderTimeline }) {
               <p className={cn("text-sm font-semibold", step.state === "upcoming" ? "text-muted" : "text-ink")}>
                 {step.label}
               </p>
+              {/* F-300 fix: the date this step was actually reached, in IST —
+                  see OrderTimelineStep.at. */}
+              {step.at && <p className="text-xs text-muted">{formatDateIST(step.at)}</p>}
               {step.description && <p className="mt-1 text-sm text-muted">{step.description}</p>}
             </div>
           </li>

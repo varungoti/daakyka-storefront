@@ -1,4 +1,4 @@
-import type { OrderStatus } from "@/generated/prisma/client";
+import type { OrderStatus, PaymentMethod } from "@/generated/prisma/client";
 
 /**
  * Phase D4: admin order-status transition matrix.
@@ -19,25 +19,24 @@ export const ORDER_STATUS_TRANSITIONS: Record<OrderStatus, readonly OrderStatus[
   // straight into PROCESSING with no PAID step behind it, so before this
   // there was no way to ever record the payment — see admin-orders.ts's
   // updateOrderAdmin, which further restricts *using* this edge to
-  // ORDER_REQUEST orders only (a RAZORPAY order only ever reaches
-  // PROCESSING by having already passed through PAID, so it has nothing
-  // to "record").
+  // ORDER_REQUEST orders with no payment recorded yet (a RAZORPAY order
+  // only ever reaches PROCESSING by having already passed through PAID,
+  // so it has nothing to "record").
   PROCESSING: ["SHIPPED", "CANCELLED", "PAID"],
-  // F-199 fix: a shipped or delivered order can now be marked RETURNED
-  // (the customer sent it back) — REFUNDED stays a separate, deliberate
-  // next step (see RETURNED below) rather than folding "returned" and
-  // "money back" into one transition, since the two don't always happen
-  // at the same time.
-  SHIPPED: ["DELIVERED", "RETURNED"],
-  DELIVERED: ["RETURNED"],
+  // F-199 fix: once an order has shipped the ways out are a return (the
+  // goods came back: RETURNED, then REFUNDED once the money has gone back)
+  // or a refund with no return at all (lost in transit, a goodwill refund:
+  // straight to REFUNDED — the same SHIPPED/DELIVERED -> REFUNDED move the
+  // Razorpay refund webhook already makes). CANCELLED stays unreachable
+  // from here: a cancellation means "never shipped".
+  SHIPPED: ["DELIVERED", "RETURNED", "REFUNDED"],
+  DELIVERED: ["RETURNED", "REFUNDED"],
   CANCELLED: [],
   REFUNDED: [],
-  // F-199 fix: previously unreachable (wave-1 schema-foundation only
-  // added the enum value — see the old comment this replaces). Reachable
-  // now from SHIPPED or DELIVERED (above); RETURNED -> REFUNDED is the
-  // deliberate second step once the returned item/refund has actually
-  // been processed. Neither return nor refund automatically restores
-  // sellable stock; condition inspection is a separate operation.
+  // F-199 fix: previously unreachable (wave-1 schema-foundation only added
+  // the enum value). Reachable from SHIPPED or DELIVERED (above);
+  // RETURNED -> REFUNDED is the deliberate second step, since "the parcel
+  // is back" and "the money is back" don't always happen at the same time.
   RETURNED: ["REFUNDED"],
 };
 
@@ -90,5 +89,36 @@ export function orderStatusTimestampField(
       return "cancelledAt";
     default:
       return null;
+  }
+}
+
+/**
+ * Whether the stock (and discount redemption) an order took out of
+ * inventory is still reserved for it in `status` — i.e. cancelling or
+ * refunding it from here must give it back. The single definition shared
+ * by updateOrderAdmin (which actually restocks) and the admin order form
+ * (whose confirmation prompt promises the restock), so the two can't
+ * drift apart.
+ *
+ * An ORDER_REQUEST order takes stock at checkout; a RAZORPAY order takes
+ * it at its PAID transition (verify/webhook, or the manual
+ * PENDING_PAYMENT -> PAID). Either way it stays reserved through
+ * PAID/PROCESSING and stops being reserved the moment the order ships:
+ * after that the goods are with the customer, so refunding a
+ * SHIPPED/DELIVERED/RETURNED order must never silently add phantom stock
+ * back — whether returned goods are sellable again is a separate,
+ * deliberate choice (updateOrderAdmin's `restockReturnedItems`).
+ */
+export function orderHoldsReservedStock(paymentMethod: PaymentMethod, status: OrderStatus): boolean {
+  switch (status) {
+    case "PAID":
+    case "PROCESSING":
+      return true;
+    case "PENDING_PAYMENT":
+      // A RAZORPAY order hasn't taken stock yet; a legacy ORDER_REQUEST row
+      // left in PENDING_PAYMENT already had it decremented at creation.
+      return paymentMethod === "ORDER_REQUEST";
+    default:
+      return false;
   }
 }

@@ -8,6 +8,8 @@ import { OrderDetailActions } from "@/components/admin/order-detail-actions";
 import { BackToOrdersLink } from "@/components/admin/back-to-orders-link";
 import { OrderTimeline } from "@/components/admin/order-timeline";
 import { formatInrExact } from "@/lib/currency/admin-money";
+import { formatDateTimeIST } from "@/lib/format/datetime";
+import type { OrderStatus } from "@/generated/prisma/client";
 import type { ShippingAddressInput } from "@/lib/validation/schemas";
 
 // F-202 fix: was `maximumFractionDigits: 0`, which silently rounded a
@@ -15,6 +17,33 @@ import type { ShippingAddressInput } from "@/lib/validation/schemas";
 // — see src/lib/currency/admin-money.ts.
 function formatInr(amount: number): string {
   return formatInrExact(amount);
+}
+
+/**
+ * F-199 fix: the note under an order-request's Payment card used to call
+ * every ORDER_REQUEST order "unpaid" unconditionally, even after an admin
+ * recorded its payment or it shipped. `paid` is `Order.paidAt` — the one
+ * real fact that survives the order moving past PAID onto
+ * PROCESSING/SHIPPED/DELIVERED.
+ */
+function orderRequestPaymentNote(status: OrderStatus, paid: boolean): string {
+  switch (status) {
+    case "CANCELLED":
+      return "This order request was cancelled — the stock it had reserved was restored to inventory.";
+    case "REFUNDED":
+      return "This order request was refunded.";
+    case "RETURNED":
+      return "This order request was returned by the customer. The items only went back into stock if \"add back to stock\" was ticked when it was marked returned.";
+    case "SHIPPED":
+    case "DELIVERED":
+      return paid
+        ? "Payment for this order request has been recorded, and it has already shipped."
+        : "This unpaid order request has already shipped — stock was decremented at checkout, and no payment has been recorded for it.";
+    default:
+      return paid
+        ? "Payment for this order request has been recorded."
+        : "This is an unpaid order request: stock was decremented at checkout (no online payment step). Choose \"PAID — record payment received\" below once payment is confirmed, or cancel it to restore that stock to inventory.";
+  }
 }
 
 export default async function AdminOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -172,6 +201,12 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
                 <span className="text-muted">Method: </span>
                 <span className="text-ink">{order.paymentMethod === "RAZORPAY" ? "Razorpay" : "Order Request"}</span>
               </p>
+              {order.paidAt && (
+                <p>
+                  <span className="text-muted">Payment recorded: </span>
+                  <span className="text-ink">{formatDateTimeIST(order.paidAt)}</span>
+                </p>
+              )}
               {order.razorpayOrderId && (
                 <p className="break-all">
                   <span className="text-muted">Razorpay order: </span>
@@ -198,27 +233,16 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
             </div>
             {order.paymentMethod === "ORDER_REQUEST" && (
               <p className="mt-3 rounded-xl bg-lavender/30 p-3 text-xs text-muted">
-                {/* F-199 fix: this used to call every ORDER_REQUEST order
-                    "unpaid" unconditionally, even after an admin recorded
-                    its payment (PROCESSING -> PAID below) or it shipped —
-                    `paidAt` is the one real fact that survives the order
-                    moving past PAID onto PROCESSING/SHIPPED/DELIVERED. */}
-                {order.status === "CANCELLED"
-                  ? "This order request was cancelled — the stock it had reserved was restored to inventory."
-                  : order.paidAt
-                    ? order.status === "SHIPPED" || order.status === "DELIVERED"
-                      ? "Payment for this order request has been recorded, and it has already shipped."
-                      : "Payment for this order request has been recorded."
-                    : order.status === "SHIPPED" || order.status === "DELIVERED"
-                      ? "This unpaid order request has already shipped — stock was decremented at checkout, and no payment has been recorded for it."
-                      : "This is an unpaid order request: stock was decremented at checkout (no online payment step). Use the status dropdown below to mark it paid once payment is confirmed, or cancel it to restore that stock to inventory."}
+                {orderRequestPaymentNote(order.status, order.paidAt !== null)}
               </p>
             )}
             {order.paymentMethod === "RAZORPAY" && order.razorpayPaymentId && (
               <p className="mt-3 rounded-xl bg-lavender/30 p-3 text-xs text-muted">
-                {order.status === "CANCELLED" || order.status === "REFUNDED"
-                  ? "Stock (and any discount code use) taken when this order was paid has been restored to inventory. Cancelling or refunding never moves money — see the Razorpay dashboard link above."
-                  : "Stock for this order was decremented, and any discount code use committed, when payment was verified — not at checkout. Cancelling or refunding it here never moves money; refund the payment in Razorpay first."}
+                {order.status === "CANCELLED"
+                  ? "Stock (and any discount code use) taken when this order was paid has been restored to inventory. Cancelling never moves money — see the Razorpay dashboard link above."
+                  : order.status === "REFUNDED" || order.status === "RETURNED"
+                    ? "Refunding or returning an order here never moves money — see the Razorpay dashboard link above. Stock is only added back automatically when an order is cancelled or refunded before it ships."
+                    : "Stock for this order was decremented, and any discount code use committed, when payment was verified — not at checkout. Cancelling or refunding it here never moves money; refund the payment in Razorpay first."}
               </p>
             )}
           </section>
@@ -232,6 +256,7 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
             canManage={canManage}
             paymentMethod={order.paymentMethod}
             hasCapturedPayment={order.razorpayPaymentId !== null}
+            paymentRecorded={order.paidAt !== null}
             razorpayPaymentUrl={order.razorpayPaymentUrl}
             updatedAt={order.updatedAt.toISOString()}
           />

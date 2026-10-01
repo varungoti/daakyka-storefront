@@ -2,8 +2,19 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { ORDER_STATUS_TRANSITIONS } from "@/lib/orders/status-transitions";
+import { ORDER_STATUS_TRANSITIONS, orderHoldsReservedStock } from "@/lib/orders/status-transitions";
 import type { OrderStatus, PaymentMethod } from "@/generated/prisma/client";
+
+/** F-199 fix: how an order-request's payment was received — mirrors
+ * admin-orders.ts's paymentRecordMethodValues (not imported: that module
+ * is server-only). */
+const PAYMENT_RECEIVED_VIA = [
+  { value: "UPI", label: "UPI" },
+  { value: "BANK_TRANSFER", label: "Bank transfer" },
+  { value: "CASH", label: "Cash" },
+  { value: "COD", label: "Cash on delivery" },
+  { value: "OTHER", label: "Other" },
+] as const;
 
 interface Props {
   orderId: string;
@@ -16,6 +27,9 @@ interface Props {
    * needs the "this doesn't refund the customer" acknowledgement below. */
   paymentMethod: PaymentMethod;
   hasCapturedPayment: boolean;
+  /** F-199 fix: whether this order's `paidAt` is set — an order-request
+   * whose payment has already been recorded can't be marked paid again. */
+  paymentRecorded: boolean;
   razorpayPaymentUrl: string | null;
   /** F-339 fix: the order's `updatedAt` as loaded onto this page — sent
    * back with every save so a stale tab (a colleague saved a change since
@@ -40,6 +54,7 @@ export function OrderDetailActions({
   canManage,
   paymentMethod,
   hasCapturedPayment,
+  paymentRecorded,
   razorpayPaymentUrl,
   updatedAt,
 }: Props) {
@@ -49,20 +64,33 @@ export function OrderDetailActions({
   const [courierName, setCourierName] = useState(courier ?? "");
   const [notes, setNotes] = useState(adminNotes ?? "");
   const [acknowledgeExternalRefund, setAcknowledgeExternalRefund] = useState(false);
+  const [paymentMethodChoice, setPaymentMethodChoice] = useState("");
+  const [paymentReference, setPaymentReference] = useState("");
+  const [restockReturned, setRestockReturned] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
   // F-199 fix: PROCESSING -> PAID exists in the matrix so an ORDER_REQUEST
   // order's payment can be recorded, but a RAZORPAY order only ever
-  // reaches PROCESSING by having already passed through PAID — offering
-  // it there would just re-stamp paidAt for a payment that already
-  // happened (the server rejects it too — see admin-orders.ts's
-  // OrderRequestPaymentOnlyError).
+  // reaches PROCESSING by having already passed through PAID — and an
+  // order-request whose payment was already recorded (it went PAID ->
+  // PROCESSING) has nothing left to record — so offering it there would
+  // just re-stamp paidAt for a payment that already happened (the server
+  // rejects it too — see admin-orders.ts's OrderRequestPaymentOnlyError).
   const nextStatuses = (ORDER_STATUS_TRANSITIONS[currentStatus] ?? []).filter(
-    (s) => !(s === "PAID" && currentStatus === "PROCESSING" && paymentMethod !== "ORDER_REQUEST"),
+    (s) => !(s === "PAID" && currentStatus === "PROCESSING" && (paymentMethod !== "ORDER_REQUEST" || paymentRecorded)),
   );
   const willShip = status === "SHIPPED" && status !== currentStatus;
+  // F-199 fix: PROCESSING -> PAID is how an order-request's payment is
+  // recorded (the only way PAID is reachable from PROCESSING in the list
+  // above), so say so — and ask how the money arrived, which the order's
+  // History then shows. Returning a shipped/delivered order can put the
+  // goods back in stock, but only when the owner says they're sellable.
+  const recordingPayment = status === "PAID" && currentStatus === "PROCESSING";
+  const returning = status === "RETURNED" && status !== currentStatus;
+  const refundingShippedOrder =
+    status === "REFUNDED" && (currentStatus === "SHIPPED" || currentStatus === "DELIVERED");
   // F-205 fix: tracking used to render only for `willShip || currentStatus
   // === "SHIPPED"` — so it vanished from the page entirely the moment an
   // order reached DELIVERED (or CANCELLED/REFUNDED after shipping), even
@@ -97,16 +125,21 @@ export function OrderDetailActions({
     // user-role-editor.tsx, category-tree.tsx) already confirm first — this
     // brings order cancellation in line with them.
     if (status !== currentStatus && (status === "CANCELLED" || status === "REFUNDED" || status === "RETURNED")) {
-      // F-199 fix: RETURNED -> REFUNDED never restocks a second time — the
-      // SHIPPED/DELIVERED -> RETURNED transition that got it there already
-      // did (see admin-orders.ts's `alreadyRestockedOnReturn`).
-      const willRestock =
-        currentStatus !== "RETURNED" &&
-        (paymentMethod === "ORDER_REQUEST" || (paymentMethod === "RAZORPAY" && hasCapturedPayment));
-      const verb = status === "CANCELLED" ? "cancel" : status === "REFUNDED" ? "refund" : "return";
+      // F-199 fix: the prompt promises a restock only when the server will
+      // really do one — cancelling/refunding an order that hasn't shipped
+      // (orderHoldsReservedStock, the same rule updateOrderAdmin applies),
+      // or returning one with the "add back to stock" box ticked. A refund
+      // after shipping, or RETURNED -> REFUNDED, never restocks.
+      const restocks =
+        status === "RETURNED" ? restockReturned : orderHoldsReservedStock(paymentMethod, currentStatus);
+      const verb = status === "CANCELLED" ? "cancel" : status === "REFUNDED" ? "refund" : "mark as returned";
       const confirmed = window.confirm(
         `Are you sure you want to ${verb} this order? This cannot be undone.` +
-          (willRestock ? " Stock reserved for it will be restored to inventory." : ""),
+          (restocks
+            ? status === "RETURNED"
+              ? " The returned items will be added back to stock."
+              : " Stock reserved for it will be restored to inventory."
+            : ""),
       );
       if (!confirmed) return;
     }
@@ -125,6 +158,13 @@ export function OrderDetailActions({
     if (tracking.trim()) body.trackingNumber = tracking.trim();
     if (courierName.trim()) body.courier = courierName.trim();
     if (needsRefundAcknowledgement) body.acknowledgeExternalRefund = acknowledgeExternalRefund;
+    if (recordingPayment) {
+      body.payment = {
+        method: paymentMethodChoice,
+        ...(paymentReference.trim() ? { reference: paymentReference.trim() } : {}),
+      };
+    }
+    if (returning && restockReturned) body.restockReturnedItems = true;
 
     const response = await fetch(`/api/admin/orders/${orderId}`, {
       method: "PATCH",
@@ -161,12 +201,66 @@ export function OrderDetailActions({
           <option value={currentStatus}>{currentStatus.replace("_", " ")} (current)</option>
           {nextStatuses.map((s) => (
             <option key={s} value={s}>
-              {s.replace("_", " ")}
+              {s === "PAID" && currentStatus === "PROCESSING"
+                ? "PAID — record payment received"
+                : s.replace("_", " ")}
             </option>
           ))}
         </select>
         {nextStatuses.length === 0 && <p className="mt-1 text-xs text-muted">This is a final status — no further transitions.</p>}
       </div>
+
+      {recordingPayment && (
+        <div className="space-y-3 rounded-xl border border-border bg-lavender/20 p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">Payment received</p>
+          <select
+            value={paymentMethodChoice}
+            disabled={!canManage}
+            onChange={(e) => setPaymentMethodChoice(e.target.value)}
+            aria-label="How was the payment received?"
+            className="w-full rounded-xl border border-border bg-white p-2 text-sm disabled:opacity-60"
+          >
+            <option value="">How was it paid? *</option>
+            {PAYMENT_RECEIVED_VIA.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <input
+            value={paymentReference}
+            disabled={!canManage}
+            maxLength={120}
+            onChange={(e) => setPaymentReference(e.target.value)}
+            placeholder="Reference / transaction ID (optional)"
+            aria-label="Payment reference"
+            className="w-full rounded-xl border border-border bg-white p-2 text-sm disabled:opacity-60"
+          />
+          <p className="text-xs text-muted">Saved in this order&rsquo;s History. Marking it paid doesn&rsquo;t touch stock.</p>
+        </div>
+      )}
+
+      {returning && (
+        <label className="flex items-start gap-2 rounded-xl border border-border bg-lavender/20 p-3 text-xs text-ink">
+          <input
+            type="checkbox"
+            checked={restockReturned}
+            onChange={(e) => setRestockReturned(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span>
+            Add the returned items back to stock. Tick this only once the parcel is back and the items are fit to
+            sell again — leave it unticked to keep them out of inventory.
+          </span>
+        </label>
+      )}
+
+      {refundingShippedOrder && (
+        <p className="rounded-xl bg-lavender/30 p-3 text-xs text-muted">
+          Refunding an order that has already shipped doesn&rsquo;t add anything back to stock. If the items are coming
+          back, mark it Returned instead.
+        </p>
+      )}
 
       {needsRefundAcknowledgement && (
         <div className="space-y-2 rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
@@ -240,7 +334,7 @@ export function OrderDetailActions({
       {canManage && (
         <button
           onClick={save}
-          disabled={busy || (needsRefundAcknowledgement && !acknowledgeExternalRefund)}
+          disabled={busy || (needsRefundAcknowledgement && !acknowledgeExternalRefund) || (recordingPayment && !paymentMethodChoice)}
           className="rounded-full bg-brand px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
         >
           {busy ? "Saving…" : "Save changes"}
