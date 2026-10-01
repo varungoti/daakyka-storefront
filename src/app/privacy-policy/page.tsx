@@ -127,7 +127,10 @@ export default async function PrivacyPolicyPage() {
       <p>
         We take reasonable technical and organisational measures to protect your data, including
         encrypting connections to our site, hashing passwords, and restricting who on our team can
-        access customer data.
+        access customer data. If a personal-data breach affects you, we will notify you and the
+        relevant authorities as required by applicable law (the IT Act and CERT-In directions, and
+        the Digital Personal Data Protection Act, 2023 once its breach-notification provisions are
+        in force).
       </p>
 
       <h2 className="mt-4 font-display text-lg font-bold text-ink">
