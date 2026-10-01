@@ -31,6 +31,11 @@ export default async function BlogPage() {
       </PageHeroBand>
 
       <PageContentSection>
+        {/* F-051: the journal is database-only; with nothing published, say so
+            instead of rendering an empty grid. */}
+        {blogPosts.length === 0 && (
+          <p className="text-center text-muted">New articles are on the way. Please check back soon.</p>
+        )}
         <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
           {blogPosts.map((post) => (
             <Link

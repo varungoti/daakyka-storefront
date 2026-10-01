@@ -1,9 +1,11 @@
 import { SeoLandingLayout } from "@/components/seo/seo-landing-layout";
 import {
   resolveLegacyGuidePath,
+  resolveSeoRelated,
   seoLandingPages,
   type SeoLandingPageConfig,
 } from "@/data/seo-landing-pages";
+import { getPublishedBlogPosts } from "@/lib/blog";
 import { getBestSellers, getProductsByCategory } from "@/lib/products";
 import { canonicalPath } from "@/lib/seo/canonical";
 import { baseOpenGraph } from "@/lib/seo/json-ld";
@@ -72,15 +74,24 @@ export default async function SeoGuidePage({ params }: PageProps) {
   const page = seoLandingPages.find((p) => p.slug === slug);
   if (!page) notFound();
 
-  const [products, fabricTechEnabled, mixMatchEnabled] = await Promise.all([
+  const [products, fabricTechEnabled, mixMatchEnabled, publishedPosts] = await Promise.all([
     page.productCategory
       ? getProductsByCategory(page.productCategory).then((list) => list.slice(0, 4))
       : getBestSellers().then((list) => list.slice(0, 4)),
     isPageEnabled("fabricTech"),
     isPageEnabled("mixMatch"),
+    // F-051: "From the Journal" links come from the live, published posts —
+    // not the hardcoded seed file — so a post the admin unpublishes drops out
+    // instead of becoming a link to a 404. The block is decoration, so a DB
+    // hiccup just omits it.
+    getPublishedBlogPosts().catch(() => []),
   ]);
 
   const resolvedPage = resolvePageLinks(page, { fabricTechEnabled, mixMatchEnabled });
+  const relatedBlogSlugs = new Set(resolveSeoRelated(page).blogSlugs);
+  const relatedPosts = publishedPosts
+    .filter((post) => relatedBlogSlugs.has(post.slug))
+    .map(({ slug, title }) => ({ slug, title }));
 
-  return <SeoLandingLayout page={resolvedPage} products={products} />;
+  return <SeoLandingLayout page={resolvedPage} products={products} relatedPosts={relatedPosts} />;
 }

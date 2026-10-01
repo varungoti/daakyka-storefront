@@ -3,9 +3,23 @@
 import { useEffect, useState, type RefObject } from "react";
 import { AddToCartButton } from "@/components/cart/add-to-cart-button";
 import { useCurrency } from "@/context/currency-provider";
+import { isCtaScrolledPast } from "@/components/product/sticky-cta";
 import { setStickyAddToCartVisible } from "@/context/sticky-add-to-cart-store";
 import type { Product, ProductVariant } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+/** DOM ids of the PDP's option groups, which the bar's selection label
+ * scrolls back to. Set in product-detail.tsx. */
+export const PDP_COLOR_GROUP_ID = "pdp-color-group";
+export const PDP_SIZE_GROUP_ID = "pdp-size-group";
+
+function scrollToOptions() {
+  const target =
+    document.getElementById(PDP_COLOR_GROUP_ID) ?? document.getElementById(PDP_SIZE_GROUP_ID);
+  if (!target) return;
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  target.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+}
 
 /**
  * Dawn-style slide-up bar for mobile PDPs (release-hardening
@@ -22,6 +36,12 @@ import { cn } from "@/lib/utils";
  * disabled state and the add-to-cart behaviour are always identical
  * between the two buttons; nothing here re-implements variant resolution
  * or cart mutation.
+ *
+ * F-025: the bar only appears once the primary row has scrolled *past* the
+ * top of the viewport (it used to show on first paint, while the row was
+ * still below the fold, before the shopper had seen the pickers), and it
+ * says which size/colour a tap will add — tapping that label scrolls back to
+ * the pickers.
  */
 export function MobileStickyAddToCart({
   product,
@@ -29,6 +49,7 @@ export function MobileStickyAddToCart({
   unavailable,
   quantity,
   displayPrice,
+  selectionLabel,
   observeTarget,
 }: {
   product: Product;
@@ -39,6 +60,8 @@ export function MobileStickyAddToCart({
   unavailable?: boolean;
   quantity: number;
   displayPrice: number;
+  /** What a tap will add, e.g. "M · Navy" (see stickySelectionLabel). */
+  selectionLabel?: string;
   observeTarget: RefObject<HTMLElement | null>;
 }) {
   const { formatPrice } = useCurrency();
@@ -47,7 +70,7 @@ export function MobileStickyAddToCart({
   useEffect(() => {
     const el = observeTarget.current;
     if (!el || typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver(([entry]) => setVisible(!entry.isIntersecting), {
+    const observer = new IntersectionObserver(([entry]) => setVisible(isCtaScrolledPast(entry)), {
       rootMargin: "0px",
     });
     observer.observe(el);
@@ -74,8 +97,20 @@ export function MobileStickyAddToCart({
       )}
     >
       <div className="mx-auto flex max-w-[1320px] items-center gap-3">
-        <p className="font-display text-lg font-bold text-ink">{formatPrice(displayPrice)}</p>
-        <div className="ml-auto">
+        <div className="min-w-0">
+          <p className="font-display text-lg font-bold leading-tight text-ink">{formatPrice(displayPrice)}</p>
+          {selectionLabel && (
+            <button
+              type="button"
+              onClick={scrollToOptions}
+              aria-label={`Selected ${selectionLabel}. Change size or colour`}
+              className="block max-w-full truncate py-1 text-left text-xs font-semibold text-muted underline-offset-2 hover:text-brand hover:underline"
+            >
+              {selectionLabel}
+            </button>
+          )}
+        </div>
+        <div className="ml-auto shrink-0">
           <AddToCartButton product={product} variant={variant} unavailable={unavailable} quantity={quantity} size="md" />
         </div>
       </div>

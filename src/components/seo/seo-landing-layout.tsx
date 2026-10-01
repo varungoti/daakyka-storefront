@@ -8,7 +8,6 @@ import {
   type SeoLandingPageConfig,
 } from "@/data/seo-landing-pages";
 import { trustItems } from "@/data/navigation";
-import { getBlogPost } from "@/data/blog";
 import type { Product } from "@/lib/types";
 import { ArrowRight, CheckCircle2, ChevronRight } from "lucide-react";
 import Link from "next/link";
@@ -16,16 +15,18 @@ import Link from "next/link";
 export function SeoLandingLayout({
   page,
   products = [],
+  relatedPosts = [],
 }: {
   page: SeoLandingPageConfig;
   products?: Product[];
+  /** F-051: the published journal posts this guide links to, resolved from
+   * the database by the page — never from the hardcoded seed file, which
+   * would keep linking to a post the admin has since unpublished. */
+  relatedPosts?: Array<{ slug: string; title: string }>;
 }) {
   const base = siteUrlBase();
   const guideUrl = `${base}/guides/${page.slug}`;
   const related = resolveSeoRelated(page);
-  const relatedPosts = related.blogSlugs
-    .map((slug) => getBlogPost(slug))
-    .filter((post): post is NonNullable<ReturnType<typeof getBlogPost>> => Boolean(post));
 
   const faqJsonLd = {
     "@context": "https://schema.org",

@@ -14,8 +14,16 @@ interface BlogPostPageProps {
 }
 
 export async function generateStaticParams() {
-  const posts = await getPublishedBlogPosts();
-  return posts.map((post) => ({ slug: post.slug }));
+  // F-051: getPublishedBlogPosts() no longer papers over a DB error with the
+  // hardcoded seed posts, so a build with no database access prerenders no
+  // posts instead of failing; dynamicParams (the default) renders each one on
+  // first request.
+  try {
+    const posts = await getPublishedBlogPosts();
+    return posts.map((post) => ({ slug: post.slug }));
+  } catch {
+    return [];
+  }
 }
 
 export async function generateMetadata({ params }: BlogPostPageProps) {

@@ -185,3 +185,32 @@ describe("matchProducts (release-hardening audit F-082)", () => {
     );
   });
 });
+
+// F-102: in-results search matched only name, first colour and the category
+// *slug*, so "Scrub Tops" found 0 products and "lab coat" found 1 of 3. The
+// shared matcher (F-082) already tokenises against the category display name
+// and every colour; these pin the cases the audit reported.
+describe("matchProducts: the F-102 queries", () => {
+  it("finds a category by its display name, in any case ('Scrub Tops')", () => {
+    const result = matchProducts(allProducts, "Scrub Tops");
+    assert.deepEqual(result.map((p) => p.handle), ["scrub-top"]);
+  });
+
+  it("finds every product in a category from the singular query ('lab coat')", () => {
+    const result = matchProducts(allProducts, "lab coat");
+    assert.deepEqual(result.map((p) => p.handle).sort(), ["doctor-coat", "lab-coat"]);
+  });
+
+  it("matches a colour that is not the product's first colour", () => {
+    const twoColours = product({
+      id: "two-colours",
+      name: "Everyday Tunic",
+      colorName: "Navy",
+      colors: [
+        { name: "Navy", hex: "#1E3A5F" },
+        { name: "Wine", hex: "#722F37" },
+      ],
+    });
+    assert.deepEqual(matchProducts([twoColours, scrubTop], "wine").map((p) => p.handle), ["two-colours"]);
+  });
+});

@@ -2,7 +2,12 @@
 
 import { AddToCartButton } from "@/components/cart/add-to-cart-button";
 import { ResendVerificationButton } from "@/components/account/resend-verification-button";
-import { MobileStickyAddToCart } from "@/components/product/mobile-sticky-add-to-cart";
+import {
+  MobileStickyAddToCart,
+  PDP_COLOR_GROUP_ID,
+  PDP_SIZE_GROUP_ID,
+} from "@/components/product/mobile-sticky-add-to-cart";
+import { stickySelectionLabel } from "@/components/product/sticky-cta";
 import { Badge } from "@/components/ui/badge";
 import type { LightboxImage } from "@/components/ui/image-lightbox";
 import { Modal } from "@/components/ui/modal";
@@ -263,7 +268,7 @@ export function ProductDetail({
           )}
 
           {product.colors.length > 1 && (
-            <div>
+            <div id={PDP_COLOR_GROUP_ID}>
               <p className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Color</p>
               <div className="flex flex-wrap gap-3">
                 {product.colors.map((color) => (
@@ -288,7 +293,7 @@ export function ProductDetail({
           )}
 
           {product.sizes.length > 0 && (
-            <div>
+            <div id={PDP_SIZE_GROUP_ID}>
               <div className="mb-3 flex items-center justify-between">
                 <p className="text-xs font-bold uppercase tracking-wide text-muted">Size</p>
                 <button
@@ -532,6 +537,7 @@ export function ProductDetail({
         unavailable={comboMissing}
         quantity={quantity}
         displayPrice={displayPrice}
+        selectionLabel={stickySelectionLabel(selectedSize, selectedColor, product.colors.length)}
         observeTarget={ctaRowRef}
       />
     </div>

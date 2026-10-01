@@ -64,6 +64,15 @@ function toNavLink(node: CategoryTreeNode): NavLink {
   return { label: node.name, href: `/category/${node.slug}` };
 }
 
+/**
+ * F-084: the admin's "Show in menu" flag has to hide a category from *every*
+ * header/drawer menu, not only the Shop grid — getCategoryTree() returns
+ * hidden categories too and leaves it to each menu renderer to filter.
+ */
+function visible(nodes: CategoryTreeNode[]): CategoryTreeNode[] {
+  return nodes.filter((node) => node.showInMenu);
+}
+
 function toCategoryTile(node: CategoryTreeNode): NavCategoryTile {
   return {
     label: node.name,
@@ -72,7 +81,7 @@ function toCategoryTile(node: CategoryTreeNode): NavCategoryTile {
     // duplicates, and canonicalizes to — link straight to the landing page.
     href: sectionLandingPath(node.slug) ?? `/category/${node.slug}`,
     image: node.image ? { url: node.image.url, alt: node.image.alt ?? node.name } : null,
-    children: node.children.filter((child) => child.showInMenu).map(toNavLink),
+    children: visible(node.children).map(toNavLink),
   };
 }
 
@@ -86,7 +95,7 @@ export function buildNavigationFromTree(
   flags: { saleEnabled: boolean },
 ): NavigationTree {
   const items: NavItem[] = [];
-  const menuCategories = tree.filter((category) => category.showInMenu);
+  const menuCategories = visible(tree);
 
   // "Shop" — a mega grid of every active top-level category with
   // showInMenu, each tile carrying its own children as quick links. This
@@ -99,44 +108,58 @@ export function buildNavigationFromTree(
     tiles: menuCategories.map(toCategoryTile),
   });
 
-  const hospitals = tree.find((category) => category.slug === HOSPITALS_SLUG);
+  // The section roots are looked up among the showInMenu categories only, so
+  // hiding "Kids Wear" (say) drops its header entry and its mobile-drawer
+  // entry too. A section whose every child is hidden degrades to a plain link
+  // to its landing page rather than a menu of "Coming soon".
+  const hospitals = menuCategories.find((category) => category.slug === HOSPITALS_SLUG);
   if (hospitals) {
-    const linens = hospitals.children.find((child) => child.slug === HOSPITAL_LINENS_SLUG);
-    const apparel = hospitals.children.filter((child) => child.slug !== HOSPITAL_LINENS_SLUG);
-    items.push({
-      id: "for-hospitals",
-      kind: "mega-columns",
-      label: "For Hospitals",
-      href: "/for-hospitals",
-      columns: [
-        { heading: "Apparel", items: apparel.map(toNavLink) },
-        { heading: "Linens", items: (linens?.children ?? []).map(toNavLink) },
-      ],
-      promo: { label: "Bulk hospital orders →", href: "/bulk-orders" },
-    });
+    const hospitalChildren = visible(hospitals.children);
+    const linens = hospitalChildren.find((child) => child.slug === HOSPITAL_LINENS_SLUG);
+    const apparel = hospitalChildren.filter((child) => child.slug !== HOSPITAL_LINENS_SLUG);
+    const columns: NavColumn[] = [
+      { heading: "Apparel", items: apparel.map(toNavLink) },
+      { heading: "Linens", items: visible(linens?.children ?? []).map(toNavLink) },
+    ].filter((column) => column.items.length > 0);
+    items.push(
+      columns.length > 0
+        ? {
+            id: "for-hospitals",
+            kind: "mega-columns",
+            label: "For Hospitals",
+            href: "/for-hospitals",
+            columns,
+            promo: { label: "Bulk hospital orders →", href: "/bulk-orders" },
+          }
+        : { id: "for-hospitals", kind: "link", label: "For Hospitals", href: "/for-hospitals" },
+    );
   }
 
-  const school = tree.find((category) => category.slug === SCHOOL_SLUG);
+  const school = menuCategories.find((category) => category.slug === SCHOOL_SLUG);
   if (school) {
-    items.push({
-      id: "school-uniforms",
-      kind: "mega-columns",
-      label: "School Uniforms",
-      href: "/school-uniforms",
-      columns: [{ heading: "Shop by Type", items: school.children.map(toNavLink) }],
-      promo: { label: "School bulk orders →", href: "/bulk-orders" },
-    });
+    const schoolLinks = visible(school.children).map(toNavLink);
+    items.push(
+      schoolLinks.length > 0
+        ? {
+            id: "school-uniforms",
+            kind: "mega-columns",
+            label: "School Uniforms",
+            href: "/school-uniforms",
+            columns: [{ heading: "Shop by Type", items: schoolLinks }],
+            promo: { label: "School bulk orders →", href: "/bulk-orders" },
+          }
+        : { id: "school-uniforms", kind: "link", label: "School Uniforms", href: "/school-uniforms" },
+    );
   }
 
-  const kids = tree.find((category) => category.slug === KIDS_SLUG);
+  const kids = menuCategories.find((category) => category.slug === KIDS_SLUG);
   if (kids) {
-    items.push({
-      id: "kids-wear",
-      kind: "simple",
-      label: "Kids Wear",
-      href: "/kids-wear",
-      children: kids.children.map(toNavLink),
-    });
+    const kidsLinks = visible(kids.children).map(toNavLink);
+    items.push(
+      kidsLinks.length > 0
+        ? { id: "kids-wear", kind: "simple", label: "Kids Wear", href: "/kids-wear", children: kidsLinks }
+        : { id: "kids-wear", kind: "link", label: "Kids Wear", href: "/kids-wear" },
+    );
   }
 
   if (flags.saleEnabled) {

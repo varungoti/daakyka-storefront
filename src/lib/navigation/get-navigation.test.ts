@@ -176,3 +176,78 @@ describe("buildNavigationFromTree", () => {
     assert.equal(schoolTile?.image, null);
   });
 });
+
+// F-084: only the Shop grid honoured the admin's "Show in menu" flag; the
+// For Hospitals / School Uniforms / Kids Wear menus and the mobile drawer
+// (which renders these same items) kept listing hidden categories.
+describe("buildNavigationFromTree honours showInMenu everywhere (F-084)", () => {
+  function hide(tree: CategoryTreeNode[], ...slugs: string[]): CategoryTreeNode[] {
+    return tree.map((n) => ({
+      ...n,
+      showInMenu: slugs.includes(n.slug) ? false : n.showInMenu,
+      children: hide(n.children, ...slugs),
+    }));
+  }
+
+  function labels(item: NavItem): string[] {
+    if (item.kind === "mega-columns") return item.columns.flatMap((c) => c.items.map((i) => i.label));
+    if (item.kind === "simple") return item.children.map((c) => c.label);
+    return [];
+  }
+
+  it("drops a hidden hospital apparel category from the For Hospitals menu", () => {
+    const nav = buildNavigationFromTree(hide(buildMockTree(), "scrub-tops"), { saleEnabled: false });
+    const hospitals = findItem(nav.items, "for-hospitals");
+    assert.deepEqual(labels(hospitals), ["Scrub Sets", "Bedsheets", "Pillow Covers"]);
+  });
+
+  it("drops a hidden linens grandchild, and the whole Linens column once nothing in it is visible", () => {
+    const partly = buildNavigationFromTree(hide(buildMockTree(), "bedsheets"), { saleEnabled: false });
+    assert.deepEqual(labels(findItem(partly.items, "for-hospitals")), ["Scrub Sets", "Scrub Tops", "Pillow Covers"]);
+
+    const none = buildNavigationFromTree(hide(buildMockTree(), "hospital-linens"), { saleEnabled: false });
+    const hospitals = findItem(none.items, "for-hospitals");
+    assert.equal(hospitals.kind, "mega-columns");
+    if (hospitals.kind !== "mega-columns") return;
+    assert.deepEqual(hospitals.columns.map((c) => c.heading), ["Apparel"]);
+  });
+
+  it("drops hidden School Uniforms and Kids Wear children", () => {
+    const nav = buildNavigationFromTree(hide(buildMockTree(), "tunics"), { saleEnabled: false });
+    assert.deepEqual(labels(findItem(nav.items, "school-uniforms")), ["Shirts"]);
+  });
+
+  it("removes a hidden top-level section from the header and drawer entirely", () => {
+    const nav = buildNavigationFromTree(hide(buildMockTree(), "kids-wear", "for-hospitals"), { saleEnabled: false });
+    assert.ok(!nav.items.some((item) => item.id === "kids-wear"));
+    assert.ok(!nav.items.some((item) => item.id === "for-hospitals"));
+    assert.ok(nav.items.some((item) => item.id === "school-uniforms"));
+  });
+
+  it("degrades a section whose every child is hidden to a plain link instead of an empty 'Coming soon' menu", () => {
+    const nav = buildNavigationFromTree(hide(buildMockTree(), "kids-tshirts", "school-shirts", "tunics"), {
+      saleEnabled: false,
+    });
+    assert.deepEqual(findItem(nav.items, "kids-wear"), {
+      id: "kids-wear",
+      kind: "link",
+      label: "Kids Wear",
+      href: "/kids-wear",
+    });
+    assert.deepEqual(findItem(nav.items, "school-uniforms"), {
+      id: "school-uniforms",
+      kind: "link",
+      label: "School Uniforms",
+      href: "/school-uniforms",
+    });
+  });
+
+  it("keeps the Shop grid and the section menus in agreement about which children are visible", () => {
+    const nav = buildNavigationFromTree(hide(buildMockTree(), "scrub-sets"), { saleEnabled: false });
+    const shop = findItem(nav.items, "shop");
+    if (shop.kind !== "mega-grid") throw new Error("expected mega-grid");
+    const hospitalsTile = shop.tiles.find((t) => t.href === "/for-hospitals");
+    assert.ok(!hospitalsTile?.children.some((c) => c.label === "Scrub Sets"));
+    assert.ok(!labels(findItem(nav.items, "for-hospitals")).includes("Scrub Sets"));
+  });
+});

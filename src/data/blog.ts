@@ -1,5 +1,13 @@
 import { blogMedia } from "@/data/media/catalog";
 
+/**
+ * F-051: SEED INPUT AND TYPES ONLY. The journal is read from the database
+ * (src/lib/blog/index.ts) — nothing at runtime may import `blogPosts` from
+ * here to serve a page, a listing or a link, because this file keeps a post
+ * alive after the admin has unpublished or deleted it. It remains for the
+ * `BlogPost` type and as the reference launch copy that tests (slug and
+ * canonical checks) read; prisma/seed.ts keeps its own copy for seeding.
+ */
 export interface BlogPost {
   slug: string;
   title: string;
@@ -62,7 +70,3 @@ export const blogPosts: BlogPost[] = [
     ],
   },
 ];
-
-export function getBlogPost(slug: string): BlogPost | undefined {
-  return blogPosts.find((post) => post.slug === slug);
-}
