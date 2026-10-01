@@ -79,7 +79,11 @@ export const settingSchemas: { [K in SettingKey]: z.ZodType<SettingValueMap[K]> 
   "pages.mixMatch.enabled": z.boolean(),
   "sale.enabled": z.boolean(),
   "header.bulkCta.enabled": z.boolean(),
-  "announcement.messages": z.array(z.string().trim().min(1).max(200)).min(1).max(10),
+  // F-170: an empty list is a valid value — it's how the owner hides the
+  // announcement messages (the storefront bar renders nothing for them, and
+  // does NOT fall back to the brand defaults — see announcement-bar.tsx).
+  // This used to be `.min(1)`, so the bar could never be switched off.
+  "announcement.messages": z.array(z.string().trim().min(1).max(200)).max(10),
   "shipping.flatRate": z.number().min(0).max(100_000),
   "shipping.freeAbove": z.number().min(0).max(10_000_000),
   "contact.phone": z.string().trim().min(6).max(30),

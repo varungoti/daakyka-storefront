@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { AdminRole } from "@/generated/prisma/client";
 import { adminRoles, formatRole } from "@/lib/auth/rbac";
+import { formatApiError } from "@/lib/validation/format-api-error";
 import { useRouter } from "next/navigation";
 
 interface UserRow {
@@ -28,20 +29,68 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
   const [busy, setBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [tempPassword, setTempPassword] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(user.name);
 
-  const updateUser = async (changes: Partial<UserRow>) => {
+  const updateUser = async (changes: Partial<UserRow>): Promise<boolean> => {
     setErrorMessage(null);
-    const response = await fetch(`/api/admin/users/${user.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: user.name, role: user.role, active: user.active, ...changes }),
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      setErrorMessage(body?.error ?? "Couldn't update this user.");
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/admin/users/${user.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: user.name, role: user.role, active: user.active, ...changes }),
+      });
+      if (!response.ok) {
+        // F-172: the PATCH route now sends `issues` for a rejected field
+        // (e.g. a too-short name) alongside its generic `error`.
+        const body = await response.json().catch(() => ({}));
+        setErrorMessage(formatApiError(body, "Couldn't update this user.").summary);
+        return false;
+      }
+      router.refresh();
+      return true;
+    } catch {
+      setErrorMessage("Couldn't update this user — check your connection and try again.");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // F-172: a role change or deactivation applied the instant the dropdown /
+  // checkbox changed — one slip of a thumb on a phone — and each one signs
+  // that admin out (it bumps their sessionVersion). Reset password and
+  // Delete already confirmed; these now do too. Declining leaves the
+  // controlled <select>/checkbox showing the saved value.
+  const changeRole = (role: AdminRole) => {
+    if (role === user.role) return;
+    const message = `Change ${user.name}'s role from ${formatRole(user.role)} to ${formatRole(role)}? They'll be signed out and will need to sign in again.`;
+    if (!window.confirm(message)) return;
+    void updateUser({ role });
+  };
+
+  const changeActive = (active: boolean) => {
+    const message = active
+      ? `Reactivate ${user.name}? They'll be able to sign in again.`
+      : `Deactivate ${user.name}? They'll be signed out right away and won't be able to sign in until reactivated.`;
+    if (!window.confirm(message)) return;
+    void updateUser({ active });
+  };
+
+  const startEditingName = () => {
+    setNameDraft(user.name);
+    setErrorMessage(null);
+    setEditingName(true);
+  };
+
+  const saveName = async () => {
+    const trimmed = nameDraft.trim();
+    if (trimmed === user.name) {
+      setEditingName(false);
       return;
     }
-    router.refresh();
+    if (await updateUser({ name: trimmed })) setEditingName(false);
   };
 
   const resetPassword = async () => {
@@ -92,7 +141,51 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
   return (
     <tr className="border-b border-border/70 align-top">
       <td className="px-4 py-4">
-        <p className="font-semibold text-ink">{user.name}</p>
+        {editingName ? (
+          <form
+            className="flex flex-wrap items-center gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveName();
+            }}
+          >
+            <input
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              aria-label={`Name for ${user.email}`}
+              maxLength={150}
+              autoFocus
+              className="w-44 rounded-lg border border-border px-2 py-1 text-sm text-ink outline-none focus:border-brand"
+            />
+            <button
+              type="submit"
+              disabled={busy || nameDraft.trim().length < 2}
+              className="rounded-full bg-brand px-3 py-1 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditingName(false)}
+              disabled={busy}
+              className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted hover:bg-lilac/40 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </form>
+        ) : (
+          <p className="flex flex-wrap items-center gap-2 font-semibold text-ink">
+            {user.name}
+            <button
+              type="button"
+              onClick={startEditingName}
+              aria-label={`Edit name for ${user.name}`}
+              className="text-xs font-semibold text-brand hover:underline"
+            >
+              Edit
+            </button>
+          </p>
+        )}
         <p className="text-sm text-muted">{user.email}</p>
         {errorMessage && <p className="mt-1 text-xs text-red-600">{errorMessage}</p>}
         {tempPassword && (
@@ -108,8 +201,9 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
       <td className="px-4 py-4">
         <select
           value={user.role}
-          onChange={(e) => updateUser({ role: e.target.value as AdminRole })}
-          disabled={isSelf}
+          onChange={(e) => changeRole(e.target.value as AdminRole)}
+          disabled={isSelf || busy}
+          aria-label={`Role for ${user.name}`}
           className="rounded-lg border border-border px-3 py-1.5 text-sm outline-none focus:border-brand"
         >
           {adminRoles.map((role) => (
@@ -124,8 +218,8 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
           <input
             type="checkbox"
             checked={user.active}
-            disabled={isSelf}
-            onChange={(e) => updateUser({ active: e.target.checked })}
+            disabled={isSelf || busy}
+            onChange={(e) => changeActive(e.target.checked)}
           />
           Active
         </label>

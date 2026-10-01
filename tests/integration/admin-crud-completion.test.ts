@@ -90,12 +90,14 @@ import {
   inviteUser,
   LastSuperAdminError,
   resetUserPassword,
+  updateAdminUser,
   UserDeleteBlockedError,
   UserEmailConflictError,
   UserNotFoundError,
   UserSelfActionBlockedError,
   WeakPasswordError,
 } from "@/lib/auth/user-admin";
+import { JourneyNotFoundError, updateJourneyStatus } from "@/lib/engagement/journeys";
 import { verifyPassword } from "@/lib/auth/password";
 import { POST as postUser } from "@/app/api/admin/users/route";
 import { DELETE as deleteUserRoute } from "@/app/api/admin/users/[id]/route";
@@ -994,5 +996,177 @@ describe("processDueScheduledCampaigns picks up a past-due SCHEDULED campaign (F
     // actually picked up and processed instead of sitting forever the way
     // a scheduledAt=NULL row used to.
     assert.notEqual(refetched?.status, "SCHEDULED");
+  });
+});
+
+// F-172: PATCH /api/admin/users/[id]'s rules now live in updateAdminUser
+// (callable without a request scope). Its last-SUPER_ADMIN check used to be
+// count-then-update outside a transaction, so two Super Admins demoting each
+// other at once could leave none.
+describe("updateAdminUser (F-172)", () => {
+  let adminId: string;
+  const createdUserIds: string[] = [];
+
+  before(async () => {
+    adminId = await findAnyAdminId();
+  });
+
+  after(async () => {
+    if (createdUserIds.length) await db.user.deleteMany({ where: { id: { in: createdUserIds } } }).catch(() => {});
+  });
+
+  async function inviteTestUser(role: "VIEWER" | "SUPER_ADMIN", label: string) {
+    const unique = randomUUID().slice(0, 8);
+    const slug = label.toLowerCase().replace(/\W+/g, "-");
+    const invited = await inviteUser({ name: label, email: `${slug}-${unique}@example.com`, role }, adminId);
+    createdUserIds.push(invited.user.id);
+    return invited.user;
+  }
+
+  /** Holds a row lock on every active SUPER_ADMIN, exactly as an in-flight
+   * updateAdminUser call does, until `release()` is called. */
+  async function holdSuperAdminLock() {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let lockAcquired!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      lockAcquired = resolve;
+    });
+    const holder = db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "role" = 'SUPER_ADMIN' AND "active" = true FOR NO KEY UPDATE`;
+      lockAcquired();
+      await hold;
+    });
+    await locked;
+    return {
+      async release() {
+        release();
+        await holder;
+      },
+    };
+  }
+
+  it("renames a user without revoking their sessions", async () => {
+    const user = await inviteTestUser("VIEWER", "Rename Me");
+    const before = await db.user.findUnique({ where: { id: user.id }, select: { sessionVersion: true } });
+
+    const updated = await updateAdminUser(user.id, { name: "Renamed Person", role: "VIEWER", active: true }, adminId);
+
+    assert.equal(updated.name, "Renamed Person");
+    const after = await db.user.findUnique({ where: { id: user.id }, select: { sessionVersion: true, name: true } });
+    assert.equal(after!.name, "Renamed Person");
+    assert.equal(after!.sessionVersion, before!.sessionVersion, "a plain name change must not log the admin out");
+  });
+
+  it("a role change or deactivation revokes the target's sessions", async () => {
+    const user = await inviteTestUser("VIEWER", "Demote Me");
+    const before = await db.user.findUnique({ where: { id: user.id }, select: { sessionVersion: true } });
+
+    await updateAdminUser(user.id, { name: user.name, role: "CONTENT_EDITOR", active: true }, adminId);
+    const afterRole = await db.user.findUnique({ where: { id: user.id }, select: { sessionVersion: true, role: true } });
+    assert.equal(afterRole!.role, "CONTENT_EDITOR");
+    assert.equal(afterRole!.sessionVersion, before!.sessionVersion + 1);
+
+    await updateAdminUser(user.id, { name: user.name, role: "CONTENT_EDITOR", active: false }, adminId);
+    const afterDeactivate = await db.user.findUnique({ where: { id: user.id }, select: { sessionVersion: true, active: true } });
+    assert.equal(afterDeactivate!.active, false);
+    assert.equal(afterDeactivate!.sessionVersion, before!.sessionVersion + 2);
+  });
+
+  it("throws UserNotFoundError for an unknown id", async () => {
+    await assert.rejects(
+      () => updateAdminUser("does-not-exist", { name: "Nobody", role: "VIEWER", active: true }, adminId),
+      UserNotFoundError,
+    );
+  });
+
+  it("refuses self-deactivation and a self role change, with the messages the admin UI shows", async () => {
+    await assert.rejects(
+      () => updateAdminUser(adminId, { name: "Me", role: "SUPER_ADMIN", active: false }, adminId),
+      (err: unknown) => err instanceof UserSelfActionBlockedError && err.message === "Cannot deactivate your own account",
+    );
+    await assert.rejects(
+      () => updateAdminUser(adminId, { name: "Me", role: "VIEWER", active: true }, adminId),
+      (err: unknown) => err instanceof UserSelfActionBlockedError && err.message === "Cannot change your own role",
+    );
+    const me = await db.user.findUnique({ where: { id: adminId }, select: { role: true, active: true } });
+    assert.equal(me!.role, "SUPER_ADMIN");
+    assert.equal(me!.active, true);
+  });
+
+  it("demoting a Super Admin waits for any in-flight change to the Super Admin set (the atomic last-admin guard)", async () => {
+    const racer = await inviteTestUser("SUPER_ADMIN", "Race Admin");
+    const lock = await holdSuperAdminLock();
+
+    let settled = false;
+    let update: Promise<unknown>;
+    try {
+      update = updateAdminUser(racer.id, { name: racer.name, role: "VIEWER", active: true }, adminId).then((result) => {
+        settled = true;
+        return result;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      assert.equal(settled, false, "the demotion must wait while another change holds the Super Admin lock");
+    } finally {
+      await lock.release();
+    }
+
+    await update;
+    const after = await db.user.findUnique({ where: { id: racer.id }, select: { role: true } });
+    assert.equal(after!.role, "VIEWER");
+  });
+
+  it("a change that doesn't touch the Super Admin set never waits on that lock", async () => {
+    const viewer = await inviteTestUser("VIEWER", "No Lock Needed");
+    const lock = await holdSuperAdminLock();
+
+    try {
+      const updated = await Promise.race([
+        updateAdminUser(viewer.id, { name: "No Lock Needed 2", role: "VIEWER", active: true }, adminId),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("blocked on the Super Admin lock")), 2000)),
+      ]);
+      assert.equal(updated.name, "No Lock Needed 2");
+    } finally {
+      await lock.release();
+    }
+  });
+});
+
+// F-219: PATCH /api/admin/journeys/[id] on an unknown id crashed with an
+// unhandled Prisma P2025 (a 500) instead of answering 404.
+describe("updateJourneyStatus (F-219)", () => {
+  let adminId: string;
+  const createdJourneyIds: string[] = [];
+
+  before(async () => {
+    adminId = await findAnyAdminId();
+  });
+
+  after(async () => {
+    if (createdJourneyIds.length) {
+      await db.customerJourney.deleteMany({ where: { id: { in: createdJourneyIds } } }).catch(() => {});
+    }
+  });
+
+  it("changes a journey's status and writes an audit row", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const journey = await db.customerJourney.create({
+      data: { name: `Status Test ${unique}`, slug: `status-test-${unique}`, trigger: "newsletter_signup", status: "DRAFT" },
+    });
+    createdJourneyIds.push(journey.id);
+
+    const updated = await updateJourneyStatus(journey.id, "ACTIVE", adminId);
+    assert.equal(updated.status, "ACTIVE");
+
+    const audit = await db.auditLog.findFirst({
+      where: { entity: "customer_journey", entityId: journey.id, action: "update_status" },
+    });
+    assert.ok(audit, "the status change must be audit logged");
+  });
+
+  it("throws JourneyNotFoundError (not a raw Prisma error) for an unknown id", async () => {
+    await assert.rejects(() => updateJourneyStatus("does-not-exist", "ACTIVE", adminId), JourneyNotFoundError);
   });
 });

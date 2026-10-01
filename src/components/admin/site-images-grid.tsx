@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import type { ManifestAspect } from "@/data/media/image-manifest";
 import { aspectClassName, placeholderForAspect, toGenerationAspect } from "@/data/media/image-manifest";
 import type { PromptFields, PromptPreset } from "@/lib/ai/prompt-presets";
+import { generationFailureNotice } from "@/lib/admin/generation-notice";
 import { uploadErrorMessage } from "@/lib/admin/retryable-upload";
 import { prepareImageForUpload } from "@/lib/media/prepare-upload";
 import { retryAfterMessage } from "@/lib/security/retry-after";
@@ -37,12 +38,27 @@ export interface SiteImageSlotRow {
  * with a friendly message when OPENAI_API_KEY / R2 aren't configured,
  * which is the only state this environment can actually exercise.
  */
-export function SiteImagesGrid({ rows: initialRows }: { rows: SiteImageSlotRow[] }) {
+export function SiteImagesGrid({
+  rows: initialRows,
+  canGenerate = true,
+}: {
+  rows: SiteImageSlotRow[];
+  /** F-292: whether the viewing role holds `ai:generate`. A role that can
+   * manage media but not generate images (CONTENT_EDITOR) used to get a
+   * "Generate with AI" button on every card that could only ever 403. */
+  canGenerate?: boolean;
+}) {
   const [rows, setRows] = useState(initialRows);
   const groups = groupBy(rows, (row) => row.group);
 
   return (
     <div className="space-y-10">
+      {canGenerate ? null : (
+        <p className="rounded-2xl border border-border bg-surface p-4 text-sm text-muted">
+          Your role can upload and replace images here, but AI image generation needs the AI images permission — ask
+          an admin if you need it.
+        </p>
+      )}
       {[...groups.entries()].map(([group, groupRows]) => (
         <section key={group}>
           <h2 className="mb-4 font-display text-lg font-bold text-ink">{group}</h2>
@@ -51,6 +67,7 @@ export function SiteImagesGrid({ rows: initialRows }: { rows: SiteImageSlotRow[]
               <SiteImageCard
                 key={row.slot}
                 row={row}
+                canGenerate={canGenerate}
                 onChange={(current) =>
                   setRows((prev) => prev.map((r) => (r.slot === row.slot ? { ...r, current } : r)))
                 }
@@ -76,9 +93,11 @@ function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
 
 function SiteImageCard({
   row,
+  canGenerate,
   onChange,
 }: {
   row: SiteImageSlotRow;
+  canGenerate: boolean;
   onChange: (current: { url: string; alt: string } | null) => void;
 }) {
   const [generating, setGenerating] = useState(false);
@@ -101,16 +120,9 @@ function SiteImageCard({
           alt: row.label,
         }),
       });
-      if (response.status === 503) {
-        setNotice("AI image generation isn't configured yet — add OPENAI_API_KEY to enable this.");
-        return;
-      }
-      if (response.status === 429) {
-        setNotice("Daily AI image limit reached — try again tomorrow, or upload an image instead.");
-        return;
-      }
       if (!response.ok) {
-        setNotice("Generation failed — try again or upload an image instead.");
+        const failure = await response.json().catch(() => ({}));
+        setNotice(generationFailureNotice(response.status, failure?.error));
         return;
       }
       const body = await response.json();
@@ -190,7 +202,7 @@ function SiteImageCard({
         ) : null}
         {notice ? <p className="text-xs text-red-600">{notice}</p> : null}
         <div className="mt-auto flex flex-wrap gap-2 pt-1">
-          {row.uploadOnly ? null : (
+          {row.uploadOnly || !canGenerate ? null : (
             <button
               type="button"
               onClick={onGenerate}

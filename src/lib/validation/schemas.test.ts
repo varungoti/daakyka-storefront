@@ -33,7 +33,9 @@ import {
   testimonialUpdateSchema,
   trustStatsContentSchema,
   userInviteSchema,
+  userUpdateSchema,
 } from "@/lib/validation/schemas";
+import { formatApiError } from "@/lib/validation/format-api-error";
 
 describe("validation schemas", () => {
   it("requires bulk order consent", () => {
@@ -1191,5 +1193,72 @@ describe("userInviteSchema", () => {
 
   it("rejects an unknown role", () => {
     assert.equal(userInviteSchema.safeParse({ ...valid, role: "GOD_MODE" }).success, false);
+  });
+});
+
+// F-172: userUpdateSchema.name was a bare `z.string().min(2)` — no trim and
+// no upper bound, so a 5,000-character name was accepted (200).
+describe("userUpdateSchema (F-172)", () => {
+  const valid = { name: "Priya Sharma", role: "VIEWER" as const, active: true };
+
+  it("accepts a normal update and trims the name", () => {
+    const result = userUpdateSchema.safeParse({ ...valid, name: "  Priya Sharma  " });
+    assert.equal(result.success, true);
+    if (result.success) assert.equal(result.data.name, "Priya Sharma");
+  });
+
+  it("rejects an oversized name (the same 150-character cap userInviteSchema has)", () => {
+    assert.equal(userUpdateSchema.safeParse({ ...valid, name: "a".repeat(5000) }).success, false);
+    assert.equal(userUpdateSchema.safeParse({ ...valid, name: "a".repeat(150) }).success, true);
+    assert.equal(userUpdateSchema.safeParse({ ...valid, name: "a".repeat(151) }).success, false);
+  });
+
+  it("rejects a name that is only whitespace", () => {
+    assert.equal(userUpdateSchema.safeParse({ ...valid, name: "     " }).success, false);
+  });
+});
+
+// F-219 / F-172: the admin forms show each issue's own message next to its
+// field (via formatApiError), so the bounds carry readable copy instead of
+// zod's "Too small: expected string to have >=2 characters".
+describe("admin form validation messages (F-219, F-172)", () => {
+  function fieldErrorsFor(result: { success: boolean; error?: { issues: unknown[] } }) {
+    assert.equal(result.success, false);
+    return formatApiError({ error: "Validation failed", issues: result.error!.issues }, "fallback").fieldErrors;
+  }
+
+  it("offer: names the field and the limit", () => {
+    const errors = fieldErrorsFor(offerSchema.safeParse({ name: "a", type: "b", description: "c" }));
+    assert.equal(errors.name, "Name must be at least 2 characters");
+    assert.equal(errors.type, "Type must be at least 2 characters");
+    assert.equal(errors.description, "Description must be at least 5 characters");
+  });
+
+  it("template: the 10-character body minimum is explained", () => {
+    const errors = fieldErrorsFor(templateSchema.safeParse({ name: "Welcome", channel: "EMAIL", body: "short" }));
+    assert.equal(errors.body, "Body must be at least 10 characters");
+  });
+
+  it("SEO record: a path without a leading slash says what's wrong", () => {
+    const errors = fieldErrorsFor(
+      seoPageRecordSchema.safeParse({ path: "no-slash", title: "T", metaDescription: "M" }),
+    );
+    assert.equal(errors.path, "Path must start with / and use URL-safe characters");
+  });
+
+  it("SEO record: empty title and description are 'required', not a bare validation failure", () => {
+    const errors = fieldErrorsFor(seoPageRecordSchema.safeParse({ path: "/shop", title: "", metaDescription: "" }));
+    assert.equal(errors.title, "Title is required");
+    assert.equal(errors.metaDescription, "Meta description is required");
+  });
+
+  it("invite: an invalid email is reported against the email field", () => {
+    const errors = fieldErrorsFor(userInviteSchema.safeParse({ name: "New Admin", email: "not-an-email", role: "VIEWER" }));
+    assert.equal(errors.email, "Enter a valid email address");
+  });
+
+  it("segment: a too-short slug is explained", () => {
+    const errors = fieldErrorsFor(segmentSchema.safeParse({ name: "Hospitals", slug: "x" }));
+    assert.equal(errors.slug, "Slug must be at least 2 characters");
   });
 });

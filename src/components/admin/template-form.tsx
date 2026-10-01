@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { FormErrorBanner } from "@/components/admin/form-error-banner";
 import { buildEngagementVars, renderTemplate } from "@/lib/engagement/template";
+import { formatApiError } from "@/lib/validation/format-api-error";
 
 export interface TemplateFormInitial {
   id: string;
@@ -30,6 +32,7 @@ export function TemplateForm({ initial }: { initial?: TemplateFormInitial }) {
 
   const [status, setStatus] = useState<"idle" | "saving" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [testStatus, setTestStatus] = useState<"idle" | "sending" | "sent" | "failed">("idle");
   const [testMessage, setTestMessage] = useState<string | null>(null);
 
@@ -42,6 +45,7 @@ export function TemplateForm({ initial }: { initial?: TemplateFormInitial }) {
   const save = async () => {
     setStatus("saving");
     setErrorMessage(null);
+    setFieldErrors({});
 
     const payload = {
       name: name.trim(),
@@ -50,16 +54,26 @@ export function TemplateForm({ initial }: { initial?: TemplateFormInitial }) {
       body,
     };
 
-    const response = await fetch(isEdit ? `/api/admin/templates/${initial!.id}` : "/api/admin/templates", {
-      method: isEdit ? "PATCH" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    try {
+      const response = await fetch(isEdit ? `/api/admin/templates/${initial!.id}` : "/api/admin/templates", {
+        method: isEdit ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    if (!response.ok) {
-      const responseBody = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        // F-219: responseBody.error is always the generic "Validation
+        // failed" — the real reason (and which field) lives in `issues`.
+        const responseBody = await response.json().catch(() => ({}));
+        const { summary, fieldErrors: fe } = formatApiError(responseBody, "Couldn't save — check the fields above.");
+        setStatus("error");
+        setErrorMessage(summary);
+        setFieldErrors(fe);
+        return;
+      }
+    } catch {
       setStatus("error");
-      setErrorMessage(responseBody?.error ?? "Couldn't save — check the fields above.");
+      setErrorMessage("Couldn't save — check your connection and try again.");
       return;
     }
 
@@ -96,10 +110,11 @@ export function TemplateForm({ initial }: { initial?: TemplateFormInitial }) {
     <div className="grid gap-6 lg:grid-cols-2">
       <div className="space-y-6 rounded-2xl border border-border bg-surface p-6">
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Name">
+          <Field label="Name" error={fieldErrors.name}>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
+              aria-invalid={Boolean(fieldErrors.name)}
               className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
             />
           </Field>
@@ -116,25 +131,31 @@ export function TemplateForm({ initial }: { initial?: TemplateFormInitial }) {
         </div>
 
         {channel === "EMAIL" && (
-          <Field label="Subject">
+          <Field label="Subject" error={fieldErrors.subject}>
             <input
               value={subject}
               onChange={(e) => setSubject(e.target.value)}
+              aria-invalid={Boolean(fieldErrors.subject)}
               className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
             />
           </Field>
         )}
 
-        <Field label="Body" hint="Use {{first_name}}, {{contact_name}}, {{organization}}, {{shop_url}}">
+        <Field
+          label="Body"
+          hint="Use {{first_name}}, {{contact_name}}, {{organization}}, {{shop_url}}"
+          error={fieldErrors.body}
+        >
           <textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={10}
+            aria-invalid={Boolean(fieldErrors.body)}
             className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
           />
         </Field>
 
-        {errorMessage ? <p className="text-sm text-red-600">{errorMessage}</p> : null}
+        <FormErrorBanner message={errorMessage} />
 
         <div className="flex flex-wrap gap-3">
           <button
@@ -181,12 +202,26 @@ export function TemplateForm({ initial }: { initial?: TemplateFormInitial }) {
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({
+  label,
+  hint,
+  error,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  error?: string;
+  children: React.ReactNode;
+}) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-semibold text-muted">{label}</span>
       {children}
-      {hint ? <span className="mt-1 block text-[11px] text-muted">{hint}</span> : null}
+      {error ? (
+        <span className="mt-1 block text-[11px] text-red-600">{error}</span>
+      ) : hint ? (
+        <span className="mt-1 block text-[11px] text-muted">{hint}</span>
+      ) : null}
     </label>
   );
 }

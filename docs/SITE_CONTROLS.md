@@ -38,7 +38,7 @@ validation — settings reads never throw and never crash a page.
 | `pages.mixMatch.enabled` | boolean | `false` | Whether Mix & Match (`/mix-and-match`, `/mix-and-match/studio`) is reachable, and its appearance in navigation, footer, `/guides`, `/shop`, `/our-story`, `/size-guide`, `/collections/[handle]`, sitemap.xml, and the SEO audit tool |
 | `sale.enabled` | boolean | `true` | Whether the `/sale` page renders (redirects/404s when off — see `src/app/sale/page.tsx`), and whether the Sale link appears in nav/footer, the homepage (`src/app/page.tsx`), sitemap.xml, and the SEO audit tool |
 | `header.bulkCta.enabled` | boolean | `true` | The "Bulk Order" call-to-action shown in the site header |
-| `announcement.messages` | `string[]`, 1–10 items, each 1–200 chars | brand's default announcement list (`src/data/brand.ts`) | The rotating announcement bar text shown site-wide |
+| `announcement.messages` | `string[]`, 0–10 items, each 1–200 chars | brand's default announcement list (`src/data/brand.ts`) | The announcement bar text shown site-wide. An empty list hides the messages (phone, WhatsApp and the Bulk Order button stay in the top bar); it does **not** fall back to the defaults |
 | `shipping.flatRate` | number, 0–100,000 | `99` | The flat shipping fee shown/applied at checkout when the order is under the free-shipping threshold |
 | `shipping.freeAbove` | number, 0–10,000,000 | `8000` | The order subtotal above which shipping becomes free |
 | `contact.phone` | string, 6–30 chars | seeded brand phone number | Displayed phone number (footer, contact page, etc.) |
@@ -88,8 +88,8 @@ it at all):
    (`SiteSettingToggle`, `src/components/admin/site-setting-toggle.tsx`). Each flips a boolean via
    `PATCH /api/admin/settings/[key]` immediately on click.
 2. **Content** (`src/components/admin/site-controls-editors.tsx`):
-   - **AnnouncementEditor** — `settings:marketing` — add/remove/reorder the rotating announcement
-     messages (1–10 of them, each up to 200 characters).
+   - **AnnouncementEditor** — `settings:marketing` — add/remove/reorder the announcement
+     messages (up to 10, each up to 200 characters). Saving it empty hides the messages.
    - **ContactEditor** — `settings:manage`-only — phone, WhatsApp, email, and address shown across
      the site (the same `contact.email` also receives the internal "New order" alert — see
      `src/lib/orders/notify.ts`).

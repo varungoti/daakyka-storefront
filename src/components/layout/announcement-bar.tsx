@@ -32,14 +32,24 @@ export function UtilityBar({
   whatsapp: string;
   bulkCtaEnabled: boolean;
 }) {
-  const items = messages && messages.length > 0 ? messages : announcementItems;
+  // F-170: an empty list means the owner switched the messages off — only
+  // an absent prop (`undefined`) falls back to the brand defaults.
+  const items = messages ?? announcementItems;
   const waHref = whatsappHref(
     whatsapp,
     "Hi DAAKYKA, I'd like to enquire about uniforms and linens for my organization.",
   );
 
   return (
-    <div className="bg-brand-violet py-1.5 text-xs font-medium tracking-wide text-white md:py-2.5 md:text-sm">
+    <div
+      className={cn(
+        "bg-brand-violet py-1.5 text-xs font-medium tracking-wide text-white md:py-2.5 md:text-sm",
+        // F-170: with the messages switched off and the Bulk Order button
+        // off too, a phone (where the phone/WhatsApp links are `hidden`
+        // below `sm`) would be left with an empty coloured strip.
+        items.length === 0 && !bulkCtaEnabled && "hidden sm:block",
+      )}
+    >
       {/* F-085/F-242: below `md` this is one non-wrapping row — the first
           announcement (clamped to two lines) on the left, the Bulk Order
           button on the right — about 40-44px tall. It used to `flex-wrap`
@@ -49,17 +59,24 @@ export function UtilityBar({
           header on every page before a shopper saw anything else. From
           `md` up this is the same wrapping row with every message as
           before. */}
-      <div className="mx-auto flex max-w-[1320px] items-center justify-between gap-x-3 px-4 md:flex-wrap md:gap-x-4 md:gap-y-1.5">
-        <div className="flex min-w-0 flex-1 items-center gap-x-4 gap-y-1 md:flex-initial md:flex-wrap md:justify-center">
-          {items.map((item, index) => (
-            <span key={item} className={cn("items-center gap-4", index > 0 ? "hidden md:flex" : "flex")}>
-              <span className="line-clamp-2 md:line-clamp-none">{item}</span>
-              {index < items.length - 1 && (
-                <span className="hidden text-white/50 md:inline">•</span>
-              )}
-            </span>
-          ))}
-        </div>
+      <div
+        className={cn(
+          "mx-auto flex max-w-[1320px] items-center gap-x-3 px-4 md:flex-wrap md:gap-x-4 md:gap-y-1.5",
+          items.length > 0 ? "justify-between" : "justify-end",
+        )}
+      >
+        {items.length > 0 && (
+          <div className="flex min-w-0 flex-1 items-center gap-x-4 gap-y-1 md:flex-initial md:flex-wrap md:justify-center">
+            {items.map((item, index) => (
+              <span key={item} className={cn("items-center gap-4", index > 0 ? "hidden md:flex" : "flex")}>
+                <span className="line-clamp-2 md:line-clamp-none">{item}</span>
+                {index < items.length - 1 && (
+                  <span className="hidden text-white/50 md:inline">•</span>
+                )}
+              </span>
+            ))}
+          </div>
+        )}
 
         <div className="flex shrink-0 items-center gap-3">
           <a

@@ -255,13 +255,16 @@ const segmentCriteriaSchema = z
   })
   .strict();
 
+// F-219: the admin forms show these messages next to the field that failed,
+// so the bounds below carry readable copy instead of zod's defaults
+// ("Too small: expected string to have >=2 characters").
 export const segmentSchema = z.object({
-  name: z.string().trim().min(2).max(150),
+  name: z.string().trim().min(2, "Name must be at least 2 characters").max(150, "Name must be at most 150 characters"),
   slug: z
     .string()
     .trim()
-    .min(2)
-    .max(160)
+    .min(2, "Slug must be at least 2 characters")
+    .max(160, "Slug must be at most 160 characters")
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and hyphens only"),
   description: z.string().trim().max(2000).optional().nullable(),
   criteria: segmentCriteriaSchema.optional(),
@@ -270,10 +273,10 @@ export const segmentSchema = z.object({
 export const segmentUpdateSchema = segmentSchema.partial();
 
 export const templateSchema = z.object({
-  name: z.string().trim().min(2).max(150),
+  name: z.string().trim().min(2, "Name must be at least 2 characters").max(150, "Name must be at most 150 characters"),
   channel: z.enum(["EMAIL", "WHATSAPP"]),
-  subject: z.string().trim().max(300).optional().nullable(),
-  body: z.string().trim().min(10).max(20_000),
+  subject: z.string().trim().max(300, "Subject must be at most 300 characters").optional().nullable(),
+  body: z.string().trim().min(10, "Body must be at least 10 characters").max(20_000, "Body must be at most 20,000 characters"),
   variables: z.array(z.string().trim().min(1).max(60)).max(50).optional(),
 });
 
@@ -350,9 +353,13 @@ export const testimonialUpdateSchema = testimonialSchema.partial();
 // Phase — admin CRUD completion: offers, SEO overrides, notifications, users.
 
 export const offerSchema = z.object({
-  name: z.string().trim().min(2).max(150),
-  type: z.string().trim().min(2).max(60),
-  description: z.string().trim().min(5).max(2000),
+  name: z.string().trim().min(2, "Name must be at least 2 characters").max(150, "Name must be at most 150 characters"),
+  type: z.string().trim().min(2, "Type must be at least 2 characters").max(60, "Type must be at most 60 characters"),
+  description: z
+    .string()
+    .trim()
+    .min(5, "Description must be at least 5 characters")
+    .max(2000, "Description must be at most 2,000 characters"),
   // Deliberately `.optional()` without `.default()` (matching
   // src/lib/catalog/categories.ts's categoryInputSchema convention) so the
   // z.infer'd type keeps this field optional for callers — the service
@@ -368,11 +375,15 @@ export const seoPageRecordSchema = z.object({
   path: z
     .string()
     .trim()
-    .min(1)
-    .max(300)
+    .min(1, "Path is required")
+    .max(300, "Path must be at most 300 characters")
     .regex(/^\/[a-zA-Z0-9\-/_]*$/, "Path must start with / and use URL-safe characters"),
-  title: z.string().trim().min(1).max(200),
-  metaDescription: z.string().trim().min(1).max(320),
+  title: z.string().trim().min(1, "Title is required").max(200, "Title must be at most 200 characters"),
+  metaDescription: z
+    .string()
+    .trim()
+    .min(1, "Meta description is required")
+    .max(320, "Meta description must be at most 320 characters"),
   h1: z.string().trim().max(200).optional().nullable(),
   // See offerSchema's `active` field above for why this is `.optional()`
   // without `.default()` — src/lib/seo/records.ts's createSeoRecord
@@ -408,8 +419,8 @@ export const adminChangePasswordSchema = z.object({
 });
 
 export const userInviteSchema = z.object({
-  name: z.string().trim().min(2).max(150),
-  email: z.string().trim().email().max(254),
+  name: z.string().trim().min(2, "Name must be at least 2 characters").max(150, "Name must be at most 150 characters"),
+  email: z.string().trim().email("Enter a valid email address").max(254, "Email must be at most 254 characters"),
   role: z.enum([
     "SUPER_ADMIN",
     "STORE_OWNER",
@@ -794,7 +805,9 @@ export const backInStockSubscribeSchema = z.object({
 export type BackInStockSubscribeInput = z.infer<typeof backInStockSubscribeSchema>;
 
 export const userUpdateSchema = z.object({
-  name: z.string().min(2),
+  // F-172: was a bare `z.string().min(2)` — no trim and no upper bound, so a
+  // 5,000-character (or all-whitespace) name saved. Matches userInviteSchema.
+  name: z.string().trim().min(2, "Name must be at least 2 characters").max(150, "Name must be at most 150 characters"),
   role: z.enum([
     "SUPER_ADMIN",
     "STORE_OWNER",
