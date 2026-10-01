@@ -1262,6 +1262,67 @@ describe("F-039: payment.failed and refund.processed no longer overwrite status 
     assert.equal(refundMetadata.source, "razorpay-webhook");
     assert.equal(refundMetadata.event, "refund.processed");
   });
+
+  // F-199: RETURNED -> REFUNDED is a valid admin edge, so the provider's own
+  // full-refund event must move a RETURNED order to REFUNDED as well — it used
+  // to match neither updateMany and leave the order stuck at RETURNED. A
+  // post-shipment refund never touches stock.
+  it("a full refund moves an admin-RETURNED order to REFUNDED without restocking", async () => {
+    const { order, variant, razorpayOrderId } = await createPendingRazorpayOrder(5);
+    const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+    const validSignature = createHmac("sha256", TEST_KEY_SECRET).update(`${razorpayOrderId}|${paymentId}`).digest("hex");
+
+    await withEnv({ RAZORPAY_KEY_SECRET: TEST_KEY_SECRET }, async () => {
+      const verify = await verifyRoute(
+        jsonRequest("http://localhost/api/checkout/verify", {
+          orderNumber: order.number,
+          razorpayPaymentId: paymentId,
+          razorpayOrderId,
+          razorpaySignature: validSignature,
+        }),
+      );
+      assert.equal(verify.status, 200);
+    });
+
+    const adminId = await findAnyAdminId();
+    await updateOrderAdmin(order.id, { status: "PROCESSING" }, adminId);
+    await updateOrderAdmin(order.id, { status: "SHIPPED", trackingNumber: "TRK-RET", courier: "Bluedart" }, adminId);
+    await updateOrderAdmin(order.id, { status: "DELIVERED" }, adminId);
+    await updateOrderAdmin(order.id, { status: "RETURNED" }, adminId);
+    const stockWhileReturned = (await db.productVariant.findUniqueOrThrow({ where: { id: variant.id } })).stock;
+
+    const orderTotalPaise = Math.round(Number((await db.order.findUniqueOrThrow({ where: { id: order.id } })).total) * 100);
+    const refundBody = JSON.stringify({
+      event: "refund.processed",
+      payload: {
+        payment: { entity: { id: paymentId, amount: orderTotalPaise, amount_refunded: orderTotalPaise } },
+        refund: { entity: { id: `rfnd_${randomUUID().slice(0, 8)}`, payment_id: paymentId, amount: orderTotalPaise } },
+      },
+    });
+    await withEnv({ RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {
+      const signature = createHmac("sha256", TEST_WEBHOOK_SECRET).update(refundBody, "utf8").digest("hex");
+      const response = await webhookRoute(
+        rawRequest("http://localhost/api/webhooks/razorpay", refundBody, { "x-razorpay-signature": signature }),
+      );
+      assert.equal(response.status, 200);
+    });
+
+    const dbOrder = await db.order.findUniqueOrThrow({ where: { id: order.id } });
+    assert.equal(dbOrder.status, "REFUNDED", "a full provider refund on a RETURNED order must land on REFUNDED");
+    assert.match(dbOrder.adminNotes ?? "", /marked returned/);
+
+    const stockAfter = (await db.productVariant.findUniqueOrThrow({ where: { id: variant.id } })).stock;
+    assert.equal(stockAfter, stockWhileReturned, "a post-shipment refund must never change stock");
+
+    const rows = await db.auditLog.findMany({
+      where: { entity: "order", entityId: order.id, action: "update" },
+      orderBy: { createdAt: "asc" },
+    });
+    const last = JSON.parse(rows[rows.length - 1]!.metadata ?? "{}");
+    assert.equal(last.source, "razorpay-webhook");
+    assert.equal(last.fromStatus, "RETURNED");
+    assert.equal(last.toStatus, "REFUNDED");
+  });
 });
 
 // F-283 fix (release-hardening order-lifecycle-payment-integrity): a
