@@ -5,6 +5,8 @@ import type { Order, OrderStatus, PaymentMethod } from "@/generated/prisma/clien
 import { logAuditEvent } from "@/lib/auth/audit";
 import {
   assertValidOrderStatusTransition,
+  canRecordOrderRequestPayment,
+  isPaymentRecordableStatus,
   orderHoldsReservedStock,
   orderStatusTimestampField,
 } from "@/lib/orders/status-transitions";
@@ -148,17 +150,19 @@ export class RefundAcknowledgementRequiredError extends Error {
 }
 
 /**
- * F-199 fix: PROCESSING -> PAID exists so an admin can record that an
- * ORDER_REQUEST order (UPI/bank transfer/COD — no online payment step) has
- * actually been paid — see status-transitions.ts's ORDER_STATUS_TRANSITIONS
- * comment on that edge. A RAZORPAY order only ever reaches PROCESSING by
- * having already passed through PAID (razorpayPaymentId already set), so
- * "marking" one paid again from PROCESSING wouldn't record a payment —
- * it would just re-stamp paidAt for one that already happened.
+ * F-199 fix: an admin can record that an ORDER_REQUEST order (UPI/bank
+ * transfer/COD — no online payment step) has actually been paid, either
+ * with the PROCESSING -> PAID transition or — for an order that has
+ * already shipped (cash on delivery) — with no status move at all; see
+ * status-transitions.ts's canRecordOrderRequestPayment. A RAZORPAY order's
+ * payment is captured online (razorpayPaymentId already set), so
+ * "recording" one wouldn't record a payment — and recording a second
+ * payment for an order-request that already has one would just re-stamp
+ * paidAt for a payment that already happened.
  */
 export class OrderRequestPaymentOnlyError extends Error {
-  constructor() {
-    super("Only an unpaid order-request can be marked paid from Processing.");
+  constructor(message = "Only an unpaid order-request can have its payment recorded.") {
+    super(message);
     this.name = "OrderRequestPaymentOnlyError";
   }
 }
@@ -568,12 +572,18 @@ export interface AdminOrderDetail {
   notes: string | null;
   adminNotes: string | null;
   /** F-199 fix: when this order was actually recorded as paid (RAZORPAY's
-   * verify/webhook, or an admin's manual PENDING_PAYMENT/PROCESSING ->
-   * PAID) — the one real fact that distinguishes "this order-request was
-   * never paid" from "it was paid, then moved on" once its `status` is no
+   * verify/webhook, an admin's manual PENDING_PAYMENT/PROCESSING -> PAID,
+   * or an admin recording an order-request's payment after it shipped) —
+   * the one real fact that distinguishes "this order-request was never
+   * paid" from "it was paid, then moved on" once its `status` is no
    * longer PAID itself. See the "unpaid order request" note on the admin
    * order detail page. */
   paidAt: Date | null;
+  /** When the order was actually marked shipped (null if it never was, or
+   * shipped before that column existed) — what tells a post-shipping
+   * refund/return, which needs a credit note against any invoice already
+   * issued, from a pre-shipping one on the printed invoice page. */
+  shippedAt: Date | null;
   items: AdminOrderItemView[];
   createdAt: Date;
   updatedAt: Date;
@@ -612,6 +622,7 @@ export function serializeOrderDetail(row: OrderDetailRow): AdminOrderDetail {
     notes: row.notes,
     adminNotes: row.adminNotes,
     paidAt: row.paidAt,
+    shippedAt: row.shippedAt,
     items: row.items.map((item) => ({
       id: item.id,
       productName: item.productName,
@@ -726,8 +737,12 @@ export const orderUpdateSchema = z
     // RefundAcknowledgementRequiredError's doc comment.
     acknowledgeExternalRefund: z.boolean().optional(),
     // F-199 fix: how/where an admin received the money when recording an
-    // order-request's payment (status -> PAID) — kept in the order's audit
-    // trail, shown in its History. Only valid together with `status: "PAID"`.
+    // order-request's payment — kept in the order's audit trail, shown in
+    // its History. Sent with `status: "PAID"` (PROCESSING -> PAID), or
+    // without moving the order to PAID at all — alone, or together with
+    // SHIPPED/DELIVERED — for an order-request paid after it shipped (cash
+    // on delivery). updateOrderAdmin checks the order really is one that
+    // can still have a payment recorded.
     payment: z
       .object({
         method: z.enum(paymentRecordMethodValues),
@@ -747,13 +762,28 @@ export const orderUpdateSchema = z
     // unaffected.
     updatedAt: z.coerce.date().optional(),
   })
-  .refine((data) => data.status !== undefined || data.trackingNumber !== undefined || data.courier !== undefined || data.adminNotes !== undefined, {
-    message: "At least one field (status, trackingNumber, courier, adminNotes) is required",
-  })
-  .refine((data) => data.payment === undefined || data.status === "PAID", {
-    message: "Payment details can only be recorded together with status PAID",
-    path: ["payment"],
-  })
+  .refine(
+    (data) =>
+      data.status !== undefined ||
+      data.trackingNumber !== undefined ||
+      data.courier !== undefined ||
+      data.adminNotes !== undefined ||
+      data.payment !== undefined,
+    {
+      message: "At least one field (status, trackingNumber, courier, adminNotes, payment) is required",
+    },
+  )
+  .refine(
+    (data) =>
+      data.payment === undefined ||
+      data.status === undefined ||
+      data.status === "PAID" ||
+      isPaymentRecordableStatus(data.status),
+    {
+      message: "Payment details can't be recorded while moving an order to CANCELLED, REFUNDED or RETURNED",
+      path: ["payment"],
+    },
+  )
   .refine((data) => data.restockReturnedItems === undefined || data.status === "RETURNED", {
     message: "restockReturnedItems can only be sent together with status RETURNED",
     path: ["restockReturnedItems"],
@@ -883,6 +913,36 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
     }
   }
 
+  // F-199 fix: recording an ORDER_REQUEST order's payment without the PAID
+  // status — the only way to do it once the order has shipped, because
+  // SHIPPED and DELIVERED (fulfilment states) have no PAID edge. This is
+  // what lets a cash-on-delivery order be marked paid at the door: ship it,
+  // then deliver it and record the COD payment, in one save or two. It
+  // stamps `paidAt` and nothing else — no status move, no stock, no
+  // discount — inside the same compare-and-swap transaction below. (The
+  // PROCESSING -> PAID transition stamps paidAt through
+  // orderStatusTimestampField instead, above.)
+  const recordsPaymentWithoutPaidStatus =
+    input.payment !== undefined && !(statusChanged && input.status === "PAID");
+  if (recordsPaymentWithoutPaidStatus) {
+    const resultingStatus = input.status ?? existing.status;
+    if (!canRecordOrderRequestPayment(existing.paymentMethod, existing.status, existing.paidAt !== null)) {
+      // Not an order-request, payment already recorded, or an order that
+      // isn't Processing/Shipped/Delivered (a cancelled/refunded/returned
+      // order, or one PAID/PENDING_PAYMENT that the status transition
+      // itself records).
+      throw new OrderRequestPaymentOnlyError(
+        existing.paymentMethod === "ORDER_REQUEST" && existing.paidAt === null
+          ? "A payment can only be recorded while an order is Processing, Shipped or Delivered."
+          : undefined,
+      );
+    }
+    if (!isPaymentRecordableStatus(resultingStatus)) {
+      throw new OrderRequestPaymentOnlyError("A payment can't be recorded while moving an order to this status.");
+    }
+    data.paidAt = new Date();
+  }
+
   if (input.trackingNumber !== undefined) data.trackingNumber = input.trackingNumber;
   if (input.courier !== undefined) data.courier = input.courier;
   if (input.adminNotes !== undefined) data.adminNotes = input.adminNotes;
@@ -956,7 +1016,10 @@ export async function updateOrderAdmin(id: string, input: OrderUpdateInput, user
       ...(input.courier !== undefined ? { courier: input.courier } : {}),
       ...(input.adminNotes !== undefined ? { adminNotesUpdated: true } : {}),
       ...(isManualPaidTransition ? { manualPaidTransition: true } : {}),
-      ...(statusChanged && input.status === "PAID" && input.payment
+      // Reaching this line with `payment` set means it was recorded: either
+      // with the PAID transition or by the status-less path above (which
+      // throws for anything else).
+      ...(input.payment
         ? {
             paymentRecorded: {
               method: input.payment.method,

@@ -21,7 +21,10 @@ export const ORDER_STATUS_TRANSITIONS: Record<OrderStatus, readonly OrderStatus[
   // updateOrderAdmin, which further restricts *using* this edge to
   // ORDER_REQUEST orders with no payment recorded yet (a RAZORPAY order
   // only ever reaches PROCESSING by having already passed through PAID,
-  // so it has nothing to "record").
+  // so it has nothing to "record"). The status-less way to record a
+  // payment (canRecordOrderRequestPayment, below) covers the rest —
+  // notably an order-request paid after it has shipped (cash on delivery),
+  // which has no PAID edge to go through.
   PROCESSING: ["SHIPPED", "CANCELLED", "PAID"],
   // F-199 fix: once an order has shipped the ways out are a return (the
   // goods came back: RETURNED, then REFUNDED once the money has gone back)
@@ -121,4 +124,46 @@ export function orderHoldsReservedStock(paymentMethod: PaymentMethod, status: Or
     default:
       return false;
   }
+}
+
+/**
+ * F-199 fix: the statuses in which an ORDER_REQUEST order's payment can be
+ * recorded without the PAID status (see canRecordOrderRequestPayment) —
+ * also the only statuses such an update may leave the order in, so
+ * recording a payment is never combined with a move to
+ * CANCELLED/REFUNDED/RETURNED, where there is no payment to record.
+ */
+export function isPaymentRecordableStatus(status: OrderStatus): boolean {
+  return status === "PROCESSING" || status === "SHIPPED" || status === "DELIVERED";
+}
+
+/**
+ * F-199 fix: whether an admin can still record that an ORDER_REQUEST
+ * order's payment has been received — and, from SHIPPED/DELIVERED, record
+ * it without moving the order's status.
+ *
+ * An order-request has no online payment step: it is created straight
+ * into PROCESSING (create-order.ts) and the money arrives later by UPI,
+ * bank transfer or cash — for cash on delivery that is *after* the parcel
+ * has shipped, even after it was delivered. Recording the payment must
+ * therefore not depend on a status edge (PROCESSING -> PAID exists, but
+ * SHIPPED and DELIVERED have no PAID edge and shouldn't: they are
+ * fulfilment states, not payment ones). The single rule shared by the
+ * server (updateOrderAdmin) and the admin order form so the two can't
+ * drift apart:
+ *
+ *  - ORDER_REQUEST only (a RAZORPAY order's payment is captured online —
+ *    verify route / webhook — so there is nothing for an admin to record);
+ *  - payment not already recorded (`paidAt` is the one real fact — a
+ *    second recording would just overwrite the first one's date);
+ *  - PROCESSING, SHIPPED or DELIVERED (PENDING_PAYMENT/PAID are covered by
+ *    the status transition itself; a cancelled/refunded/returned order
+ *    has no money to record).
+ */
+export function canRecordOrderRequestPayment(
+  paymentMethod: PaymentMethod,
+  status: OrderStatus,
+  paymentRecorded: boolean,
+): boolean {
+  return paymentMethod === "ORDER_REQUEST" && !paymentRecorded && isPaymentRecordableStatus(status);
 }

@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import type { OrderStatus, PaymentMethod } from "@/generated/prisma/client";
 import {
   assertValidOrderStatusTransition,
+  canRecordOrderRequestPayment,
   InvalidOrderStatusTransitionError,
+  isPaymentRecordableStatus,
   isValidOrderStatusTransition,
   orderHoldsReservedStock,
   orderStatusTimestampField,
@@ -163,6 +165,36 @@ describe("orderHoldsReservedStock (F-199: refunding after shipping must not add 
       for (const status of ["SHIPPED", "DELIVERED", "RETURNED", "CANCELLED", "REFUNDED"] as const) {
         assert.equal(orderHoldsReservedStock(method, status), false, `${method} ${status}`);
       }
+    }
+  });
+});
+
+describe("canRecordOrderRequestPayment (F-199: a cash-on-delivery order is paid after it ships)", () => {
+  it("an unpaid order-request can have its payment recorded while Processing, Shipped or Delivered", () => {
+    for (const status of ["PROCESSING", "SHIPPED", "DELIVERED"] as const) {
+      assert.equal(canRecordOrderRequestPayment("ORDER_REQUEST", status, false), true, status);
+      assert.equal(isPaymentRecordableStatus(status), true, status);
+    }
+  });
+
+  it("SHIPPED and DELIVERED have no PAID edge — recording a payment there must not depend on one", () => {
+    assert.equal(isValidOrderStatusTransition("SHIPPED", "PAID"), false);
+    assert.equal(isValidOrderStatusTransition("DELIVERED", "PAID"), false);
+    assert.equal(canRecordOrderRequestPayment("ORDER_REQUEST", "SHIPPED", false), true);
+    assert.equal(canRecordOrderRequestPayment("ORDER_REQUEST", "DELIVERED", false), true);
+  });
+
+  it("never once a payment is recorded, and never for a RAZORPAY order (its payment is captured online)", () => {
+    for (const status of ALL_STATUSES) {
+      assert.equal(canRecordOrderRequestPayment("ORDER_REQUEST", status, true), false, `recorded ${status}`);
+      assert.equal(canRecordOrderRequestPayment("RAZORPAY", status, false), false, `razorpay ${status}`);
+    }
+  });
+
+  it("never for an order with no money to record: cancelled, refunded, returned, or still awaiting payment/PAID (the status move records those)", () => {
+    for (const status of ["PENDING_PAYMENT", "PAID", "CANCELLED", "REFUNDED", "RETURNED"] as const) {
+      assert.equal(canRecordOrderRequestPayment("ORDER_REQUEST", status, false), false, status);
+      assert.equal(isPaymentRecordableStatus(status), false, status);
     }
   });
 });

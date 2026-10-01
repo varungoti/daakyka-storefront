@@ -2,7 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { ORDER_STATUS_TRANSITIONS, orderHoldsReservedStock } from "@/lib/orders/status-transitions";
+import {
+  canRecordOrderRequestPayment,
+  ORDER_STATUS_TRANSITIONS,
+  orderHoldsReservedStock,
+} from "@/lib/orders/status-transitions";
 import type { OrderStatus, PaymentMethod } from "@/generated/prisma/client";
 
 /** F-199 fix: how an order-request's payment was received — mirrors
@@ -88,6 +92,18 @@ export function OrderDetailActions({
   // History then shows. Returning a shipped/delivered order can put the
   // goods back in stock, but only when the owner says they're sellable.
   const recordingPayment = status === "PAID" && currentStatus === "PROCESSING";
+  // F-199 fix: an order-request that has already shipped (cash on delivery,
+  // paid at the door) has no PAID edge to record its payment through —
+  // SHIPPED and DELIVERED are fulfilment states — so the same fields are
+  // offered there on their own, optionally, with no status change (or
+  // together with SHIPPED -> DELIVERED). Hidden when the admin has picked
+  // a return/refund: there's no payment to record on those. The server
+  // applies the same rule (canRecordOrderRequestPayment).
+  const recordingPaymentOnly =
+    canManage &&
+    (currentStatus === "SHIPPED" || currentStatus === "DELIVERED") &&
+    canRecordOrderRequestPayment(paymentMethod, currentStatus, paymentRecorded) &&
+    (status === currentStatus || status === "DELIVERED");
   const returning = status === "RETURNED" && status !== currentStatus;
   const refundingShippedOrder =
     status === "REFUNDED" && (currentStatus === "SHIPPED" || currentStatus === "DELIVERED");
@@ -158,7 +174,7 @@ export function OrderDetailActions({
     if (tracking.trim()) body.trackingNumber = tracking.trim();
     if (courierName.trim()) body.courier = courierName.trim();
     if (needsRefundAcknowledgement) body.acknowledgeExternalRefund = acknowledgeExternalRefund;
-    if (recordingPayment) {
+    if (recordingPayment || (recordingPaymentOnly && paymentMethodChoice)) {
       body.payment = {
         method: paymentMethodChoice,
         ...(paymentReference.trim() ? { reference: paymentReference.trim() } : {}),
@@ -210,9 +226,17 @@ export function OrderDetailActions({
         {nextStatuses.length === 0 && <p className="mt-1 text-xs text-muted">This is a final status — no further transitions.</p>}
       </div>
 
-      {recordingPayment && (
+      {(recordingPayment || recordingPaymentOnly) && (
         <div className="space-y-3 rounded-xl border border-border bg-lavender/20 p-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted">Payment received</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+            {recordingPayment ? "Payment received" : "Record payment received (optional)"}
+          </p>
+          {recordingPaymentOnly && (
+            <p className="text-xs text-muted">
+              No payment has been recorded for this order yet. Choose how it was paid once the customer has paid — for
+              cash on delivery, that is when the parcel is handed over.
+            </p>
+          )}
           <select
             value={paymentMethodChoice}
             disabled={!canManage}
@@ -220,7 +244,7 @@ export function OrderDetailActions({
             aria-label="How was the payment received?"
             className="w-full rounded-xl border border-border bg-white p-2 text-sm disabled:opacity-60"
           >
-            <option value="">How was it paid? *</option>
+            <option value="">{recordingPayment ? "How was it paid? *" : "Not received yet"}</option>
             {PAYMENT_RECEIVED_VIA.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
@@ -236,7 +260,11 @@ export function OrderDetailActions({
             aria-label="Payment reference"
             className="w-full rounded-xl border border-border bg-white p-2 text-sm disabled:opacity-60"
           />
-          <p className="text-xs text-muted">Saved in this order&rsquo;s History. Marking it paid doesn&rsquo;t touch stock.</p>
+          <p className="text-xs text-muted">
+            {recordingPayment
+              ? "Saved in this order’s History. Marking it paid doesn’t touch stock."
+              : "Saved in this order’s History. Recording it doesn’t change the order’s status or stock."}
+          </p>
         </div>
       )}
 

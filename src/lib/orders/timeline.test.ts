@@ -253,6 +253,31 @@ describe("getOrderTimeline", () => {
     assert.equal(processing.steps.find((s) => s.id === "shipped")?.at, undefined);
   });
 
+  // F-199 fix: a cash-on-delivery order-request is paid at the door, so its
+  // payment is recorded after it shipped (or was delivered) — the timeline
+  // must still show the confirmation step, dated when it was recorded.
+  it("F-199: an order-request paid after it shipped or was delivered shows (and dates) its confirmation step", () => {
+    const placedAt = new Date("2026-09-20T05:00:00Z");
+    const shippedAt = new Date("2026-09-21T10:00:00Z");
+    const deliveredAt = new Date("2026-09-24T10:00:00Z");
+    const paidAt = new Date("2026-09-24T10:05:00Z");
+
+    const delivered = getOrderTimeline("DELIVERED", "ORDER_REQUEST", true, { placedAt, paidAt, shippedAt, deliveredAt });
+    assert.deepEqual(
+      delivered.steps.map((s) => [s.id, s.state, s.at]),
+      [
+        ["placed", "complete", placedAt],
+        ["confirmed", "complete", paidAt],
+        ["shipped", "complete", shippedAt],
+        ["delivered", "complete", deliveredAt],
+      ],
+    );
+
+    const shipped = getOrderTimeline("SHIPPED", "ORDER_REQUEST", true, { placedAt, paidAt, shippedAt });
+    assert.equal(shipped.steps.find((s) => s.id === "confirmed")?.at, paidAt);
+    assert.equal(shipped.steps.find((s) => s.id === "confirmed")?.label, "Order confirmed");
+  });
+
   it("F-300: omitting the milestones leaves every step undated (existing callers read exactly as before)", () => {
     for (const status of orderStatusValues) {
       const timeline = getOrderTimeline(status, "RAZORPAY");

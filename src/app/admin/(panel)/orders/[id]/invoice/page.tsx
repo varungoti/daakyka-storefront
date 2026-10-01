@@ -3,7 +3,8 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { getOrderForAdmin, OrderNotFoundError } from "@/lib/orders/admin-orders";
 import { formatDateIST } from "@/lib/format/datetime";
-import { ensureInvoiceNumber, isInvoiceEligible } from "@/lib/orders/invoice-number";
+import { ensureInvoiceNumber } from "@/lib/orders/invoice-number";
+import { getInvoiceDocument } from "@/lib/orders/invoice-document";
 import { getSetting } from "@/lib/settings";
 import { brand } from "@/data/brand";
 import type { ShippingAddressInput } from "@/lib/validation/schemas";
@@ -21,18 +22,6 @@ function formatInr(amount: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount);
-}
-
-/** F-195: the printed document's title must say what it actually is —
- * a document titled bare "Invoice" for an unpaid or cancelled order is
- * misleading, and (once a GSTIN is configured) only a genuinely
- * invoice-eligible order gets to say "Tax Invoice". */
-function invoiceHeading(status: string, hasGstin: boolean): string {
-  if (status === "CANCELLED" || status === "REFUNDED") return "Cancelled — Not a Tax Invoice";
-  if (isInvoiceEligible(status as Parameters<typeof isInvoiceEligible>[0])) {
-    return hasGstin ? "Tax Invoice" : "Bill of Supply";
-  }
-  return "Proforma Invoice";
 }
 
 /**
@@ -65,8 +54,13 @@ export default async function AdminOrderInvoicePage({ params }: { params: Promis
   // ensureInvoiceNumber's own doc comment for why it isn't done at the
   // PAID-transition call site instead.
   const invoiceNumber = await ensureInvoiceNumber(order.id);
-  const heading = invoiceHeading(order.status, Boolean(gstin));
-  const isCancelledDoc = heading.startsWith("Cancelled");
+  // F-195 / F-199: the title (and, for a cancelled/refunded/returned order,
+  // the warning banner) must say what the document actually is — see
+  // getInvoiceDocument.
+  const invoiceDoc = getInvoiceDocument(order.status, Boolean(gstin), {
+    invoiceNumber,
+    shipped: order.shippedAt !== null,
+  });
   // Best-effort place of supply from the free-text shipping-address state
   // — see this file's own note on the tax-breakup limitation below.
   const placeOfSupply = address?.state ?? null;
@@ -91,7 +85,7 @@ export default async function AdminOrderInvoicePage({ params }: { params: Promis
             {gstin && <p className="mt-1 text-xs font-semibold text-ink">GSTIN: {gstin}</p>}
           </div>
           <div className="text-right">
-            <h2 className="font-display text-xl font-bold">{heading}</h2>
+            <h2 className="font-display text-xl font-bold">{invoiceDoc.heading}</h2>
             <p className="text-sm text-muted">Order {order.number}</p>
             {invoiceNumber && <p className="text-sm text-muted">Invoice No. {invoiceNumber}</p>}
             <p className="text-sm text-muted">{formatDateIST(order.createdAt)}</p>
@@ -191,13 +185,13 @@ export default async function AdminOrderInvoicePage({ params }: { params: Promis
           </p>
         )}
 
-        {isCancelledDoc && (
+        {invoiceDoc.voided && (
           <p className="mt-4 rounded-md bg-red-50 px-3 py-2 text-center text-xs font-semibold text-red-700">
-            This order was cancelled or refunded. This document is not a valid tax invoice.
+            {invoiceDoc.notice}
           </p>
         )}
 
-        {!isCancelledDoc && (
+        {!invoiceDoc.voided && (
           <div className="mt-10 flex justify-end">
             <div className="text-center text-xs text-muted">
               <p className="mb-8">For {brand.legalName}</p>

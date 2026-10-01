@@ -18,6 +18,13 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
   OTHER: "other method",
 };
 
+/** "received via UPI · ref UTR-123" — shared by a payment recorded with a
+ * status change and one recorded on its own. */
+function describePaymentReceived(payment: NonNullable<OrderHistoryEntry["paymentRecorded"]>): string {
+  const { method, reference } = payment;
+  return `received via ${PAYMENT_METHOD_LABELS[method] ?? method}${reference ? ` · ref ${reference}` : ""}`;
+}
+
 function describeEntry(entry: OrderHistoryEntry): string {
   const parts: string[] = [];
   if (entry.fromStatus && entry.toStatus) {
@@ -32,9 +39,14 @@ function describeEntry(entry: OrderHistoryEntry): string {
       parts.push("(marked paid manually)");
     }
     if (entry.paymentRecorded) {
-      const { method, reference } = entry.paymentRecorded;
-      parts.push(`(payment received via ${PAYMENT_METHOD_LABELS[method] ?? method}${reference ? ` · ref ${reference}` : ""})`);
+      parts.push(`(payment ${describePaymentReceived(entry.paymentRecorded)})`);
     }
+  } else if (entry.paymentRecorded) {
+    // F-199 fix: a payment recorded with no status change (an order-request
+    // paid after it shipped — cash on delivery). Checked before the
+    // tracking branch: saving from a shipped order re-sends its tracking
+    // details too, which would otherwise hide that a payment was recorded.
+    parts.push(`Payment recorded: ${describePaymentReceived(entry.paymentRecorded)}`);
   } else if (entry.trackingNumber || entry.courier) {
     parts.push(`Tracking updated: ${entry.courier ?? "—"} ${entry.trackingNumber ?? ""}`.trim());
   } else if (entry.adminNotesUpdated) {

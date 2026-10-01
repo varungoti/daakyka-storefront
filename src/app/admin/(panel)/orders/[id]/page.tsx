@@ -38,7 +38,7 @@ function orderRequestPaymentNote(status: OrderStatus, paid: boolean): string {
     case "DELIVERED":
       return paid
         ? "Payment for this order request has been recorded, and it has already shipped."
-        : "This unpaid order request has already shipped — stock was decremented at checkout, and no payment has been recorded for it.";
+        : "This order request has already shipped, but no payment has been recorded for it yet. Record the payment under Manage order below once it arrives (for example, cash on delivery).";
     default:
       return paid
         ? "Payment for this order request has been recorded."
