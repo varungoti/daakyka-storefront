@@ -1,4 +1,7 @@
 import { revalidateTag, unstable_cache } from "next/cache";
+import { parseBlogContent } from "@/lib/blog/content";
+import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
+import type { RevalidateProfile } from "@/lib/cache/admin-revalidate";
 import { db } from "@/lib/db";
 import { formatIstDateOnly } from "@/lib/format/datetime";
 import { blogPosts as seedBlogPosts } from "@/data/blog";
@@ -28,7 +31,10 @@ function mapRecord(record: {
     publishedAt: formatIstDateOnly(record.publishedAt),
     readTime: record.readTime,
     image: record.image,
-    content: JSON.parse(record.content) as string[],
+    // F-213: tolerant parse — one malformed row (e.g. the plain text a Hermes
+    // draft used to store) used to throw here, which readPublishedBlogPostsFromDb
+    // turned into "show the seed posts instead of every real post".
+    content: parseBlogContent(record.content),
   };
 }
 
@@ -134,10 +140,12 @@ export async function getAllBlogPostsForAdmin() {
  * `revalidate` here instead of spying on the real one.
  */
 export function revalidateBlogCache(
-  revalidate: (tag: string, profile: string) => void = revalidateTag,
+  revalidate: (tag: string, profile: RevalidateProfile) => void = revalidateTag,
 ): void {
   try {
-    revalidate(BLOG_CACHE_TAG, "max");
+    // F-214: immediate ({ expire: 0 }), not "max" — see
+    // src/lib/cache/admin-revalidate.ts.
+    revalidate(BLOG_CACHE_TAG, ADMIN_REVALIDATE_PROFILE);
   } catch {
     // No static generation store in this context (unit/integration tests,
     // one-off scripts) — nothing to revalidate.

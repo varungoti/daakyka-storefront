@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   announcementContentSchema,
+  blogPostSchema,
   bulkOrderSchema,
   checkoutSchema,
   checkoutVerifySchema,
@@ -1107,6 +1108,73 @@ describe("discountUpdateSchema (F-038)", () => {
 
   it("accepts an empty partial payload", () => {
     assert.equal(discountUpdateSchema.safeParse({}).success, true);
+  });
+});
+
+// F-216: the blog API crashed (500) on a bad date, accepted slugs that 404 on
+// the storefront, and rejected every Media Library image (a root-relative
+// /cdn/... path is not a valid z.string().url()).
+describe("blogPostSchema (F-216)", () => {
+  const valid = {
+    slug: "how-to-care-for-hospital-linens",
+    title: "How to care for hospital linens",
+    excerpt: "A short guide to keeping scrubs and linens in shape.",
+    category: "Guide",
+    author: "DAAKYKA Editorial",
+    publishedAt: "2026-09-25",
+    readTime: "5 min read",
+    image: "/cdn/media/banner/2026/09/hero.webp",
+    content: ["First paragraph.", "Second paragraph."],
+    status: "DRAFT" as const,
+  };
+
+  it("accepts a valid post with a Media Library (root-relative) image", () => {
+    assert.equal(blogPostSchema.safeParse(valid).success, true);
+  });
+
+  it("accepts a static root-relative path and an https image from an allowed host", () => {
+    assert.equal(blogPostSchema.safeParse({ ...valid, image: "/images/hospital-apparel-studio.webp" }).success, true);
+    assert.equal(
+      blogPostSchema.safeParse({ ...valid, image: "https://images.pexels.com/photos/1/example.jpeg" }).success,
+      true,
+    );
+  });
+
+  it("rejects an image that is protocol-relative, traverses, or is not on an allowed host", () => {
+    for (const image of [
+      "//evil.example/x.png",
+      "/../etc/passwd",
+      "javascript:alert(1)",
+      "https://not-allowed.example/x.png",
+      "",
+    ]) {
+      assert.equal(blogPostSchema.safeParse({ ...valid, image }).success, false, `expected ${image || "(empty)"} to be rejected`);
+    }
+  });
+
+  it("rejects a slug with spaces, capitals-and-spaces or punctuation (it would publish but 404)", () => {
+    for (const slug of ["Audit Blog 123", "hermes:-blog-draft", "my_post", "-leading", "trailing-", "double--hyphen", "a"]) {
+      assert.equal(blogPostSchema.safeParse({ ...valid, slug }).success, false, `expected "${slug}" to be rejected`);
+    }
+  });
+
+  it("lowercases and trims an otherwise-valid slug instead of rejecting it", () => {
+    const result = blogPostSchema.safeParse({ ...valid, slug: "  Winter-Care-Guide " });
+    assert.equal(result.success, true);
+    if (result.success) assert.equal(result.data.slug, "winter-care-guide");
+  });
+
+  it("rejects a publish date that isn't YYYY-MM-DD (what an Indian owner types by habit)", () => {
+    for (const publishedAt of ["25/09/2026", "09-25-2026", "Sept 25", "2026-13-45", ""]) {
+      const result = blogPostSchema.safeParse({ ...valid, publishedAt });
+      assert.equal(result.success, false, `expected "${publishedAt}" to be rejected`);
+      if (!result.success) assert.ok(result.error.issues.some((issue) => issue.path[0] === "publishedAt"));
+    }
+  });
+
+  it("requires at least one non-empty paragraph", () => {
+    assert.equal(blogPostSchema.safeParse({ ...valid, content: [] }).success, false);
+    assert.equal(blogPostSchema.safeParse({ ...valid, content: [""] }).success, false);
   });
 });
 

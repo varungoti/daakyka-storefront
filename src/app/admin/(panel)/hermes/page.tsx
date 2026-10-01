@@ -4,6 +4,7 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import type { ApprovalExecutionResult } from "@/lib/hermes/approval-executor";
+import { canApproveHermesApproval } from "@/lib/hermes/approval-permissions";
 import { getHermesMode, isHermesInlineRuntime, isHermesRuntimeConfigured } from "@/lib/hermes/client";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -85,7 +86,13 @@ export default async function AdminHermesPage() {
                   <p className="mt-1 text-sm text-muted">{item.summary}</p>
                   <ExecutionPreview title={item.title} result={item.executionResult as ApprovalExecutionResult | null} />
                 </div>
-                <HermesApprovalActions approvalId={item.id} currentStatus={item.status} />
+                {/* F-293: approving creates the entity itself, so hide Approve for a
+                    role that lacks that entity's permission (the API 403s anyway). */}
+                <HermesApprovalActions
+                  approvalId={item.id}
+                  currentStatus={item.status}
+                  canApprove={canApproveHermesApproval(session.role, item.type)}
+                />
               </div>
             </li>
           ))}
