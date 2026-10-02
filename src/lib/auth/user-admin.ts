@@ -1,5 +1,6 @@
 import { Prisma, type AdminRole, type User } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { diffFields } from "@/lib/auth/audit-diff";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { isLocked, recordFailedLogin } from "@/lib/auth/lockout";
 import { isInsecureSeedPassword } from "@/lib/auth/seed-defaults";
@@ -169,8 +170,8 @@ export async function updateAdminUser(
     throw new UserSelfActionBlockedError("Cannot deactivate your own account");
   }
 
-  const user = await db.$transaction(async (tx) => {
-    const existing = await tx.user.findUnique({ where: { id }, select: { active: true, role: true } });
+  const { user, previous } = await db.$transaction(async (tx) => {
+    const existing = await tx.user.findUnique({ where: { id }, select: { active: true, role: true, name: true } });
     if (!existing) throw new UserNotFoundError(id);
 
     if (isSelfRoleChangeBlocked(id, actingUserId, existing.role, input.role)) {
@@ -195,11 +196,12 @@ export async function updateAdminUser(
     // change until it naturally expires (see src/lib/auth/session.ts).
     // Decision logic lives in src/lib/auth/user-updates.ts.
     const { data } = buildUserUpdateData(existing, input);
-    return tx.user.update({
+    const updated = await tx.user.update({
       where: { id },
       data,
       select: { id: true, email: true, name: true, role: true, active: true },
     });
+    return { user: updated, previous: existing };
   });
 
   await logAuditEvent({
@@ -207,7 +209,14 @@ export async function updateAdminUser(
     action: "update",
     entity: "user",
     entityId: id,
-    metadata: { ...input },
+    // F-288: this used to hold only the NEW values, so a promotion to
+    // SUPER_ADMIN showed the new role and nothing about what it replaced.
+    metadata: {
+      ...input,
+      fromRole: previous.role,
+      fromActive: previous.active,
+      changes: diffFields(previous, user, ["name", "role", "active"]),
+    },
   });
 
   return user;

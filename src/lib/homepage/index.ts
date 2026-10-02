@@ -369,6 +369,14 @@ export async function updateHomepageSection(
   // parameter for why existing callers are unaffected until they pass it.
   expectedUpdatedAt?: Date,
 ) {
+  // F-288: what the section held before, so the audit row can say which of
+  // its top-level fields this save changed (best-effort — a failed read must
+  // never block the save itself).
+  const previousContent = await db.homepageSection
+    .findUnique({ where: { key }, select: { content: true } })
+    .then((row) => row?.content ?? null)
+    .catch(() => null);
+
   let section;
   if (expectedUpdatedAt) {
     const { count } = await db.homepageSection.updateMany({
@@ -389,11 +397,15 @@ export async function updateHomepageSection(
   }
 
   const { logAuditEvent } = await import("@/lib/auth/audit");
+  const { changedContentKeys } = await import("@/lib/auth/audit-diff");
   await logAuditEvent({
     userId,
     action: "update",
     entity: "homepage_section",
     entityId: key,
+    // F-288: this row used to carry no metadata at all. The content itself is
+    // large (slides, copy), so only which fields changed is recorded.
+    metadata: { key, changedFields: changedContentKeys(previousContent, content) },
   });
 
   revalidateHomepageCache();

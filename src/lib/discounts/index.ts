@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { Prisma, type Discount as DiscountRow, type DiscountType } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { diffFields } from "@/lib/auth/audit-diff";
 import { formatCurrencyAmount } from "@/lib/currency/convert";
 import { validateDiscountRules, type DiscountInput, type DiscountUpdateInput } from "@/lib/validation/schemas";
 
@@ -423,7 +424,18 @@ export async function createDiscount(input: DiscountInput, userId: string): Prom
       action: "create",
       entity: "discount",
       entityId: discount.id,
-      metadata: { code: discount.code, type: discount.type, value: Number(discount.value) },
+      metadata: {
+        code: discount.code,
+        type: discount.type,
+        value: Number(discount.value),
+        // F-288: the limits a code is created with matter as much as its value.
+        minSubtotal: discount.minSubtotal === null ? null : Number(discount.minSubtotal),
+        maxRedemptions: discount.maxRedemptions,
+        maxRedemptionsPerCustomer: discount.maxRedemptionsPerCustomer,
+        startsAt: discount.startsAt?.toISOString() ?? null,
+        endsAt: discount.endsAt?.toISOString() ?? null,
+        active: discount.active,
+      },
     });
     return discount;
   } catch (error) {
@@ -433,6 +445,19 @@ export async function createDiscount(input: DiscountInput, userId: string): Prom
     throw error;
   }
 }
+
+/** F-288: the Discount columns whose before -> after is audited on update. */
+const DISCOUNT_AUDITED_FIELDS = [
+  "code",
+  "type",
+  "value",
+  "minSubtotal",
+  "maxRedemptions",
+  "maxRedemptionsPerCustomer",
+  "startsAt",
+  "endsAt",
+  "active",
+] as const;
 
 export async function updateDiscount(
   id: string,
@@ -484,7 +509,14 @@ export async function updateDiscount(
       action: "update",
       entity: "discount",
       entityId: id,
-      metadata: { code: updated.code, active: updated.active },
+      metadata: {
+        code: updated.code,
+        active: updated.active,
+        // F-288: the row used to say only {code, active}, so raising a
+        // 5% code to 90% — or lifting its cap — left no trace of the old
+        // value. `changes` is the before -> after of every field that moved.
+        changes: diffFields(existing, updated, DISCOUNT_AUDITED_FIELDS),
+      },
     });
     return updated;
   } catch (error) {

@@ -1075,6 +1075,35 @@ describe("updateAdminUser (F-172)", () => {
     assert.equal(afterDeactivate!.sessionVersion, before!.sessionVersion + 2);
   });
 
+  // F-288: the audit row held only the NEW role, so a promotion to
+  // SUPER_ADMIN never said what it replaced.
+  it("records the previous role and active flag alongside the new ones in the audit row (F-288)", async () => {
+    const user = await inviteTestUser("VIEWER", "Audit Role");
+
+    await updateAdminUser(user.id, { name: user.name, role: "CONTENT_EDITOR", active: true }, adminId);
+    await updateAdminUser(user.id, { name: user.name, role: "CONTENT_EDITOR", active: false }, adminId);
+
+    const rows = await db.auditLog.findMany({
+      where: { entity: "user", entityId: user.id, action: "update" },
+      orderBy: { createdAt: "asc" },
+    });
+    assert.equal(rows.length, 2);
+    const [promotion, deactivation] = rows.map(
+      (row) =>
+        JSON.parse(row.metadata!) as {
+          role: string;
+          fromRole: string;
+          fromActive: boolean;
+          changes: Record<string, { from: unknown; to: unknown }>;
+        },
+    );
+    assert.equal(promotion.role, "CONTENT_EDITOR");
+    assert.equal(promotion.fromRole, "VIEWER");
+    assert.deepEqual(promotion.changes, { role: { from: "VIEWER", to: "CONTENT_EDITOR" } });
+    assert.equal(deactivation.fromActive, true);
+    assert.deepEqual(deactivation.changes, { active: { from: true, to: false } });
+  });
+
   it("throws UserNotFoundError for an unknown id", async () => {
     await assert.rejects(
       () => updateAdminUser("does-not-exist", { name: "Nobody", role: "VIEWER", active: true }, adminId),

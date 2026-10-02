@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { diffFields } from "@/lib/auth/audit-diff";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { revalidateBlogCache } from "@/lib/blog";
 import { db } from "@/lib/db";
@@ -34,6 +35,8 @@ export async function PUT(request: Request, { params }: RouteParams) {
   }
 
   try {
+    // F-288: the row as it was, for the audit diff (best-effort — never blocks the save).
+    const before = await db.blogPostRecord.findUnique({ where: { id } }).catch(() => null);
     const post = await db.blogPostRecord.update({
       where: { id },
       data: {
@@ -49,6 +52,16 @@ export async function PUT(request: Request, { params }: RouteParams) {
       action: "update",
       entity: "blog_post",
       entityId: id,
+      // F-288: this row used to carry no metadata at all. The article body is
+      // long, so only the small fields' before -> after are recorded.
+      metadata: {
+        title: post.title,
+        slug: post.slug,
+        changes: before
+          ? diffFields(before, post, ["title", "slug", "status", "category", "author", "publishedAt", "excerpt"])
+          : {},
+        ...(before && before.content !== post.content ? { contentChanged: true } : {}),
+      },
     });
 
     revalidateBlogCache();
@@ -75,8 +88,12 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
   if (error) return error;
 
   const { id } = await params;
+  let deletedPost: { title: string; slug: string } | null = null;
   try {
+    // F-288: which article this was, once the row is gone.
+    const before = await db.blogPostRecord.findUnique({ where: { id }, select: { title: true, slug: true } }).catch(() => null);
     await db.blogPostRecord.delete({ where: { id } });
+    deletedPost = before;
   } catch (err) {
     // F-216: DELETE on an unknown/already-deleted id crashed with an
     // unhandled 500 instead of a clean 404.
@@ -91,6 +108,7 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
     action: "delete",
     entity: "blog_post",
     entityId: id,
+    metadata: deletedPost ?? undefined,
   });
 
   revalidateBlogCache();

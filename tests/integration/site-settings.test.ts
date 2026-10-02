@@ -102,6 +102,23 @@ describe("site settings integration", () => {
       await setSetting("sale.enabled", true, adminId);
       assert.equal(await isSaleEnabled(), true);
     });
+
+    // F-288: the row used to hold only the new value.
+    it("records the value a setting had before, not just the one it was changed to (F-288)", async () => {
+      const adminId = await findAnyAdminId();
+
+      await setSetting("sale.enabled", true, adminId);
+      await setSetting("sale.enabled", false, adminId);
+      const latest = await db.auditLog.findFirst({
+        where: { entity: "site_setting", entityId: "sale.enabled" },
+        orderBy: { createdAt: "desc" },
+      });
+      const metadata = JSON.parse(latest!.metadata!) as { value: unknown; previousValue: unknown };
+      assert.equal(metadata.value, false);
+      assert.equal(metadata.previousValue, true);
+
+      await setSetting("sale.enabled", true, adminId);
+    });
   });
 
   // F-343: setSetting used to `upsert` unconditionally — two admins saving

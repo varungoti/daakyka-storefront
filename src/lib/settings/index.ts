@@ -184,6 +184,13 @@ export async function setSetting<K extends SettingKey>(
 ): Promise<SettingValueMap[K]> {
   const parsed = settingSchemas[key].parse(value);
 
+  // F-288: the value being replaced, for the audit row (best-effort — a failed
+  // read must never block the save itself).
+  const previous = await db.siteSetting
+    .findUnique({ where: { key }, select: { value: true } })
+    .then((row) => (row ? row.value : null))
+    .catch(() => null);
+
   if (expectedUpdatedAt) {
     // A row that doesn't exist yet can't be stale — `updateMany` matches
     // zero rows either way, so an existence check comes first to tell
@@ -211,7 +218,9 @@ export async function setSetting<K extends SettingKey>(
     action: "update",
     entity: "site_setting",
     entityId: key,
-    metadata: { value: parsed },
+    // F-288: `value` alone said what a setting became, never what it was —
+    // so a shipping fee or announcement edit could not be reconstructed.
+    metadata: { value: parsed, previousValue: previous },
   });
 
   try {

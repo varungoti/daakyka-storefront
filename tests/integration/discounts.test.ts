@@ -615,6 +615,43 @@ describe("admin discount CRUD", () => {
   });
 });
 
+// F-288: the audit row for a discount edit used to be {code, active}, so
+// raising a 5% code to 90% left no trace of the old value.
+describe("admin discount audit trail (F-288)", () => {
+  it("records the old and new value, type and caps when a discount is edited", async () => {
+    const admin = await findAnyAdminId();
+    const discount = await createTestDiscount(admin, { type: "PERCENTAGE", value: 5 });
+
+    await updateDiscount(discount.id, { value: 90, maxRedemptions: 10 }, admin);
+
+    const rows = await db.auditLog.findMany({
+      where: { entity: "discount", entityId: discount.id, action: "update" },
+      orderBy: { createdAt: "desc" },
+      take: 1,
+    });
+    assert.equal(rows.length, 1);
+    const metadata = JSON.parse(rows[0].metadata!) as {
+      code: string;
+      changes: Record<string, { from: unknown; to: unknown }>;
+    };
+    assert.equal(metadata.code, discount.code);
+    assert.deepEqual(metadata.changes.value, { from: 5, to: 90 });
+    assert.deepEqual(metadata.changes.maxRedemptions, { from: null, to: 10 });
+    assert.equal(metadata.changes.type, undefined, "an unchanged field is not listed");
+  });
+
+  it("records the limits a code was created with", async () => {
+    const admin = await findAnyAdminId();
+    const discount = await createTestDiscount(admin, { type: "FIXED", value: 150 });
+    const rows = await db.auditLog.findMany({ where: { entity: "discount", entityId: discount.id, action: "create" } });
+    assert.equal(rows.length, 1);
+    const metadata = JSON.parse(rows[0].metadata!) as { type: string; value: number; active: boolean };
+    assert.equal(metadata.type, "FIXED");
+    assert.equal(metadata.value, 150);
+    assert.equal(metadata.active, true);
+  });
+});
+
 describe("createOrderFromCart still rejects an empty cart with a discount code present", () => {
   it("throws EmptyCartError before ever touching the discount", async () => {
     await assert.rejects(

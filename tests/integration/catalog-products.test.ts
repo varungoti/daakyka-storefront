@@ -565,6 +565,164 @@ describe("products admin service (Phase B1)", () => {
     });
   });
 
+  // F-288: audit rows used to say "this product was updated" and nothing
+  // else — a price dropped to ₹1 and a status flipped live left only
+  // {name, slug}. Every update row now carries the before -> after.
+  describe("F-288: audit rows record what actually changed", () => {
+    /** The shape of the metadata these rows carry — only what the tests read. */
+    type AuditMeta = {
+      name?: string;
+      changes: Record<string, { from: unknown; to: unknown }>;
+      descriptionChanged?: boolean;
+      fromStatus?: string;
+      toStatus?: string;
+      updated?: number;
+      variantChanges?: unknown;
+      variantsAdded: { sku: string }[];
+      variantsRemoved?: unknown;
+      bulkAction?: string;
+      ids?: string[];
+      statusChanges: Record<string, unknown>;
+      percent?: number;
+      priceChanges: Record<string, unknown>;
+      stock?: number;
+      previousStockTotals: Record<string, number>;
+    };
+    async function auditRows(entity: string, entityId: string) {
+      const rows = await db.auditLog.findMany({ where: { entity, entityId }, orderBy: { createdAt: "asc" } });
+      return rows.map((row) => ({ action: row.action, metadata: JSON.parse(row.metadata ?? "{}") as AuditMeta }));
+    }
+
+    it("updateProduct records the old and new price and status, and logs the PATCH as a publish", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `Audit Price ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+      await replaceVariants(product.id, [{ size: "S", color: "Navy", sku: `DK-AUD1-${unique}`, stock: 5, active: true }], adminId);
+
+      await updateProduct(product.id, { price: 1, status: "ACTIVE" }, adminId);
+
+      const rows = await auditRows("product", product.id);
+      const update = rows.find((row) => row.action === "update");
+      assert.ok(update, "an update row");
+      assert.deepEqual(update.metadata.changes.price, { from: 500, to: 1 });
+      assert.deepEqual(update.metadata.changes.status, { from: "DRAFT", to: "ACTIVE" });
+      assert.equal(update.metadata.name, `Audit Price ${unique}`);
+
+      const publish = rows.find((row) => row.action === "publish");
+      assert.ok(publish, "a status change through PATCH must also be logged as a publish");
+      assert.equal(publish.metadata.fromStatus, "DRAFT");
+      assert.equal(publish.metadata.toStatus, "ACTIVE");
+    });
+
+    it("logs an unpublish / archive made through PATCH under its own action name", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `Audit Status ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+      await replaceVariants(product.id, [{ size: "S", color: "Navy", sku: `DK-AUD2-${unique}`, stock: 5, active: true }], adminId);
+      await publishProduct(product.id, adminId);
+
+      await updateProduct(product.id, { status: "DRAFT" }, adminId);
+      await updateProduct(product.id, { status: "ARCHIVED" }, adminId);
+
+      const actions = (await auditRows("product", product.id)).map((row) => row.action);
+      assert.ok(actions.includes("unpublish"));
+      assert.ok(actions.includes("archive"));
+    });
+
+    it("an ordinary save that re-sends unchanged fields records no changes and no phantom status event", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `Audit Noop ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+
+      await updateProduct(product.id, { name: product.name, price: 500, status: "DRAFT" }, adminId);
+
+      const rows = await auditRows("product", product.id);
+      const update = rows.find((row) => row.action === "update");
+      assert.deepEqual(update?.metadata.changes, {});
+      assert.ok(!rows.some((row) => ["publish", "unpublish", "archive", "unarchive"].includes(row.action)));
+    });
+
+    it("flags a description edit without copying the (long) HTML into the audit row", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `Audit Desc ${unique}`, categoryId, price: 500, description: "<p>first</p>" }, adminId);
+      createdProductIds.push(product.id);
+
+      await updateProduct(product.id, { description: "<p>a brand new secret-marker description</p>" }, adminId);
+
+      const rows = await db.auditLog.findMany({ where: { entity: "product", entityId: product.id, action: "update" } });
+      assert.equal(rows.length, 1);
+      assert.equal(JSON.parse(rows[0].metadata!).descriptionChanged, true);
+      assert.ok(!rows[0].metadata!.includes("secret-marker"));
+    });
+
+    it("replaceVariants records each SKU's stock/price/active change, and the variants it added and removed", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `Audit Variants ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+      const synced = await replaceVariants(
+        product.id,
+        [
+          { size: "S", color: "Navy", sku: `DK-AUDV-${unique}-S`, stock: 5, active: true },
+          { size: "M", color: "Navy", sku: `DK-AUDV-${unique}-M`, stock: 9, active: true },
+        ],
+        adminId,
+      );
+      const small = synced.find((variant) => variant.size === "S")!;
+
+      await replaceVariants(
+        product.id,
+        [
+          { id: small.id, size: "S", color: "Navy", sku: small.sku, stock: 7, price: 450, active: false },
+          { size: "L", color: "Navy", sku: `DK-AUDV-${unique}-L`, stock: 3, active: true },
+        ],
+        adminId,
+      );
+
+      const rows = await auditRows("product_variants", product.id);
+      const last = rows[rows.length - 1];
+      assert.equal(last.metadata.updated, 1);
+      assert.deepEqual(last.metadata.variantChanges, [
+        {
+          sku: small.sku,
+          changes: {
+            price: { from: null, to: 450 },
+            stock: { from: 5, to: 7 },
+            active: { from: true, to: false },
+          },
+        },
+      ]);
+      assert.deepEqual(last.metadata.variantsAdded.map((v) => v.sku), [`DK-AUDV-${unique}-L`]);
+      assert.deepEqual(last.metadata.variantsRemoved, [{ sku: `DK-AUDV-${unique}-M`, stock: 9, outcome: "deleted" }]);
+    });
+
+    it("performBulkAction records the percent with each product's old and new price, the stock value, and status changes", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const a = await createProduct({ name: `Audit Bulk A ${unique}`, categoryId, price: 100 }, adminId);
+      createdProductIds.push(a.id);
+      await replaceVariants(a.id, [{ size: "S", color: "Navy", sku: `DK-AUDB-${unique}`, stock: 4, active: true }], adminId);
+
+      const latestBulk = async () => {
+        const rows = await db.auditLog.findMany({
+          where: { entity: "product", action: "bulk-update" },
+          orderBy: { createdAt: "desc" },
+          take: 20,
+        });
+        return rows.map((row) => JSON.parse(row.metadata ?? "{}") as AuditMeta).filter((meta) => meta.ids?.includes(a.id));
+      };
+
+      await performBulkAction({ action: "publish", ids: [a.id] }, adminId);
+      await performBulkAction({ action: "adjust-price-pct", ids: [a.id], percent: 10 }, adminId);
+      await performBulkAction({ action: "set-stock", ids: [a.id], stock: 50 }, adminId);
+
+      const byAction = new Map((await latestBulk()).map((meta) => [meta.bulkAction ?? "", meta]));
+      assert.deepEqual(byAction.get("publish")?.statusChanges[a.id], { from: "DRAFT", to: "ACTIVE" });
+      assert.equal(byAction.get("adjust-price-pct")?.percent, 10);
+      assert.deepEqual(byAction.get("adjust-price-pct")?.priceChanges[a.id], { from: 100, to: 110 });
+      assert.equal(byAction.get("set-stock")?.stock, 50);
+      assert.equal(byAction.get("set-stock")?.previousStockTotals[a.id], 4);
+    });
+  });
+
   it("duplicateProduct copies variants and images with a new slug and DRAFT status", async () => {
     const unique = randomUUID().slice(0, 8);
     const product = await createProduct({ name: `Original ${unique}`, categoryId, price: 500 }, adminId);
