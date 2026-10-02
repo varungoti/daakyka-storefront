@@ -183,4 +183,47 @@ describe("draft catalog data", () => {
       "kids-wear chart Age rows must exactly match the sizes kids products are sold in",
     );
   });
+
+  // release-hardening audit F-273: blazers, PE kit, corporate wear and team
+  // kits used to show a chart for a different garment (a school-shirt
+  // chest/age table on a made-to-measure blazer). Whatever chart a category
+  // shows, each size it sells must be a row of that chart — except charts
+  // that are not size tables at all (the linen dimensions, the
+  // made-to-measure "how we measure" guide).
+  it("every size sold in a category is a row of that category's size chart", () => {
+    const sizeLabelColumns = new Set(["Size", "Size (Chest)", "Waist", "Age"]);
+    let checked = 0;
+    for (const category of draftCategories) {
+      const chart = draftSizeCharts.find((c) => c.key === category.sizeChartKey);
+      if (!chart || !sizeLabelColumns.has(chart.columns[0])) continue;
+
+      const labels = new Set(chart.rows.map((row) => String(row[chart.columns[0]])));
+      const sizesSold = new Set(
+        draftProducts
+          .filter((p) => p.categorySlug === category.slug)
+          .flatMap((p) => p.variants.map((v) => v.size)),
+      );
+      for (const size of sizesSold) {
+        checked += 1;
+        assert.ok(
+          labels.has(size),
+          `category "${category.slug}" sells size "${size}" but its "${chart.name}" chart has no such row`,
+        );
+      }
+    }
+    assert.ok(checked > 0, "expected at least one category/size pair to be checked");
+  });
+
+  // release-hardening audit F-097: Category.description is public copy (the
+  // /category/<slug> hero and its <meta description>); a note to the admin
+  // belongs in a code comment.
+  it("no category description reads like an instruction to the admin", () => {
+    for (const category of draftCategories) {
+      assert.doesNotMatch(
+        category.description ?? "",
+        /\b(toggle|site controls|admin)\b/i,
+        `category "${category.slug}" has an admin-facing description: "${category.description}"`,
+      );
+    }
+  });
 });

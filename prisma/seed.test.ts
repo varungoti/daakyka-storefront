@@ -1,7 +1,16 @@
-import { describe, it } from "node:test";
+import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { db } from "@/lib/db";
+import { draftCategories, draftSizeCharts } from "@/data/catalog/draft-catalog";
+import type { Prisma } from "@/generated/prisma/client";
+import {
+  CATALOG_CONTENT_CORRECTION_MARKER_KEY,
+  JOURNEY_CONTENT_CORRECTION_MARKER_KEY,
+  correctSeededCatalogContent,
+  correctSeededJourneyContent,
+  runSeededContentCorrections,
+} from "./seed-corrections";
 
 /**
  * F-070: what `npx tsx prisma/seed.ts` leaves in the database. Seeded
@@ -259,5 +268,469 @@ describe("prisma/seed.ts legacy account handling (F-232)", () => {
       true,
       "admin@daakyka.com should stay active on re-seed — it is the configured ADMIN_SEED_EMAIL, not a stale legacy account",
     );
+  });
+});
+
+/**
+ * F-097 / F-273: the seed's category and size-chart upserts are create-only,
+ * so correcting draft-catalog.ts only fixes a fresh database. Production
+ * was seeded before the fix and keeps the old rows — an internal admin note
+ * as /category/corporate-uniforms' public description, blazers / PE kit /
+ * corporate wear / team kits / gowns pointed at charts for other garments,
+ * and a Kids Wear chart whose labels don't match the sizes sold.
+ * prisma/seed-corrections.ts rewrites exactly those legacy rows, once.
+ *
+ * These tests put the rows back into the shape the old seed left (the
+ * constants below are the old values, copied from git history on purpose —
+ * an independent statement of what production holds), then run the
+ * correction.
+ */
+const LEGACY_CORPORATE_DESCRIPTION =
+  "Executive and corporate wear — toggle on in site controls to list in the menu.";
+const LEGACY_CHART_ASSIGNMENTS = [
+  { slug: "ot-surgical-gowns", chart: "Adult Scrubs" },
+  { slug: "patient-gowns", chart: "Adult Scrubs" },
+  { slug: "blazers", chart: "School Shirts" },
+  { slug: "sports-pe", chart: "School Trousers" },
+  { slug: "corporate-uniforms", chart: "Adult Scrubs" },
+  { slug: "sports-teams", chart: "Adult Scrubs" },
+];
+const LEGACY_KIDS_CHART = {
+  columns: ["Age", "Height (cm)", "Chest (in)"],
+  rows: [
+    { Age: "2–3Y", "Height (cm)": "92–98", "Chest (in)": 21 },
+    { Age: "4–5Y", "Height (cm)": "104–110", "Chest (in)": 22 },
+    { Age: "6–7Y", "Height (cm)": "116–122", "Chest (in)": 24 },
+    { Age: "8–9Y", "Height (cm)": "128–134", "Chest (in)": 26 },
+    { Age: "10–11Y", "Height (cm)": "140–146", "Chest (in)": 28 },
+    { Age: "12–13Y", "Height (cm)": "152–158", "Chest (in)": 30 },
+    { Age: "13–14Y", "Height (cm)": "158–164", "Chest (in)": 32 },
+  ],
+};
+// Charts the old seed never created — production has none of these.
+const NEW_CHART_KEYS = ["corporate-apparel", "sportswear", "team-kit", "gowns", "made-to-measure"];
+
+function draftChartForCategory(slug: string) {
+  const key = draftCategories.find((c) => c.slug === slug)?.sizeChartKey;
+  const chart = draftSizeCharts.find((c) => c.key === key);
+  assert.ok(chart, `draft-catalog.ts should assign a size chart to ${slug}`);
+  return chart;
+}
+
+async function putCatalogIntoLegacyState(): Promise<void> {
+  await db.category.update({
+    where: { slug: "corporate-uniforms" },
+    data: { description: LEGACY_CORPORATE_DESCRIPTION },
+  });
+  for (const { slug, chart } of LEGACY_CHART_ASSIGNMENTS) {
+    const legacyChart = await db.sizeChart.findFirstOrThrow({ where: { name: chart } });
+    await db.category.update({ where: { slug }, data: { sizeChartId: legacyChart.id } });
+  }
+  await db.sizeChart.updateMany({
+    where: { name: "Kids Wear" },
+    data: {
+      unit: "CM",
+      columns: LEGACY_KIDS_CHART.columns as Prisma.InputJsonValue,
+      rows: LEGACY_KIDS_CHART.rows as Prisma.InputJsonValue,
+      notes: null,
+    },
+  });
+  await db.sizeChart.deleteMany({
+    where: { name: { in: draftSizeCharts.filter((c) => NEW_CHART_KEYS.includes(c.key)).map((c) => c.name) } },
+  });
+  await db.siteSetting.deleteMany({ where: { key: CATALOG_CONTENT_CORRECTION_MARKER_KEY } });
+}
+
+/** Leaves the database exactly as a freshly seeded one (and marked handled). */
+async function restoreCatalog(): Promise<void> {
+  await putCatalogIntoLegacyState();
+  await runSeededContentCorrections(db);
+}
+
+describe("prisma/seed-corrections.ts catalogue corrections for already-seeded rows (F-097, F-273)", () => {
+  after(restoreCatalog);
+
+  it("is a no-op on a database seeded from the current source", async () => {
+    const summary = await correctSeededCatalogContent(db);
+    assert.deepEqual(summary, {
+      descriptionsCorrected: 0,
+      categoriesReassigned: 0,
+      sizeChartsCreated: 0,
+      sizeChartsRewritten: 0,
+    });
+  });
+
+  it("rewrites the legacy description, chart assignments and Kids Wear chart, creating the charts production lacks", async () => {
+    await putCatalogIntoLegacyState();
+
+    const result = await runSeededContentCorrections(db);
+    assert.deepEqual(result.catalog, {
+      descriptionsCorrected: 1,
+      categoriesReassigned: LEGACY_CHART_ASSIGNMENTS.length,
+      sizeChartsCreated: NEW_CHART_KEYS.length,
+      sizeChartsRewritten: 1,
+    });
+
+    // F-097
+    const corporate = await db.category.findUniqueOrThrow({ where: { slug: "corporate-uniforms" } });
+    const corporateDraft = draftCategories.find((c) => c.slug === "corporate-uniforms");
+    assert.equal(corporate.description, corporateDraft?.description);
+    assert.doesNotMatch(corporate.description ?? "", /toggle|site controls|admin/i);
+
+    // F-273: each category now shows the chart draft-catalog.ts assigns it,
+    // with that chart's seeded content.
+    for (const { slug } of LEGACY_CHART_ASSIGNMENTS) {
+      const expected = draftChartForCategory(slug);
+      const category = await db.category.findUniqueOrThrow({ where: { slug }, include: { sizeChart: true } });
+      assert.equal(category.sizeChart?.name, expected.name, `${slug} should use "${expected.name}"`);
+      assert.equal(category.sizeChart?.unit, expected.unit);
+      assert.deepEqual(category.sizeChart?.columns, expected.columns);
+      assert.deepEqual(category.sizeChart?.rows, expected.rows);
+      assert.equal(category.sizeChart?.notes ?? undefined, expected.notes);
+    }
+
+    const kidsDraft = draftSizeCharts.find((c) => c.key === "kids-wear");
+    const kids = await db.sizeChart.findFirstOrThrow({ where: { name: "Kids Wear" } });
+    assert.deepEqual(kids.columns, kidsDraft?.columns);
+    assert.deepEqual(kids.rows, kidsDraft?.rows);
+    assert.equal(kids.unit, "CM");
+
+    // Nothing was duplicated: one chart per name.
+    for (const chart of draftSizeCharts) {
+      assert.equal(await db.sizeChart.count({ where: { name: chart.name } }), 1, `exactly one "${chart.name}" chart`);
+    }
+  });
+
+  it("runs at most once per database: an admin's later choice survives the next deploy", async () => {
+    await putCatalogIntoLegacyState();
+    await runSeededContentCorrections(db);
+
+    // The admin deliberately goes back to the old chart / copy afterwards.
+    const legacyChart = await db.sizeChart.findFirstOrThrow({ where: { name: "School Shirts" } });
+    await db.category.update({ where: { slug: "blazers" }, data: { sizeChartId: legacyChart.id } });
+    await db.category.update({
+      where: { slug: "corporate-uniforms" },
+      data: { description: LEGACY_CORPORATE_DESCRIPTION },
+    });
+
+    const again = await runSeededContentCorrections(db);
+    assert.deepEqual(again, { catalog: undefined, journeys: undefined });
+    const blazers = await db.category.findUniqueOrThrow({ where: { slug: "blazers" }, include: { sizeChart: true } });
+    assert.equal(blazers.sizeChart?.name, "School Shirts");
+    const corporate = await db.category.findUniqueOrThrow({ where: { slug: "corporate-uniforms" } });
+    assert.equal(corporate.description, LEGACY_CORPORATE_DESCRIPTION);
+  });
+
+  it("never touches a row an admin has edited or reassigned", async () => {
+    await putCatalogIntoLegacyState();
+
+    // Admin rewrote the corporate description, picked a different chart for
+    // blazers, cleared sports-teams' chart, and changed one row of the Kids
+    // Wear chart.
+    await db.category.update({ where: { slug: "corporate-uniforms" }, data: { description: "Admin-written copy." } });
+    const labCoats = await db.sizeChart.findFirstOrThrow({ where: { name: "Lab Coats" } });
+    await db.category.update({ where: { slug: "blazers" }, data: { sizeChartId: labCoats.id } });
+    await db.category.update({ where: { slug: "sports-teams" }, data: { sizeChartId: null } });
+    await db.sizeChart.updateMany({
+      where: { name: "Kids Wear" },
+      data: {
+        rows: LEGACY_KIDS_CHART.rows.map((row, i) =>
+          i === 0 ? { ...row, "Chest (in)": 99 } : row,
+        ) as Prisma.InputJsonValue,
+      },
+    });
+
+    const summary = await correctSeededCatalogContent(db);
+
+    assert.equal(summary.descriptionsCorrected, 0);
+    assert.equal(summary.sizeChartsRewritten, 0);
+    // Only the four still-legacy assignments move (gowns x2, sports-pe, corporate).
+    assert.equal(summary.categoriesReassigned, 4);
+
+    const corporate = await db.category.findUniqueOrThrow({ where: { slug: "corporate-uniforms" } });
+    assert.equal(corporate.description, "Admin-written copy.");
+    const blazers = await db.category.findUniqueOrThrow({ where: { slug: "blazers" }, include: { sizeChart: true } });
+    assert.equal(blazers.sizeChart?.name, "Lab Coats");
+    const teams = await db.category.findUniqueOrThrow({ where: { slug: "sports-teams" } });
+    assert.equal(teams.sizeChartId, null);
+    const kids = await db.sizeChart.findFirstOrThrow({ where: { name: "Kids Wear" } });
+    assert.equal((kids.rows as { "Chest (in)": number }[])[0]["Chest (in)"], 99);
+  });
+
+  it("is applied by prisma/seed.ts itself, once", async () => {
+    await putCatalogIntoLegacyState();
+
+    runSeed();
+
+    const corporate = await db.category.findUniqueOrThrow({ where: { slug: "corporate-uniforms" } });
+    assert.doesNotMatch(corporate.description ?? "", /toggle|site controls/i);
+    const blazers = await db.category.findUniqueOrThrow({ where: { slug: "blazers" }, include: { sizeChart: true } });
+    assert.equal(blazers.sizeChart?.name, draftChartForCategory("blazers").name);
+    const marker = await db.siteSetting.findUnique({ where: { key: CATALOG_CONTENT_CORRECTION_MARKER_KEY } });
+    assert.ok(marker, "the seed should record that the catalogue correction has run");
+  });
+});
+
+/**
+ * F-070: production's seeded customer journeys. The fresh seed now creates
+ * them DRAFT with one step each and no HERO10 text, but the rows an old seed
+ * created there were ACTIVE (they send the moment Brevo is enabled, with no
+ * approval step), resent one template 3-5 times, and told every subscriber
+ * to "use code HERO10" — a code that was never a real Discount row.
+ */
+const WELCOME_TEMPLATE_ID = "seed-welcome-email";
+const CART_TEMPLATE_ID = "seed-cart-abandon-email";
+const POST_PURCHASE_TEMPLATE_ID = "seed-post-purchase-email";
+const BULK_ACK_TEMPLATE_ID = "seed-bulk-followup-wa";
+const BULK_QUOTE_TEMPLATE_ID = "seed-bulk-followup-quote-wa";
+const SEEDED_TEMPLATE_IDS = [
+  WELCOME_TEMPLATE_ID,
+  CART_TEMPLATE_ID,
+  POST_PURCHASE_TEMPLATE_ID,
+  BULK_ACK_TEMPLATE_ID,
+  BULK_QUOTE_TEMPLATE_ID,
+];
+const SEEDED_JOURNEY_SLUGS = ["welcome-series", "abandoned-cart", "post-purchase", "bulk-order-followup"];
+
+const LEGACY_JOURNEY_FIXTURES: {
+  slug: string;
+  name: string;
+  description: string;
+  trigger: string;
+  steps: { name: string; delayHours: number; templateId: string }[];
+}[] = [
+  {
+    slug: "welcome-series",
+    name: "Welcome Journey",
+    description: "Day 0 welcome, Day 2 best sellers, Day 5 fabric science, Day 7 offer.",
+    trigger: "newsletter_signup",
+    steps: [
+      { name: "Welcome email", delayHours: 0, templateId: WELCOME_TEMPLATE_ID },
+      { name: "Best sellers spotlight", delayHours: 48, templateId: WELCOME_TEMPLATE_ID },
+      { name: "Fabric science guide", delayHours: 120, templateId: WELCOME_TEMPLATE_ID },
+      { name: "First purchase offer", delayHours: 168, templateId: WELCOME_TEMPLATE_ID },
+    ],
+  },
+  {
+    slug: "abandoned-cart",
+    name: "Abandoned Cart Journey",
+    description: "1h reminder, 24h benefit nudge, 48h offer (when email known).",
+    trigger: "cart_abandoned",
+    steps: [
+      { name: "Cart reminder", delayHours: 1, templateId: CART_TEMPLATE_ID },
+      { name: "Benefit-led nudge", delayHours: 24, templateId: CART_TEMPLATE_ID },
+      { name: "Offer reminder", delayHours: 48, templateId: CART_TEMPLATE_ID },
+    ],
+  },
+  {
+    slug: "post-purchase",
+    name: "Post-Purchase Journey",
+    description: "Thank you, care tips, review request, cross-sell, repeat reminder.",
+    trigger: "order_created",
+    steps: [
+      { name: "Thank you email", delayHours: 0, templateId: POST_PURCHASE_TEMPLATE_ID },
+      { name: "Care instructions", delayHours: 24, templateId: POST_PURCHASE_TEMPLATE_ID },
+      { name: "Review request", delayHours: 72, templateId: POST_PURCHASE_TEMPLATE_ID },
+      { name: "Cross-sell spotlight", delayHours: 168, templateId: WELCOME_TEMPLATE_ID },
+      { name: "Repeat purchase reminder", delayHours: 720, templateId: WELCOME_TEMPLATE_ID },
+    ],
+  },
+];
+
+async function snapshotSeededJourneyContent() {
+  const templates = await db.messageTemplate.findMany({
+    where: { id: { in: SEEDED_TEMPLATE_IDS } },
+    orderBy: { id: "asc" },
+    select: { id: true, name: true, channel: true, subject: true, body: true, variables: true },
+  });
+  const journeys = await db.customerJourney.findMany({
+    where: { slug: { in: SEEDED_JOURNEY_SLUGS } },
+    orderBy: { slug: "asc" },
+    select: {
+      slug: true,
+      name: true,
+      description: true,
+      trigger: true,
+      steps: {
+        orderBy: { sortOrder: "asc" },
+        select: { sortOrder: true, name: true, delayHours: true, channel: true, templateId: true, notes: true },
+      },
+    },
+  });
+  return { templates, journeys };
+}
+
+async function putJourneysIntoLegacyState(): Promise<void> {
+  await db.messageTemplate.update({
+    where: { id: WELCOME_TEMPLATE_ID },
+    data: {
+      name: "Welcome — 10% Off First Order",
+      subject: "Welcome to DAAKYKA — Your 10% Hero Discount",
+      body: "Hi {{first_name}},\n\nWelcome to DAAKYKA Apparels. Use code HERO10 for 10% off your first scrub set.\n\nShop best sellers: {{shop_url}}",
+    },
+  });
+  await db.messageTemplate.update({
+    where: { id: CART_TEMPLATE_ID },
+    data: {
+      body: "Hi {{first_name}},\n\nYour DAAKYKA scrub set is waiting. Complete your order: {{shop_url}}/shop\n\nUse code HERO10 on your first purchase.",
+    },
+  });
+  await db.messageTemplate.update({ where: { id: BULK_ACK_TEMPLATE_ID }, data: { name: "Bulk Order Follow-up" } });
+
+  for (const fixture of LEGACY_JOURNEY_FIXTURES) {
+    const journey = await db.customerJourney.update({
+      where: { slug: fixture.slug },
+      data: {
+        name: fixture.name,
+        description: fixture.description,
+        trigger: fixture.trigger,
+        status: "ACTIVE",
+      },
+    });
+    await db.journeyStep.deleteMany({ where: { journeyId: journey.id } });
+    await db.journeyStep.createMany({
+      data: fixture.steps.map((step, sortOrder) => ({
+        journeyId: journey.id,
+        sortOrder,
+        name: step.name,
+        delayHours: step.delayHours,
+        channel: "EMAIL" as const,
+        templateId: step.templateId,
+      })),
+    });
+  }
+
+  // bulk-order-followup's 48h quote follow-up reused the acknowledgement
+  // template; the distinct follow-up template did not exist.
+  await db.journeyStep.updateMany({
+    where: { journey: { slug: "bulk-order-followup" }, sortOrder: 2 },
+    data: { templateId: BULK_ACK_TEMPLATE_ID },
+  });
+  await db.messageTemplate.deleteMany({ where: { id: BULK_QUOTE_TEMPLATE_ID } });
+
+  await db.siteSetting.deleteMany({ where: { key: JOURNEY_CONTENT_CORRECTION_MARKER_KEY } });
+}
+
+describe("prisma/seed-corrections.ts journey corrections for already-seeded rows (F-070)", () => {
+  let fresh: Awaited<ReturnType<typeof snapshotSeededJourneyContent>>;
+
+  before(async () => {
+    fresh = await snapshotSeededJourneyContent();
+  });
+
+  after(async () => {
+    await putJourneysIntoLegacyState();
+    await runSeededContentCorrections(db);
+  });
+
+  it("is a no-op on a database seeded from the current source", async () => {
+    const summary = await correctSeededJourneyContent(db);
+    assert.deepEqual(summary, {
+      templatesCorrected: 0,
+      journeysCollapsed: 0,
+      journeysDeactivated: 0,
+      stepsRemoved: 0,
+      stepsRepointed: 0,
+    });
+    assert.deepEqual(await snapshotSeededJourneyContent(), fresh);
+  });
+
+  it("turns production's old journeys into exactly what a fresh seed creates", async () => {
+    await putJourneysIntoLegacyState();
+    // Sanity: the fixture really is the old, broken shape.
+    const legacy = await snapshotSeededJourneyContent();
+    assert.match(legacy.templates.find((t) => t.id === WELCOME_TEMPLATE_ID)?.body ?? "", /HERO10/);
+    assert.equal(legacy.journeys.find((j) => j.slug === "welcome-series")?.steps.length, 4);
+
+    const result = await runSeededContentCorrections(db);
+    assert.deepEqual(result.journeys, {
+      templatesCorrected: 3,
+      journeysCollapsed: 3,
+      journeysDeactivated: 3,
+      stepsRemoved: 3 + 2 + 4,
+      stepsRepointed: 1,
+    });
+
+    // Template copy, journey descriptions and steps now match the fresh
+    // seed field for field — one step each, nothing mentioning HERO10.
+    assert.deepEqual(await snapshotSeededJourneyContent(), fresh);
+
+    // The marketing journeys are not ACTIVE any more; bulk stays ACTIVE (it
+    // is what notifies the owner of a new institutional lead).
+    const statuses = Object.fromEntries(
+      (await db.customerJourney.findMany({ where: { slug: { in: SEEDED_JOURNEY_SLUGS } } })).map((j) => [j.slug, j.status]),
+    );
+    assert.deepEqual(statuses, {
+      "welcome-series": "DRAFT",
+      "abandoned-cart": "DRAFT",
+      "post-purchase": "DRAFT",
+      "bulk-order-followup": "ACTIVE",
+    });
+    assert.equal(await db.messageTemplate.count({ where: { body: { contains: "HERO10" } } }), 0);
+  });
+
+  it("runs at most once per database: re-activating a journey afterwards sticks", async () => {
+    await putJourneysIntoLegacyState();
+    await runSeededContentCorrections(db);
+
+    await db.customerJourney.update({ where: { slug: "welcome-series" }, data: { status: "ACTIVE" } });
+    const again = await runSeededContentCorrections(db);
+    assert.deepEqual(again, { catalog: undefined, journeys: undefined });
+
+    const journey = await db.customerJourney.findUniqueOrThrow({ where: { slug: "welcome-series" } });
+    assert.equal(journey.status, "ACTIVE");
+  });
+
+  it("leaves a journey or template an admin has touched alone", async () => {
+    await putJourneysIntoLegacyState();
+
+    // welcome-series: the admin rewrote the description (and left it ACTIVE).
+    await db.customerJourney.update({
+      where: { slug: "welcome-series" },
+      data: { description: "Our own welcome flow." },
+    });
+    // abandoned-cart: the admin replaced the reminder copy.
+    await db.messageTemplate.update({
+      where: { id: CART_TEMPLATE_ID },
+      data: { body: "Hi {{first_name}}, we saved your cart: {{shop_url}}/shop" },
+    });
+    // post-purchase: the admin paused it.
+    await db.customerJourney.update({ where: { slug: "post-purchase" }, data: { status: "PAUSED" } });
+
+    await correctSeededJourneyContent(db);
+
+    const welcome = await db.customerJourney.findUniqueOrThrow({
+      where: { slug: "welcome-series" },
+      include: { steps: true },
+    });
+    assert.equal(welcome.description, "Our own welcome flow.");
+    assert.equal(welcome.status, "ACTIVE", "an edited journey is not paused behind the admin's back");
+    assert.equal(welcome.steps.length, 4, "an edited journey keeps its steps");
+
+    // ...yet its still-untouched template's HERO10 text is replaced.
+    const welcomeTemplate = await db.messageTemplate.findUniqueOrThrow({ where: { id: WELCOME_TEMPLATE_ID } });
+    assert.doesNotMatch(welcomeTemplate.body, /HERO10/);
+
+    const cartTemplate = await db.messageTemplate.findUniqueOrThrow({ where: { id: CART_TEMPLATE_ID } });
+    assert.equal(cartTemplate.body, "Hi {{first_name}}, we saved your cart: {{shop_url}}/shop");
+
+    const postPurchase = await db.customerJourney.findUniqueOrThrow({
+      where: { slug: "post-purchase" },
+      include: { steps: true },
+    });
+    assert.equal(postPurchase.status, "PAUSED", "a paused journey stays paused");
+    assert.equal(postPurchase.steps.length, 1, "its duplicate steps are still removed");
+  });
+
+  it("is applied by prisma/seed.ts itself", async () => {
+    await putJourneysIntoLegacyState();
+
+    runSeed();
+
+    assert.deepEqual(await snapshotSeededJourneyContent(), fresh);
+    const marker = await db.siteSetting.findUnique({ where: { key: JOURNEY_CONTENT_CORRECTION_MARKER_KEY } });
+    assert.ok(marker, "the seed should record that the journey correction has run");
+    const welcome = await db.customerJourney.findUniqueOrThrow({ where: { slug: "welcome-series" } });
+    assert.equal(welcome.status, "DRAFT");
   });
 });
