@@ -231,6 +231,21 @@ describe("segments admin CRUD", () => {
     await assert.rejects(() => getSegmentForAdmin(segment.id), SegmentNotFoundError);
   });
 
+  it("audit rows record the segment's name on create and what changed on edit (F-288)", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const segment = await createSegment({ name: `Audit Segment ${unique}`, slug: `audit-segment-${unique}`, criteria: { source: "footer" } }, adminId);
+    createdIds.push(segment.id);
+    await updateSegment(segment.id, { description: "now described", criteria: { source: "checkout" } }, adminId);
+
+    const rows = await db.auditLog.findMany({ where: { entity: "customer_segment", entityId: segment.id }, orderBy: { createdAt: "asc" } });
+    const [created, updated] = rows.map(
+      (row) => JSON.parse(row.metadata ?? "{}") as { name?: string; slug?: string; changes?: Record<string, unknown>; criteriaChanged?: boolean },
+    );
+    assert.equal(created.slug, `audit-segment-${unique}`);
+    assert.deepEqual(updated.changes, { description: { from: null, to: "now described" } });
+    assert.equal(updated.criteriaChanged, true);
+  });
+
   it("createSegment rejects a slug already used by another segment", async () => {
     const unique = randomUUID().slice(0, 8);
     const first = await createSegment({ name: `Dup ${unique}`, slug: `dup-segment-${unique}` }, adminId);
@@ -298,6 +313,24 @@ describe("templates admin CRUD", () => {
   after(async () => {
     if (createdCampaignIds.length) await db.campaign.deleteMany({ where: { id: { in: createdCampaignIds } } }).catch(() => {});
     if (createdIds.length) await db.messageTemplate.deleteMany({ where: { id: { in: createdIds } } }).catch(() => {});
+  });
+
+  it("audit rows record what a template edit changed, flagging the body without copying it (F-288)", async () => {
+    const template = await createTemplate(
+      { name: `Audit Template ${randomUUID().slice(0, 8)}`, channel: "EMAIL", body: "original body text" },
+      adminId,
+    );
+    createdIds.push(template.id);
+    await updateTemplate(template.id, { subject: "A new subject", body: "rewritten secret-marker body" }, adminId);
+
+    const rows = await db.auditLog.findMany({ where: { entity: "message_template", entityId: template.id }, orderBy: { createdAt: "asc" } });
+    const [created, updated] = rows.map(
+      (row) => JSON.parse(row.metadata ?? "{}") as { channel?: string; changes?: Record<string, unknown>; bodyChanged?: boolean },
+    );
+    assert.equal(created.channel, "EMAIL");
+    assert.deepEqual(updated.changes, { subject: { from: null, to: "A new subject" } });
+    assert.equal(updated.bodyChanged, true);
+    assert.ok(!(rows[1].metadata ?? "").includes("secret-marker"));
   });
 
   it("full round trip: create -> read -> update -> delete", async () => {
@@ -445,6 +478,29 @@ describe("offers admin CRUD", () => {
     await deleteOffer(offer.id, adminId);
     createdIds.splice(createdIds.indexOf(offer.id), 1);
     await assert.rejects(() => getOfferForAdmin(offer.id), OfferNotFoundError);
+  });
+
+  // F-288: offers (and segments / templates below) wrote create rows with no
+  // metadata at all and update rows with only the new name.
+  it("audit rows record what was created and what an edit changed (F-288)", async () => {
+    const offer = await createOffer(
+      { name: `Audit Offer ${randomUUID().slice(0, 8)}`, type: "bundle", description: "d", active: true },
+      adminId,
+    );
+    createdIds.push(offer.id);
+    await updateOffer(offer.id, { active: false, config: { discount: "15%" } }, adminId);
+
+    const rows = await db.auditLog.findMany({
+      where: { entity: "offer_recommendation", entityId: offer.id },
+      orderBy: { createdAt: "asc" },
+    });
+    const [created, updated] = rows.map(
+      (row) => JSON.parse(row.metadata ?? "{}") as { name?: string; active?: boolean; changes?: Record<string, unknown>; configChanged?: boolean },
+    );
+    assert.equal(created.name, offer.name);
+    assert.equal(created.active, true);
+    assert.deepEqual(updated.changes, { active: { from: true, to: false } });
+    assert.equal(updated.configChanged, true);
   });
 
   it("routes reject with 401/403 without a session", async () => {

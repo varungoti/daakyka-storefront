@@ -143,6 +143,7 @@ export async function createTestimonial(
     action: "create",
     entity: "testimonial",
     entityId: created.id,
+    metadata: { name: created.name },
   });
 
   revalidateTestimonialsCache();

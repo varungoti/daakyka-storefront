@@ -1219,6 +1219,19 @@ describe("product image helpers are scoped to the product in the URL (F-194)", (
       assert.equal(recoloured.color, "Red");
       const renamed = await updateImageAlt(productA.id, imageA.id, "A renamed", adminId);
       assert.equal(renamed.alt, "A renamed");
+
+      // F-288: the audit rows say which product the photo belongs to and
+      // what changed (they used to be a bare {alt} / {color}).
+      const imageRows = await db.auditLog.findMany({
+        where: { entity: "product_image", entityId: imageA.id, action: "update" },
+        orderBy: { createdAt: "asc" },
+      });
+      const [colorRow, altRow] = imageRows.map((row) => JSON.parse(row.metadata!) as { productId: string; changes: Record<string, unknown> });
+      assert.equal(colorRow.productId, productA.id);
+      assert.deepEqual(colorRow.changes, { color: { from: "Navy", to: "Red" } });
+      assert.equal(altRow.productId, productA.id);
+      assert.deepEqual(altRow.changes, { alt: { from: "A", to: "A renamed" } });
+
       await removeProductImage(productA.id, imageA.id, adminId);
       assert.equal(await db.productImage.findUnique({ where: { id: imageA.id } }), null);
     } finally {

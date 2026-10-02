@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { db } from "@/lib/db";
 import {
   deleteUnattachedMediaAsset,
   MediaAssetAttachedError,
@@ -31,6 +32,8 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
   const { id } = await params;
 
   try {
+    // F-288: which file this was, once its row is gone (best-effort).
+    const before = await db.mediaAsset.findUnique({ where: { id }, select: { key: true, usage: true, slot: true } }).catch(() => null);
     await deleteUnattachedMediaAsset(id);
 
     await logAuditEvent({
@@ -38,6 +41,7 @@ export async function DELETE(_request: Request, { params }: RouteParams) {
       action: "delete",
       entity: "media_asset",
       entityId: id,
+      metadata: before ?? undefined,
     });
 
     return NextResponse.json({ success: true });

@@ -1,4 +1,5 @@
 import { logAuditEvent } from "@/lib/auth/audit";
+import { diffFields } from "@/lib/auth/audit-diff";
 import { db } from "@/lib/db";
 import type { MessageTemplate } from "@/generated/prisma/client";
 import type { z } from "zod";
@@ -66,6 +67,7 @@ export async function createTemplate(input: TemplateInput, userId: string): Prom
     action: "create",
     entity: "message_template",
     entityId: template.id,
+    metadata: { name: template.name, channel: template.channel },
   });
 
   return template;
@@ -97,7 +99,13 @@ export async function updateTemplate(
     action: "update",
     entity: "message_template",
     entityId: id,
-    metadata: { name: updated.name },
+    // F-288: what moved, not just the new name. The body is long, so only the
+    // fact that it changed is recorded.
+    metadata: {
+      name: updated.name,
+      changes: diffFields(existing, updated, ["name", "channel", "subject"]),
+      ...(existing.body !== updated.body ? { bodyChanged: true } : {}),
+    },
   });
 
   return updated;

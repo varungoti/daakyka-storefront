@@ -1,6 +1,7 @@
 import { revalidateTag, unstable_cache } from "next/cache";
 import { db } from "@/lib/db";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { diffFields } from "@/lib/auth/audit-diff";
 import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
 import type { RevalidateProfile } from "@/lib/cache/admin-revalidate";
 import { isDiscountCodeActive } from "@/lib/discounts";
@@ -172,6 +173,7 @@ export async function createOffer(input: OfferInput, userId: string): Promise<Of
     action: "create",
     entity: "offer_recommendation",
     entityId: offer.id,
+    metadata: { name: offer.name, type: offer.type, active: offer.active },
   });
 
   revalidateOffersCache();
@@ -202,7 +204,14 @@ export async function updateOffer(
     action: "update",
     entity: "offer_recommendation",
     entityId: id,
-    metadata: { name: updated.name, active: updated.active },
+    // F-288: the before -> after of what moved (an offer switched on or off
+    // is the change that matters most here).
+    metadata: {
+      name: updated.name,
+      active: updated.active,
+      changes: diffFields(existing, updated, ["name", "type", "description", "active"]),
+      ...(existing.config !== updated.config ? { configChanged: true } : {}),
+    },
   });
 
   revalidateOffersCache();

@@ -1056,7 +1056,14 @@ export async function setImageColor(productId: string, imageId: string, color: s
 
   const updated = await db.productImage.update({ where: { id: imageId }, data: { color }, include: { media: true } });
 
-  await logAuditEvent({ userId, action: "update", entity: "product_image", entityId: imageId, metadata: { color } });
+  // F-288: which product the photo belongs to, and what the colour was.
+  await logAuditEvent({
+    userId,
+    action: "update",
+    entity: "product_image",
+    entityId: imageId,
+    metadata: { productId, color, changes: diffFields(image, updated, ["color"]) },
+  });
   revalidateProduct(image.product.slug);
   return updated;
 }
@@ -1080,7 +1087,13 @@ export async function setImageSizeScope(
     data: { size, appliesToAllSizes },
     include: { media: true },
   });
-  await logAuditEvent({ userId, action: "update", entity: "product_image", entityId: imageId, metadata: { size, appliesToAllSizes } });
+  await logAuditEvent({
+    userId,
+    action: "update",
+    entity: "product_image",
+    entityId: imageId,
+    metadata: { productId, size, appliesToAllSizes, changes: diffFields(image, updated, ["size", "appliesToAllSizes"]) },
+  });
   revalidateProduct(image.product.slug);
   return updated;
 }
@@ -1091,7 +1104,13 @@ export async function updateImageAlt(productId: string, imageId: string, alt: st
 
   const updated = await db.productImage.update({ where: { id: imageId }, data: { alt }, include: { media: true } });
 
-  await logAuditEvent({ userId, action: "update", entity: "product_image", entityId: imageId, metadata: { alt } });
+  await logAuditEvent({
+    userId,
+    action: "update",
+    entity: "product_image",
+    entityId: imageId,
+    metadata: { productId, alt, changes: diffFields(image, updated, ["alt"]) },
+  });
   revalidateProduct(image.product.slug);
   return updated;
 }
@@ -1125,7 +1144,7 @@ export async function reorderProductImages(productId: string, imageId: string, d
     db.productImage.update({ where: { id: other.id }, data: { sortOrder: self.sortOrder } }),
   ]);
 
-  await logAuditEvent({ userId, action: "update", entity: "product_image", entityId: imageId, metadata: { reorder: direction } });
+  await logAuditEvent({ userId, action: "update", entity: "product_image", entityId: imageId, metadata: { productId, reorder: direction } });
   revalidateProduct(product.slug);
   return true;
 }
