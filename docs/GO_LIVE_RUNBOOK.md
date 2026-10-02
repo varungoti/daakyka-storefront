@@ -63,6 +63,13 @@ TEST_BASE_URL=https://YOUR-STAGING-URL.vercel.app npm run probe:deploy -- --stag
 TEST_BASE_URL=https://YOUR-STAGING-URL.vercel.app npm run verify:staging -- --dogfood
 ```
 
+These remote gates write data (a homepage edit, a blog draft, a queued Hermes task), so
+`verify:staging` and `verify:staging:full` refuse the production store; point them at a Preview/staging
+deployment. Against production use `npm run verify:staging:full -- --production-readonly` (GET-only
+checks). Mix & Match, its try-on studio and Fabric Technology are switched off by default and return 404 by
+design: the probe, smoke and dogfood checks expect that. If you have switched them on for that deployment,
+run the gates with `CI_OPTIONAL_PAGES_ENABLED=1` so they expect the pages instead.
+
 `npm run check:deploy-env` / `npm run go-live:check` check `DATABASE_URL`, `AUTH_SECRET`,
 `CRON_SECRET`, `NEXT_PUBLIC_SITE_URL`, `ADMIN_SEED_PASSWORD` and `CREDENTIAL_ENCRYPTION_KEY` — but
 both only read the **current shell environment**, not what's actually stored on Vercel, so a green

@@ -57,7 +57,7 @@ staging environment; QA against it is QA against production.
 
 ```bash
 npm run verify:101              # local full gate
-npm run verify:staging:full     # live staging probe + smoke + e2e + dogfood
+TEST_BASE_URL=https://<preview-or-staging-host> npm run verify:staging:full   # probe + smoke + e2e + dogfood; refuses production
 ```
 
 ## Performance (manual)
