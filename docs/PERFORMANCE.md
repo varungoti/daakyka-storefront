@@ -276,6 +276,109 @@ gate already in CI):
   (home/`/shop` best-practices measured 0.89, just under the floor; warn-level
   so it's visible without blocking CI on a single point).
 
+## Cacheable listings and product pages, lighter payloads, lazier motion (release-hardening wave 4)
+
+Findings F-013, F-018, F-256, F-257, F-258, F-260, F-261. Measured on local
+production builds (`next build` + `next start` against a seeded Postgres, 60
+products), baseline = the commit before this work, mobile Lighthouse with
+simulated throttling, median of 3 runs.
+
+**What was dynamic, and is not any more.** `/shop`, `/category/[slug]` and
+`/products/[handle]` were rendered by a function on every view
+(`Cache-Control: private, no-cache, no-store`), and `GET /api/products` — what
+the header search dialog downloads — was a function run too. They are
+prerendered now (`○ /shop`, `● /category/[slug]`, `● /products/[handle]`,
+`○ /api/products` in the build output) and served with `s-maxage=300,
+stale-while-revalidate`:
+
+- `/shop` and `/category/[slug]` no longer take a `searchParams` prop (reading
+  it opts the route into per-request rendering). The server and the first client
+  render show the unfiltered grid; `ShopPageContent` applies `?category=`/`?q=`/
+  facets right after hydration. The only `useSearchParams()` call is in a tiny
+  `ShopUrlSync` component inside its own `<Suspense>` (on a prerendered route it
+  makes the tree up to the nearest boundary client-only, so it must not be the
+  component that renders the grid). The page keeps its own filter state so a
+  click filters the grid on the same frame; `src/lib/shop/url-sync.ts` stops the
+  router's lagging echo of the page's own `history.pushState`/`replaceState`
+  writes from typing over what a shopper typed meanwhile (a stale echo would
+  otherwise drop the space in "scrub top"). A side effect: a search from the header
+  dialog while already on `/shop` now actually applies (it was ignored before,
+  the page only read the URL on mount). A filtered deep link
+  (`/shop?category=…`) shows the unfiltered grid for the moment between the HTML
+  and hydration.
+- `/category/[slug]` and `/products/[handle]` export an empty
+  `generateStaticParams()`. Without it a dynamic segment is rendered on every
+  request however static its page is; with it each slug is rendered on first
+  visit and then cached. Nothing is built ahead, so the build does not need the
+  catalogue for them.
+- The one thing on the product page that read the request was the signed-in
+  visitor's review eligibility (`cookies()`). It is `GET
+  /api/products/[handle]/review-eligibility` now (`private, no-store`), asked
+  by the review section from the browser only once the section is about to
+  scroll into view. The server still re-checks everything on submit.
+- Invalidation is by the tags the reads already carry — an admin save, a stock
+  change at checkout/payment/cancel, a review approval each call
+  `revalidateTag`. Checked end to end: after an order, the product page is
+  regenerated with the new stock on the very next request (`expire: 0`) and
+  `/shop` one request later (`"max"`, stale-while-revalidate); a cached 404 for a
+  not-yet-published handle is purged when it is published. A database outage can
+  no longer be cached as a 404 or as "no reviews": `getProductByHandle` rethrows
+  outside the seed-fallback case and the product page reads its reviews with
+  `{ strict: true }`.
+
+**Payloads (F-013, F-257).** The search index is
+`{id, handle, name, colorName, price, image, category…}` per product — 51 KB →
+22 KB raw (5.7 → 2.8 KB brotli), cached at the CDN, downloaded once per page
+session (a shared promise, preloaded on hover/focus of the Search button, never
+on a plain page load) instead of on every open. The listing pages and the home
+page hand the client `toShopCardProduct(p)` (no descriptions/SEO/legal fields,
+one preview image per colour, variants cut to what Quick Add needs): 202 KB →
+120 KB raw (17.2 → 11.8 KB brotli) for the 60 seeded products; `/shop` HTML
+460 → 364 KB raw (31.8 → 26.4 KB brotli). Not done: server-side pagination of
+the listing. Filters, facet counts and search all run in memory over the whole
+list, which is what lets the route be static; the grid already renders 24 cards
+at a time ("Load more", F-021).
+
+**Prefetch (F-260).** Scrolling `/shop` on a phone made 60 product-page
+prefetch requests (56 distinct). `ProductGrid` cards now prefetch on intent
+(pointer over, touch, keyboard focus) with `router.prefetch`, once per card;
+scrolling prefetches none. (`<Link prefetch={false}>` also turns off the Link's
+own hover prefetch, so it has to be done by hand.)
+
+**Bundle (F-258).** The cart, wishlist, search and filter overlays use `m.*`
+inside `LazyMotion` instead of the full `motion` component: the up-front
+framer-motion chunk went from 125 KB raw / 41 KB gzip to about 57 KB / 21 KB
+(shared with other modules, esbuild puts the bare core at ~9 KB gzip), and the
+animation features (`domAnimation`, ~13 KB gzip) are a separate chunk fetched on
+the visitor's first press/touch/key/focus, so a page that is only read never
+downloads it. Initial JS per storefront page: `/about` 212.7 → 190.6 KB gzip,
+`/shop` 234.3 → 212.7 KB gzip. Until the features arrive an overlay opens in
+its final state (`useMotionInitial`) — no slide, but never an invisible cart
+drawer if the chunk is late or fails to load. `optimizePackageImports:
+["framer-motion"]` makes no difference to the chunk under Turbopack. Admin pages
+still import the shell (and so this core) through the root layout; moving the
+storefront chrome into a route group would remove that and is not part of this
+change.
+
+**LCP priority (F-261).** `ProductGrid` only preloads its first card's image when
+the caller passes `eagerFirst` (`/shop`, `/category/[slug]`). The home page's
+Featured grid sits several screens below the hero and used to preload an image
+next to it (2 image preloads in `/`, now 1).
+
+| URL | Performance | LCP | Unused JS | Transfer |
+|---|---|---|---|---|
+| `/shop` | 0.88 → 0.88 | 3.91 → 3.81 s | 64 → 27 KiB | 472 → 430 KiB |
+| a product page | 0.90 → 0.90 | 3.61 → 3.63 s | 66 → 30 KiB | 429 → 404 KiB |
+| `/` (5 alternating runs) | 0.85 → 0.89 | 4.26 → 3.74 s | 66 → 30 KiB | 475 → 450 KiB |
+
+`/shop` and the product page barely move: under simulated 4x CPU throttling their
+LCP is dominated by main-thread work rather than by the bytes removed here. The
+gains there are in unused JavaScript, transfer, server work (a cached page
+instead of a function run from `hnd1` per view) and the 60 fewer prefetches per
+scroll. The home page's LCP element is text whose paint moves between two
+values from run to run (~3.8 s and ~4.3 s in the baseline), which is why it was
+measured with 5 alternating runs.
+
 ## Targets (master plan Part 16)
 
 | Metric | Target |
