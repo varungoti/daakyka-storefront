@@ -26,6 +26,9 @@ function row(overrides: Partial<Record<(typeof IMPORT_COLUMNS)[number], string>>
     stock: "20",
     variant_active: "yes",
     generate_images: "no",
+    country_of_origin: "",
+    net_quantity: "",
+    hsn_code: "",
   };
   return HEADER.map((col) => overrides[col] ?? base[col]);
 }
@@ -199,6 +202,76 @@ describe("validateImportRows", () => {
     assert.equal(results[0].status, "ok");
     assert.equal(results[0].data?.variantActive, true);
     assert.equal(results[0].data?.generateImages, false);
+  });
+});
+
+// F-311: country of origin / net quantity / HSN code travel through CSV
+// import and export, so the owner can fill the Legal Metrology and GST
+// fields for the whole catalogue in one spreadsheet pass.
+describe("compliance columns (F-311)", () => {
+  it("are the last three template columns, so every earlier column keeps its position", () => {
+    assert.deepEqual(HEADER.slice(-3), ["country_of_origin", "net_quantity", "hsn_code"]);
+    assert.equal(HEADER.indexOf("generate_images"), HEADER.length - 4);
+  });
+
+  it("are parsed and trimmed onto the row", () => {
+    const results = validateImportRows(
+      [HEADER, row({ country_of_origin: " India ", net_quantity: "1 set (2 pcs)", hsn_code: "6211" })],
+      context,
+    );
+    assert.equal(results[0].status, "ok");
+    assert.equal(results[0].data?.countryOfOrigin, "India");
+    assert.equal(results[0].data?.netQuantity, "1 set (2 pcs)");
+    assert.equal(results[0].data?.hsnCode, "6211");
+  });
+
+  it("a blank cell in a file that has the column is null, which clears the stored value", () => {
+    const results = validateImportRows([HEADER, row()], context);
+    assert.equal(results[0].data?.countryOfOrigin, null);
+    assert.equal(results[0].data?.netQuantity, null);
+    assert.equal(results[0].data?.hsnCode, null);
+  });
+
+  it("a file without the columns leaves them undefined, so re-importing an older export can't wipe them", () => {
+    const olderHeader = HEADER.filter((col) => !["country_of_origin", "net_quantity", "hsn_code"].includes(col));
+    const olderRow = row().slice(0, olderHeader.length);
+    const results = validateImportRows([olderHeader, olderRow], context);
+    assert.equal(results[0].status, "ok");
+    assert.equal(results[0].data?.countryOfOrigin, undefined);
+    assert.equal(results[0].data?.netQuantity, undefined);
+    assert.equal(results[0].data?.hsnCode, undefined);
+  });
+
+  it("are held to the same length limits as the product form", () => {
+    for (const [column, max] of [
+      ["country_of_origin", 100],
+      ["net_quantity", 60],
+      ["hsn_code", 20],
+    ] as const) {
+      const ok = validateImportRows([HEADER, row({ [column]: "x".repeat(max) })], context);
+      assert.equal(ok[0].status, "ok", `${column} at ${max} characters`);
+      const tooLong = validateImportRows([HEADER, row({ [column]: "x".repeat(max + 1) })], context);
+      assert.equal(tooLong[0].status, "error", `${column} at ${max + 1} characters`);
+      assert.ok(tooLong[0].errors.some((e) => e.includes(`"${column}" must be ${max} characters or fewer`)));
+    }
+  });
+
+  it("survive an export-shaped CSV round trip (stringify, parse, validate), commas and quotes included", () => {
+    const exported = stringifyCsv([
+      HEADER,
+      row({ country_of_origin: "India", net_quantity: '1 set, 2 pcs ("pair")', hsn_code: "6211" }),
+      // A product-only placeholder row (no variants yet) carries them too.
+      row({ product_slug: "draft-product", size: "", color: "", color_hex: "", sku: "", stock: "", country_of_origin: "India", net_quantity: "1 N", hsn_code: "6210" }),
+    ]);
+    const results = validateImportRows(parseCsv(exported), context);
+    assert.deepEqual(results.map((result) => result.status), ["ok", "ok"]);
+    assert.deepEqual(
+      results.map((result) => [result.data?.countryOfOrigin, result.data?.netQuantity, result.data?.hsnCode]),
+      [
+        ["India", '1 set, 2 pcs ("pair")', "6211"],
+        ["India", "1 N", "6210"],
+      ],
+    );
   });
 });
 

@@ -27,6 +27,15 @@ export const IMPORT_COLUMNS = [
   "stock",
   "variant_active",
   "generate_images",
+  // F-311: the per-product Legal Metrology / GST fields (the product form's
+  // "Compliance" section). They sit after the variant columns — not beside
+  // the other product-level ones — so every column that was already in the
+  // template keeps its position: older CSVs, and anything that builds rows
+  // positionally, still line up. Import reads by header name, so a file
+  // without these columns is still valid (see ParsedImportRow).
+  "country_of_origin",
+  "net_quantity",
+  "hsn_code",
 ] as const;
 
 export type ImportColumn = (typeof IMPORT_COLUMNS)[number];
@@ -65,6 +74,10 @@ const MAX_LENGTHS = {
   size: 40,
   color: 60,
   sku: 80,
+  // F-311: the same ceilings productInputSchema applies to the form fields.
+  country_of_origin: 100,
+  net_quantity: 60,
+  hsn_code: 20,
 } as const;
 const MAX_TAG_LENGTH = 50;
 const MAX_TAGS = 30;
@@ -161,6 +174,14 @@ export interface ParsedImportRow {
   stock: number;
   variantActive: boolean;
   generateImages: boolean;
+  /** F-311: `undefined` when the file has no such column at all — an older
+   * export or hand-made CSV — so the importer leaves the product's stored
+   * value alone instead of wiping it; `null` when the column is there but
+   * the cell is blank, which clears it (the same as blanking the form
+   * field); otherwise the trimmed text. */
+  countryOfOrigin?: string | null;
+  netQuantity?: string | null;
+  hsnCode?: string | null;
   /** F-191: false for a row that only carries product-level fields — no
    * size/color/sku at all (see the `size`/`color`/`sku`-all-empty case
    * below). `exportProductsCsv` writes one such row for a product with no
@@ -199,6 +220,12 @@ function parseBool(value: string | undefined, fallback: boolean): boolean {
   const normalized = (value ?? "").trim().toLowerCase();
   if (!normalized) return fallback;
   return normalized === "yes" || normalized === "true" || normalized === "1";
+}
+
+/** F-311: undefined = column absent from the file; null = present but blank. */
+function optionalColumn(raw: Record<string, string>, column: string): string | null | undefined {
+  if (!(column in raw)) return undefined;
+  return raw[column]?.trim() || null;
 }
 
 /** Validates and parses every data row (rows[1:], rows[0] is the header).
@@ -363,6 +390,9 @@ export function validateImportRows(
             stock: Number.isFinite(stock) ? stock : 0,
             variantActive: parseBool(raw.variant_active, true),
             generateImages: parseBool(raw.generate_images, false),
+            countryOfOrigin: optionalColumn(raw, "country_of_origin"),
+            netQuantity: optionalColumn(raw, "net_quantity"),
+            hsnCode: optionalColumn(raw, "hsn_code"),
             hasVariant: !isProductOnlyRow,
           }
         : null;
