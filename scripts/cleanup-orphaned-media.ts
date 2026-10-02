@@ -3,6 +3,7 @@ import type { PrismaClient } from "@/generated/prisma/client";
 import { db as defaultDb } from "@/lib/db";
 import { deleteUnattachedMediaAsset, MediaAssetNotFoundError } from "@/lib/media/store";
 import { assertBucketIsWritable } from "@/lib/storage/r2";
+import { assertDisposableDatabase } from "./lib/assert-disposable-db.mjs";
 
 /**
  * Release-hardening F-04 / plan item (docs/audit-2026-09-19/admin-ux.md):
@@ -40,11 +41,11 @@ import { assertBucketIsWritable } from "@/lib/storage/r2";
  *  - Reads `DATABASE_URL` only (via src/lib/db.ts / createPrismaClient),
  *    exactly like the running app — never `SUPABASE_DATABASE_URL`.
  *    `assertNotProductionDatabase` below refuses to run at all if
- *    `DATABASE_URL` equals `SUPABASE_DATABASE_URL` or looks like a Supabase
- *    host, even though nothing in this file ever reads that variable for
- *    connecting (same belt-and-suspenders guard as the phantom-customer
- *    script, duplicated here rather than imported so this file stays a
- *    standalone, independently-runnable script like its sibling).
+ *    `DATABASE_URL` equals `SUPABASE_DATABASE_URL`, looks like a Supabase
+ *    host, or is not a local database (F-080) — even though nothing in this
+ *    file ever reads that variable for connecting. The rules are the guard
+ *    shared with the phantom-customer script and the test/verify scripts,
+ *    scripts/lib/assert-disposable-db.mjs.
  *  - Defaults to a dry run. Deleting requires the explicit `--execute` flag.
  *  - Only ever deletes a MediaAsset that is unattached, un-slotted, and
  *    older than the grace period — see `isProvablyOrphaned` for the exact,
@@ -154,26 +155,18 @@ export function isProvablyOrphaned(candidate: OrphanCandidate, gracePeriodHours:
   );
 }
 
-/** Refuses to proceed if `databaseUrl` is, or looks like, the production
- * Supabase database. Exported for direct unit testing. Identical logic to
- * cleanup-phantom-customers.ts's own guard — see the file-level comment
- * above for why it's duplicated rather than imported. */
+/** Refuses to proceed unless `databaseUrl` is a local database: never the
+ * production Supabase one, and (F-080) not any other remote host either.
+ * Exported for direct unit testing; the rules live in the guard shared with
+ * the test and verify scripts, scripts/lib/assert-disposable-db.mjs. */
 export function assertNotProductionDatabase(databaseUrl: string | undefined, supabaseUrl: string | undefined): void {
-  if (!databaseUrl) {
-    throw new Error("DATABASE_URL is not set — refusing to run.");
-  }
-  if (supabaseUrl && databaseUrl === supabaseUrl) {
-    throw new Error(
-      "Refusing to run: DATABASE_URL is identical to SUPABASE_DATABASE_URL (production). " +
-        "This script must only ever run against the local database.",
-    );
-  }
-  if (/supabase\.co|pooler\.supabase\.com/i.test(databaseUrl)) {
-    throw new Error(
-      "Refusing to run: DATABASE_URL looks like a Supabase host (production). " +
-        "This script must only ever run against the local database.",
-    );
-  }
+  // F-080: the shared guard also requires a local host, so a remote database
+  // that is not Supabase is refused too (ALLOW_REMOTE_TEST_DB=1 overrides
+  // only that second rule, never the production match).
+  assertDisposableDatabase(databaseUrl, {
+    prodUrl: supabaseUrl,
+    allowRemote: process.env.ALLOW_REMOTE_TEST_DB === "1",
+  });
 }
 
 export interface CliOptions {

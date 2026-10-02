@@ -37,6 +37,11 @@ env:
   AUTH_SECRET: ci-test-auth-secret-min-32-chars-long
   ADMIN_SEED_EMAIL: ci-admin@example.com
   ADMIN_SEED_PASSWORD: ci-only-admin-password-not-a-real-secret
+  # F-249: the root key for encrypted admin-saved credentials. Strict-mode env
+  # validation and every credential-store write need it, and a CI runner has no
+  # .env to supply one. CI-only (32 bytes of 0x01, base64) — never a real key,
+  # and the throwaway database it encrypts for is destroyed with the job.
+  CREDENTIAL_ENCRYPTION_KEY: AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
 
 jobs:
   verify:
@@ -128,6 +133,13 @@ jobs:
 
       - name: Setup database
         run: npm run db:setup
+
+      # The application seed leaves every catalogue product in DRAFT, so the
+      # browser specs (which open the first listed product, the shop grid and
+      # the navigation) need a published catalogue in this throwaway database.
+      # Mirrors scripts/local-ci-runner.mjs.
+      - name: Publish disposable CI catalogue
+        run: npm run db:seed:catalog -- --publish
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium

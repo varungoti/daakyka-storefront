@@ -7,6 +7,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
+import { assertDisposableRun } from "./lib/assert-disposable-db.mjs";
 import { ensurePortFree, killPort, wantsKillPort } from "./lib/kill-port.mjs";
 
 const PORT = process.env.PORT ?? "3000";
@@ -32,6 +33,16 @@ const env = {
   ADMIN_SEED_PASSWORD: process.env.ADMIN_SEED_PASSWORD ?? generatedAdminPassword,
   CRON_SECRET: process.env.CRON_SECRET ?? "predeploy-cron-secret",
 };
+
+// F-080: `db:setup` (migrate + seed) and `npm run verify` write to
+// env.DATABASE_URL. Refuse anything that is not a disposable local database
+// before spawning anything.
+try {
+  assertDisposableRun(env);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+}
 
 function run(command, args, label) {
   console.log(`\n==> ${label}`);

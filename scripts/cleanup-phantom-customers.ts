@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import type { PrismaClient } from "@/generated/prisma/client";
 import { db as defaultDb } from "@/lib/db";
+import { assertDisposableDatabase } from "./lib/assert-disposable-db.mjs";
 
 /**
  * Release-hardening F-01 / plan item 1.4 cleanup: removes already-created
@@ -119,25 +120,19 @@ export function isProvablySynthetic(candidate: PhantomCandidate): boolean {
 }
 
 /**
- * Refuses to proceed if `databaseUrl` is, or looks like, the production
- * Supabase database. Exported for direct unit testing.
+ * Refuses to proceed unless `databaseUrl` is a local database: never the
+ * production Supabase one, and (F-080) not any other remote host either.
+ * Exported for direct unit testing; the rules live in the guard shared with
+ * the test and verify scripts, scripts/lib/assert-disposable-db.mjs.
  */
 export function assertNotProductionDatabase(databaseUrl: string | undefined, supabaseUrl: string | undefined): void {
-  if (!databaseUrl) {
-    throw new Error("DATABASE_URL is not set — refusing to run.");
-  }
-  if (supabaseUrl && databaseUrl === supabaseUrl) {
-    throw new Error(
-      "Refusing to run: DATABASE_URL is identical to SUPABASE_DATABASE_URL (production). " +
-        "This script must only ever run against the local database.",
-    );
-  }
-  if (/supabase\.co|pooler\.supabase\.com/i.test(databaseUrl)) {
-    throw new Error(
-      "Refusing to run: DATABASE_URL looks like a Supabase host (production). " +
-        "This script must only ever run against the local database.",
-    );
-  }
+  // F-080: the shared guard also requires a local host, so a remote database
+  // that is not Supabase is refused too (ALLOW_REMOTE_TEST_DB=1 overrides
+  // only that second rule, never the production match).
+  assertDisposableDatabase(databaseUrl, {
+    prodUrl: supabaseUrl,
+    allowRemote: process.env.ALLOW_REMOTE_TEST_DB === "1",
+  });
 }
 
 export interface CliOptions {

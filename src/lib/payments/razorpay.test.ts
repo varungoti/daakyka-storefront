@@ -9,7 +9,10 @@ import {
   verifyPaymentSignature,
   verifyWebhookSignature,
 } from "@/lib/payments/razorpay";
+import { findAnyAdminId } from "../../../tests/helpers/admin-user";
+import { TEST_CREDENTIAL_KEY } from "../../../tests/helpers/credential-key";
 import { withEnv } from "../../../tests/helpers/env";
+import { stashIntegrationState } from "../../../tests/helpers/integration-state";
 
 const TEST_KEY_SECRET = "test-razorpay-key-secret";
 const TEST_WEBHOOK_SECRET = "test-razorpay-webhook-secret";
@@ -209,22 +212,33 @@ describe("fetchCapturedPaymentId", () => {
 
 describe("DB-backed credentials take priority over env vars", () => {
   it("isRazorpayConfigured prefers a DB-set key id/secret over env", async () => {
-    await withEnv({ RAZORPAY_KEY_ID: undefined, RAZORPAY_KEY_SECRET: undefined }, async () => {
-      const { setCredential, clearCredential } = await import("@/lib/integrations/credential-store");
-      const { db } = await import("@/lib/db");
-      const user = await db.user.findFirst({ select: { id: true } });
-      assert.ok(user, "expected at least one admin user to exist in the database");
+    // A clean CI runner has no .env to supply CREDENTIAL_ENCRYPTION_KEY, so
+    // the test brings its own (F-249); a developer's key is kept as is.
+    await withEnv(
+      {
+        RAZORPAY_KEY_ID: undefined,
+        RAZORPAY_KEY_SECRET: undefined,
+        CREDENTIAL_ENCRYPTION_KEY: process.env.CREDENTIAL_ENCRYPTION_KEY || TEST_CREDENTIAL_KEY,
+      },
+      async () => {
+        const { setCredential, clearCredential } = await import("@/lib/integrations/credential-store");
+        const adminId = await findAnyAdminId();
 
-      await setCredential("RAZORPAY", "KEY_ID", "rzp_db_test", user.id);
-      await setCredential("RAZORPAY", "KEY_SECRET", "db-secret", user.id);
-      try {
-        assert.equal(await isRazorpayConfigured(), true);
-      } finally {
-        await clearCredential("RAZORPAY", "KEY_ID", user.id);
-        await clearCredential("RAZORPAY", "KEY_SECRET", user.id);
-      }
+        // Set any real Razorpay keys aside for the run and restore them
+        // after, rather than overwriting then deleting them (F-080).
+        const restoreIntegrationState = await stashIntegrationState({ credentialProviders: ["RAZORPAY"] });
+        try {
+          await setCredential("RAZORPAY", "KEY_ID", "rzp_db_test", adminId);
+          await setCredential("RAZORPAY", "KEY_SECRET", "db-secret", adminId);
+          assert.equal(await isRazorpayConfigured(), true);
 
-      assert.equal(await isRazorpayConfigured(), false);
-    });
+          await clearCredential("RAZORPAY", "KEY_ID", adminId);
+          await clearCredential("RAZORPAY", "KEY_SECRET", adminId);
+          assert.equal(await isRazorpayConfigured(), false);
+        } finally {
+          await restoreIntegrationState();
+        }
+      },
+    );
   });
 });

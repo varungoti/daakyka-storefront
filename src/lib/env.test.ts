@@ -8,6 +8,7 @@ import {
   getClientIp,
   resetRateLimits,
 } from "@/lib/security/rate-limit";
+import { TEST_CREDENTIAL_KEY } from "../../tests/helpers/credential-key";
 import { setNodeEnv, withEnv } from "../../tests/helpers/env";
 
 describe("env validation", () => {
@@ -44,6 +45,9 @@ describe("env validation", () => {
     AUTH_SECRET: "a".repeat(32),
     DATABASE_URL: "postgresql://user:pass@host:5432/db",
     CRON_SECRET: "cron-secret",
+    // Strict mode checks this first, so every case below needs it (a CI
+    // runner has no .env to supply one — F-249).
+    CREDENTIAL_ENCRYPTION_KEY: TEST_CREDENTIAL_KEY,
     ADMIN_SEED_PASSWORD: "a-genuinely-unique-password-123",
     NEXT_PUBLIC_SITE_URL: "https://daakyka.com",
     NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN: undefined,
@@ -56,6 +60,21 @@ describe("env validation", () => {
     await withEnv(validProductionEnv, () => {
       assert.doesNotThrow(() => validateEnv());
     });
+  });
+
+  it("throws in production when CREDENTIAL_ENCRYPTION_KEY is unset", async () => {
+    await withEnv({ ...validProductionEnv, CREDENTIAL_ENCRYPTION_KEY: undefined }, () => {
+      assert.throws(() => validateEnv(), /CREDENTIAL_ENCRYPTION_KEY must be set/);
+    });
+  });
+
+  it("throws in production when CREDENTIAL_ENCRYPTION_KEY does not decode to 32 bytes", async () => {
+    await withEnv(
+      { ...validProductionEnv, CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(16, 7).toString("base64") },
+      () => {
+        assert.throws(() => validateEnv(), /exactly 32 bytes/);
+      },
+    );
   });
 
   it("throws in production when ADMIN_SEED_PASSWORD is unset", async () => {

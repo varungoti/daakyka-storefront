@@ -4,6 +4,7 @@ import { SignJWT } from "jose";
 import { ADMIN_SESSION_COOKIE } from "@/lib/auth/constants";
 import { adminRoles } from "@/lib/auth/rbac";
 import type { AdminRole } from "@/generated/prisma/client";
+import { assertDisposableEnvironment } from "../../../scripts/lib/assert-disposable-db.mjs";
 
 /**
  * release-hardening item 2 (F13, docs/audit-2026-09-19/correctness.md):
@@ -64,6 +65,9 @@ export interface RoleSession {
  * and returns a ready-to-send `Cookie` header value for each. Idempotent
  * — safe to call from multiple runs. */
 export async function createSessionsForAllRoles(): Promise<Record<AdminRole, RoleSession>> {
+  // Writes admin users straight into DATABASE_URL, so refuse anything that is
+  // not a disposable local database (F-080).
+  assertDisposableEnvironment(process.env);
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
   try {
     const result: Record<string, RoleSession> = {};
@@ -91,6 +95,7 @@ export async function createSessionsForAllRoles(): Promise<Record<AdminRole, Rol
  * prefix (not tracked ids) so a prior interrupted run's leftovers are
  * always cleaned up too, not just the current run's own rows. */
 export async function cleanupRbacMatrixUsers(): Promise<void> {
+  assertDisposableEnvironment(process.env);
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
   try {
     await pool.query(`DELETE FROM "User" WHERE email LIKE $1`, [`${EMAIL_PREFIX}%`]);

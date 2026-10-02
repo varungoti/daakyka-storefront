@@ -7,6 +7,7 @@ import { MediaSource } from "@/generated/prisma/client";
 import { db } from "@/lib/db";
 import { addProductImage, createProduct } from "@/lib/catalog/products";
 import { deleteUnattachedMediaAsset, saveMediaAsset, type StorageDeps } from "@/lib/media/store";
+import { findAnyAdminId } from "../tests/helpers/admin-user";
 import {
   assertNotProductionDatabase,
   findOrphanedMediaCandidates,
@@ -70,12 +71,6 @@ const deleteFakeAsset = (id: string) =>
 
 async function tinyPngBuffer(): Promise<Buffer> {
   return sharp({ create: { width: 16, height: 16, channels: 3, background: { r: 1, g: 2, b: 3 } } }).png().toBuffer();
-}
-
-async function findAnyAdminId(): Promise<string> {
-  const user = await db.user.findFirst({ select: { id: true } });
-  assert.ok(user, "expected at least one admin user to exist in the database");
-  return user.id;
 }
 
 const createdAssetIds: string[] = [];

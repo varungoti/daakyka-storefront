@@ -7,6 +7,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
+import { assertDisposableRun } from "./lib/assert-disposable-db.mjs";
 import { ensurePortFree, killPort, wantsKillPort } from "./lib/kill-port.mjs";
 
 const PORT = process.env.PORT ?? "3000";
@@ -33,6 +34,16 @@ const env = {
   ADMIN_SEED_PASSWORD: process.env.ADMIN_SEED_PASSWORD ?? generatedAdminPassword,
   CRON_SECRET: process.env.CRON_SECRET ?? "predeploy-cron-secret",
 };
+
+// F-080: this gate runs `db:setup` and the whole suite (which creates and
+// deletes orders, customers and admin users) against env.DATABASE_URL. Refuse
+// anything that is not a disposable local database before spawning anything.
+try {
+  assertDisposableRun(env);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
+}
 
 function runSync(label, command, args) {
   console.log(`\n==> ${label}`);
@@ -80,7 +91,9 @@ try {
   const stamp = {
     completedAt: new Date().toISOString(),
     gate: "verify:101",
-    stagingUrl: process.env.STAGING_URL ?? "https://storefront-nu-woad.vercel.app",
+    // F-077: no production fallback — that alias is the live store, not a
+    // staging deployment. Recorded only when a real staging URL was given.
+    stagingUrl: process.env.STAGING_URL ?? null,
     automatedChecks: {
       unit: 56,
       integration: 17,
