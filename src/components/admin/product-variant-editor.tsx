@@ -255,7 +255,12 @@ export function ProductVariantEditor({
             </button>
           </div>
 
-          <div className="overflow-x-auto rounded-xl border border-border">
+          {/* `relative` is load-bearing: the `sr-only` labels inside the table are
+              position:absolute, so without a positioned scroll container they escape
+              its clipping and sit past the table's right edge, which widened the whole
+              page to ~700px on a 375px phone (the owner then had to pan sideways to
+              reach anything). With it they are clipped by this box like the cells. */}
+          <div className="relative overflow-x-auto rounded-xl border border-border">
             <table className="w-full min-w-[720px] text-xs">
               <thead className="bg-surface-muted text-left text-[11px] font-semibold text-muted">
                 <tr>
