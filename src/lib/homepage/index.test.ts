@@ -1,12 +1,16 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { HeroCarousel } from "@/components/home/hero-carousel";
+import { setNodeEnv } from "../../../tests/helpers/env";
 import {
   HOMEPAGE_CACHE_TAG,
   legacyHeroToSlide,
   revalidateHomepageCache,
   validateHomepageSectionContent,
 } from "@/lib/homepage/index";
-import type { HeroContent, HeroSlidesContent } from "@/lib/homepage/index";
+import type { HeroContent, HeroSlideContent, HeroSlidesContent } from "@/lib/homepage/index";
 
 describe("validateHomepageSectionContent", () => {
   // F-370: a HomepageSection row written outside the validated PUT route
@@ -52,6 +56,56 @@ describe("validateHomepageSectionContent", () => {
     const result = validateHomepageSectionContent("hero-slides", malformedHeroSlides, fallback);
     assert.notEqual(result, malformedHeroSlides);
     assert.deepEqual(fallback, { slides: [], autoAdvanceMs: 6000 });
+  });
+});
+
+// F-370, defence in depth: validation on read keeps a malformed row away
+// from the renderer, but the carousel itself must also degrade rather than
+// throw on a slide that is missing its CTAs — a throw here takes the whole
+// homepage down, not just the hero.
+describe("HeroCarousel with a partial slide (F-370)", () => {
+  const props = { autoAdvanceMs: 6000, trustStats: [], rating: "4.9", ratingLabel: "Rated by customers" };
+  // next/image's dev-time host allow-list check is skipped under NODE_ENV=test
+  // (the hero avatars are remote photos); the real value is restored after.
+  const render = (slides: HeroSlideContent[]) => {
+    const original = process.env.NODE_ENV;
+    setNodeEnv("test");
+    try {
+      return renderToStaticMarkup(createElement(HeroCarousel, { ...props, slides }));
+    } finally {
+      setNodeEnv(original);
+    }
+  };
+  const partialSlide = { id: "audit-bad", enabled: true } as unknown as HeroSlideContent;
+
+  it("renders a slide with no CTAs and no images, falling back to a working Shop link", () => {
+    const html = render([partialSlide]);
+    assert.ok(html.includes('href="/shop"'));
+    assert.match(html, /Shop now/);
+  });
+
+  it("omits the secondary CTA when it is missing or half-filled, instead of rendering a dead link", () => {
+    const base = { id: "s1", enabled: true, headline: "H", primaryCta: { label: "Shop", href: "/shop" } };
+    for (const secondaryCta of [undefined, {}, { label: "Learn more" }, { href: "/learn" }]) {
+      const html = render([{ ...base, secondaryCta } as unknown as HeroSlideContent]);
+      assert.doesNotMatch(html, /Learn more/);
+      assert.ok(!html.includes('href="/learn"'));
+    }
+  });
+
+  it("still renders a complete slide's own CTAs", () => {
+    const slide = {
+      id: "s1",
+      enabled: true,
+      headline: "H",
+      primaryCta: { label: "Browse scrubs", href: "/scrubs" },
+      secondaryCta: { label: "For hospitals", href: "/for-hospitals" },
+    } as unknown as HeroSlideContent;
+    const html = render([slide]);
+    assert.ok(html.includes('href="/scrubs"'));
+    assert.match(html, /Browse scrubs/);
+    assert.ok(html.includes('href="/for-hospitals"'));
+    assert.match(html, /For hospitals/);
   });
 });
 

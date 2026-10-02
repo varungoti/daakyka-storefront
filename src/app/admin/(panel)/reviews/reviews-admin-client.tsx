@@ -4,6 +4,19 @@ import { StarRating } from "@/components/ui/star-rating";
 import type { LightboxImage } from "@/components/ui/image-lightbox";
 import { cn } from "@/lib/utils";
 import type { AdminReviewRow, ListReviewsForAdminResult } from "@/lib/reviews/moderate-review";
+import {
+  appendReviewsPage,
+  pendingSelection,
+  removeReviews,
+  reviewActionConfirmMessage,
+  reviewRowActions,
+  reviewsQueryString,
+  setReviewStatuses,
+  statusAfter,
+  viewNeedsRefill,
+  type ReviewAction,
+  type ReviewStatusFilter,
+} from "@/lib/reviews/admin-list-state";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
@@ -16,34 +29,21 @@ const ImageLightbox = dynamic(() => import("@/components/ui/image-lightbox").the
   ssr: false,
 });
 
-type StatusFilter = "PENDING" | "APPROVED" | "REJECTED" | "ALL";
-
-const TABS: { value: StatusFilter; label: string }[] = [
+const TABS: { value: ReviewStatusFilter; label: string }[] = [
   { value: "PENDING", label: "Pending" },
   { value: "APPROVED", label: "Approved" },
   { value: "REJECTED", label: "Rejected" },
   { value: "ALL", label: "All" },
 ];
 
-function dedupeById(rows: AdminReviewRow[]): AdminReviewRow[] {
-  const seen = new Set<string>();
-  const result: AdminReviewRow[] = [];
-  for (const row of rows) {
-    if (seen.has(row.id)) continue;
-    seen.add(row.id);
-    result.push(row);
-  }
-  return result;
-}
-
 export function ReviewsAdminClient({
   initialData,
   initialStatus,
 }: {
   initialData: ListReviewsForAdminResult;
-  initialStatus: StatusFilter;
+  initialStatus: ReviewStatusFilter;
 }) {
-  const [status, setStatus] = useState<StatusFilter>(initialStatus);
+  const [status, setStatus] = useState<ReviewStatusFilter>(initialStatus);
   const [data, setData] = useState(initialData);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -54,27 +54,17 @@ export function ReviewsAdminClient({
   // F-360: which review's photos are open in the full-screen viewer.
   const [photoLightbox, setPhotoLightbox] = useState<{ photos: LightboxImage[]; index: number } | null>(null);
 
-  function queryStringFor(nextStatus: StatusFilter, page: number): string {
-    const params = new URLSearchParams();
-    if (nextStatus !== "ALL") params.set("status", nextStatus);
-    // F-203: page 1 is the default the GET route already assumes — only
-    // send it once there's a page to actually ask for, to keep the common
-    // (first-page) request URL exactly as before.
-    if (page > 1) params.set("page", String(page));
-    const qs = params.toString();
-    return qs ? `?${qs}` : "";
-  }
-
   /** F-203: (re)loads page 1 of `nextStatus` — every tab click, and every
    * refetch after an action leaves the current view empty while more
-   * reviews remain (see moderate/bulk* below). */
-  async function loadStatus(nextStatus: StatusFilter) {
+   * reviews remain (see moderate/bulk* below). The list-state rules live in
+   * src/lib/reviews/admin-list-state.ts, where they're unit-tested. */
+  async function loadStatus(nextStatus: ReviewStatusFilter) {
     setStatus(nextStatus);
     setSelected(new Set());
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/admin/reviews${queryStringFor(nextStatus, 1)}`);
+      const response = await fetch(`/api/admin/reviews${reviewsQueryString(nextStatus, 1)}`);
       if (!response.ok) throw new Error("Failed to load reviews");
       const result = (await response.json()) as ListReviewsForAdminResult;
       setData(result);
@@ -94,10 +84,10 @@ export function ReviewsAdminClient({
     setLoadingMore(true);
     setError(null);
     try {
-      const response = await fetch(`/api/admin/reviews${queryStringFor(status, nextPage)}`);
+      const response = await fetch(`/api/admin/reviews${reviewsQueryString(status, nextPage)}`);
       if (!response.ok) throw new Error("Failed to load reviews");
       const result = (await response.json()) as ListReviewsForAdminResult;
-      setData((prev) => ({ ...result, reviews: dedupeById([...prev.reviews, ...result.reviews]) }));
+      setData((prev) => appendReviewsPage(prev, result));
     } catch {
       setError("Could not load more reviews. Try again.");
     } finally {
@@ -106,11 +96,7 @@ export function ReviewsAdminClient({
   }
 
   function removeFromList(ids: string[]) {
-    setData((prev) => ({
-      ...prev,
-      reviews: prev.reviews.filter((r) => !ids.includes(r.id)),
-      total: Math.max(0, prev.total - ids.length),
-    }));
+    setData((prev) => removeReviews(prev, ids));
     setSelected((prev) => {
       const next = new Set(prev);
       for (const id of ids) next.delete(id);
@@ -118,7 +104,7 @@ export function ReviewsAdminClient({
     });
   }
 
-  async function moderate(id: string, action: "approve" | "reject", fromStatus: AdminReviewRow["status"]) {
+  async function moderate(id: string, action: ReviewAction, fromStatus: AdminReviewRow["status"]) {
     setBusyId(id);
     setError(null);
     try {
@@ -138,25 +124,21 @@ export function ReviewsAdminClient({
         }
         throw new Error("Moderation failed");
       }
-      const nextStatus = action === "approve" ? "APPROVED" : "REJECTED";
       // The review no longer belongs in the current filtered view (unless
       // viewing "All", where its status just changed in place) — simplest
       // correct behavior is to drop it from a status-filtered list and
       // patch it in place for "All".
       if (status === "ALL") {
-        setData((prev) => ({
-          ...prev,
-          reviews: prev.reviews.map((r) => (r.id === id ? { ...r, status: nextStatus } : r)),
-        }));
+        setData((prev) => setReviewStatuses(prev, [id], statusAfter(action)));
       } else {
         // F-203: once this was the last row visible in a filtered tab,
         // dropping it would show "No reviews in this view" even though
         // `total` (now minus this one) is still above zero — reload page 1
         // instead of leaving the rest of the queue unreachable until the
         // admin clicks the tab again.
-        const isLastVisibleRow = data.reviews.length <= 1 && data.total - 1 > 0;
+        const needsRefill = viewNeedsRefill(data.reviews.length, data.total, 1);
         removeFromList([id]);
-        if (isLastVisibleRow) await loadStatus(status);
+        if (needsRefill) await loadStatus(status);
       }
     } catch {
       setError("Could not update that review. Try again.");
@@ -165,7 +147,7 @@ export function ReviewsAdminClient({
     }
   }
 
-  async function bulkModerateSelected(action: "approve" | "reject") {
+  async function bulkModerateSelected(action: ReviewAction) {
     const ids = [...selected];
     if (ids.length === 0) return;
     setLoading(true);
@@ -179,17 +161,13 @@ export function ReviewsAdminClient({
       if (!response.ok) throw new Error("Bulk action failed");
       const result = (await response.json()) as { approvedIds?: string[]; rejectedIds?: string[] };
       const handledIds = action === "approve" ? (result.approvedIds ?? []) : (result.rejectedIds ?? []);
-      const nextStatus = action === "approve" ? "APPROVED" : "REJECTED";
       if (status === "ALL") {
-        setData((prev) => ({
-          ...prev,
-          reviews: prev.reviews.map((r) => (handledIds.includes(r.id) ? { ...r, status: nextStatus } : r)),
-        }));
+        setData((prev) => setReviewStatuses(prev, handledIds, statusAfter(action)));
         setSelected(new Set());
       } else {
-        const isEmptyingView = data.reviews.length <= handledIds.length && data.total - handledIds.length > 0;
+        const needsRefill = viewNeedsRefill(data.reviews.length, data.total, handledIds.length);
         removeFromList(handledIds);
-        if (isEmptyingView) await loadStatus(status);
+        if (needsRefill) await loadStatus(status);
       }
     } catch {
       setError(`Bulk ${action === "approve" ? "approve" : "reject"} failed. Try again.`);
@@ -207,8 +185,7 @@ export function ReviewsAdminClient({
     });
   }
 
-  const pendingVisibleIds = data.reviews.filter((r) => r.status === "PENDING").map((r) => r.id);
-  const allPendingSelected = pendingVisibleIds.length > 0 && pendingVisibleIds.every((id) => selected.has(id));
+  const { pendingIds: pendingVisibleIds, allSelected: allPendingSelected } = pendingSelection(data.reviews, selected);
 
   function toggleSelectAllPending() {
     setSelected(allPendingSelected ? new Set() : new Set(pendingVisibleIds));
@@ -302,8 +279,7 @@ export function ReviewsAdminClient({
                 busy={busyId === review.id}
                 onToggleSelect={() => toggleSelected(review.id)}
                 onToggleExpand={() => toggleExpanded(review.id)}
-                onApprove={() => void moderate(review.id, "approve", review.status)}
-                onReject={() => void moderate(review.id, "reject", review.status)}
+                onAction={(action) => void moderate(review.id, action, review.status)}
                 onOpenPhoto={(index) => openPhotoLightbox(review.photos, index)}
               />
             ))}
@@ -347,8 +323,7 @@ function ReviewRow({
   busy,
   onToggleSelect,
   onToggleExpand,
-  onApprove,
-  onReject,
+  onAction,
   onOpenPhoto,
 }: {
   review: AdminReviewRow;
@@ -357,38 +332,24 @@ function ReviewRow({
   busy: boolean;
   onToggleSelect: () => void;
   onToggleExpand: () => void;
-  onApprove: () => void;
-  onReject: () => void;
+  onAction: (action: ReviewAction) => void;
   onOpenPhoto: (index: number) => void;
 }) {
   const bodyPreview =
     review.body.length > 160 && !expanded ? `${review.body.slice(0, 160)}…` : review.body;
 
-  // F-203: every status now has *some* action — Approve/Reject for a
-  // PENDING review, "Unpublish" (reject) for a live APPROVED one, and
-  // "Restore" (approve) for a REJECTED one. Only the PENDING pair skips the
-  // confirm() — unpublishing or restoring changes what's already live/dead
-  // on a product page, so a moderator gets one chance to back out of a
-  // misclick.
-  // F-362: rejecting (or unpublishing) a review deletes its photos from
-  // storage so they stop being publicly downloadable — which Restore can't
-  // undo — so the two confirms that already exist say so.
-  function handleReject() {
-    const photoNote = review.photos.length > 0 ? " Its photos will be permanently deleted." : "";
-    if (review.status === "APPROVED" && !window.confirm(`Unpublish this review from the product page?${photoNote}`)) {
-      return;
-    }
-    onReject();
-  }
-
-  function handleApprove() {
-    if (
-      review.status === "REJECTED" &&
-      !window.confirm("Restore and publish this review? Any photos it had were deleted when it was rejected.")
-    ) {
-      return;
-    }
-    onApprove();
+  // F-203: every status now has *some* action (reviewRowActions) — Approve/
+  // Reject for a PENDING review, "Unpublish" (reject) for a live APPROVED
+  // one, and "Restore" (approve) for a REJECTED one. Only the PENDING pair
+  // skips the confirm() — unpublishing or restoring changes what's already
+  // live/dead on a product page, so a moderator gets one chance to back out
+  // of a misclick. F-362: rejecting (or unpublishing) a review deletes its
+  // photos from storage so they stop being publicly downloadable — which
+  // Restore can't undo — so the confirm says so.
+  function runAction(action: ReviewAction) {
+    const confirmMessage = reviewActionConfirmMessage(review.status, action, review.photos.length);
+    if (confirmMessage && !window.confirm(confirmMessage)) return;
+    onAction(action);
   }
 
   return (
@@ -462,46 +423,22 @@ function ReviewRow({
             column above keeps the full card width instead of being
             squeezed to ~80px next to these buttons. */}
         <div className="flex w-full shrink-0 justify-end gap-2 sm:w-auto">
-          {review.status === "PENDING" && (
-            <>
-              <button
-                type="button"
-                onClick={handleApprove}
-                disabled={busy}
-                className="rounded-md bg-brand px-3 py-1.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
-              >
-                Approve
-              </button>
-              <button
-                type="button"
-                onClick={handleReject}
-                disabled={busy}
-                className="rounded-md border border-border px-3 py-1.5 text-sm font-semibold text-ink transition hover:border-red-400 hover:text-red-600 disabled:opacity-50"
-              >
-                Reject
-              </button>
-            </>
-          )}
-          {review.status === "APPROVED" && (
+          {reviewRowActions(review.status).map((rowAction) => (
             <button
+              key={rowAction.action}
               type="button"
-              onClick={handleReject}
+              onClick={() => runAction(rowAction.action)}
               disabled={busy}
-              className="rounded-md border border-border px-3 py-1.5 text-sm font-semibold text-ink transition hover:border-red-400 hover:text-red-600 disabled:opacity-50"
+              className={cn(
+                "rounded-md px-3 py-1.5 text-sm font-semibold transition disabled:opacity-50",
+                rowAction.tone === "primary"
+                  ? "bg-brand text-white hover:opacity-90"
+                  : "border border-border text-ink hover:border-red-400 hover:text-red-600",
+              )}
             >
-              Unpublish
+              {rowAction.label}
             </button>
-          )}
-          {review.status === "REJECTED" && (
-            <button
-              type="button"
-              onClick={handleApprove}
-              disabled={busy}
-              className="rounded-md bg-brand px-3 py-1.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50"
-            >
-              Restore
-            </button>
-          )}
+          ))}
         </div>
       </div>
     </li>
