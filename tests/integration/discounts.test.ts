@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 import { db } from "@/lib/db";
 import { createOrderFromCart, EmptyCartError } from "@/lib/orders/create-order";
+import { POST as discountPreviewRoute } from "@/app/api/checkout/discount/route";
 import { POST as verifyRoute } from "@/app/api/checkout/verify/route";
+import { POST as webhookRoute } from "@/app/api/webhooks/razorpay/route";
 import {
   commitDiscountRedemption,
   computeDiscountAmount,
@@ -39,6 +41,7 @@ import { findAnyAdminId } from "../helpers/admin-user";
  */
 
 const TEST_KEY_SECRET = "discounts-test-key-secret";
+const TEST_WEBHOOK_SECRET = "discounts-test-webhook-secret";
 
 function jsonRequest(url: string, body: unknown): Request {
   return new Request(url, {
@@ -52,8 +55,18 @@ const createdOrderIds: string[] = [];
 const createdProductIds: string[] = [];
 const createdCategoryIds: string[] = [];
 const createdDiscountIds: string[] = [];
+// F-251: orders whose conflict notification / emails the tests below inspect.
+const notificationOrderNumbers: string[] = [];
 
 after(async () => {
+  if (notificationOrderNumbers.length > 0) {
+    await db.emailOutbox
+      .deleteMany({ where: { OR: notificationOrderNumbers.map((number) => ({ subject: { contains: number } })) } })
+      .catch(() => {});
+    await db.adminNotification
+      .deleteMany({ where: { OR: notificationOrderNumbers.map((number) => ({ metadata: { contains: number } })) } })
+      .catch(() => {});
+  }
   if (createdOrderIds.length > 0) {
     await db.orderItem.deleteMany({ where: { orderId: { in: createdOrderIds } } }).catch(() => {});
     await db.order.deleteMany({ where: { id: { in: createdOrderIds } } }).catch(() => {});
@@ -665,5 +678,247 @@ describe("createOrderFromCart still rejects an empty cart with a discount code p
         }),
       EmptyCartError,
     );
+  });
+});
+
+// F-251: the paid-but-over-the-cap branch. A RAZORPAY order prices its code at
+// creation but only commits the redemption when payment lands (see the
+// "defers the redemption commit" test above), so the cap can fill up in
+// between. The money is already captured by then, so the order must still be
+// PAID at the discounted price — flagged for an admin, never failed, and the
+// redemption count must not exceed the cap.
+describe("a discount whose cap filled up before a RAZORPAY payment landed (F-251)", () => {
+  async function createRacedOrder() {
+    const admin = await findAnyAdminId();
+    const discount = await createTestDiscount(admin, { type: "FIXED", value: 75, maxRedemptions: 1 });
+
+    // The paying shopper's order is created and priced while the code still has room...
+    const { variant } = await createActiveProductWithVariant({ stock: 5, price: 1000 });
+    const paying = await createOrderFromCart({
+      items: [{ variantId: variant.id, quantity: 1 }],
+      email: `discount-conflict-${randomUUID().slice(0, 8)}@example.com`,
+      shippingAddress: testAddress,
+      paymentMethod: "RAZORPAY",
+      discountCode: discount.code,
+    });
+    createdOrderIds.push(paying.id);
+    notificationOrderNumbers.push(paying.number);
+    const razorpayOrderId = `order_${randomUUID().slice(0, 12)}`;
+    await db.order.update({ where: { id: paying.id }, data: { razorpayOrderId } });
+
+    // ...then another shopper takes the only redemption (an ORDER_REQUEST commits at once).
+    const { variant: otherVariant } = await createActiveProductWithVariant({ stock: 5, price: 1000 });
+    const other = await createOrderFromCart({
+      items: [{ variantId: otherVariant.id, quantity: 1 }],
+      email: `discount-conflict-other-${randomUUID().slice(0, 8)}@example.com`,
+      shippingAddress: testAddress,
+      paymentMethod: "ORDER_REQUEST",
+      discountCode: discount.code,
+    });
+    createdOrderIds.push(other.id);
+    assert.equal((await db.discount.findUniqueOrThrow({ where: { id: discount.id } })).redeemedCount, 1, "the cap is now full");
+
+    return { discount, paying, variant, razorpayOrderId };
+  }
+
+  async function assertConflictHandled(raced: Awaited<ReturnType<typeof createRacedOrder>>) {
+    const { discount, paying, variant } = raced;
+    const order = await db.order.findUniqueOrThrow({ where: { id: paying.id } });
+    assert.equal(order.status, "PAID", "the money was captured, so the order is PAID");
+    assert.equal(Number(order.discount), 75, "the shopper keeps the discounted price they were charged");
+    assert.equal(Number(order.total), paying.total);
+    assert.match(order.adminNotes ?? "", /DISCOUNT CONFLICT/);
+    assert.doesNotMatch(order.adminNotes ?? "", /STOCK CONFLICT/, "stock was fine — only the cap conflicted");
+
+    const notifications = await db.adminNotification.findMany({
+      where: { type: "order_discount_conflict", metadata: { contains: paying.number } },
+    });
+    assert.equal(notifications.length, 1, "an admin is asked to review it");
+    assert.ok(notifications[0]!.metadata?.includes(discount.code), "the notification names the code");
+    assert.equal(
+      await db.adminNotification.count({ where: { type: "order_stock_conflict", metadata: { contains: paying.number } } }),
+      0,
+    );
+
+    const dbDiscount = await db.discount.findUniqueOrThrow({ where: { id: discount.id } });
+    assert.equal(dbDiscount.redeemedCount, 1, "the cap is never exceeded");
+    assert.equal(await db.discountRedemption.count({ where: { orderId: paying.id } }), 0, "no redemption is recorded for the late order");
+    assert.equal((await db.productVariant.findUniqueOrThrow({ where: { id: variant.id } })).stock, 4, "the order is still fulfilled from stock");
+  }
+
+  it("via /api/checkout/verify", async () => {
+    const raced = await createRacedOrder();
+    const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+    const signature = createHmac("sha256", TEST_KEY_SECRET).update(`${raced.razorpayOrderId}|${paymentId}`).digest("hex");
+
+    await withEnv({ RAZORPAY_KEY_SECRET: TEST_KEY_SECRET }, async () => {
+      const response = await verifyRoute(
+        jsonRequest("http://localhost/api/checkout/verify", {
+          orderNumber: raced.paying.number,
+          razorpayPaymentId: paymentId,
+          razorpayOrderId: raced.razorpayOrderId,
+          razorpaySignature: signature,
+        }),
+      );
+      assert.equal(response.status, 200, "a captured payment must never be failed over a discount cap");
+    });
+
+    await assertConflictHandled(raced);
+  });
+
+  it("via the Razorpay webhook", async () => {
+    const raced = await createRacedOrder();
+    const rawBody = JSON.stringify({
+      event: "payment.captured",
+      payload: {
+        payment: {
+          entity: {
+            id: `pay_${randomUUID().slice(0, 12)}`,
+            order_id: raced.razorpayOrderId,
+            status: "captured",
+            amount: Math.round(raced.paying.total * 100),
+            currency: "INR",
+          },
+        },
+      },
+    });
+
+    await withEnv({ RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, async () => {
+      const response = await webhookRoute(
+        new Request("http://localhost/api/webhooks/razorpay", {
+          method: "POST",
+          headers: { "x-razorpay-signature": createHmac("sha256", TEST_WEBHOOK_SECRET).update(rawBody, "utf8").digest("hex") },
+          body: rawBody,
+        }),
+      );
+      assert.equal(response.status, 200);
+    });
+
+    await assertConflictHandled(raced);
+  });
+});
+
+// F-251: nothing called the checkout page's live "Have a discount code?"
+// preview. It is non-authoritative and must stay side-effect free, but it is
+// what tells a shopper the code works, so a regression here is a lost sale.
+describe("POST /api/checkout/discount (F-251)", () => {
+  function preview(body: unknown): Promise<Response> {
+    return discountPreviewRoute(jsonRequest("http://localhost/api/checkout/discount", body));
+  }
+
+  async function lineFor(price: number, quantity: number, stock = 10) {
+    const { variant } = await createActiveProductWithVariant({ stock, price });
+    return { variantId: variant.id, quantity };
+  }
+
+  it("returns the server-computed amount and subtotal, ignoring any figures the client sends", async () => {
+    const admin = await findAnyAdminId();
+    const discount = await createTestDiscount(admin, { type: "PERCENTAGE", value: 10 });
+    const item = await lineFor(1000, 2);
+
+    const response = await preview({
+      items: [item],
+      code: `  ${discount.code.toLowerCase()}  `,
+      email: "preview-buyer@example.com",
+      // Not part of the contract — must change nothing.
+      subtotal: 1,
+      amount: 2000,
+      price: 1,
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      code: discount.code,
+      type: "PERCENTAGE",
+      value: 10,
+      amount: 200,
+      subtotal: 2000,
+    });
+  });
+
+  it("answers a fixed code the same way and never exceeds the subtotal", async () => {
+    const admin = await findAnyAdminId();
+    const discount = await createTestDiscount(admin, { type: "FIXED", value: 5000 });
+    const response = await preview({ items: [await lineFor(300, 1)], code: discount.code });
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { amount: number; subtotal: number };
+    assert.equal(body.subtotal, 300);
+    assert.equal(body.amount, 300, "a discount can never be larger than what is being bought");
+  });
+
+  it("rejects an expired, an inactive, a not-yet-started and a below-minimum code with the matching message", async () => {
+    const admin = await findAnyAdminId();
+    const item = await lineFor(1000, 1);
+    const cases: { code: string; message: string }[] = [
+      {
+        code: (await createTestDiscount(admin, { endsAt: new Date(Date.now() - 86_400_000) })).code,
+        message: "This discount code has expired",
+      },
+      { code: (await createTestDiscount(admin, { active: false })).code, message: "This discount code is no longer active" },
+      {
+        code: (await createTestDiscount(admin, { startsAt: new Date(Date.now() + 86_400_000) })).code,
+        message: "This discount code isn't active yet",
+      },
+      {
+        code: (await createTestDiscount(admin, { minSubtotal: 5000 })).code,
+        message: "Add ₹4,000 more to your cart to use this code (minimum order ₹5,000)",
+      },
+    ];
+    for (const { code, message } of cases) {
+      const response = await preview({ items: [item], code });
+      assert.equal(response.status, 400, message);
+      assert.deepEqual(await response.json(), { error: message });
+    }
+  });
+
+  it("rejects an unknown code and a code that has reached its usage limit", async () => {
+    const admin = await findAnyAdminId();
+    const item = await lineFor(1000, 1);
+
+    const unknown = await preview({ items: [item], code: "NOSUCHCODE" });
+    assert.equal(unknown.status, 400);
+    assert.deepEqual(await unknown.json(), { error: "Invalid discount code" });
+
+    const discount = await createTestDiscount(admin, { maxRedemptions: 1 });
+    const { variant } = await createActiveProductWithVariant({ stock: 5 });
+    const order = await createOrderFromCart({
+      items: [{ variantId: variant.id, quantity: 1 }],
+      email: `preview-cap-${randomUUID().slice(0, 8)}@example.com`,
+      shippingAddress: testAddress,
+      paymentMethod: "ORDER_REQUEST",
+      discountCode: discount.code,
+    });
+    createdOrderIds.push(order.id);
+    const full = await preview({ items: [item], code: discount.code });
+    assert.equal(full.status, 400);
+    assert.deepEqual(await full.json(), { error: "This discount code has reached its usage limit" });
+  });
+
+  it("changes nothing: a preview never counts against a code's cap", async () => {
+    const admin = await findAnyAdminId();
+    const discount = await createTestDiscount(admin, { maxRedemptions: 1 });
+    const item = await lineFor(1000, 1);
+
+    for (let i = 0; i < 3; i += 1) {
+      assert.equal((await preview({ items: [item], code: discount.code })).status, 200);
+    }
+    const row = await db.discount.findUniqueOrThrow({ where: { id: discount.id } });
+    assert.equal(row.redeemedCount, 0);
+    assert.equal(await db.discountRedemption.count({ where: { discountId: discount.id } }), 0);
+  });
+
+  it("rejects a malformed request and a cart it cannot price, without leaking why", async () => {
+    const admin = await findAnyAdminId();
+    const discount = await createTestDiscount(admin);
+
+    const emptyCart = await preview({ items: [], code: discount.code });
+    assert.equal(emptyCart.status, 400);
+    assert.deepEqual(await emptyCart.json(), { error: "Invalid request" });
+
+    const noCode = await preview({ items: [await lineFor(1000, 1)] });
+    assert.equal(noCode.status, 400);
+
+    const soldOut = await preview({ items: [await lineFor(1000, 1, 0)], code: discount.code });
+    assert.equal(soldOut.status, 400);
+    assert.deepEqual(await soldOut.json(), { error: "Could not validate this code right now" });
   });
 });

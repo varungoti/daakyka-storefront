@@ -48,8 +48,27 @@ const createdOrderIds: string[] = [];
 const createdProductIds: string[] = [];
 const createdCategoryIds: string[] = [];
 const createdRateLimitKeys: string[] = [];
+// F-251: notification rows (customer/store emails, admin notifications) the
+// money-path tests below look at, removed again in the file-level after().
+const notificationEmails: string[] = [];
+const notificationOrderNumbers: string[] = [];
 
 after(async () => {
+  if (notificationEmails.length > 0 || notificationOrderNumbers.length > 0) {
+    await db.emailOutbox
+      .deleteMany({
+        where: {
+          OR: [
+            { to: { in: notificationEmails } },
+            ...notificationOrderNumbers.map((number) => ({ subject: { contains: number } })),
+          ],
+        },
+      })
+      .catch(() => {});
+    await db.adminNotification
+      .deleteMany({ where: { OR: notificationOrderNumbers.map((number) => ({ metadata: { contains: number } })) } })
+      .catch(() => {});
+  }
   if (createdOrderIds.length > 0) {
     await db.orderItem.deleteMany({ where: { orderId: { in: createdOrderIds } } }).catch(() => {});
     await db.order.deleteMany({ where: { id: { in: createdOrderIds } } }).catch(() => {});
@@ -393,6 +412,58 @@ describe("POST /api/checkout (Phase D3)", () => {
     });
   });
 
+  // F-251: nothing asserted what an order request actually queues for the
+  // shopper and the store, or the link the shopper is given.
+  it("an order request queues the customer confirmation (tokenised link), the store alert and an order_request notification", async () => {
+    await resetCheckoutIpBucket();
+    const { variant } = await createActiveProductWithVariant({ stock: 5 });
+    const email = `request-notify-${randomUUID().slice(0, 8)}@example.com`;
+    notificationEmails.push(email);
+
+    await withEnv({ RAZORPAY_KEY_ID: undefined, RAZORPAY_KEY_SECRET: undefined }, async () => {
+      const response = await checkoutRoute(
+        jsonRequest("http://localhost/api/checkout", {
+          items: [{ variantId: variant.id, quantity: 1 }],
+          email,
+          phone: randomIndianMobile(),
+          shippingAddress: {
+            name: "Buyer",
+            line1: "1 Test Street",
+            city: "Hyderabad",
+            state: "Telangana",
+            pincode: "500032",
+            country: "IN",
+          },
+        }),
+      );
+      assert.equal(response.status, 200);
+      const data = (await response.json()) as { orderNumber: string; orderToken: string };
+      notificationOrderNumbers.push(data.orderNumber);
+      const order = await db.order.findUniqueOrThrow({ where: { number: data.orderNumber } });
+      createdOrderIds.push(order.id);
+
+      const customerRows = await db.emailOutbox.findMany({ where: { to: email, kind: "order_confirmation_customer" } });
+      assert.equal(customerRows.length, 1, "exactly one customer confirmation email");
+      assert.equal(customerRows[0]!.subject, `We received your order ${data.orderNumber}`);
+      const body = openOutboxBody(customerRows[0]!.html, customerRows[0]!.text);
+      assert.ok(body, "the sealed body is readable by the running app");
+      assert.ok(
+        body!.html.includes(`/order/${data.orderNumber}?token=${encodeURIComponent(data.orderToken)}`),
+        "the email links to the order page with the same token the checkout response gave the shopper",
+      );
+
+      const storeRows = await db.emailOutbox.findMany({
+        where: { kind: "order_confirmation_admin", subject: { contains: data.orderNumber } },
+      });
+      assert.equal(storeRows.length, 1, "exactly one alert to the store's contact address");
+      assert.ok(storeRows[0]!.html.includes(`/admin/orders/${order.id}`));
+
+      const notifications = await db.adminNotification.findMany({ where: { metadata: { contains: data.orderNumber } } });
+      assert.equal(notifications.length, 1);
+      assert.equal(notifications[0]!.type, "order_request");
+    });
+  });
+
   it("rejects an invalid body with 400", async () => {
     const response = await checkoutRoute(
       jsonRequest("http://localhost/api/checkout", {
@@ -669,6 +740,68 @@ describe("POST /api/checkout/verify (Phase D3)", () => {
     }
     assert.equal((await db.order.findUniqueOrThrow({ where: { id: order.id } })).status, "PENDING_PAYMENT");
     assert.equal((await db.productVariant.findUniqueOrThrow({ where: { id: variant.id } })).stock, 5);
+  });
+
+  // F-251: the "payment received" email, and the token it links with.
+  it("queues the payment confirmation with the order's own token link and raises an order_paid notification", async () => {
+    const { order, razorpayOrderId } = await createPendingRazorpayOrder(5);
+    notificationOrderNumbers.push(order.number);
+    notificationEmails.push("razorpay-buyer@example.com");
+    const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+    const signature = createHmac("sha256", TEST_KEY_SECRET).update(`${razorpayOrderId}|${paymentId}`).digest("hex");
+
+    await withEnv({ RAZORPAY_KEY_SECRET: TEST_KEY_SECRET }, async () => {
+      const response = await verifyRoute(
+        jsonRequest("http://localhost/api/checkout/verify", {
+          orderNumber: order.number,
+          razorpayPaymentId: paymentId,
+          razorpayOrderId,
+          razorpaySignature: signature,
+          orderToken: order.accessToken,
+        }),
+      );
+      assert.equal(response.status, 200);
+    });
+
+    const rows = await db.emailOutbox.findMany({
+      where: { kind: "order_confirmation_customer", subject: { contains: order.number } },
+    });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.subject, `Payment received — order ${order.number}`);
+    const body = openOutboxBody(rows[0]!.html, rows[0]!.text);
+    assert.ok(body!.html.includes(`/order/${order.number}?token=${encodeURIComponent(order.accessToken)}`));
+
+    const notifications = await db.adminNotification.findMany({ where: { metadata: { contains: order.number } } });
+    assert.equal(notifications.length, 1);
+    assert.equal(notifications[0]!.type, "order_paid");
+  });
+
+  it("never puts a client-supplied token that isn't the order's own into the confirmation email", async () => {
+    const { order, razorpayOrderId } = await createPendingRazorpayOrder(5);
+    notificationOrderNumbers.push(order.number);
+    notificationEmails.push("razorpay-buyer@example.com");
+    const paymentId = `pay_${randomUUID().slice(0, 12)}`;
+    const signature = createHmac("sha256", TEST_KEY_SECRET).update(`${razorpayOrderId}|${paymentId}`).digest("hex");
+
+    await withEnv({ RAZORPAY_KEY_SECRET: TEST_KEY_SECRET }, async () => {
+      const response = await verifyRoute(
+        jsonRequest("http://localhost/api/checkout/verify", {
+          orderNumber: order.number,
+          razorpayPaymentId: paymentId,
+          razorpayOrderId,
+          razorpaySignature: signature,
+          orderToken: "smuggled-token-for-another-order",
+        }),
+      );
+      assert.equal(response.status, 200);
+    });
+
+    const [row] = await db.emailOutbox.findMany({
+      where: { kind: "order_confirmation_customer", subject: { contains: order.number } },
+    });
+    const body = openOutboxBody(row!.html, row!.text);
+    assert.ok(!body!.html.includes("smuggled-token-for-another-order"));
+    assert.ok(body!.html.includes(`/order/${order.number}?sig=`), "falls back to the signed link instead");
   });
 
   // F-290: a system-driven PAID transition used to leave no AuditLog row
@@ -1438,6 +1571,104 @@ describe("F-283: two Razorpay payments racing for the last unit", () => {
 
     const finalVariant = await db.productVariant.findUnique({ where: { id: variant.id } });
     assert.equal(finalVariant?.stock, 0, "stock must be decremented exactly once and never go negative");
+
+    // F-251: ...and the shopper is told so, instead of being promised a shipment.
+    notificationOrderNumbers.push(dbOrderB.number);
+    notificationEmails.push("race-buyer-b@example.com");
+    const [loserEmail] = await db.emailOutbox.findMany({
+      where: { kind: "order_confirmation_customer", subject: { contains: dbOrderB.number } },
+    });
+    assert.ok(loserEmail, "the losing shopper still gets an email");
+    assert.equal(loserEmail.subject, `Payment received — order ${dbOrderB.number} (stock issue)`);
+    const loserBody = openOutboxBody(loserEmail.html, loserEmail.text);
+    assert.ok(loserBody!.html.includes("sold out"));
+    assert.ok(!loserBody!.html.includes("as soon as it ships"), "must never promise shipment for a sold-out line");
+  });
+
+  // F-251: the same paid-but-sold-out outcome when the webhook, not the
+  // browser callback, is what reconciles the losing payment (the shopper
+  // closed the tab, or the callback never arrived).
+  it("a losing payment reconciled by the Razorpay webhook is also PAID but flagged, notified and told honestly", async () => {
+    const { variant } = await createActiveProductWithVariant({ stock: 1 });
+    const suffix = randomUUID().slice(0, 8);
+    const loserAddress = `webhook-race-loser-${suffix}@example.com`;
+    notificationEmails.push(loserAddress);
+
+    async function createPendingOrderFor(email: string) {
+      const order = await createOrderFromCart({
+        items: [{ variantId: variant.id, quantity: 1 }],
+        email,
+        shippingAddress: {
+          name: "Buyer",
+          line1: "1 Test Street",
+          city: "Hyderabad",
+          state: "Telangana",
+          pincode: "500032",
+          country: "IN",
+        },
+        paymentMethod: "RAZORPAY",
+      });
+      createdOrderIds.push(order.id);
+      const razorpayOrderId = `order_${randomUUID().slice(0, 12)}`;
+      await db.order.update({ where: { id: order.id }, data: { razorpayOrderId } });
+      return { order, razorpayOrderId };
+    }
+
+    const winner = await createPendingOrderFor(`webhook-race-winner-${suffix}@example.com`);
+    const loser = await createPendingOrderFor(loserAddress);
+    notificationOrderNumbers.push(winner.order.number, loser.order.number);
+
+    async function capture(order: { total: unknown }, razorpayOrderId: string) {
+      const rawBody = JSON.stringify({
+        event: "payment.captured",
+        payload: {
+          payment: {
+            entity: {
+              id: `pay_${randomUUID().slice(0, 12)}`,
+              order_id: razorpayOrderId,
+              status: "captured",
+              amount: Math.round(Number(order.total) * 100),
+              currency: "INR",
+            },
+          },
+        },
+      });
+      return withEnv({ RAZORPAY_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET }, () =>
+        webhookRoute(
+          rawRequest("http://localhost/api/webhooks/razorpay", rawBody, {
+            "x-razorpay-signature": createHmac("sha256", TEST_WEBHOOK_SECRET).update(rawBody, "utf8").digest("hex"),
+          }),
+        ),
+      );
+    }
+
+    assert.equal((await capture(winner.order, winner.razorpayOrderId)).status, 200);
+    assert.equal((await capture(loser.order, loser.razorpayOrderId)).status, 200, "Razorpay must not be told to retry a captured payment");
+
+    const dbWinner = await db.order.findUniqueOrThrow({ where: { id: winner.order.id } });
+    assert.equal(dbWinner.status, "PAID");
+    assert.doesNotMatch(dbWinner.adminNotes ?? "", /STOCK CONFLICT/);
+
+    const dbLoser = await db.order.findUniqueOrThrow({ where: { id: loser.order.id } });
+    assert.equal(dbLoser.status, "PAID", "the money was captured — the order must show PAID, not silently fail");
+    assert.match(dbLoser.adminNotes ?? "", /STOCK CONFLICT/);
+
+    const conflict = await db.adminNotification.findMany({
+      where: { type: "order_stock_conflict", metadata: { contains: loser.order.number } },
+    });
+    assert.equal(conflict.length, 1, "a human is asked to resolve it");
+    assert.match(conflict[0]!.body, /Razorpay webhook/);
+    assert.equal(
+      await db.adminNotification.count({ where: { type: "order_stock_conflict", metadata: { contains: winner.order.number } } }),
+      0,
+      "the winner raises no conflict",
+    );
+    assert.equal((await db.productVariant.findUniqueOrThrow({ where: { id: variant.id } })).stock, 0, "stock never goes negative");
+
+    const [loserEmail] = await db.emailOutbox.findMany({ where: { to: loserAddress, kind: "order_confirmation_customer" } });
+    assert.ok(loserEmail);
+    assert.equal(loserEmail.subject, `Payment received — order ${loser.order.number} (stock issue)`);
+    assert.ok(!openOutboxBody(loserEmail.html, loserEmail.text)!.html.includes("as soon as it ships"));
   });
 });
 
