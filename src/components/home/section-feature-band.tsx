@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { buttonClassNames } from "@/components/ui/button";
 import { ProductCard } from "@/components/ui/product-card";
 import { SectionHeading } from "@/components/ui/section-heading";
 import type { Product } from "@/lib/types";
@@ -44,14 +44,12 @@ export function SectionFeatureBand({
             <SectionHeading eyebrow={eyebrow} title={title} description={description} />
           </div>
           <div className="flex flex-wrap gap-3">
-            <Link href={browseHref}>
-              <Button variant="outline">
-                {browseLabel}
-                <ArrowRight size={16} />
-              </Button>
+            <Link href={browseHref} className={buttonClassNames({ variant: "outline" })}>
+              {browseLabel}
+              <ArrowRight size={16} />
             </Link>
-            <Link href="/bulk-orders">
-              <Button>Request Bulk Quote</Button>
+            <Link href="/bulk-orders" className={buttonClassNames()}>
+              Request Bulk Quote
             </Link>
           </div>
         </div>

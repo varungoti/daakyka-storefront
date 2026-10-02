@@ -255,13 +255,16 @@ const segmentCriteriaSchema = z
   })
   .strict();
 
+// F-219: the admin forms show these messages next to the field that failed,
+// so the bounds below carry readable copy instead of zod's defaults
+// ("Too small: expected string to have >=2 characters").
 export const segmentSchema = z.object({
-  name: z.string().trim().min(2).max(150),
+  name: z.string().trim().min(2, "Name must be at least 2 characters").max(150, "Name must be at most 150 characters"),
   slug: z
     .string()
     .trim()
-    .min(2)
-    .max(160)
+    .min(2, "Slug must be at least 2 characters")
+    .max(160, "Slug must be at most 160 characters")
     .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use lowercase letters, numbers, and hyphens only"),
   description: z.string().trim().max(2000).optional().nullable(),
   criteria: segmentCriteriaSchema.optional(),
@@ -270,10 +273,10 @@ export const segmentSchema = z.object({
 export const segmentUpdateSchema = segmentSchema.partial();
 
 export const templateSchema = z.object({
-  name: z.string().trim().min(2).max(150),
+  name: z.string().trim().min(2, "Name must be at least 2 characters").max(150, "Name must be at most 150 characters"),
   channel: z.enum(["EMAIL", "WHATSAPP"]),
-  subject: z.string().trim().max(300).optional().nullable(),
-  body: z.string().trim().min(10).max(20_000),
+  subject: z.string().trim().max(300, "Subject must be at most 300 characters").optional().nullable(),
+  body: z.string().trim().min(10, "Body must be at least 10 characters").max(20_000, "Body must be at most 20,000 characters"),
   variables: z.array(z.string().trim().min(1).max(60)).max(50).optional(),
 });
 
@@ -350,9 +353,13 @@ export const testimonialUpdateSchema = testimonialSchema.partial();
 // Phase — admin CRUD completion: offers, SEO overrides, notifications, users.
 
 export const offerSchema = z.object({
-  name: z.string().trim().min(2).max(150),
-  type: z.string().trim().min(2).max(60),
-  description: z.string().trim().min(5).max(2000),
+  name: z.string().trim().min(2, "Name must be at least 2 characters").max(150, "Name must be at most 150 characters"),
+  type: z.string().trim().min(2, "Type must be at least 2 characters").max(60, "Type must be at most 60 characters"),
+  description: z
+    .string()
+    .trim()
+    .min(5, "Description must be at least 5 characters")
+    .max(2000, "Description must be at most 2,000 characters"),
   // Deliberately `.optional()` without `.default()` (matching
   // src/lib/catalog/categories.ts's categoryInputSchema convention) so the
   // z.infer'd type keeps this field optional for callers — the service
@@ -368,11 +375,15 @@ export const seoPageRecordSchema = z.object({
   path: z
     .string()
     .trim()
-    .min(1)
-    .max(300)
+    .min(1, "Path is required")
+    .max(300, "Path must be at most 300 characters")
     .regex(/^\/[a-zA-Z0-9\-/_]*$/, "Path must start with / and use URL-safe characters"),
-  title: z.string().trim().min(1).max(200),
-  metaDescription: z.string().trim().min(1).max(320),
+  title: z.string().trim().min(1, "Title is required").max(200, "Title must be at most 200 characters"),
+  metaDescription: z
+    .string()
+    .trim()
+    .min(1, "Meta description is required")
+    .max(320, "Meta description must be at most 320 characters"),
   h1: z.string().trim().max(200).optional().nullable(),
   // See offerSchema's `active` field above for why this is `.optional()`
   // without `.default()` — src/lib/seo/records.ts's createSeoRecord
@@ -408,8 +419,8 @@ export const adminChangePasswordSchema = z.object({
 });
 
 export const userInviteSchema = z.object({
-  name: z.string().trim().min(2).max(150),
-  email: z.string().trim().email().max(254),
+  name: z.string().trim().min(2, "Name must be at least 2 characters").max(150, "Name must be at most 150 characters"),
+  email: z.string().trim().email("Enter a valid email address").max(254, "Email must be at most 254 characters"),
   role: z.enum([
     "SUPER_ADMIN",
     "STORE_OWNER",
@@ -429,6 +440,20 @@ export const userInviteSchema = z.object({
 
 const customerNameSchema = z.string().trim().min(2, "Name is required").max(120);
 const customerPhoneSchema = indianPhoneField();
+
+/**
+ * F-130: an optional customer field the shopper has emptied. The account forms
+ * used to send `undefined` for a blank field, which JSON.stringify drops, so a
+ * PATCH never touched the stored value while the UI said it had saved — a
+ * phone number or "Flat 4B" could be replaced but never removed. A blank
+ * string (a plain form post) or an explicit `null` now both mean "clear it"
+ * and parse to `null`; an *omitted* key is still `undefined`, i.e. "leave as
+ * it is", which keeps PATCH partial. A non-blank value still has to pass the
+ * field's own rule (the phone normaliser, the length caps).
+ */
+function blankToNull(value: unknown): unknown {
+  return typeof value === "string" && value.trim() === "" ? null : value;
+}
 
 export const customerRegisterSchema = z.object({
   name: customerNameSchema,
@@ -459,7 +484,7 @@ export const customerVerifyEmailSchema = z.object({
 export const customerProfileUpdateSchema = z
   .object({
     name: customerNameSchema.optional(),
-    phone: customerPhoneSchema.optional().nullable(),
+    phone: z.preprocess(blankToNull, customerPhoneSchema.nullable()).optional(),
     // Optional password-change sub-form on the Profile tab, reusing the
     // same bounds as customerResetPasswordSchema's newPassword. Changing
     // the password this way (while already logged in) requires the
@@ -478,13 +503,14 @@ export const customerProfileUpdateSchema = z
 // doc comment below for why. customerAddressSchema (the create schema)
 // re-adds the defaults on top of this same shape.
 const customerAddressBaseSchema = z.object({
-  label: z.string().trim().max(60).optional(),
+  // F-130: label/line2/phone are clearable — see blankToNull.
+  label: z.preprocess(blankToNull, z.string().trim().max(60).nullable()).optional(),
   // F-134: who the shipment is addressed to — nullable/optional so
   // existing rows (and any write path that doesn't send it) are
   // unaffected; see the matching CustomerAddress.recipientName column.
   recipientName: customerNameSchema.optional(),
   line1: z.string().trim().min(2, "Address line 1 is required").max(200),
-  line2: z.string().trim().max(200).optional(),
+  line2: z.preprocess(blankToNull, z.string().trim().max(200).nullable()).optional(),
   city: z.string().trim().min(2, "City is required").max(100),
   state: z.string().trim().min(2, "State is required").max(100),
   postalCode: indianPincodeField(),
@@ -493,7 +519,7 @@ const customerAddressBaseSchema = z.object({
   // India-only validated. Matches shippingAddressSchema's identical
   // restriction.
   country: z.literal("IN", { message: "We currently ship within India only" }),
-  phone: customerPhoneSchema.optional(),
+  phone: z.preprocess(blankToNull, customerPhoneSchema.nullable()).optional(),
   isDefault: z.boolean().optional(),
 });
 
@@ -794,7 +820,9 @@ export const backInStockSubscribeSchema = z.object({
 export type BackInStockSubscribeInput = z.infer<typeof backInStockSubscribeSchema>;
 
 export const userUpdateSchema = z.object({
-  name: z.string().min(2),
+  // F-172: was a bare `z.string().min(2)` — no trim and no upper bound, so a
+  // 5,000-character (or all-whitespace) name saved. Matches userInviteSchema.
+  name: z.string().trim().min(2, "Name must be at least 2 characters").max(150, "Name must be at most 150 characters"),
   role: z.enum([
     "SUPER_ADMIN",
     "STORE_OWNER",

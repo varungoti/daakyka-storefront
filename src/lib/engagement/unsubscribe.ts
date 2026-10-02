@@ -62,7 +62,11 @@ export async function unsubscribeByToken(token: string): Promise<UnsubscribeResu
   if (!alreadyUnsubscribed) {
     await db.newsletterSubscriber.update({
       where: { id: subscriber.id },
-      data: { unsubscribedAt: new Date() },
+      // Someone who unsubscribes while an opt-in confirmation is still
+      // waiting has withdrawn that request too: drop the link, so the account
+      // page does not keep showing "pending" and the old email cannot
+      // re-subscribe them later.
+      data: { unsubscribedAt: new Date(), confirmToken: null },
     });
   }
 

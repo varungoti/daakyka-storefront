@@ -55,8 +55,9 @@ cd storefront
 # Local full gate (docker compose up -d first)
 npm run verify:101
 
-# Live remote (198 tests against the deployed URL after next deploy re-seed)
-npm run verify:staging:full
+# Remote tests against a Preview/staging deployment — never production, they write data.
+# Production only gets the GET-only checks: `... npm run verify:staging:full -- --production-readonly`
+TEST_BASE_URL=https://<preview-or-staging-host> npm run verify:staging:full
 
 # After adding production env vars
 npm run go-live:check -- --production

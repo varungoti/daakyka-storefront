@@ -29,7 +29,7 @@ export const metadata: Metadata = {
 export default function BespokePage() {
   return (
     <>
-      <BespokeSection />
+      <BespokeSection headingAs="h1" />
       <section className="py-16 text-center">
         <div className="mx-auto max-w-2xl px-4 lg:px-8">
           <h2 className="font-display text-2xl font-bold text-ink">

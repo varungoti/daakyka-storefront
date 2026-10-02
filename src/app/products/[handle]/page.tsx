@@ -1,15 +1,21 @@
 import { ProductCard } from "@/components/ui/product-card";
-import { ProductDetail, type ReviewEligibility } from "@/components/product/product-detail";
+import { ProductDetail } from "@/components/product/product-detail";
 import { ProductViewTracker } from "@/components/product/product-view-tracker";
 import { JsonLdScript } from "@/components/seo/json-ld-script";
 import { brand } from "@/data/brand";
 import { getSizeChartForProduct } from "@/lib/catalog/size-charts";
-import { getCustomerSession } from "@/lib/customer-auth/session";
-import { db } from "@/lib/db";
-import { getCategoryBySlug, getProductByHandle, getProducts } from "@/lib/products";
+import { getBestSellers, getCategoryBySlug, getProductByHandle, getProducts } from "@/lib/products";
+import { toShopCardProduct } from "@/lib/products/card-product";
+import { pickRelatedProducts } from "@/lib/products/related";
 import { getApprovedReviews, getReviewSummary } from "@/lib/reviews";
 import { canonicalPath } from "@/lib/seo/canonical";
-import { baseOpenGraph, breadcrumbJsonLd, productJsonLd, siteUrlBase } from "@/lib/seo/json-ld";
+import {
+  baseOpenGraph,
+  breadcrumbJsonLd,
+  PLACEHOLDER_PRODUCT_IMAGE,
+  productJsonLd,
+  siteUrlBase,
+} from "@/lib/seo/json-ld";
 import { getSetting } from "@/lib/settings";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -24,44 +30,21 @@ const SECTION_LANDING: Record<string, { label: string; href: string }> = {
   KIDS: { label: "Kids Wear", href: "/kids-wear" },
 };
 
-/**
- * Phase D2: the real "can this visitor write a review for this product"
- * state — replaces the Phase C5 placeholder that only ever checked for the
- * customer cookie's *presence* (D1 didn't exist yet, so it was always
- * "guest"). Computed here, server-side, from the real customer session
- * (never trusted from the client) plus a single extra lookup against the
- * @@unique([productId, customerId]) constraint that also backs
- * createReview()'s own duplicate check — cheap, and means the button never
- * has to render a form only to 409 on submit for a customer who already
- * reviewed this exact product.
- */
-async function getReviewEligibility(productId: string): Promise<ReviewEligibility> {
-  const session = await getCustomerSession();
-  if (!session) return { status: "guest" };
-  if (!session.emailVerifiedAt) return { status: "unverified", email: session.email };
-
-  const existing = await db.review.findUnique({
-    where: { productId_customerId: { productId, customerId: session.id } },
-    select: { id: true, status: true },
-  });
-  // F-296: a REJECTED review no longer permanently blocks this customer
-  // from writing a new one for this product — only a still-live
-  // (PENDING/APPROVED) review counts as "already reviewed". See
-  // createReview's matching resubmit-on-REJECTED path.
-  if (existing?.status === "REJECTED") return { status: "rejected" };
-  if (existing) return { status: "already-reviewed" };
-
-  return { status: "eligible" };
+// F-256: an empty list prerenders no product at build time but lets every
+// product page be rendered on its first visit and then served from the cache.
+// A dynamic segment without generateStaticParams is rendered on every request
+// instead (node_modules/next/dist/docs/01-app/03-api-reference/04-functions/generate-static-params.md),
+// no matter how static the page is. Nothing on this page reads the request:
+// the one thing that did, the signed-in visitor's review eligibility, is
+// fetched by the review section from the browser (see
+// src/lib/reviews/review-eligibility.ts). An admin catalog save, a stock change or a
+// review moderation revalidates the "products"/"product-<handle>" tags the
+// reads below carry (see revalidateProductStockTags in src/lib/products).
+export function generateStaticParams() {
+  return [];
 }
 
 const META_DESCRIPTION_MAX_LENGTH = 160;
-
-// Matches src/lib/products/index.ts's own PLACEHOLDER_PRODUCT_IMAGE (not
-// exported — that file is out of scope for this fix) — the fallback shown
-// for a product with zero real images. Neither social cards nor Google's
-// structured-data image guidelines accept an SVG, so it must never be
-// published as og:image or a JSON-LD image (release-hardening F-110).
-const PLACEHOLDER_PRODUCT_IMAGE = "/placeholder-product.svg";
 
 /** Trims to a word boundary rather than mid-word, so a long admin-entered
  * SEO/short description never ends mid-syllable in search results. */
@@ -107,8 +90,10 @@ export async function generateMetadata({ params }: ProductPageProps) {
   // never setting og:url at all. It also published the SVG placeholder as
   // og:image/JSON-LD image for a product with zero real photos — neither
   // social unfurlers nor Google's structured-data guidelines accept an SVG
-  // there. twitter:title/description now come from openGraph automatically
-  // (see the root layout's doc comment) — no need to repeat them here.
+  // there — such a product falls back to baseOpenGraph's site-wide share
+  // image instead. twitter:title/description/image now come from openGraph
+  // automatically (see the root layout's doc comment) — no need to repeat
+  // them here.
   const hasRealImage = product.image !== PLACEHOLDER_PRODUCT_IMAGE;
 
   return {
@@ -134,7 +119,6 @@ export default async function ProductPage({ params }: ProductPageProps) {
 
   const [
     allProducts,
-    reviewEligibility,
     sizeChart,
     reviewSummary,
     initialReviews,
@@ -147,10 +131,9 @@ export default async function ProductPage({ params }: ProductPageProps) {
     resolvedCategory,
   ] = await Promise.all([
     getProducts(),
-    getReviewEligibility(product.id),
     getSizeChartForProduct(product.id),
-    getReviewSummary(product.id),
-    getApprovedReviews(product.id, { page: 1 }),
+    getReviewSummary(product.id, { strict: true }),
+    getApprovedReviews(product.id, { page: 1 }, { strict: true }),
     getSetting("shipping.flatRate"),
     getSetting("shipping.freeAbove"),
     getSetting("returns.windowDays"),
@@ -175,9 +158,14 @@ export default async function ProductPage({ params }: ProductPageProps) {
     consumerCareEmail: contactEmail,
   };
 
-  const related = allProducts
-    .filter((item) => item.category === product.category && item.id !== product.id)
-    .slice(0, 4);
+  // F-114: same category first, then the same section, then the best sellers —
+  // so a category with a single product still ends with recommendations. The
+  // best-seller read only happens when the first two tiers fall short.
+  const RELATED_LIMIT = 4;
+  let related = pickRelatedProducts(product, allProducts, RELATED_LIMIT);
+  if (related.length < RELATED_LIMIT) {
+    related = pickRelatedProducts(product, allProducts, RELATED_LIMIT, await getBestSellers());
+  }
 
   const base = siteUrlBase();
 
@@ -204,9 +192,11 @@ export default async function ProductPage({ params }: ProductPageProps) {
           images: product.images?.map((img) => img.url),
           // F-298: the rating/reviewCount that were on `product` come from
           // the cached getProductByHandle (tagged "products", revalidated
-          // with a "max" profile on approve/reject) — reviewSummary is an
-          // uncached, per-request read, so it can never disagree with what
-          // the Reviews section below actually renders.
+          // with a "max" profile on approve/reject) — reviewSummary is read
+          // straight from the reviews table each time this page renders
+          // (the page itself is cached, F-256), not through that product
+          // cache, and the Reviews section below renders from the same
+          // value, so the two can never disagree.
           rating: reviewSummary.average,
           reviewCount: reviewSummary.count,
           // F-311: Legal Metrology declarations in structured data too.
@@ -216,21 +206,27 @@ export default async function ProductPage({ params }: ProductPageProps) {
           // F-110/F-320: same variant prices and shipping/returns settings
           // the size picker and the PDP's shipping/returns copy already use
           // (fetched above), so structured data can't disagree with them.
-          shipping: { flatRateInr: flatRate },
+          shipping: { flatRateInr: flatRate, freeAboveInr: freeAbove },
           returnWindowDays,
         })}
       />
       <JsonLdScript data={breadcrumbJsonLd(breadcrumbItems)} />
 
       <section className="border-b border-border bg-alt-surface py-6">
-        <div className="mx-auto max-w-[1320px] px-4 text-sm text-muted lg:px-8">
+        <nav aria-label="Breadcrumb" className="mx-auto max-w-[1320px] px-4 text-sm text-muted lg:px-8">
           {breadcrumbItems.map((crumb, index) => {
             const isLast = index === breadcrumbItems.length - 1;
             return (
               <span key={crumb.name}>
-                {index > 0 && <span className="mx-2">›</span>}
+                {index > 0 && (
+                  <span aria-hidden="true" className="mx-2">
+                    ›
+                  </span>
+                )}
                 {isLast ? (
-                  <span className="font-semibold text-ink">{crumb.name}</span>
+                  <span aria-current="page" className="font-semibold text-ink">
+                    {crumb.name}
+                  </span>
                 ) : (
                   <Link
                     href={index === 0 ? "/" : crumb.url.replace(base, "")}
@@ -242,7 +238,7 @@ export default async function ProductPage({ params }: ProductPageProps) {
               </span>
             );
           })}
-        </div>
+        </nav>
       </section>
 
       <section className="py-12">
@@ -250,7 +246,6 @@ export default async function ProductPage({ params }: ProductPageProps) {
           <ProductViewTracker handle={product.handle} name={product.name} />
           <ProductDetail
             product={product}
-            reviewEligibility={reviewEligibility}
             sizeChart={sizeChart}
             reviewSummary={reviewSummary}
             initialReviews={initialReviews}
@@ -268,7 +263,7 @@ export default async function ProductPage({ params }: ProductPageProps) {
             </h2>
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
               {related.map((item) => (
-                <ProductCard key={item.id} product={item} />
+                <ProductCard key={item.id} product={toShopCardProduct(item)} />
               ))}
             </div>
           </div>

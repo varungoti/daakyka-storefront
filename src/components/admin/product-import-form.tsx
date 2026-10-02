@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { canCommitImport } from "@/lib/catalog/import-commit-gate";
 import { retryAfterMessage } from "@/lib/security/retry-after";
@@ -91,12 +90,16 @@ export function ProductImportForm() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap gap-3">
-        <Link href="/api/admin/products/import/template" className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-muted hover:bg-lilac/40">
+        {/* F-190: plain download anchors, not <Link>. next/link prefetches its
+            target on page load (and re-requests it on click), and this one is
+            an API route that builds the whole catalogue as a CSV — so every
+            visit, and every click, ran the export two or three times. */}
+        <a href="/api/admin/products/import/template" download className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-muted hover:bg-lilac/40">
           Download CSV template
-        </Link>
-        <Link href="/api/admin/products/export" className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-muted hover:bg-lilac/40">
+        </a>
+        <a href="/api/admin/products/export" download className="rounded-full border border-border px-4 py-2 text-sm font-semibold text-muted hover:bg-lilac/40">
           Export all products (CSV)
-        </Link>
+        </a>
       </div>
 
       <div className="space-y-3 rounded-2xl border border-border bg-surface p-6">

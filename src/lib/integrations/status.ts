@@ -19,13 +19,27 @@ async function brevoSource(): Promise<CredentialSource | null> {
   return null;
 }
 
+/** F-267: Brevo rejects every send whose sender isn't a verified one, and
+ * there is no safe default to invent — so a From Email (DB first, then the
+ * BREVO_FROM_EMAIL env var, the same resolution sendEmail uses) is part of
+ * "configured", exactly as src/lib/env.ts and scripts/check-deploy-env.mjs
+ * already require for an env-var setup. */
+async function brevoHasFromEmail(): Promise<boolean> {
+  return Boolean((await getCredential("BREVO", "FROM_EMAIL")) || process.env.BREVO_FROM_EMAIL);
+}
+
 async function razorpaySource(): Promise<CredentialSource | null> {
   if (!(await isRazorpayConfigured())) return null;
   return (await getCredential("RAZORPAY", "KEY_ID")) ? "database" : "env";
 }
 
 export async function getIntegrationStatuses(): Promise<IntegrationStatus[]> {
-  const [brevo, razorpay] = await Promise.all([brevoSource(), razorpaySource()]);
+  const [brevoKeySource, brevoFromEmail, razorpay] = await Promise.all([
+    brevoSource(),
+    brevoHasFromEmail(),
+    razorpaySource(),
+  ]);
+  const brevoConfigured = brevoKeySource !== null && brevoFromEmail;
 
   return [
     {
@@ -40,9 +54,12 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatus[]> {
     {
       provider: "BREVO",
       label: "Brevo Email",
-      status: brevo ? "configured" : "missing",
-      hint: "Transactional and campaign email",
-      source: brevo ?? undefined,
+      status: brevoConfigured ? "configured" : "missing",
+      hint:
+        brevoKeySource && !brevoFromEmail
+          ? "API key saved — add a From Email (a sender verified in Brevo) to finish setup"
+          : "Transactional and campaign email",
+      source: brevoConfigured ? (brevoKeySource ?? undefined) : undefined,
     },
     {
       provider: "WATI",

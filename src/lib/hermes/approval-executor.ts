@@ -1,4 +1,6 @@
 import { daakykaMedia } from "@/data/media/catalog";
+import { logAuditEvent } from "@/lib/auth/audit";
+import { blogSlugify, paragraphsFromDraft } from "@/lib/blog/content";
 import { db } from "@/lib/db";
 import type { HermesApproval, HermesApprovalStatus, Prisma } from "@/generated/prisma/client";
 
@@ -78,7 +80,16 @@ export async function executeHermesApproval(approvalId: string): Promise<Approva
 
   switch (approval.type) {
     case "blog_draft": {
-      const slug = String(payload.slug ?? approval.title.toLowerCase().replace(/\s+/g, "-"));
+      // F-213: the slug used to be `title.toLowerCase().replace(/\s+/g, "-")`,
+      // which kept punctuation: "Hermes: blog draft" became "hermes:-blog-draft",
+      // a slug blogPostSchema rejects (and /blog/<slug> can't serve). Normalise
+      // both the payload's own slug and the title-derived fallback the way the
+      // blog editor/API require. Re-slugifying an already-valid slug is a no-op,
+      // so an approval that already ran still dedupes to the same row below.
+      const slug =
+        blogSlugify(typeof payload.slug === "string" ? payload.slug : "") ||
+        blogSlugify(approval.title.replace(/^(?:Blog|Hermes):\s*/i, "")) ||
+        "hermes-blog-draft";
       const existing = await db.blogPostRecord.findUnique({ where: { slug } });
       if (existing) {
         return { ok: true, action: "blog_draft_exists", entityId: existing.id };
@@ -94,9 +105,26 @@ export async function executeHermesApproval(approvalId: string): Promise<Approva
           publishedAt: new Date(),
           readTime: "5 min read",
           image: daakykaMedia.hospitalUniforms,
-          content: String(payload.draftContent ?? `${approval.summary}\n\nDraft generated from Hermes approval.`),
+          // F-213: BlogPostRecord.content is a JSON array of paragraphs (every
+          // reader and the admin routes assume it). This used to store a plain
+          // string, which crashed the admin editor the moment the owner clicked
+          // "open in CMS" on the approved draft.
+          content: JSON.stringify(
+            paragraphsFromDraft(payload.draftContent, [approval.summary, "Draft generated from Hermes approval."]),
+          ),
           status: "DRAFT",
         },
+      });
+
+      // F-293: the approval route's own audit row says an approval happened;
+      // this one says which record it created, in the same entity/action shape
+      // the blog CMS's own create writes (source/approvalId tell them apart).
+      await logAuditEvent({
+        userId: approval.reviewedBy ?? undefined,
+        action: "create",
+        entity: "blog_post",
+        entityId: post.id,
+        metadata: { source: "hermes", approvalId: approval.id },
       });
 
       await db.adminNotification.create({
@@ -133,6 +161,15 @@ export async function executeHermesApproval(approvalId: string): Promise<Approva
           segmentId: segment?.id,
           notes: approval.summary,
         },
+      });
+
+      // F-293: see the matching blog_draft audit row above.
+      await logAuditEvent({
+        userId: approval.reviewedBy ?? undefined,
+        action: "create",
+        entity: "campaign",
+        entityId: campaign.id,
+        metadata: { source: "hermes", approvalId: approval.id },
       });
 
       await db.adminNotification.create({

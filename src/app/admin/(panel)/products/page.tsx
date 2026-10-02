@@ -5,6 +5,9 @@ import { ProductsTable } from "@/components/admin/products-table";
 import { listCategoryOptions } from "@/lib/catalog/categories";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Products" };
 
 export default async function AdminProductsPage() {
   const session = await getSession();

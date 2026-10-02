@@ -6,6 +6,8 @@ import { whatsappHref } from "@/lib/contact/whatsapp";
 import { getSiteImage } from "@/lib/media/get-site-image";
 import { canonicalPath } from "@/lib/seo/canonical";
 import { baseOpenGraph } from "@/lib/seo/json-ld";
+import { withSeoOverride } from "@/lib/seo/records";
+import { BULK_ORDERS_PAGE } from "@/lib/seo/static-pages";
 import { getSetting } from "@/lib/settings";
 import { Building2, MessageCircle, ShieldCheck, Users } from "lucide-react";
 import type { Metadata } from "next";
@@ -15,13 +17,16 @@ import Link from "next/link";
 // so /bulk-orders inherited the root layout's canonical (the homepage) and
 // its og:title/og:url — a B2B lead page listed in its own right in
 // sitemap.ts, not a duplicate of "/".
-export const metadata: Metadata = {
-  title: "Bulk Orders",
-  description:
-    "Bulk uniform enquiries for hospitals, schools, sports teams and corporate offices — DAAKYKA Apparels, Pan India.",
-  alternates: { canonical: canonicalPath("/bulk-orders") },
-  openGraph: baseOpenGraph("/bulk-orders"),
-};
+// F-052: an admin override saved for /bulk-orders in /admin/seo now lands
+// here too (it used to be recorded and never read).
+export async function generateMetadata(): Promise<Metadata> {
+  return withSeoOverride("/bulk-orders", {
+    title: BULK_ORDERS_PAGE.title,
+    description: BULK_ORDERS_PAGE.description,
+    alternates: { canonical: canonicalPath("/bulk-orders") },
+    openGraph: baseOpenGraph("/bulk-orders"),
+  });
+}
 
 export default async function BulkOrdersPage() {
   const [heroImage, contactWhatsapp] = await Promise.all([
@@ -34,9 +39,10 @@ export default async function BulkOrdersPage() {
       <PageHeroBand image={heroImage}>
         <SectionHeading
           eyebrow="B2B"
-          title="Uniforms for Institutions & Teams"
+          title={BULK_ORDERS_PAGE.h1}
           description="Department-wise uniform planning, logo embroidery, color standardization, and bulk pricing for hospitals, schools, sports teams, and corporate offices."
           align="center"
+          titleAs="h1"
         />
         <div className="mt-10 grid gap-4 md:grid-cols-3">
           <BenefitCard icon={Building2} title="Institutional Programs" text="Standardized uniforms across departments and locations with brand consistency." />
@@ -67,7 +73,7 @@ export default async function BulkOrdersPage() {
                 href={whatsappHref(contactWhatsapp, brand.web.whatsappMessage)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-4 inline-flex items-center gap-2 rounded-md bg-trust px-4 py-3 text-sm font-semibold text-white hover:opacity-90"
+                className="mt-4 inline-flex items-center gap-2 rounded-md bg-trust-ink px-4 py-3 text-sm font-semibold text-white hover:opacity-90"
               >
                 <MessageCircle size={18} />
                 Chat on WhatsApp
@@ -101,7 +107,7 @@ function BenefitCard({
   return (
     <div className="rounded-2xl border border-border bg-surface p-6 text-center">
       <Icon className="mx-auto mb-3 text-brand" size={28} />
-      <h3 className="font-display font-bold text-ink">{title}</h3>
+      <h2 className="font-display font-bold text-ink">{title}</h2>
       <p className="mt-2 text-sm text-muted">{text}</p>
     </div>
   );

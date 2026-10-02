@@ -79,6 +79,42 @@ describe("POST /api/cron/drain-email-outbox (F7)", () => {
     assert.equal(reloaded!.attemptCount, 0);
   });
 
+  // F-277: a drain that throws after claiming its window used to leave the
+  // CronRun row behind, so the retry for that tick answered "alreadyRan".
+  it("releases the CronRun claim when the drain throws, so a re-run of the same tick does the work (F-277)", async () => {
+    await withEnv({ CRON_SECRET: TEST_CRON_SECRET }, async () => {
+      const makeRequest = () =>
+        new Request("http://localhost/api/cron/drain-email-outbox", {
+          headers: { authorization: `Bearer ${TEST_CRON_SECRET}` },
+        });
+
+      // Prisma's model delegates are Proxies, so node:test's mock.method
+      // can't see their methods — patch the property directly and restore it.
+      const delegate = db.emailOutbox as unknown as { updateMany: unknown };
+      const original = delegate.updateMany;
+      delegate.updateMany = async () => {
+        throw new Error("EMAXCONNSESSION max clients reached");
+      };
+      try {
+        await assert.rejects(() => cronPost(makeRequest()), /EMAXCONNSESSION/);
+      } finally {
+        delegate.updateMany = original;
+      }
+
+      assert.equal(
+        await db.cronRun.count({ where: { job: "drain-email-outbox" } }),
+        0,
+        "the crashed run's claim must be released",
+      );
+
+      const retry = await cronPost(makeRequest());
+      assert.equal(retry.status, 200);
+      const retryBody = (await retry.json()) as { ok: boolean; alreadyRan?: boolean };
+      assert.equal(retryBody.ok, true);
+      assert.equal(retryBody.alreadyRan, undefined, "the retry must actually run, not be told it already ran");
+    });
+  });
+
   it("CronRun idempotency: a second call within the same scheduled window is a no-op", async () => {
     await withEnv({ CRON_SECRET: TEST_CRON_SECRET }, async () => {
       const makeRequest = () =>

@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { sendEmail, type SendEmailInput, type SendEmailResult } from "@/lib/engagement/providers/email";
 import { RESET_TOKEN_TTL_MS, VERIFY_TOKEN_TTL_MS } from "@/lib/customer-auth/tokens";
+import { openOutboxBody, REDACTED_BODY, sealOutboxBody } from "@/lib/engagement/outbox-seal";
 
 /**
  * F7 fix (docs/audit-2026-09-19/correctness.md): a durable outbox for
@@ -39,6 +40,11 @@ export const EMAIL_KIND = {
   ORDER_REFUNDED_CUSTOMER: "order_refunded_customer",
   CUSTOMER_VERIFY_EMAIL: "customer_verify_email",
   CUSTOMER_RESET_PASSWORD: "customer_reset_password",
+  // F-315: the confirmation link sent to a NEW address when a shopper changes
+  // their account email (src/lib/customer-auth/email-change.ts), and the
+  // courtesy notice sent to the OLD address once the change has happened.
+  CUSTOMER_EMAIL_CHANGE: "customer_email_change",
+  CUSTOMER_EMAIL_CHANGED_NOTICE: "customer_email_changed_notice",
   // Shopify-parity gap: back-in-stock "Notify me" restock email — see
   // src/lib/back-in-stock/index.ts's sweepBackInStock.
   BACK_IN_STOCK: "back_in_stock",
@@ -63,12 +69,45 @@ export type EmailKind = (typeof EMAIL_KIND)[keyof typeof EMAIL_KIND];
 const SUPERSEDING_KINDS: ReadonlySet<string> = new Set([
   EMAIL_KIND.CUSTOMER_VERIFY_EMAIL,
   EMAIL_KIND.CUSTOMER_RESET_PASSWORD,
+  EMAIL_KIND.CUSTOMER_EMAIL_CHANGE,
   // F-264 fix: a resubscribe while still unconfirmed rotates confirmToken
   // (see subscribeToNewsletter in newsletter.ts) — same "only the newest
   // link works" rule as verify/reset, otherwise an earlier still-PENDING
   // confirmation could later go out carrying a dead token.
   EMAIL_KIND.NEWSLETTER_CONFIRM,
 ]);
+
+/**
+ * F-043: kinds whose body embeds a live credential — a raw reset / verify /
+ * newsletter-confirm token, or the (non-expiring) order access link. The
+ * customer-side tokens are hash-only in their own tables on purpose; the
+ * outbox must not undo that. For these kinds the body is sealed
+ * (outbox-seal.ts) while the row is PENDING and replaced by REDACTED_BODY
+ * the moment it reaches any terminal state, so no readable credential is
+ * ever kept at rest. Every other kind's body is kept as before (the data-
+ * retention job, src/lib/privacy/retention.ts, ages those out).
+ */
+const CREDENTIAL_KINDS: ReadonlySet<string> = new Set([
+  EMAIL_KIND.CUSTOMER_VERIFY_EMAIL,
+  EMAIL_KIND.CUSTOMER_RESET_PASSWORD,
+  EMAIL_KIND.CUSTOMER_EMAIL_CHANGE,
+  EMAIL_KIND.NEWSLETTER_CONFIRM,
+  EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER,
+]);
+
+export function isCredentialKind(kind: EmailKind | string): boolean {
+  return CREDENTIAL_KINDS.has(kind);
+}
+
+/** The same set as an array, for queries (the retention job's sweep of rows
+ * queued before sealing existed — src/lib/privacy/retention.ts). */
+export const CREDENTIAL_EMAIL_KINDS: readonly string[] = [...CREDENTIAL_KINDS];
+
+/** The `data` fragment that blanks a credential-bearing row's body — empty
+ * for every other kind. */
+function redactionFor(kind: EmailKind | string): { html?: string; text?: null } {
+  return CREDENTIAL_KINDS.has(kind) ? { html: REDACTED_BODY, text: null } : {};
+}
 
 /** F-044 fix: how long a still-PENDING row of this kind stays eligible to
  * send. `null` = no expiry (order confirmations, back-in-stock) — those
@@ -78,6 +117,7 @@ const SUPERSEDING_KINDS: ReadonlySet<string> = new Set([
 function ttlMsForKind(kind: EmailKind | string): number | null {
   if (kind === EMAIL_KIND.CUSTOMER_RESET_PASSWORD) return RESET_TOKEN_TTL_MS;
   if (kind === EMAIL_KIND.CUSTOMER_VERIFY_EMAIL) return VERIFY_TOKEN_TTL_MS;
+  if (kind === EMAIL_KIND.CUSTOMER_EMAIL_CHANGE) return VERIFY_TOKEN_TTL_MS;
   return null;
 }
 
@@ -150,7 +190,9 @@ export async function sendTransactionalEmail(
     await db.emailOutbox
       .updateMany({
         where: { to: input.to, kind, status: "PENDING" },
-        data: { status: "EXPIRED" },
+        // F-043: a superseded reset/verify email is never sent, so its
+        // (still-live) link has no reason to stay in the table.
+        data: { status: "EXPIRED", ...redactionFor(kind) },
       })
       .catch((error) => {
         // Best-effort — never block the actual send/queue below over this.
@@ -173,6 +215,8 @@ export async function sendTransactionalEmail(
       const row = await db.emailOutbox.create({
         data: {
           ...baseData,
+          // F-043: delivered — a credential-bearing body has no further use.
+          ...redactionFor(kind),
           status: "SENT",
           sentAt: new Date(),
           providerMessageId: result.messageId ?? null,
@@ -193,6 +237,13 @@ export async function sendTransactionalEmail(
     const row = await db.emailOutbox.create({
       data: {
         ...baseData,
+        // F-043: waiting to be retried — a credential-bearing body is kept
+        // sealed, never as readable HTML. Throws (and so persists nothing,
+        // see the catch below) if AUTH_SECRET is missing: fail closed
+        // rather than store a live link in the clear.
+        ...(CREDENTIAL_KINDS.has(kind)
+          ? { html: sealOutboxBody({ html: input.html, text: input.text ?? null }), text: null }
+          : {}),
         status: "PENDING",
         expiresAt: ttlMs !== null ? new Date(Date.now() + ttlMs) : null,
         attemptCount: isRealAttempt ? 1 : 0,
@@ -284,7 +335,8 @@ export async function drainEmailOutbox(
   // are untouched — same as before this column existed.
   const expiredResult = await db.emailOutbox.updateMany({
     where: { status: "PENDING", expiresAt: { lte: now }, ...idFilter },
-    data: { status: "EXPIRED", lockedAt: null },
+    // F-043: an expired reset/verify link will never be sent — drop its body.
+    data: { status: "EXPIRED", lockedAt: null, html: REDACTED_BODY, text: null },
   });
 
   const candidates = await db.emailOutbox.findMany({
@@ -308,13 +360,33 @@ export async function drainEmailOutbox(
 
     attempted += 1;
 
+    // F-043: a credential-bearing row's body is sealed at rest. One that
+    // can't be opened (AUTH_SECRET changed since it was queued) can never be
+    // sent — fail it (its link is at most a day old anyway) instead of
+    // retrying forever.
+    const body = openOutboxBody(row.html, row.text);
+    if (!body) {
+      await db.emailOutbox.update({
+        where: { id: row.id },
+        data: {
+          status: "FAILED",
+          attemptCount: row.attemptCount + 1,
+          lastError: "Stored body could not be decrypted (AUTH_SECRET changed since it was queued)",
+          lockedAt: null,
+          ...redactionFor(row.kind),
+        },
+      });
+      failedTerminal += 1;
+      continue;
+    }
+
     let result: SendEmailResult;
     try {
       result = await sendFn({
         to: row.to,
         subject: row.subject,
-        html: row.html,
-        text: row.text ?? undefined,
+        html: body.html,
+        text: body.text ?? undefined,
         headers: parseHeaders(row.headers),
       });
     } catch (error) {
@@ -334,6 +406,8 @@ export async function drainEmailOutbox(
           providerMessageId: result.messageId ?? null,
           lastError: null,
           lockedAt: null,
+          // F-043: delivered — see redactionFor.
+          ...redactionFor(row.kind),
         },
       });
       sent += 1;
@@ -358,6 +432,7 @@ export async function drainEmailOutbox(
           attemptCount,
           lastError: result.error ?? "Send failed",
           lockedAt: null,
+          ...redactionFor(row.kind),
         },
       });
       failedTerminal += 1;
@@ -398,15 +473,35 @@ export interface UndeliveredEmailCount {
   total: number;
 }
 
+/** F-209: the emails an order's customer is waiting on — the confirmation
+ * and the shipped / cancelled / refunded updates. Excludes the store's own
+ * admin copy (ORDER_CONFIRMATION_ADMIN) and account emails (verify, reset),
+ * so the orders-page banner counts only what is really about orders. */
+export const CUSTOMER_ORDER_EMAIL_KINDS: readonly EmailKind[] = [
+  EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER,
+  EMAIL_KIND.ORDER_SHIPPED_CUSTOMER,
+  EMAIL_KIND.ORDER_CANCELLED_CUSTOMER,
+  EMAIL_KIND.ORDER_REFUNDED_CUSTOMER,
+];
+
+export interface UndeliveredEmailCountOptions {
+  /** Count only these kinds. Omitted = every kind (the dashboard and
+   * /admin/notifications show the whole queue). */
+  kinds?: readonly string[];
+}
+
 /** Backs the admin-visible indicator (dashboard banner, orders list
  * banner, /admin/notifications). Mirrors getUnreadNotificationCount()'s
  * defensive shape (src/lib/notifications.ts) — a DB hiccup here must never
  * break the admin shell that calls it on every page load. */
-export async function getUndeliveredEmailCount(): Promise<UndeliveredEmailCount> {
+export async function getUndeliveredEmailCount(
+  options: UndeliveredEmailCountOptions = {},
+): Promise<UndeliveredEmailCount> {
   try {
+    const kindFilter = options.kinds ? { kind: { in: [...options.kinds] } } : {};
     const [pending, failed] = await Promise.all([
-      db.emailOutbox.count({ where: { status: "PENDING" } }),
-      db.emailOutbox.count({ where: { status: "FAILED" } }),
+      db.emailOutbox.count({ where: { status: "PENDING", ...kindFilter } }),
+      db.emailOutbox.count({ where: { status: "FAILED", ...kindFilter } }),
     ]);
     return { pending, failed, total: pending + failed };
   } catch {

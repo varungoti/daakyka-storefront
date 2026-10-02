@@ -1,11 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { isIndexingAllowed, validateEnv } from "@/lib/env";
+import { isR2EnvConfigured } from "@/lib/storage/r2-env";
+import { isR2Configured } from "@/lib/storage/r2";
 import {
   checkRateLimit,
   getClientIp,
   resetRateLimits,
 } from "@/lib/security/rate-limit";
+import { TEST_CREDENTIAL_KEY } from "../../tests/helpers/credential-key";
 import { setNodeEnv, withEnv } from "../../tests/helpers/env";
 
 describe("env validation", () => {
@@ -40,8 +43,12 @@ describe("env validation", () => {
   const validProductionEnv = {
     VERCEL_ENV: "production",
     AUTH_SECRET: "a".repeat(32),
-    DATABASE_URL: "postgresql://user:pass@host:5432/db",
+    // Explicit sslmode, like production (F-371); the implicit cases are tested below.
+    DATABASE_URL: "postgresql://user:pass@host:5432/db?sslmode=verify-full",
     CRON_SECRET: "cron-secret",
+    // Strict mode checks this first, so every case below needs it (a CI
+    // runner has no .env to supply one — F-249).
+    CREDENTIAL_ENCRYPTION_KEY: TEST_CREDENTIAL_KEY,
     ADMIN_SEED_PASSWORD: "a-genuinely-unique-password-123",
     NEXT_PUBLIC_SITE_URL: "https://daakyka.com",
     NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN: undefined,
@@ -54,6 +61,21 @@ describe("env validation", () => {
     await withEnv(validProductionEnv, () => {
       assert.doesNotThrow(() => validateEnv());
     });
+  });
+
+  it("throws in production when CREDENTIAL_ENCRYPTION_KEY is unset", async () => {
+    await withEnv({ ...validProductionEnv, CREDENTIAL_ENCRYPTION_KEY: undefined }, () => {
+      assert.throws(() => validateEnv(), /CREDENTIAL_ENCRYPTION_KEY must be set/);
+    });
+  });
+
+  it("throws in production when CREDENTIAL_ENCRYPTION_KEY does not decode to 32 bytes", async () => {
+    await withEnv(
+      { ...validProductionEnv, CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(16, 7).toString("base64") },
+      () => {
+        assert.throws(() => validateEnv(), /exactly 32 bytes/);
+      },
+    );
   });
 
   it("throws in production when ADMIN_SEED_PASSWORD is unset", async () => {
@@ -127,6 +149,149 @@ describe("env validation", () => {
           !warnings.some((args) => String(args[0]).includes("BREVO_API_KEY is not set")),
           "did not expect a BREVO_API_KEY warning when it is configured",
         );
+      },
+    );
+  });
+
+  // F-371: pg prints "SSL modes ... are aliases for verify-full" on every
+  // cold start and pg v9 will silently weaken them, so a production
+  // DATABASE_URL has to pin its TLS mode explicitly. Warn-only.
+  async function sslWarningsFor(databaseUrl: string | undefined, extra: Record<string, string | undefined> = {}) {
+    const warnings: string[] = [];
+    await withEnv({ ...validProductionEnv, DATABASE_URL: databaseUrl, ...extra }, () => {
+      const originalWarn = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warnings.push(String(args[0]));
+      };
+      try {
+        assert.doesNotThrow(() => validateEnv());
+      } finally {
+        console.warn = originalWarn;
+      }
+    });
+    return warnings.filter((message) => message.includes("DATABASE_URL"));
+  }
+
+  it("warns in production when DATABASE_URL has no sslmode", async () => {
+    const warnings = await sslWarningsFor("postgresql://user:pass@db.example.com:6543/postgres?pgbouncer=true");
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /no sslmode/);
+    assert.match(warnings[0], /sslmode=verify-full/);
+  });
+
+  it("warns in production about the sslmode values pg v9 will weaken", async () => {
+    for (const mode of ["require", "prefer", "verify-ca"]) {
+      const warnings = await sslWarningsFor(`postgresql://user:pass@db.example.com:5432/postgres?sslmode=${mode}`);
+      assert.equal(warnings.length, 1, mode);
+      assert.match(warnings[0], /pg v9/);
+    }
+  });
+
+  it("warns in production about sslmodes that skip certificate verification", async () => {
+    for (const mode of ["disable", "allow", "no-verify"]) {
+      const warnings = await sslWarningsFor(`postgresql://user:pass@db.example.com:5432/postgres?sslmode=${mode}`);
+      assert.equal(warnings.length, 1, mode);
+      assert.match(warnings[0], /does not verify/);
+    }
+  });
+
+  it("does not warn when sslmode=verify-full, libpq compat is explicit, or the host is loopback", async () => {
+    assert.deepEqual(await sslWarningsFor("postgresql://u:p@db.example.com:5432/postgres?sslmode=verify-full"), []);
+    assert.deepEqual(
+      await sslWarningsFor("postgresql://u:p@db.example.com:5432/postgres?uselibpqcompat=true&sslmode=require"),
+      [],
+    );
+    assert.deepEqual(await sslWarningsFor("postgresql://u:p@localhost:5432/daakyka"), []);
+    assert.deepEqual(await sslWarningsFor("postgresql://u:p@127.0.0.1:5432/daakyka"), []);
+  });
+
+  it("never throws over the sslmode, and stays quiet outside production", async () => {
+    const warnings = await sslWarningsFor("postgresql://u:p@db.example.com:5432/postgres", {
+      VERCEL_ENV: "preview",
+      ENFORCE_PRODUCTION_ENV: undefined,
+    });
+    assert.deepEqual(warnings, []);
+  });
+
+  // F-237: the boot-time R2 warning fired on every production build even
+  // though uploads worked (it wanted R2_PUBLIC_BASE_URL, which the bucket
+  // deliberately leaves unset, and ignored the CLOUDFLARE_* fallback names).
+  // It now asks the same reader isR2Configured() uses, so it can only warn
+  // when uploads genuinely can't work.
+  const r2Cleared = {
+    R2_ACCOUNT_ID: undefined,
+    R2_ACCESS_KEY_ID: undefined,
+    R2_SECRET_ACCESS_KEY: undefined,
+    R2_BUCKET: undefined,
+    R2_PUBLIC_BASE_URL: undefined,
+    CLOUDFLARE_ACCOUNT_ID: undefined,
+    CLOUDFLARE_ACCESS_KEY_ID: undefined,
+    CLOUDFLARE_ACCESS_KEY: undefined,
+    CLOUDFLARE_SECRET_ACCESS_KEY: undefined,
+    CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString("base64"),
+  };
+
+  async function r2WarningsFor(vars: Record<string, string | undefined>): Promise<string[]> {
+    const warnings: string[] = [];
+    await withEnv({ ...validProductionEnv, ...r2Cleared, ...vars }, () => {
+      const originalWarn = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warnings.push(String(args[0]));
+      };
+      try {
+        assert.doesNotThrow(() => validateEnv());
+      } finally {
+        console.warn = originalWarn;
+      }
+    });
+    return warnings.filter((message) => message.includes("R2"));
+  }
+
+  it("does not warn about R2 when the R2_* names are set and R2_PUBLIC_BASE_URL is deliberately unset", async () => {
+    const warnings = await r2WarningsFor({
+      R2_ACCOUNT_ID: "acct",
+      R2_ACCESS_KEY_ID: "key",
+      R2_SECRET_ACCESS_KEY: "secret",
+      R2_BUCKET: "bucket",
+    });
+    assert.deepEqual(warnings, []);
+  });
+
+  it("does not warn about R2 when only the CLOUDFLARE_* fallback names carry the credentials", async () => {
+    const warnings = await r2WarningsFor({
+      CLOUDFLARE_ACCOUNT_ID: "acct",
+      CLOUDFLARE_ACCESS_KEY_ID: "key",
+      CLOUDFLARE_SECRET_ACCESS_KEY: "secret",
+      R2_BUCKET: "bucket",
+    });
+    assert.deepEqual(warnings, []);
+  });
+
+  it("warns about R2 when uploads genuinely cannot work (no bucket)", async () => {
+    const warnings = await r2WarningsFor({
+      R2_ACCOUNT_ID: "acct",
+      R2_ACCESS_KEY_ID: "key",
+      R2_SECRET_ACCESS_KEY: "secret",
+    });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /R2 storage is not configured/);
+  });
+
+  it("agrees with isR2Configured() for the same environment", async () => {
+    await withEnv({ ...r2Cleared, CLOUDFLARE_ACCESS_KEY: "legacy-key-name" }, () => {
+      assert.equal(isR2EnvConfigured(), false);
+    });
+    await withEnv(
+      {
+        ...r2Cleared,
+        R2_ACCOUNT_ID: "acct",
+        CLOUDFLARE_ACCESS_KEY: "legacy-key-name",
+        CLOUDFLARE_SECRET_ACCESS_KEY: "secret",
+        R2_BUCKET: "bucket",
+      },
+      () => {
+        assert.equal(isR2EnvConfigured(), true);
+        assert.equal(isR2Configured(), true);
       },
     );
   });

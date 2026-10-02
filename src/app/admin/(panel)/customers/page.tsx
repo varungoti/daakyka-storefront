@@ -3,6 +3,9 @@ import { getSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
 import { CustomersTable } from "@/components/admin/customers-table";
 import { GuestBuyersTable } from "@/components/admin/guest-buyers-table";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Customers" };
 
 export default async function AdminCustomersPage() {
   const session = await getSession();
@@ -18,7 +21,7 @@ export default async function AdminCustomersPage() {
             (Phase D1)", which both leaked an internal phase label and
             described the page inaccurately once guest buyers (below) were
             added — most orders at this store are guest checkouts. */}
-        <p className="text-muted">Registered storefront accounts and their order activity.</p>
+        <p className="text-muted">Registered customer accounts and their order activity.</p>
       </div>
       <CustomersTable />
 

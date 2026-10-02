@@ -1,5 +1,6 @@
 import { PolicyPage, policyMetadata } from "@/components/legal/policy-page";
 import { brand } from "@/data/brand";
+import { RETENTION_RULES, formatRetentionPeriod } from "@/lib/privacy/retention";
 import { getSetting } from "@/lib/settings";
 
 export const metadata = policyMetadata(
@@ -85,10 +86,21 @@ export default async function PrivacyPolicyPage() {
 
       <h2 className="mt-4 font-display text-lg font-bold text-ink">How long we keep it</h2>
       <p>
-        We keep order, account and review records for as long as your account is active or as we
-        need them for accounting, warranty, and legal purposes, and delete or anonymise them when
-        they&apos;re no longer needed for those purposes. You can ask us to delete your account data at
-        any time — see &quot;Your rights&quot; below.
+        We keep your data only as long as it is needed for the purpose we collected it for, and a
+        scheduled job then deletes or anonymises it automatically. Our retention periods are:
+      </p>
+      <ul className="list-disc space-y-1 pl-5">
+        {RETENTION_RULES.filter((rule) => rule.inPolicy !== false).map((rule) => (
+          <li key={rule.id}>
+            {rule.subject} — {formatRetentionPeriod(rule.maxAgeDays)}, then{" "}
+            {rule.action === "delete" ? "deleted" : "anonymised"}.
+          </li>
+        ))}
+      </ul>
+      <p>
+        Your account, saved addresses, wishlist and reviews are kept while your account is open and
+        are deleted when you delete it or ask us to. You can do that at any time — see &quot;Your
+        rights&quot; below.
       </p>
 
       <h2 className="mt-4 font-display text-lg font-bold text-ink">Cookies and browser storage</h2>
@@ -110,9 +122,11 @@ export default async function PrivacyPolicyPage() {
 
       <h2 className="mt-4 font-display text-lg font-bold text-ink">Your rights</h2>
       <p>
-        You can ask us to access, correct, or delete your personal data, or withdraw consent to
-        marketing communications at any time (marketing emails also carry an unsubscribe link), by
-        writing to us at{" "}
+        If you have an account, you can do most of this yourself from the Profile tab of your account:
+        download a copy of your data, change your email address, turn marketing emails on or off, or
+        delete your account. Anyone — with or without an account — can also ask us to access,
+        correct, or delete their personal data, or withdraw consent to marketing communications at
+        any time (marketing emails also carry an unsubscribe link), by writing to us at{" "}
         <a href={`mailto:${contactEmail}`} className="text-brand hover:underline">
           {contactEmail}
         </a>{" "}
@@ -127,7 +141,10 @@ export default async function PrivacyPolicyPage() {
       <p>
         We take reasonable technical and organisational measures to protect your data, including
         encrypting connections to our site, hashing passwords, and restricting who on our team can
-        access customer data.
+        access customer data. If a personal-data breach affects you, we will notify you and the
+        relevant authorities as required by applicable law (the IT Act and CERT-In directions, and
+        the Digital Personal Data Protection Act, 2023 once its breach-notification provisions are
+        in force).
       </p>
 
       <h2 className="mt-4 font-display text-lg font-bold text-ink">

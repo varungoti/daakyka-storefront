@@ -4,7 +4,11 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { CustomerNotFoundError, getCustomerForAdmin } from "@/lib/customers/admin-customers";
 import { CustomerActiveToggle } from "@/components/admin/customer-active-toggle";
+import { PersonalDataTools } from "@/components/admin/personal-data-tools";
 import { formatInrExact } from "@/lib/currency/admin-money";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Customer" };
 
 // F-202 fix (release-hardening admin-order-list-detail-ux): was
 // `maximumFractionDigits: 0`, which silently rounded a customer's
@@ -29,6 +33,7 @@ export default async function AdminCustomerDetailPage({ params }: { params: Prom
   if (!customer) notFound();
 
   const canManage = hasPermission(session.role, "customers:manage");
+  const canManagePrivacy = hasPermission(session.role, "privacy:manage");
 
   return (
     <div className="space-y-6">
@@ -93,6 +98,17 @@ export default async function AdminCustomerDetailPage({ params }: { params: Prom
             </div>
           )}
         </section>
+
+        {canManagePrivacy && (
+          <section className="rounded-2xl border border-border bg-surface p-5 lg:col-span-2">
+            <h2 className="mb-1 font-display text-lg font-bold text-ink">Personal data</h2>
+            <p className="mb-3 text-sm text-muted">
+              Answer an access or erasure request without SQL: export everything held about this customer, or erase
+              it (orders are anonymised, not deleted, so tax records stay whole).
+            </p>
+            <PersonalDataTools mode="customer" customerId={customer.id} email={customer.email} />
+          </section>
+        )}
 
         <section className="rounded-2xl border border-border bg-surface p-5 lg:col-span-2">
           <h2 className="mb-3 font-display text-lg font-bold text-ink">Review history</h2>

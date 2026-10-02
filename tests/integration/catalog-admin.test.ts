@@ -22,6 +22,9 @@ import {
   SizeChartNotFoundError,
   updateSizeChart,
 } from "@/lib/catalog/size-charts";
+import { createProduct, replaceVariants, updateProduct } from "@/lib/catalog/products";
+import { buildImportTemplateCsv, commitProductImport, exportProductsCsv } from "@/lib/catalog/product-import";
+import { IMPORT_COLUMNS, parseCsv, stringifyCsv } from "@/lib/catalog/csv";
 import { GET as getCategories, POST as postCategory } from "@/app/api/admin/categories/route";
 import {
   DELETE as deleteCategoryRoute,
@@ -470,5 +473,145 @@ describe("products export audit trail (F-290)", () => {
     });
     assert.equal(rows.length, 1);
     assert.deepEqual(JSON.parse(rows[0]!.metadata ?? "{}"), { filters });
+  });
+});
+
+/**
+ * F-311: CSV import/export carries the per-product Legal Metrology / GST
+ * fields (country of origin, net quantity, HSN code) the product form's
+ * Compliance section edits. Library layer against the real database, same
+ * reason as the rest of this file: the routes need a real request context
+ * for their admin session.
+ */
+describe("product CSV carries country of origin, net quantity and HSN code (F-311)", () => {
+  let adminId: string;
+  let categoryId: string;
+  let categorySlug: string;
+
+  before(async () => {
+    adminId = await findAnyAdminId();
+    const category = await createCategory({ name: `CSV Compliance ${randomUUID().slice(0, 8)}`, section: "GENERAL" }, adminId);
+    createdCategoryIds.push(category.id);
+    categoryId = category.id;
+    categorySlug = category.slug;
+  });
+
+  async function makeProduct(fields: { countryOfOrigin?: string; netQuantity?: string; hsnCode?: string }, withVariant = true) {
+    const unique = randomUUID().slice(0, 8);
+    const product = await createProduct({ name: `CSV Compliance ${unique}`, categoryId, price: 499, ...fields }, adminId);
+    createdProductIds.push(product.id);
+    if (withVariant) {
+      await replaceVariants(
+        product.id,
+        [{ size: "M", color: "Navy", sku: `DK-CSVCOMP-${unique}`, stock: 3, active: true }],
+        adminId,
+      );
+    }
+    return product;
+  }
+
+  /** Re-serialises an export with every row passed through `edit` (header excluded). */
+  function editCsv(csv: string, edit: (row: string[], col: (name: string) => number) => string[]): string {
+    const [header, ...rows] = parseCsv(csv);
+    const col = (name: string) => header.indexOf(name);
+    return stringifyCsv([header, ...rows.map((row) => edit(row, col))]);
+  }
+
+  async function stored(id: string) {
+    const row = await db.product.findUniqueOrThrow({ where: { id } });
+    return { countryOfOrigin: row.countryOfOrigin, netQuantity: row.netQuantity, hsnCode: row.hsnCode };
+  }
+
+  const full = { countryOfOrigin: "India", netQuantity: "1 set (2 pcs)", hsnCode: "6211" };
+
+  it("the export and the template share the column list, and the export carries each product's values", async () => {
+    const withVariant = await makeProduct(full);
+    // A product with no variants yet still exports (as a placeholder row) — with its fields.
+    const placeholder = await makeProduct({ countryOfOrigin: "India", netQuantity: "1 N", hsnCode: "6210" }, false);
+
+    const [templateHeader, templateExample] = parseCsv(buildImportTemplateCsv());
+    assert.equal(templateHeader.join(","), IMPORT_COLUMNS.join(","));
+    assert.equal(templateExample.length, templateHeader.length, "the template's example row must line up with its header");
+
+    const [header, ...rows] = parseCsv(await exportProductsCsv({ categorySlug }));
+    assert.equal(header.join(","), IMPORT_COLUMNS.join(","));
+    const cell = (slug: string, name: string) => rows.find((row) => row[header.indexOf("product_slug")] === slug)?.[header.indexOf(name)];
+    assert.deepEqual(
+      ["country_of_origin", "net_quantity", "hsn_code"].map((name) => cell(withVariant.slug, name)),
+      ["India", "1 set (2 pcs)", "6211"],
+    );
+    assert.deepEqual(
+      ["country_of_origin", "net_quantity", "hsn_code"].map((name) => cell(placeholder.slug, name)),
+      ["India", "1 N", "6210"],
+    );
+  });
+
+  it("exporting then re-importing restores the three fields", async () => {
+    const product = await makeProduct(full);
+    const csv = await exportProductsCsv({ categorySlug });
+
+    await updateProduct(product.id, { countryOfOrigin: null, netQuantity: null, hsnCode: null }, adminId);
+    assert.deepEqual(await stored(product.id), { countryOfOrigin: null, netQuantity: null, hsnCode: null });
+
+    await commitProductImport(csv, adminId, { generateImages: false });
+    assert.deepEqual(await stored(product.id), full);
+  });
+
+  it("a value edited in the spreadsheet is imported, and a blank cell clears only that field", async () => {
+    const product = await makeProduct(full);
+    const csv = await exportProductsCsv({ categorySlug });
+
+    const edited = editCsv(csv, (row, col) => {
+      if (row[col("product_slug")] !== product.slug) return row;
+      const next = [...row];
+      next[col("country_of_origin")] = "Bangladesh";
+      next[col("hsn_code")] = "";
+      return next;
+    });
+    await commitProductImport(edited, adminId, { generateImages: false });
+
+    assert.deepEqual(await stored(product.id), { countryOfOrigin: "Bangladesh", netQuantity: "1 set (2 pcs)", hsnCode: null });
+  });
+
+  it("importing an older CSV without the three columns leaves the stored values alone", async () => {
+    const product = await makeProduct(full);
+    const csv = await exportProductsCsv({ categorySlug });
+
+    // Drop the last three columns (header included) — what an export from before F-311 looks like.
+    const older = stringifyCsv(parseCsv(csv).map((row) => row.slice(0, -3)));
+    assert.ok(!parseCsv(older)[0].includes("hsn_code"));
+    await commitProductImport(older, adminId, { generateImages: false });
+
+    assert.deepEqual(await stored(product.id), full);
+  });
+
+  it("a brand-new product imported with the columns is created with the values", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const slug = `csv-compliance-new-${unique}`;
+    const header = [...IMPORT_COLUMNS];
+    const row = header.map((name) => {
+      const values: Record<string, string> = {
+        product_slug: slug,
+        product_name: `CSV Compliance New ${unique}`,
+        category_slug: categorySlug,
+        price: "599",
+        size: "L",
+        color: "Wine",
+        sku: `DK-CSVCOMP-NEW-${unique}`,
+        stock: "4",
+        variant_active: "yes",
+        generate_images: "no",
+        country_of_origin: "India",
+        net_quantity: "1 N",
+        hsn_code: "6211",
+      };
+      return values[name] ?? "";
+    });
+
+    await commitProductImport(stringifyCsv([header, row]), adminId, { generateImages: false });
+    const created = await db.product.findUniqueOrThrow({ where: { slug } });
+    createdProductIds.push(created.id);
+
+    assert.deepEqual(await stored(created.id), { countryOfOrigin: "India", netQuantity: "1 N", hsnCode: "6211" });
   });
 });

@@ -1,24 +1,84 @@
 import { BulkLeadStatusSelect } from "@/components/admin/bulk-lead-status-select";
+import { AdminPager } from "@/components/admin/pager";
+import {
+  BULK_LEAD_STATUS_FILTERS,
+  BULK_LEADS_PAGE_SIZE,
+  parseBulkLeadStatusFilter,
+  telHref,
+  whatsappLink,
+} from "@/lib/admin/bulk-leads";
+import { adminListHref, getPageWindow, parsePageParam, type RawSearchParam } from "@/lib/admin/pagination";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
+import { formatDateIST } from "@/lib/format/datetime";
+import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
 
-export default async function AdminBulkOrdersPage() {
+export const metadata: Metadata = { title: "Bulk Enquiries" };
+
+interface PageProps {
+  searchParams: Promise<{ page?: RawSearchParam; status?: RawSearchParam }>;
+}
+
+export default async function AdminBulkOrdersPage({ searchParams }: PageProps) {
   const session = await getSession();
   if (!session || !hasPermission(session.role, "bulk-orders:manage")) {
     redirect("/admin/dashboard");
   }
 
+  // F-196: this used to load every lead (45+ and growing) in one unpaginated
+  // list — a 13,000px page on a phone. Same `?page=` + `?status=` shape as
+  // the Contact Enquiries list, so the owner can work through just the NEW
+  // leads and page through the rest.
+  const rawParams = await searchParams;
+  const statusFilter = parseBulkLeadStatusFilter(rawParams.status);
+  const where = statusFilter ? { status: statusFilter } : {};
+
+  const [total, statusGroups] = await Promise.all([
+    db.bulkOrderLead.count({ where }),
+    db.bulkOrderLead.groupBy({ by: ["status"], _count: { _all: true } }),
+  ]);
+  const pageWindow = getPageWindow(parsePageParam(rawParams.page), total, BULK_LEADS_PAGE_SIZE);
   const leads = await db.bulkOrderLead.findMany({
-    orderBy: { createdAt: "desc" },
+    where,
+    // `id` breaks createdAt ties so a lead can never repeat or vanish across
+    // a page boundary.
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    skip: pageWindow.skip,
+    take: pageWindow.take,
   });
+  const countFor = (status: string) => statusGroups.find((group) => group.status === status)?._count._all ?? 0;
+  const allCount = statusGroups.reduce((sum, group) => sum + group._count._all, 0);
+  const hrefForPage = (page: number) => adminListHref("/admin/bulk-orders", { status: statusFilter, page });
+  const emptyMessage = statusFilter ? "No enquiries with this status." : "No bulk enquiries captured yet.";
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="font-display text-3xl font-bold text-ink">Bulk Order Manager</h1>
         <p className="text-muted">Hospital and team uniform enquiries from the storefront.</p>
+      </div>
+
+      <div className="flex flex-wrap gap-2 text-xs font-semibold" role="group" aria-label="Filter by status">
+        <Link
+          href="/admin/bulk-orders"
+          aria-current={statusFilter ? undefined : "true"}
+          className={`rounded-full border px-3 py-1.5 ${statusFilter ? "border-border text-muted hover:bg-lilac/40" : "border-brand bg-brand/10 text-brand"}`}
+        >
+          All ({allCount})
+        </Link>
+        {BULK_LEAD_STATUS_FILTERS.map((filter) => (
+          <Link
+            key={filter.value}
+            href={adminListHref("/admin/bulk-orders", { status: filter.value })}
+            aria-current={statusFilter === filter.value ? "true" : undefined}
+            className={`rounded-full border px-3 py-1.5 ${statusFilter === filter.value ? "border-brand bg-brand/10 text-brand" : "border-border text-muted hover:bg-lilac/40"}`}
+          >
+            {filter.label} ({countFor(filter.value)})
+          </Link>
+        ))}
       </div>
 
       {/* F-05 (docs/audit-2026-09-19/admin-ux.md): desktop table unchanged,
@@ -55,7 +115,7 @@ export default async function AdminBulkOrdersPage() {
                   <a href={`mailto:${lead.email}`} className="block text-brand hover:underline">
                     {lead.email}
                   </a>
-                  <a href={`tel:${lead.phone}`} className="block text-muted hover:text-brand hover:underline">
+                  <a href={telHref(lead.phone)} className="block text-muted hover:text-brand hover:underline">
                     {lead.phone}
                   </a>
                   {wa && (
@@ -82,10 +142,10 @@ export default async function AdminBulkOrdersPage() {
                   <BulkOrderRequirements lead={lead} />
                 </td>
                 <td className="px-4 py-4">
-                  <BulkLeadStatusSelect leadId={lead.id} currentStatus={lead.status} />
+                  <BulkLeadStatusSelect leadId={lead.id} leadName={lead.organization} currentStatus={lead.status} />
                 </td>
                 <td className="px-4 py-4 text-muted">
-                  {lead.createdAt.toLocaleDateString("en-IN")}
+                  {formatDateIST(lead.createdAt)}
                 </td>
               </tr>
               );
@@ -93,14 +153,14 @@ export default async function AdminBulkOrdersPage() {
           </tbody>
         </table>
         {leads.length === 0 && (
-          <p className="p-8 text-center text-muted">No bulk enquiries captured yet.</p>
+          <p className="p-8 text-center text-muted">{emptyMessage}</p>
         )}
       </div>
 
       {/* Mobile/tablet stacked-card layout (below `lg`). */}
       <div className="space-y-3 lg:hidden">
         {leads.length === 0 ? (
-          <p className="rounded-2xl border border-border bg-surface p-8 text-center text-muted">No bulk enquiries captured yet.</p>
+          <p className="rounded-2xl border border-border bg-surface p-8 text-center text-muted">{emptyMessage}</p>
         ) : (
           leads.map((lead) => {
             const wa = whatsappLink(lead.phone);
@@ -118,7 +178,7 @@ export default async function AdminBulkOrdersPage() {
                     </a>
                   </dd>
                   <dd>
-                    <a href={`tel:${lead.phone}`} className="text-muted hover:text-brand hover:underline">
+                    <a href={telHref(lead.phone)} className="text-muted hover:text-brand hover:underline">
                       {lead.phone}
                     </a>
                   </dd>
@@ -151,27 +211,25 @@ export default async function AdminBulkOrdersPage() {
               </dl>
               {lead.notes && <p className="mt-2 whitespace-pre-line break-words text-xs text-muted">{lead.notes}</p>}
               <div className="mt-3 flex items-center justify-between gap-2 border-t border-border pt-3">
-                <BulkLeadStatusSelect leadId={lead.id} currentStatus={lead.status} />
-                <span className="shrink-0 text-xs text-muted">{lead.createdAt.toLocaleDateString("en-IN")}</span>
+                <BulkLeadStatusSelect leadId={lead.id} leadName={lead.organization} currentStatus={lead.status} />
+                <span className="shrink-0 text-xs text-muted">{formatDateIST(lead.createdAt)}</span>
               </div>
             </div>
             );
           })
         )}
       </div>
+
+      <AdminPager
+        page={pageWindow.page}
+        totalPages={pageWindow.totalPages}
+        total={pageWindow.total}
+        noun="enquiries"
+        hrefForPage={hrefForPage}
+        label="Bulk enquiry pagination"
+      />
     </div>
   );
-}
-
-/** wa.me needs a bare, country-coded digit string — strips everything
- * else and, for a 10-digit Indian mobile with no country code typed,
- * prefixes 91. Returns null when what's left doesn't look like a usable
- * number, so no dead WhatsApp link is ever rendered. */
-function whatsappLink(phone: string): string | null {
-  const digits = phone.replace(/\D/g, "");
-  const withCountryCode = digits.length === 10 ? `91${digits}` : digits;
-  if (withCountryCode.length < 11 || withCountryCode.length > 15) return null;
-  return `https://wa.me/${withCountryCode}`;
 }
 
 type BulkOrderLeadRequirements = {

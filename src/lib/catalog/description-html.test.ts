@@ -187,4 +187,27 @@ describe("descriptionToPlainText", () => {
   it("strips tags from sanitized HTML for meta/JSON-LD contexts", () => {
     assert.equal(descriptionToPlainText("<p>Soft <strong>cotton</strong> scrubs.</p><ul><li>Breathable</li></ul>"), "Soft cotton scrubs. Breathable");
   });
+
+  // F-105: sanitize-html hands back text with &, < and > re-encoded, which
+  // React / Next metadata / JSON-LD then escaped a second time.
+  it("decodes entities so & < > and quotes read as the characters, not 'Poly &amp; cotton' (F-105)", () => {
+    assert.equal(
+      descriptionToPlainText("<p>Poly &amp; cotton &lt;3 &gt; x &quot;q&quot; it&#39;s</p>"),
+      `Poly & cotton <3 > x "q" it's`,
+    );
+    assert.equal(descriptionToPlainText("<p>Poly-cotton &amp; spandex</p><p>Soft &amp; light</p>"), "Poly-cotton & spandex Soft & light");
+  });
+
+  it("decodes only once, so literal entity text survives (F-105)", () => {
+    assert.equal(descriptionToPlainText("<p>&amp;lt;</p>"), "&lt;");
+    assert.equal(descriptionToPlainText("<p>&amp;amp;</p>"), "&amp;");
+  });
+
+  it("does not turn an escaped tag into a real one (F-105)", () => {
+    assert.equal(descriptionToPlainText("<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>"), "<script>alert(1)</script>");
+  });
+
+  it("leaves a plain-text description containing a literal & untouched (F-105)", () => {
+    assert.equal(descriptionToPlainText("Poly & cotton"), "Poly & cotton");
+  });
 });

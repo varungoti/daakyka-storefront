@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { hashPassword } from "@/lib/customer-auth/password";
 import { claimCustomerToken, consumeCustomerToken, invalidateOutstandingTokens } from "@/lib/customer-auth/tokens";
 import { db } from "@/lib/db";
+import { linkGuestOrdersToCustomer } from "@/lib/orders/claim-guest-orders";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { customerResetPasswordSchema } from "@/lib/validation/schemas";
@@ -38,6 +39,7 @@ export async function POST(request: Request) {
     // and shouldn't hold a DB transaction (and its row locks) open.
     const passwordHash = await hashPassword(parsed.data.newPassword);
 
+    let newlyVerified = false;
     try {
       await db.$transaction(async (tx) => {
         // F-133: atomically claim the token inside the same transaction as
@@ -68,12 +70,39 @@ export async function POST(request: Request) {
         // several outstanding tokens at once) kept working after this one
         // succeeded.
         await invalidateOutstandingTokens(result.customerId, "RESET", tx);
+
+        // F-136: the reset link went to the account's own inbox, so using it
+        // proves the customer owns the address exactly as the verification
+        // link does (claim-guest-orders.ts already counts it as proof) — an
+        // unverified account that completes a reset is verified, instead of
+        // being left with "Not yet verified" and a verification email still to
+        // find. Only ever fills an empty emailVerifiedAt; a verified account's
+        // original timestamp is kept.
+        const { count } = await tx.customer.updateMany({
+          where: { id: result.customerId, emailVerifiedAt: null },
+          data: { emailVerifiedAt: new Date() },
+        });
+        newlyVerified = count === 1;
       });
     } catch (err) {
       if (err instanceof TokenAlreadyUsedError) {
         return NextResponse.json({ error: "Invalid or expired reset link" }, { status: 400 });
       }
       throw err;
+    }
+
+    // Verification is also the moment guest orders placed under this address
+    // become claimable (F-037) — best-effort, never failing the reset itself.
+    if (newlyVerified) {
+      try {
+        const customer = await db.customer.findUnique({
+          where: { id: result.customerId },
+          select: { email: true },
+        });
+        if (customer) await linkGuestOrdersToCustomer(result.customerId, customer.email);
+      } catch {
+        // Intentionally swallowed — the next verified login claims them.
+      }
     }
 
     return NextResponse.json({ ok: true });

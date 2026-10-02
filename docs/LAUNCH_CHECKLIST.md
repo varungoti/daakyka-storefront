@@ -26,6 +26,7 @@ Production values, one at a time:
 | `BREVO_API_KEY` | For email journeys | Or set later via `/admin/integrations` |
 | `WATI_API_KEY` | For WhatsApp | |
 | `NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN` / `..._STOREFRONT_ACCESS_TOKEN` | No effect on the cart | Not needed for launch — see above |
+| `ERROR_WEBHOOK_URL` | Recommended | `https://` incoming-webhook URL (Slack, Mattermost, Google Chat or a relay) that gets a short alert for every server error. Unset = errors are only written to the runtime logs. See "Monitoring & alerting" in [GO_LIVE_RUNBOOK.md](./GO_LIVE_RUNBOOK.md). |
 | `DB_POOL_MAX` | Optional | Defaults to 5; keep small with a connection pooler |
 | `HERMES_API_URL` / `HERMES_API_KEY` | Optional | Agent runtime |
 
@@ -112,7 +113,15 @@ Full detail, including the stock-decrement/idempotency design: [PAYMENTS_RAZORPA
 
 - [ ] Submit sitemap: `https://daakyka.com/sitemap.xml`
 - [ ] Verify `robots.txt` allows crawling (and that `NEXT_PUBLIC_ALLOW_INDEXING` isn't left `false`)
-- [ ] Google Search Console property verified
+- [ ] Google Search Console property verified — either route works:
+  - **DNS TXT record (recommended):** once `daakyka.com` points at Vercel, add a *Domain* property in
+    Search Console and paste the TXT record it gives you at Hostinger. No code change or redeploy.
+  - **Meta tag:** set `GOOGLE_SITE_VERIFICATION` (the `content` value of Search Console's "HTML tag"
+    method) in the Vercel env and redeploy. For Meta Business Suite domain verification set
+    `FB_DOMAIN_VERIFICATION` the same way. Both are optional and render nothing when unset.
+- [ ] `NEXT_PUBLIC_SITE_URL` is the real `https://` domain (not a `*.vercel.app` alias) before indexing is switched on
+- [ ] Product feed for Google Merchant Center / Meta Commerce: **not built yet** (product pages already carry
+  shipping and return-policy structured data); plan it as a later growth task
 - [ ] Rich Results Test on homepage, product, guide page
 - [ ] All schema checks green in `/admin/seo`
 
@@ -130,10 +139,23 @@ from the request after that — that's Next 16's documented stale-while-revalida
 bug. If a reload right after saving still looks stale, reload once more before filing it. None of
 these need a redeploy to reflect a save; see `GO_LIVE_RUNBOOK.md`.
 
-## 8. Monitoring
+## 8. Monitoring, backups & incident readiness
 
-- [ ] Error tracking (Sentry) connected
+The code is in place (`onRequestError` reporting, `/api/health`, `/.well-known/security.txt`); these are
+the account and dashboard steps that make it useful. Details: [GO_LIVE_RUNBOOK.md](./GO_LIVE_RUNBOOK.md)
+(Monitoring, Rolling back, Backups) and [INCIDENT_RESPONSE.md](./INCIDENT_RESPONSE.md).
+
+- [ ] `ERROR_WEBHOOK_URL` set on Vercel Production and a test error reaches the channel (or Sentry connected)
 - [ ] Uptime monitor on `/api/health` (not cron URLs)
+- [ ] Supabase plan and backup tier written down; restore drill done once (go-live runbook, "Backups & restore")
+- [ ] Rollback understood: `npx vercel rollback`, migrations stay backward compatible for one release, and the
+      target is checked first with `node scripts/check-rollback-target.mjs <deployment>` (deployments built before
+      2026-09-22 point at the old Neon database; remove them in Vercel so nobody promotes one)
+- [ ] Production `DATABASE_URL` ends in `sslmode=verify-full` (go-live runbook, "Database TLS mode")
+- [ ] Vercel Log Drain with at least 180-day retention (CERT-In), recorded in INCIDENT_RESPONSE.md §7
+- [ ] Incident owner and backup named in INCIDENT_RESPONSE.md; counsel has confirmed the notification deadlines
+- [ ] `public/.well-known/security.txt` contact is a mailbox someone reads; renewal date on the calendar
+- [ ] Unused Vercel env vars removed (go-live runbook, "Environment variable hygiene")
 - [ ] Admin audit logs reviewed weekly
 
 ## 9. Go-Live

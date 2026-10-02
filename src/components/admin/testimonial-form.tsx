@@ -45,21 +45,28 @@ export function TestimonialForm({ initial }: { initial?: TestimonialFormInitial 
 
     const payload = { quote, name, title, rating, avatar, featured, active, sortOrder };
 
-    const response = await fetch(
-      isEdit ? `/api/admin/testimonials/${initial!.id}` : "/api/admin/testimonials",
-      {
-        method: isEdit ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      },
-    );
+    try {
+      const response = await fetch(
+        isEdit ? `/api/admin/testimonials/${initial!.id}` : "/api/admin/testimonials",
+        {
+          method: isEdit ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
 
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const formatted = formatApiError(body, "Couldn't save — check the fields above.");
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const formatted = formatApiError(body, "Couldn't save — check the fields above.");
+        setStatus("error");
+        setErrorMessage(formatted.summary);
+        setFieldErrors(formatted.fieldErrors);
+        return;
+      }
+    } catch {
+      // F-219: a network failure used to leave the form stuck on "Saving…".
       setStatus("error");
-      setErrorMessage(formatted.summary);
-      setFieldErrors(formatted.fieldErrors);
+      setErrorMessage("Couldn't save — check your connection and try again.");
       return;
     }
 
@@ -69,49 +76,54 @@ export function TestimonialForm({ initial }: { initial?: TestimonialFormInitial 
 
   return (
     <div className="max-w-2xl space-y-6 rounded-2xl border border-border bg-surface p-6">
-      <Field label="Quote">
+      <Field label="Quote" error={fieldErrors.quote}>
         <textarea
           value={quote}
           onChange={(e) => setQuote(e.target.value)}
           rows={4}
+          aria-invalid={Boolean(fieldErrors.quote)}
           className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
         />
       </Field>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Name">
+        <Field label="Name" error={fieldErrors.name}>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
+            aria-invalid={Boolean(fieldErrors.name)}
             className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
           />
         </Field>
-        <Field label="Title / role">
+        <Field label="Title / role" error={fieldErrors.title}>
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
+            aria-invalid={Boolean(fieldErrors.title)}
             className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
           />
         </Field>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Rating (1-5)">
+        <Field label="Rating (1-5)" error={fieldErrors.rating}>
           <input
             type="number"
             min={1}
             max={5}
             value={rating}
             onChange={(e) => setRating(Number(e.target.value))}
+            aria-invalid={Boolean(fieldErrors.rating)}
             className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
           />
         </Field>
-        <Field label="Sort order">
+        <Field label="Sort order" error={fieldErrors.sortOrder}>
           <input
             type="number"
             min={0}
             value={sortOrder}
             onChange={(e) => setSortOrder(Number(e.target.value))}
+            aria-invalid={Boolean(fieldErrors.sortOrder)}
             className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
           />
         </Field>

@@ -3,10 +3,12 @@ import { DM_Sans, Outfit } from "next/font/google";
 import { CurrencyProvider } from "@/context/currency-provider";
 import { WishlistProvider } from "@/context/wishlist-provider";
 import { CartProvider } from "@/context/cart-provider";
+import { NavigationProgress } from "@/components/layout/navigation-progress";
 import { SiteShell } from "@/components/layout/site-shell";
 import { GlobalJsonLd } from "@/components/seo/global-json-ld";
 import { isIndexingAllowed } from "@/lib/env";
 import { getNavigation } from "@/lib/navigation/get-navigation";
+import { siteVerification } from "@/lib/seo/verification";
 import { getSetting, isPageEnabled, isSaleEnabled } from "@/lib/settings";
 import "./globals.css";
 
@@ -74,17 +76,10 @@ export async function generateMetadata(): Promise<Metadata> {
     robots: allowIndex
       ? { index: true, follow: true }
       : { index: false, follow: false },
-    // F-320: no-ops (Next omits the tag) until the owner sets these from
-    // Search Console / Meta Business Suite — see docs/LAUNCH_CHECKLIST.md.
-    // A DNS TXT record at Hostinger is the simpler route once daakyka.com
-    // points at Vercel, but a meta tag works immediately and doesn't need a
-    // DNS change.
-    verification: {
-      google: process.env.GOOGLE_SITE_VERIFICATION || undefined,
-      other: process.env.FB_DOMAIN_VERIFICATION
-        ? { "facebook-domain-verification": process.env.FB_DOMAIN_VERIFICATION }
-        : undefined,
-    },
+    // F-320: no-ops (Next omits the tag) until the owner sets
+    // GOOGLE_SITE_VERIFICATION / FB_DOMAIN_VERIFICATION from Search Console /
+    // Meta Business Suite — see src/lib/seo/verification.ts.
+    verification: siteVerification(),
   };
 }
 
@@ -131,6 +126,7 @@ export default async function RootLayout({
             only cost every visitor a wasted DNS/TCP attempt. */}
       </head>
       <body className="min-h-full flex flex-col antialiased">
+        <NavigationProgress />
         <GlobalJsonLd contactAddress={contactAddress} contactPhone={contactPhone} contactEmail={contactEmail} />
         <CurrencyProvider freeShippingThresholdInr={freeShippingThresholdInr}>
           <WishlistProvider>

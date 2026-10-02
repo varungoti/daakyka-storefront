@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { GripVertical } from "lucide-react";
 import { moveArrayItem, swapStepsForMove } from "@/lib/admin/reorder";
 import { summarizeFailuresByMessage, uploadErrorMessage, uploadFilesSequentially } from "@/lib/admin/retryable-upload";
@@ -46,7 +46,7 @@ export interface AttachImagePick {
  * image with the next one, so only the *last* of several picked images
  * actually stuck. Now every attach flow (upload, "Add selected to
  * gallery", multi-pick from the library) folds its whole batch through
- * this single accumulator and calls `onChange` once with the final list.
+ * this single accumulator and commits the result once.
  *
  * Exported and parameterized on `postAttach` (rather than closing over
  * `fetch`) so the accumulator logic itself is unit-testable without a
@@ -113,19 +113,44 @@ export function ProductImageGallery({
   // time a PATCH fails). A ref, not state: writing it must never itself
   // trigger a render.
   const altBackupRef = useRef<Map<string, string | null>>(new Map());
+  // F-358/F-366: every handler below awaits a network call and then writes
+  // to `images` — but a handler's closure only ever sees the `images` of
+  // the render it was created in, so a slow upload (or a revert after a
+  // failed PATCH) used to write back a list that had since lost an image
+  // the admin removed, or an alt edit they'd made, in the meantime.
+  // `latestImages` always holds the newest list (synced after every
+  // render, and set synchronously by `commit` so two calls in the same
+  // tick can't overwrite each other), and every post-await write goes
+  // through it.
+  const latestImages = useRef(images);
+  useEffect(() => {
+    latestImages.current = images;
+  }, [images]);
+
+  function commit(next: ProductImageRow[]) {
+    latestImages.current = next;
+    onChange(next);
+  }
 
   async function attachAsset(assetId: string, altGuess: string) {
     await attachAssets([{ id: assetId, alt: altGuess }]);
   }
 
   async function postAttachPick(pick: AttachImagePick): Promise<ProductImageRow | null> {
-    const response = await fetch(`/api/admin/products/${productId}/images`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mediaAssetId: pick.id, alt: pick.alt }),
-    });
-    if (!response.ok) return null;
-    const body = await response.json();
+    let body;
+    try {
+      const response = await fetch(`/api/admin/products/${productId}/images`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mediaAssetId: pick.id, alt: pick.alt }),
+      });
+      if (!response.ok) return null;
+      body = await response.json();
+    } catch {
+      // A dropped connection must count as one failed pick, not abort the
+      // batch (and lose the rows already attached earlier in it).
+      return null;
+    }
     return {
       id: body.image.id,
       mediaId: body.image.mediaId,
@@ -142,14 +167,16 @@ export function ProductImageGallery({
    * the media picker's "Add N images" multi-select and by "Add selected to
    * gallery" below. See attachPicksSequentially's doc comment (F-358) for
    * why this always folds the whole batch through one accumulator and
-   * calls onChange once, rather than once per picked image. */
+   * commits once, rather than once per picked image. The accumulator
+   * starts empty so it yields just the newly attached rows, which are then
+   * appended to whatever the list is *by the time the batch finishes*. */
   async function attachAssets(picks: AttachImagePick[]) {
-    const { current, failureCount } = await attachPicksSequentially(picks, images, postAttachPick);
+    const { current: attachedRows, failureCount } = await attachPicksSequentially(picks, [], postAttachPick);
     if (failureCount > 0) {
       setNotice(picks.length > 1 ? "Couldn't attach one or more images to the product." : "Couldn't attach image to the product.");
     }
-    if (failureCount < picks.length) {
-      onChange(current);
+    if (attachedRows.length > 0) {
+      commit([...latestImages.current, ...attachedRows]);
     }
   }
 
@@ -204,7 +231,11 @@ export function ProductImageGallery({
           });
           continue;
         }
-        const body = await response.json();
+        const body = await response.json().catch(() => null);
+        if (typeof body?.asset?.id !== "string") {
+          failures.push({ file, message: "Unexpected response from the server" });
+          continue;
+        }
         attached.push({ id: body.asset.id, alt: aiFields.name ?? "" });
       }
 
@@ -276,7 +307,19 @@ export function ProductImageGallery({
   }
 
   function updateImage(id: string, patch: Partial<ProductImageRow>) {
-    onChange(images.map((img) => (img.id === id ? { ...img, ...patch } : img)));
+    commit(latestImages.current.map((img) => (img.id === id ? { ...img, ...patch } : img)));
+  }
+
+  /** One image's PATCH/DELETE. Resolves false — never throws — for a
+   * non-2xx response *or* a network failure, so every caller can revert
+   * its optimistic update the same way. */
+  async function sendImageRequest(id: string, init: RequestInit): Promise<boolean> {
+    try {
+      const response = await fetch(`/api/admin/products/${productId}/images/${id}`, init);
+      return response.ok;
+    } catch {
+      return false;
+    }
   }
 
   /** F-366 fix: used to fire-and-forget the PATCH and always keep the
@@ -285,21 +328,21 @@ export function ProductImageGallery({
    * Reverts the optimistic update and surfaces a notice when the request
    * doesn't succeed. */
   async function setColor(id: string, color: string) {
-    const previous = images.find((img) => img.id === id)?.color ?? null;
+    const previous = latestImages.current.find((img) => img.id === id)?.color ?? null;
     updateImage(id, { color: color || null });
-    const response = await fetch(`/api/admin/products/${productId}/images/${id}`, {
+    const ok = await sendImageRequest(id, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ color: color || null }),
     });
-    if (!response.ok) {
+    if (!ok) {
       updateImage(id, { color: previous });
       setNotice("Couldn't update the colour tag — try again.");
     }
   }
 
   async function setSizeScope(id: string, value: string) {
-    const previous = images.find((img) => img.id === id);
+    const previous = latestImages.current.find((img) => img.id === id);
     if (!previous) return;
     const size = value === "" || value === "__ALL__" ? null : value;
     const appliesToAllSizes = value === "__ALL__";
@@ -328,13 +371,19 @@ export function ProductImageGallery({
    * value to revert to, since by blur time `images` already reflects
    * whatever the admin just typed, not the last successful save. */
   async function saveAlt(id: string, alt: string) {
-    const response = await fetch(`/api/admin/products/${productId}/images/${id}`, {
+    const saved = altBackupRef.current.get(id) ?? null;
+    // Tabbing through the field without editing it isn't a change — skip
+    // the PATCH (and the audit-log row it would write).
+    if ((alt || null) === saved) return;
+    const ok = await sendImageRequest(id, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ alt: alt || null }),
     });
-    if (!response.ok) {
-      updateImage(id, { alt: altBackupRef.current.get(id) ?? null });
+    if (ok) {
+      altBackupRef.current.set(id, alt || null);
+    } else {
+      updateImage(id, { alt: saved });
       setNotice("Couldn't save the alt text — try again.");
     }
   }
@@ -343,35 +392,39 @@ export function ProductImageGallery({
    * DELETE failed — the image looked removed until the next reload brought
    * it back. */
   async function remove(id: string) {
-    const response = await fetch(`/api/admin/products/${productId}/images/${id}`, { method: "DELETE" });
-    if (!response.ok) {
+    // F-065: one mis-tap on a phone used to drop a product photo with no
+    // way back (its alt text, colour tag and position go with it). The file
+    // itself stays in the Media library.
+    if (!window.confirm("Remove this image from the product? The file stays in your Media library.")) return;
+    const ok = await sendImageRequest(id, { method: "DELETE" });
+    if (!ok) {
       setNotice("Couldn't remove that image — try again.");
       return;
     }
-    onChange(images.filter((img) => img.id !== id));
+    commit(latestImages.current.filter((img) => img.id !== id));
   }
 
   /** Single-step "swap with adjacent sibling" call — shared by the ↑/↓
    * buttons and the drag-and-drop handler below (see
    * src/lib/admin/reorder.ts). */
   async function reorderStep(id: string, direction: "up" | "down"): Promise<boolean> {
-    const response = await fetch(`/api/admin/products/${productId}/images/${id}`, {
+    return sendImageRequest(id, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ reorder: direction }),
     });
-    return response.ok;
   }
 
   async function move(id: string, direction: "up" | "down") {
     const ok = await reorderStep(id, direction);
     if (ok) {
-      const index = images.findIndex((img) => img.id === id);
+      const latest = latestImages.current;
+      const index = latest.findIndex((img) => img.id === id);
       const swapWith = direction === "up" ? index - 1 : index + 1;
-      if (swapWith >= 0 && swapWith < images.length) {
-        const next = images.slice();
+      if (index >= 0 && swapWith >= 0 && swapWith < latest.length) {
+        const next = latest.slice();
         [next[index], next[swapWith]] = [next[swapWith], next[index]];
-        onChange(next);
+        commit(next);
       }
     }
   }
@@ -396,7 +449,7 @@ export function ProductImageGallery({
       }
     }
     setReordering(false);
-    onChange(moveArrayItem(images, fromIndex, toIndex));
+    commit(moveArrayItem(latestImages.current, fromIndex, toIndex));
   }
 
   return (
@@ -452,6 +505,7 @@ export function ProductImageGallery({
           onChange={(e) => setPromptOverride(e.target.value)}
           rows={2}
           placeholder="Optional prompt override — leave blank to auto-fill from name, category, gender and fabric"
+          aria-label="Image generation prompt override"
           className="w-full rounded-lg border border-border bg-surface p-2 text-xs text-ink"
         />
         <div className="flex items-center gap-2">
@@ -492,6 +546,18 @@ export function ProductImageGallery({
       </div>
 
       {notice ? <p className="text-xs text-red-600">{notice}</p> : null}
+
+      {/* F-363: the storefront never shows another colour's photo for the
+          selected colour, and on a multi-colour product a photo with no
+          colour tag can't be assumed to be *this* colour either (see
+          selectProductGallery) — so say so where the tag is set, rather
+          than leaving an untagged photo to silently vanish from the page. */}
+      {productColors.length > 1 && images.length > 0 ? (
+        <p className="text-xs text-muted">
+          Tag each photo with its colour. On a product with several colours, a photo without a colour tag
+          isn&apos;t shown on the product page.
+        </p>
+      ) : null}
 
       {images.length === 0 ? (
         <p className="rounded-xl border border-dashed border-border p-4 text-center text-xs text-muted">No images yet.</p>
@@ -544,7 +610,12 @@ export function ProductImageGallery({
                   <GripVertical size={14} />
                 </span>
               </div>
-              <select value={img.color ?? ""} onChange={(e) => setColor(img.id, e.target.value)} className="w-full rounded border border-border p-1 text-xs">
+              <select
+                value={img.color ?? ""}
+                onChange={(e) => setColor(img.id, e.target.value)}
+                aria-label={`Colour tag for image ${index + 1}`}
+                className="w-full rounded border border-border p-1 text-xs"
+              >
                 <option value="">No colour tag</option>
                 {productColors.map((color) => (
                   <option key={color} value={color}>
@@ -568,19 +639,20 @@ export function ProductImageGallery({
                 onChange={(e) => setAlt(img.id, e.target.value)}
                 onBlur={(e) => saveAlt(img.id, e.target.value)}
                 placeholder="Alt text"
+                aria-label={`Alt text for image ${index + 1}`}
                 maxLength={MAX_ALT_LENGTH}
                 className="w-full rounded border border-border p-1 text-xs"
               />
-              <div className="flex items-center justify-between text-[11px]">
+              <div className="flex items-center justify-between text-xs">
                 <div className="flex gap-1">
-                  <button type="button" disabled={index === 0 || reordering} onClick={() => move(img.id, "up")} aria-label="Move image up" className="rounded border border-border px-1.5 py-0.5 disabled:opacity-30">
+                  <button type="button" disabled={index === 0 || reordering} onClick={() => move(img.id, "up")} aria-label="Move image up" className="min-h-8 min-w-8 rounded border border-border px-2 py-1 disabled:opacity-30">
                     ↑
                   </button>
-                  <button type="button" disabled={index === images.length - 1 || reordering} onClick={() => move(img.id, "down")} aria-label="Move image down" className="rounded border border-border px-1.5 py-0.5 disabled:opacity-30">
+                  <button type="button" disabled={index === images.length - 1 || reordering} onClick={() => move(img.id, "down")} aria-label="Move image down" className="min-h-8 min-w-8 rounded border border-border px-2 py-1 disabled:opacity-30">
                     ↓
                   </button>
                 </div>
-                <button type="button" onClick={() => remove(img.id)} className="text-red-600 hover:underline">
+                <button type="button" onClick={() => remove(img.id)} className="min-h-8 rounded border border-red-200 px-3 py-1 font-semibold text-red-600 hover:bg-red-50">
                   Remove
                 </button>
               </div>

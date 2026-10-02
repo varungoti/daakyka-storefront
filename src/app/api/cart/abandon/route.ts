@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isUniqueLocalCartId } from "@/lib/cart/service";
 import { db } from "@/lib/db";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
@@ -14,7 +15,10 @@ import { z } from "zod";
 // server-side from a proven, consenting identity — never taken from the
 // request body.
 const schema = z.object({
-  cartId: z.string().min(1).max(200),
+  // F-122: must be a real per-browser `local-<uuid>` — the retired shared
+  // "local-cart" sentinel (every cart used to carry it) would otherwise make
+  // the one-hour dedupe below swallow every shopper after the first.
+  cartId: z.string().max(200).refine(isUniqueLocalCartId, "Invalid cart id"),
   subtotal: z.number().optional(),
   itemCount: z.number().int().min(1),
   items: z.array(z.object({ title: z.string(), quantity: z.number() })).optional(),

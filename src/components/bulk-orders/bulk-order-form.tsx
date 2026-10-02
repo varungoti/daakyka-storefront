@@ -1,10 +1,12 @@
 "use client";
 
+import { CollectionNotice } from "@/components/legal/collection-notice";
 import { Button } from "@/components/ui/button";
+import { FocusedStatus } from "@/components/ui/focused-status";
 import { HoneypotField } from "@/components/ui/honeypot-field";
 import { HONEYPOT_FIELD_NAME } from "@/lib/validation/honeypot";
 import { retryAfterMessage } from "@/lib/security/retry-after";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const ORGANIZATION_TYPES = [
   { value: "HOSPITAL", label: "Hospital" },
@@ -26,6 +28,23 @@ export function BulkOrderForm() {
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const formRef = useRef<HTMLFormElement>(null);
+  // F-241: set by "Submit Another Enquiry" so the re-rendered form takes
+  // focus — the button that was clicked is unmounted with the success box.
+  const refocusForm = useRef(false);
+
+  useEffect(() => {
+    if (status !== "idle" || !refocusForm.current) return;
+    refocusForm.current = false;
+    (formRef.current?.elements.namedItem("organization") as HTMLElement | null)?.focus();
+  }, [status]);
+
+  // F-241: after a failed submit, move focus to the first field the server
+  // (or the client-side check) marked invalid — same as checkout does.
+  useEffect(() => {
+    if (Object.keys(fieldErrors).length === 0) return;
+    formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [fieldErrors]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -98,20 +117,26 @@ export function BulkOrderForm() {
 
   if (status === "success") {
     return (
-      <div className="rounded-3xl border border-trust/30 bg-trust/10 p-8 text-center">
+      <FocusedStatus className="rounded-3xl border border-trust/30 bg-trust/10 p-8 text-center">
         <h2 className="font-display text-2xl font-bold text-ink">Enquiry Received</h2>
         <p className="mt-3 text-muted">
           Our bulk orders team will contact you within 1–2 business days.
         </p>
-        <Button className="mt-6" onClick={() => setStatus("idle")}>
+        <Button
+          className="mt-6"
+          onClick={() => {
+            refocusForm.current = true;
+            setStatus("idle");
+          }}
+        >
           Submit Another Enquiry
         </Button>
-      </div>
+      </FocusedStatus>
     );
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-border bg-surface p-8">
+    <form ref={formRef} onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-border bg-surface p-8">
       <HoneypotField />
       <FormField
         label="Organisation / Institution Name *"
@@ -230,6 +255,7 @@ export function BulkOrderForm() {
       <Button type="submit" className="w-full" disabled={status === "loading"}>
         {status === "loading" ? "Submitting..." : "Submit Enquiry"}
       </Button>
+      <CollectionNotice purpose="We use these details only to prepare and follow up on your quote." />
     </form>
   );
 }

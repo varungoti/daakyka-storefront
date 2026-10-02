@@ -3,6 +3,9 @@ import { TemplateForm } from "@/components/admin/template-form";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { getTemplateForAdmin, TemplateNotFoundError } from "@/lib/engagement/templates";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Edit Template" };
 
 export default async function EditTemplatePage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();

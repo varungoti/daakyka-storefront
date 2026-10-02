@@ -18,10 +18,27 @@
  * — see docs/PERFORMANCE.md). Keep server-side honeypot schemas (if
  * ever needed) in a separate, server-only module instead of here.
  */
-export const HONEYPOT_FIELD_NAME = "company_website";
+// F-157: this used to be "company_website", which Chrome's address autofill
+// matches on "company" (it also ignores autocomplete="off") — a buyer who
+// autofilled a form with an Organization field could populate the honeypot
+// and have a real lead silently dropped behind a fake success. The name is
+// deliberately meaningless to every autofill / password-manager heuristic;
+// don't rename it back to anything that reads like a real field
+// (company, website, url, address, phone, ...). The server no longer looks
+// at the old name, so a tab opened before the rename that autofilled it is
+// processed normally instead of discarded.
+export const HONEYPOT_FIELD_NAME = "hp_x9k2";
 
-export function isHoneypotTripped(data: unknown): boolean {
+/**
+ * True when a bot filled the honeypot. `source` (the route name, e.g.
+ * "contact") is logged — never the payload — so a spike of trips from real
+ * visitors (a false positive, i.e. lost leads) is visible in the runtime
+ * logs instead of vanishing behind the fake success every caller returns.
+ */
+export function isHoneypotTripped(data: unknown, source?: string): boolean {
   if (!data || typeof data !== "object") return false;
   const value = (data as Record<string, unknown>)[HONEYPOT_FIELD_NAME];
-  return typeof value === "string" && value.trim().length > 0;
+  const tripped = typeof value === "string" && value.trim().length > 0;
+  if (tripped) console.warn(`[honeypot] tripped${source ? ` on ${source}` : ""}`);
+  return tripped;
 }

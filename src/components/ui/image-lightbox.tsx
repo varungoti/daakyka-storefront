@@ -1,6 +1,7 @@
 "use client";
 
 import { useFocusTrap } from "@/hooks/use-focus-trap";
+import { clampTranslate, panBy, startsOnControl } from "@/lib/ui/lightbox-gestures";
 import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import Image from "next/image";
@@ -37,12 +38,17 @@ const SWIPE_THRESHOLD_PX = 60;
  * Reuses useFocusTrap from C2 for focus containment, Escape-to-close and
  * body scroll lock. Adds its own arrow-key and pointer-event handling on
  * top (swipe to change image, pinch to zoom, double-tap/double-click to
- * toggle 1x/2x zoom) since those are specific to the image viewer.
+ * toggle 1x/2x zoom, and — F-114 — drag to pan once zoomed in) since those
+ * are specific to the image viewer.
  */
 export function ImageLightbox({ images, startIndex = 0, onClose }: ImageLightboxProps) {
   const [index, setIndex] = useState(() => clampIndex(startIndex, images.length));
   const [scale, setScale] = useState(1);
   const [translate, setTranslate] = useState({ x: 0, y: 0 });
+  // True while a one-finger drag is moving a zoomed picture: the 150ms
+  // transition that smooths zoom changes would otherwise make it trail behind
+  // the finger.
+  const [panning, setPanning] = useState(false);
   const containerRef = useFocusTrap<HTMLDivElement>(true, onClose, { lockScroll: true });
 
   const goTo = useCallback(
@@ -76,7 +82,21 @@ export function ImageLightbox({ images, startIndex = 0, onClose }: ImageLightbox
   const lastTapAt = useRef(0);
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    // The previous/next arrows sit inside this container, so their presses
+    // bubble up here. Capturing such a pointer would redirect the click that
+    // follows to the container and the arrow's onClick would never run — leave a
+    // press on a control entirely to the control.
+    if (startsOnControl(event.target as Element)) return;
+
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    // Keep receiving this pointer's moves and its release even when the finger
+    // or mouse leaves the viewer, so a drag can never be left half-finished.
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Not supported everywhere; a drag that ends outside is then simply ended
+      // by the next pointer-down.
+    }
 
     if (pointers.current.size === 1) {
       dragStart.current = { x: event.clientX, y: event.clientY };
@@ -88,19 +108,37 @@ export function ImageLightbox({ images, startIndex = 0, onClose }: ImageLightbox
   };
 
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!pointers.current.has(event.pointerId)) return;
+    const previous = pointers.current.get(event.pointerId);
+    if (!previous) return;
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const rect = event.currentTarget.getBoundingClientRect();
 
     if (pointers.current.size === 2 && pinchStartDistance.current) {
       const [a, b] = [...pointers.current.values()];
       const ratio = distance(a, b) / pinchStartDistance.current;
-      setScale(clampScale(pinchStartScale.current * ratio));
+      const nextScale = clampScale(pinchStartScale.current * ratio);
+      setScale(nextScale);
+      // Zooming back out shrinks how far the picture can be moved.
+      setTranslate((current) => clampTranslate(current, nextScale, rect.width, rect.height));
+    } else if (pointers.current.size === 1 && scale > 1) {
+      // F-114: one finger (or the mouse) on a zoomed picture drags it. Only
+      // two pointers were handled before, so zooming in left the rest of the
+      // picture out of reach.
+      setPanning(true);
+      setTranslate((current) =>
+        panBy(current, event.clientX - previous.x, event.clientY - previous.y, scale, rect.width, rect.height),
+      );
     }
   };
 
   const onPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    // Releases of a press that began on an arrow (never tracked above) bubble up
+    // here too; they must not end, or count as, a drag of the picture.
+    if (!pointers.current.has(event.pointerId)) return;
+
     const wasSinglePointer = pointers.current.size === 1;
     pointers.current.delete(event.pointerId);
+    setPanning(false);
 
     if (pointers.current.size === 0) {
       pinchStartDistance.current = null;
@@ -188,7 +226,7 @@ export function ImageLightbox({ images, startIndex = 0, onClose }: ImageLightbox
             alt={current.alt ?? `Image ${index + 1} of ${images.length}`}
             fill
             unoptimized={current.url.endsWith(".svg")}
-            className="object-contain transition-transform duration-150 ease-out"
+            className={cn("object-contain ease-out", !panning && "transition-transform duration-150")}
             style={{ transform: `scale(${scale}) translate(${translate.x}px, ${translate.y}px)` }}
             sizes="100vw"
             preload

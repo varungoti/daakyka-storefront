@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import type { ProductGender } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
 import { PRODUCTS_CACHE_TAG, CATEGORIES_CACHE_TAG } from "@/lib/products";
 import { revalidateTag } from "next/cache";
 import {
@@ -23,9 +24,10 @@ import { prepareDescriptionForStorage } from "@/lib/catalog/description-html";
  * on re-run with the same slugs).
  */
 
+// F-032: immediate ({ expire: 0 }) — see src/lib/cache/admin-revalidate.ts.
 function safeRevalidate(tag: string) {
   try {
-    revalidateTag(tag, "max");
+    revalidateTag(tag, ADMIN_REVALIDATE_PROFILE);
   } catch {
     // No static generation store in this context.
   }
@@ -199,6 +201,13 @@ export async function commitProductImport(
         tags,
         seoTitle: first.seoTitle,
         seoDescription: first.seoDescription,
+        // F-311: only written when the CSV actually has the column (see
+        // ParsedImportRow) — importing an older export must not blank a
+        // product's country of origin / net quantity / HSN code. A blank
+        // cell in a file that does have the column still clears it.
+        ...(first.countryOfOrigin !== undefined ? { countryOfOrigin: first.countryOfOrigin } : {}),
+        ...(first.netQuantity !== undefined ? { netQuantity: first.netQuantity } : {}),
+        ...(first.hsnCode !== undefined ? { hsnCode: first.hsnCode } : {}),
       };
 
       let productId: string;
@@ -328,6 +337,11 @@ export function buildImportTemplateCsv(): string {
     "20",
     "yes",
     "no",
+    "India",
+    "1 set (2 pcs)",
+    // hsn_code is deliberately blank: the right GST HSN depends on the
+    // garment, so a sample value here would just get copied.
+    "",
   ];
   return stringifyCsv([header, example]);
 }
@@ -360,6 +374,8 @@ export async function exportProductsCsv(filter: { categorySlug?: string; status?
       product.seoTitle ?? "",
       product.seoDescription ?? "",
     ];
+    // F-311: after the variant columns — see IMPORT_COLUMNS.
+    const complianceCells = [product.countryOfOrigin ?? "", product.netQuantity ?? "", product.hsnCode ?? ""];
 
     if (product.variants.length === 0) {
       // F-191: was skipped entirely (the old loop only ever ran for
@@ -371,7 +387,7 @@ export async function exportProductsCsv(filter: { categorySlug?: string; status?
       // commitProductImport writes the product's own fields but skips
       // writing a variant for it (ParsedImportRow.hasVariant), rather than
       // upserting one with an empty SKU.
-      rows.push([...productCells, "", "", "", "", "", "", ""]);
+      rows.push([...productCells, "", "", "", "", "", "", "", ...complianceCells]);
       continue;
     }
 
@@ -385,6 +401,7 @@ export async function exportProductsCsv(filter: { categorySlug?: string; status?
         variant.stock,
         variant.active ? "yes" : "no",
         "no",
+        ...complianceCells,
       ]);
     }
   }

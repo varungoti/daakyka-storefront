@@ -4,6 +4,7 @@ import { marketingMedia } from "@/data/media/catalog";
 import { placeholderForAspect } from "@/data/media/image-manifest";
 import type { HeroSlideContent } from "@/lib/homepage";
 import { buttonClassNames } from "@/components/ui/button";
+import { publicImageAlt } from "@/lib/media/public-alt";
 import { cn } from "@/lib/utils";
 import { ArrowRight, ChevronLeft, ChevronRight, Pause, Play, Star } from "lucide-react";
 import Image from "next/image";
@@ -173,12 +174,17 @@ export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, rating
         {`Slide ${activeIndex + 1} of ${slides.length}: ${active.headline}`}
       </p>
 
-      {/* F-085: `gap-6 py-8` on mobile (was `gap-10 py-12`) — the fixed
-          mobile min-height this used to have is gone (see F-001's grid-
-          stack comment above), but the grid's own gap and padding were
-          still sized for desktop and added their own dead space on top of
-          three unshrunk sections stacked in a single mobile column. */}
-      <div className="relative mx-auto grid max-w-[1320px] items-center gap-6 px-4 py-8 sm:gap-8 md:gap-10 md:py-16 lg:grid-cols-[1.05fr_0.95fr_0.55fr] lg:gap-8 lg:px-8">
+      {/* F-085: sized for a phone first. The fixed mobile min-height this
+          used to have is gone (see F-001's grid-stack comment above), but
+          the grid's own gap and padding were still sized for desktop (`gap-10
+          py-12`) and the single mobile column stacked a 4:5 photo collage
+          (~430px at 375px wide), a 44px headline and a stack of full-size
+          CTAs into a ~1,240px hero, with the photos (when they were last
+          in the column) well below the fold. Below `lg` that column is now
+          first, 4:3, with a smaller headline, no description and tighter
+          spacing — so the image, headline and CTAs all start on the first
+          screen of a typical phone. From `lg` up nothing changes. */}
+      <div className="relative mx-auto grid max-w-[1320px] items-center gap-5 px-4 py-6 sm:gap-8 md:gap-10 md:py-16 lg:grid-cols-[1.05fr_0.95fr_0.55fr] lg:gap-8 lg:px-8">
         <div className="animate-fade-up lg:pr-4">
           {/* F-001: `grid` instead of `relative` + a guessed min-height.
               Every slide below is stacked in the same grid cell
@@ -196,7 +202,7 @@ export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, rating
                 aria-hidden={index !== activeIndex}
                 inert={index !== activeIndex}
                 className={cn(
-                  "col-start-1 row-start-1 self-start space-y-7 transition-opacity duration-700 ease-out",
+                  "col-start-1 row-start-1 self-start space-y-5 transition-opacity duration-700 ease-out md:space-y-7",
                   index === activeIndex ? "opacity-100" : "pointer-events-none opacity-0",
                 )}
               >
@@ -213,35 +219,57 @@ export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, rating
                   {slide.eyebrow}
                 </span>
 
-                <div className="space-y-4">
+                <div className="space-y-3 md:space-y-4">
                   {index === 0 ? (
-                    <h1 className="line-clamp-3 font-display text-[2.75rem] font-bold leading-[1.02] tracking-tight text-ink md:text-5xl xl:text-[3.75rem]">
+                    <h1 className="line-clamp-3 font-display text-4xl font-bold leading-[1.02] tracking-tight text-ink sm:text-[2.75rem] md:text-5xl xl:text-[3.75rem]">
                       {slide.headline}
                     </h1>
                   ) : (
-                    <h2 className="line-clamp-3 font-display text-[2.75rem] font-bold leading-[1.02] tracking-tight text-ink md:text-5xl xl:text-[3.75rem]">
+                    <h2 className="line-clamp-3 font-display text-4xl font-bold leading-[1.02] tracking-tight text-ink sm:text-[2.75rem] md:text-5xl xl:text-[3.75rem]">
                       {slide.headline}
                     </h2>
                   )}
                   <p className="line-clamp-2 font-display text-xl font-medium text-ink/85 md:text-2xl">
                     {slide.subheadline}
                   </p>
-                  <p className="line-clamp-3 max-w-lg text-base leading-relaxed text-muted">
+                  {/* F-085: hidden on a phone — headline, subheadline and the
+                      CTAs already carry the message, and this paragraph was
+                      the difference between the CTAs being on the first
+                      screen and not. */}
+                  <p className="hidden max-w-lg text-base leading-relaxed text-muted sm:line-clamp-3">
                     {slide.description}
                   </p>
                 </div>
 
-                <div className="flex flex-wrap gap-4">
-                  <Link href={slide.primaryCta.href} className={buttonClassNames({ size: "lg", className: "min-w-[170px]" })}>
-                    {slide.primaryCta.label}
+                {/* F-085: on a phone each CTA is `flex-1` — two short labels
+                    share a row, longer ones stack full-width — and a
+                    little smaller than the desktop `lg` size. */}
+                {/* F-370: homepage content is schema-validated on read, but a
+                    partial slide must still degrade to a working link rather
+                    than throw and take the whole homepage down. */}
+                <div className="flex flex-wrap gap-3 sm:gap-4">
+                  <Link
+                    href={slide.primaryCta?.href || "/shop"}
+                    className={buttonClassNames({
+                      size: "lg",
+                      className: "min-w-[170px] flex-1 px-5 py-3.5 text-sm sm:flex-none sm:px-8 sm:py-4 sm:text-base",
+                    })}
+                  >
+                    {slide.primaryCta?.label || "Shop now"}
                     <ArrowRight size={18} aria-hidden="true" />
                   </Link>
-                  <Link
-                    href={slide.secondaryCta.href}
-                    className={buttonClassNames({ variant: "outline", size: "lg", className: "min-w-[170px]" })}
-                  >
-                    {slide.secondaryCta.label}
-                  </Link>
+                  {slide.secondaryCta?.href && slide.secondaryCta?.label ? (
+                    <Link
+                      href={slide.secondaryCta.href}
+                      className={buttonClassNames({
+                        variant: "outline",
+                        size: "lg",
+                        className: "min-w-[170px] flex-1 px-5 py-3.5 text-sm sm:flex-none sm:px-8 sm:py-4 sm:text-base",
+                      })}
+                    >
+                      {slide.secondaryCta.label}
+                    </Link>
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -337,10 +365,12 @@ export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, rating
             restores document order at the 3-column desktop layout) — this
             used to be the very last thing on the page before the trust-
             stat cards, so a phone shopper's whole first screen was text
-            with no product imagery at all. */}
+            with no product imagery at all. The frame is 4:3 below `lg`
+            (4:5 would be ~430px tall at 375px wide and push the headline
+            and CTAs back below the fold) and 4:5 again from `lg`. */}
         <div className="animate-scale-in relative order-first mx-auto w-full max-w-md lg:order-none lg:max-w-none">
           <div className="absolute inset-x-6 top-6 bottom-6 rounded-full bg-brand/10 blur-3xl" />
-          <div className="relative mx-auto aspect-[4/5] max-w-lg">
+          <div className="relative mx-auto aspect-[4/3] max-w-lg lg:aspect-[4/5]">
             <div className="absolute bottom-[8%] left-1/2 h-8 w-[72%] -translate-x-1/2 rounded-[100%] bg-brand/25 blur-2xl" />
             <div className="absolute bottom-[6%] left-1/2 h-3 w-[68%] -translate-x-1/2 rounded-full border border-brand/20 bg-[linear-gradient(180deg,rgba(138,52,125,0.35),rgba(138,52,125,0.05))] shadow-[0_0_40px_rgba(138,52,125,0.35)]" />
 
@@ -364,7 +394,7 @@ export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, rating
                       <div className="relative h-[88%] w-[46%] overflow-hidden rounded-[1.5rem] hero-model-frame shadow-[0_20px_50px_rgba(138,52,125,0.15)]">
                         <Image
                           src={secondaryImage.url}
-                          alt={secondaryImage.alt || ""}
+                          alt={publicImageAlt(secondaryImage.alt)}
                           fill
                           className="object-cover object-top"
                           sizes="(max-width: 1024px) 42vw, 18vw"
@@ -373,7 +403,10 @@ export function HeroCarousel({ slides, autoAdvanceMs, trustStats, rating, rating
                       <div className="relative h-[94%] w-[48%] overflow-hidden rounded-[1.5rem] hero-model-frame shadow-[0_24px_60px_rgba(138,52,125,0.2)]">
                         <Image
                           src={mainImage.url}
-                          alt={mainImage.alt || (index === 0 ? "Healthcare team in DAAKYKA scrubs" : "")}
+                          alt={publicImageAlt(
+                            mainImage.alt,
+                            index === 0 ? "Healthcare team in DAAKYKA scrubs" : "",
+                          )}
                           fill
                           preload={index === 0}
                           fetchPriority={index === 0 ? "high" : undefined}

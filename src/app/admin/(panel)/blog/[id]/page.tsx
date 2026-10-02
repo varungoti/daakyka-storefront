@@ -1,8 +1,12 @@
 import { BlogPostEditor } from "@/components/admin/blog-post-editor";
 import { requireAdminPage } from "@/lib/auth/require-admin-page";
+import { parseBlogContent } from "@/lib/blog/content";
 import { db } from "@/lib/db";
 import { formatIstDateOnly } from "@/lib/format/datetime";
 import { notFound } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Edit Article" };
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -41,7 +45,9 @@ export default async function EditBlogPostPage({ params }: PageProps) {
           publishedAt: formatIstDateOnly(post.publishedAt),
           readTime: post.readTime,
           image: post.image,
-          content: JSON.parse(post.content) as string[],
+          // F-213: JSON.parse threw on a Hermes-approved draft whose content was
+          // plain text, so opening it hit the admin error boundary.
+          content: parseBlogContent(post.content),
           status: post.status,
         }}
       />

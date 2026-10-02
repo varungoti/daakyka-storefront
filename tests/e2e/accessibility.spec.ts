@@ -150,3 +150,373 @@ test.describe("Hero carousel", () => {
     await expect(slides.first()).toHaveAttribute("aria-hidden", "false");
   });
 });
+
+/**
+ * Release-hardening a11y sweep 1 (F-010, F-022, F-047, F-056, F-083, F-087,
+ * F-088, F-145, F-238, F-241). The scans above only fail on serious/critical
+ * violations; these pin the specific things that sweep fixed, so they can't
+ * quietly come back — including the keyboard behaviour (mega-menu tab order,
+ * predictive-search combobox, focus return) that a static scan can't see.
+ */
+async function scanRules(page: Page, rules: string[]) {
+  const results = await new AxeBuilder({ page }).withRules(rules).analyze();
+  expect(results.violations, describeViolations(results.violations)).toEqual([]);
+}
+
+test.describe("Accessibility sweep 1", () => {
+  // F-047: axe's page-has-heading-one was firing on all of these, and /shop
+  // rendered two h1s (the desktop filter panel repeated the title).
+  for (const path of [
+    "/about",
+    "/accessibility",
+    "/bulk-orders",
+    "/collections",
+    "/contact",
+    "/privacy-policy",
+    "/returns",
+    "/shipping",
+    "/shop",
+    "/shop/bespoke",
+    "/terms",
+  ]) {
+    test(`${path} has exactly one h1`, async ({ page }) => {
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await gotoAndSettle(page, path);
+      await expect(page.locator("h1")).toHaveCount(1);
+    });
+  }
+
+  // F-056: inline policy links need a non-colour cue, the WhatsApp CTA green
+  // (#38a169 on white = 3.24:1) needs to reach 4.5:1.
+  for (const path of ["/privacy-policy", "/returns", "/shipping", "/accessibility", "/terms", "/contact", "/bulk-orders"]) {
+    test(`${path} has underlined in-text links and AA-contrast text`, async ({ page }) => {
+      await gotoAndSettle(page, path);
+      await scanRules(page, ["link-in-text-block", "color-contrast", "page-has-heading-one"]);
+    });
+  }
+
+  // F-088/F-022: <a><button> is invalid and gives every CTA two tab stops.
+  for (const path of ["/", "/for-hospitals", "/shop", "/checkout"]) {
+    test(`${path} has no button nested inside a link`, async ({ page }) => {
+      await gotoAndSettle(page, path);
+      await expect(page.locator("a button, a [role=button]")).toHaveCount(0);
+    });
+  }
+
+  test("shop filter toggles expose their pressed state (F-022)", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await gotoAndSettle(page, "/shop");
+    // Each filter group is a titled box; scope to it so the product cards'
+    // own quick-add size chips (also aria-pressed buttons) can't match.
+    const group = (title: string) => page.locator("p", { hasText: new RegExp("^" + title + "$") }).locator("xpath=..");
+
+    await expect(group("Categories").getByRole("button", { name: /^All Products/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    const size = group("Size").getByRole("button", { name: "M", exact: true });
+    await expect(size).toHaveAttribute("aria-pressed", "false");
+    await size.click();
+    await expect(size).toHaveAttribute("aria-pressed", "true");
+
+    const colour = group("Color").locator("button[aria-label]").first();
+    await expect(colour).toHaveAttribute("aria-pressed", "false");
+    await colour.click();
+    await expect(colour).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("product count is singular for one product and announced politely (F-022)", async ({ page }) => {
+    await gotoAndSettle(page, "/shop");
+    await expect(page.locator('[role="status"]').filter({ hasText: /\d+ Products?$/ }).first()).toBeVisible();
+  });
+
+  // F-239: the card's name/price link spans the card edge to edge inside an
+  // overflow-hidden article, so its own outline was clipped to two stray
+  // lines; the ring now lives on the card.
+  test("keyboard focus on a product card shows a ring around the whole card (F-239)", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await gotoAndSettle(page, "/shop");
+    const article = page.locator("article").first();
+    const link = article.locator("a[data-card-link]");
+    await link.focus();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    await expect(link).toBeFocused();
+    expect(await article.evaluate((el) => getComputedStyle(el).boxShadow)).not.toBe("none");
+    // The link's own outline is inset and transparent: nothing visible in
+    // normal rendering (the card ring is the indicator), but still an
+    // outline for forced-colors mode — see the next test.
+    const outline = await link.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return { style: style.outlineStyle, width: style.outlineWidth, offset: style.outlineOffset, color: style.outlineColor };
+    });
+    expect(outline.style).not.toBe("none");
+    expect(outline.width).toBe("2px");
+    expect(outline.offset).toBe("-2px");
+    expect(outline.color).toBe("rgba(0, 0, 0, 0)");
+  });
+
+  // F-239 (review): Windows High Contrast strips box-shadow, so the card ring
+  // vanishes there; the link's transparent inset outline is what gets painted.
+  test("keyboard focus on a product card stays visible in forced-colors mode (F-239)", async ({ page }) => {
+    await page.emulateMedia({ forcedColors: "active" });
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await gotoAndSettle(page, "/shop");
+    const article = page.locator("article").first();
+    const link = article.locator("a[data-card-link]");
+    await link.focus();
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("Tab");
+    await expect(link).toBeFocused();
+    const painted = await link.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return {
+        style: style.outlineStyle,
+        width: parseFloat(style.outlineWidth),
+        color: style.outlineColor,
+        // The box-shadow ring really is gone in this mode, so the outline is
+        // the only indicator.
+        cardShadow: getComputedStyle(el.closest("article") as Element).boxShadow,
+      };
+    });
+    expect(painted.cardShadow).toBe("none");
+    expect(painted.style).not.toBe("none");
+    expect(painted.width).toBeGreaterThanOrEqual(2);
+    // Forced colors repaints the transparent colour in a system colour.
+    expect(painted.color).not.toBe("rgba(0, 0, 0, 0)");
+  });
+
+  test("colour swatches on a product card are at least 24px (F-022)", async ({ page }) => {
+    await gotoAndSettle(page, "/shop");
+    const swatch = page.locator('article button[aria-label^="Preview"]').first();
+    await expect(swatch).toBeVisible();
+    const box = await swatch.boundingBox();
+    expect(box?.width ?? 0).toBeGreaterThanOrEqual(24);
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(24);
+  });
+
+  // F-010
+  test("mega menu: Tab goes straight into the open panel and focus leaving closes it", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await gotoAndSettle(page, "/");
+    const trigger = page.locator('header nav button[aria-controls^="nav-panel-"]').first();
+    await trigger.focus();
+    await trigger.press("Enter");
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const panelId = (await trigger.getAttribute("aria-controls")) as string;
+
+    await page.keyboard.press("Tab");
+    expect(
+      await page.evaluate((id) => document.getElementById(id)?.contains(document.activeElement) ?? false, panelId),
+      "first Tab from an expanded trigger should land inside its own panel",
+    ).toBe(true);
+
+    // Tab out of the nav entirely (past every other top-level item): the
+    // panel must not be left open over the page.
+    for (let i = 0; i < 60; i += 1) {
+      await page.keyboard.press("Tab");
+      if ((await page.locator(`#${panelId}`).count()) === 0) break;
+    }
+    await expect(page.locator(`#${panelId}`)).toHaveCount(0);
+  });
+
+  test("mega menu: moving focus to another top-level item closes the open panel, Escape returns to the trigger", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await gotoAndSettle(page, "/");
+    const triggers = page.locator('header nav button[aria-controls^="nav-panel-"]');
+    test.skip((await triggers.count()) < 2, "needs two mega-menu items");
+
+    await triggers.nth(0).focus();
+    await triggers.nth(0).press("Enter");
+    await expect(triggers.nth(0)).toHaveAttribute("aria-expanded", "true");
+    await triggers.nth(1).focus();
+    await expect(triggers.nth(0)).toHaveAttribute("aria-expanded", "false");
+
+    await triggers.nth(1).press("Enter");
+    await expect(triggers.nth(1)).toHaveAttribute("aria-expanded", "true");
+    await page.keyboard.press("Escape");
+    await expect(triggers.nth(1)).toHaveAttribute("aria-expanded", "false");
+    await expect(triggers.nth(1)).toBeFocused();
+  });
+
+  // F-083 / F-238
+  test("predictive search: Enter searches, arrows pick a result, focus returns to the Search button", async ({ page }) => {
+    await gotoAndSettle(page, "/");
+    const searchButton = page.locator("header").getByRole("button", { name: "Search", exact: true });
+    await searchButton.focus();
+    await searchButton.press("Enter");
+
+    const input = page.getByRole("combobox", { name: "Search products" });
+    await expect(input).toBeFocused();
+    await input.fill("scrub");
+    const options = page.getByRole("option");
+    await expect(options.first()).toBeVisible();
+
+    await input.press("ArrowDown");
+    const activeId = await input.getAttribute("aria-activedescendant");
+    expect(activeId).toBeTruthy();
+    await expect(page.locator(`#${activeId}`)).toHaveAttribute("aria-selected", "true");
+    await expect(input).toBeFocused();
+
+    // Typing clears the highlight; Enter with no result highlighted runs
+    // the full search.
+    await input.fill("");
+    await input.fill("scrub");
+    await expect(input).not.toHaveAttribute("aria-activedescendant", /.+/);
+    await input.press("Enter");
+    await expect(page).toHaveURL(/\/shop\?q=scrub$/);
+
+    // Esc closes, and focus goes back to where it came from.
+    await gotoAndSettle(page, "/");
+    await searchButton.focus();
+    await searchButton.press("Enter");
+    await expect(input).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog", { name: "Search products" })).toHaveCount(0);
+    await expect(searchButton).toBeFocused();
+  });
+
+  test("predictive search: Enter on a highlighted result opens that product; no-results offers a next step", async ({
+    page,
+  }) => {
+    await gotoAndSettle(page, "/");
+    await page.locator("header").getByRole("button", { name: "Search", exact: true }).click();
+    const input = page.getByRole("combobox", { name: "Search products" });
+    await input.fill("scrub");
+    await expect(page.getByRole("option").first()).toBeVisible();
+    await input.press("ArrowDown");
+    await input.press("Enter");
+    await expect(page).toHaveURL(/\/products\//);
+
+    await gotoAndSettle(page, "/");
+    await page.locator("header").getByRole("button", { name: "Search", exact: true }).click();
+    await input.fill("zzqxnomatch");
+    await expect(page.getByText("No products found")).toBeVisible();
+    const dialog = page.getByRole("dialog", { name: "Search products" });
+    await expect(dialog.getByRole("link", { name: /Search all products for/ })).toBeVisible();
+    await expect(dialog.getByRole("link", { name: "Kids wear" })).toBeVisible();
+  });
+
+  // F-083 (review): the freshly opened dialog lists suggestions in a scrolling
+  // region whose options are arrow-key only (tabindex -1). With no query there
+  // was no Tab-focusable descendant, so axe's scrollable-region-focusable
+  // (WCAG 2.1.1) fired. Every state of the dialog is scanned.
+  test("predictive search: the empty-query suggestions region is keyboard reachable", async ({ page }) => {
+    for (const viewport of [
+      { width: 1280, height: 800 },
+      { width: 375, height: 812 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await gotoAndSettle(page, "/");
+      await page.locator("header").getByRole("button", { name: "Search", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "Search products" });
+      await expect(dialog.getByRole("option").first()).toBeVisible();
+
+      // The suggestion list sits in a scrolling region (max-height +
+      // overflow-y-auto), and the Tab stop that makes it keyboard reachable
+      // lives inside that same region.
+      const region = dialog.locator("div.overflow-y-auto");
+      const overflows = await region.evaluate((el) => el.scrollHeight > el.clientHeight);
+      const browse = region.getByRole("link", { name: "Browse all products" });
+      await expect(browse).toBeVisible();
+      await expect(browse).toHaveAttribute("href", "/shop");
+
+      // Tab order: input -> Close search -> Browse all products.
+      await expect(dialog.getByRole("combobox")).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(dialog.getByRole("button", { name: "Close search" })).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(browse).toBeFocused();
+
+      const results = await new AxeBuilder({ page })
+        .include('[role="dialog"]')
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa", "best-practice"])
+        .analyze();
+      expect(results.violations, `overflows=${overflows} ${describeViolations(results.violations)}`).toEqual([]);
+
+      // The same region with a query typed (links to /shop?q=) and with no matches.
+      await dialog.getByRole("combobox").fill("scrub");
+      await expect(dialog.getByRole("link", { name: /Search all products for/ })).toBeVisible();
+      await dialog.getByRole("combobox").fill("zzqxnomatch");
+      await expect(dialog.getByText("No products found")).toBeVisible();
+      const noResults = await new AxeBuilder({ page })
+        .include('[role="dialog"]')
+        .withTags(["wcag2a", "wcag2aa", "wcag21aa", "wcag22aa", "best-practice"])
+        .analyze();
+      expect(noResults.violations, describeViolations(noResults.violations)).toEqual([]);
+    }
+  });
+
+  // F-241
+  test("newsletter errors are announced (role=alert)", async ({ page }) => {
+    await gotoAndSettle(page, "/");
+    const footer = page.locator("footer");
+    await footer.getByPlaceholder("Enter your email").fill("shopper@example.com");
+    await footer.getByRole("button", { name: "Subscribe" }).click();
+    const alert = footer.getByRole("alert");
+    await expect(alert).toContainText("agree to receive emails");
+    await expect(footer.getByLabel("Email address")).toBeVisible();
+  });
+
+  test("contact form: the success confirmation is announced, takes focus, and \"Send Another\" returns to the form", async ({
+    page,
+  }) => {
+    await gotoAndSettle(page, "/contact");
+    await page.getByLabel("Full Name *").fill("Accessibility Check");
+    await page.getByLabel("Email *").fill("a11y-check@example.com");
+    await page.getByLabel("Message *").fill("Automated accessibility check - please ignore this enquiry.");
+    await page.getByRole("button", { name: "Send Enquiry" }).click();
+
+    const status = page.getByRole("status").filter({ hasText: "Message Sent" });
+    await expect(status).toBeVisible();
+    await expect(status).toBeFocused();
+
+    await page.getByRole("button", { name: "Send Another Message" }).click();
+    await expect(page.getByLabel("Full Name *")).toBeFocused();
+  });
+
+  test("register: a client-side field error is announced and the field takes focus (F-241)", async ({ page }) => {
+    await gotoAndSettle(page, "/account/register");
+    await page.getByLabel("Full Name *").fill("Accessibility Check");
+    await page.getByLabel("Email *").fill("a11y-check@example.com");
+    await page.getByLabel("Phone", { exact: true }).fill("123");
+    await page.getByLabel("Password *").fill("a-long-enough-password");
+    await page.locator("main").getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Create Account" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: "fix the highlighted" })).toBeVisible();
+    await expect(page.getByLabel("Phone", { exact: true })).toBeFocused();
+  });
+
+  test("login errors are announced (role=alert)", async ({ page }) => {
+    await gotoAndSettle(page, "/account/login");
+    await page.getByLabel("Email *").fill("nobody@example.com");
+    await page.getByLabel("Password *").fill("not-a-real-password");
+    await page.getByRole("button", { name: "Sign In" }).click();
+    await expect(page.getByRole("alert").filter({ hasText: /./ })).toBeVisible();
+  });
+
+  test("account login page passes the full axe wcag2a/aa rule set", async ({ page }) => {
+    await gotoAndSettle(page, "/account/login");
+    const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa"]).analyze();
+    expect(results.violations, describeViolations(results.violations)).toEqual([]);
+  });
+
+  // F-087
+  test("the hero's images never use an internal media label as alt text", async ({ page }) => {
+    await gotoAndSettle(page, "/");
+    const alts = await page
+      .locator('section[aria-label="Featured collections"] img')
+      .evaluateAll((images) => images.map((image) => image.getAttribute("alt") ?? ""));
+    for (const alt of alts) {
+      expect(alt).not.toMatch(/^(Homepage|Contact|Category|About|Bulk Orders|Our Story)\b.*\s[—–-]\s/);
+    }
+  });
+
+  test("the homepage has no heading-order violation", async ({ page }) => {
+    await gotoAndSettle(page, "/");
+    await scanRules(page, ["heading-order"]);
+  });
+});

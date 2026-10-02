@@ -39,6 +39,11 @@ If Hermes produces harmful content:
 3. Revoke and rotate `HERMES_API_KEY`
 4. Check `AuditLog` and `HermesTask` output for scope
 
+This section covers harmful Hermes output only. For anything that might involve customer data, a
+leaked secret or an unauthorised login (including a Hermes key compromise), follow
+[INCIDENT_RESPONSE.md](./INCIDENT_RESPONSE.md): it has the secret-rotation table and the CERT-In and
+DPDP notification deadlines.
+
 ## Testing Safety
 
 Run `npm run test` — includes Hermes safety tests verifying stub mode and default SUGGEST_ONLY.

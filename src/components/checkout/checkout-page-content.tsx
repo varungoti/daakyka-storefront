@@ -1,6 +1,6 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { Button, buttonClassNames } from "@/components/ui/button";
 import { EMPTY_CART, setCartState } from "@/context/cart-store";
 import { useCart } from "@/context/cart-provider";
 import { useCurrency } from "@/context/currency-provider";
@@ -390,8 +390,8 @@ export function CheckoutPageContent({
         <p className="mt-2 text-muted">
           Use the cart&rsquo;s checkout button — it takes you to our secure Shopify checkout.
         </p>
-        <Link href="/shop" className="mt-6 inline-block">
-          <Button>Back to Shop</Button>
+        <Link href="/shop" className={buttonClassNames({ className: "mt-6" })}>
+          Back to Shop
         </Link>
       </div>
     );
@@ -402,8 +402,8 @@ export function CheckoutPageContent({
       <div className="mx-auto max-w-lg px-4 py-24 text-center">
         <ShoppingBag className="mx-auto mb-4 text-muted" size={48} />
         <h1 className="font-display text-2xl font-bold text-ink">Your cart is empty</h1>
-        <Link href="/shop" className="mt-6 inline-block">
-          <Button>Continue Shopping</Button>
+        <Link href="/shop" className={buttonClassNames({ className: "mt-6" })}>
+          Continue Shopping
         </Link>
       </div>
     );
@@ -753,7 +753,7 @@ export function CheckoutPageContent({
           ref={errorRef}
           role="alert"
           tabIndex={-1}
-          className="mt-6 flex scroll-mt-24 items-start gap-2 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 outline-none"
+          className="mt-6 flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 outline-none"
         >
           <AlertCircle size={18} className="mt-0.5 shrink-0" />
           <span>{error}</span>
@@ -1032,7 +1032,7 @@ export function CheckoutPageContent({
           {appliedDiscount && (
             <div className="mt-2 flex items-center justify-between text-sm">
               <span className="text-muted">Discount ({appliedDiscount.code})</span>
-              <span className="font-semibold text-trust">-{renderInrPrice(appliedDiscount.amount)}</span>
+              <span className="font-semibold text-trust-ink">-{renderInrPrice(appliedDiscount.amount)}</span>
             </div>
           )}
 
@@ -1073,7 +1073,7 @@ export function CheckoutPageContent({
 
           <div className="mt-4 border-t border-border pt-4">
             {appliedDiscount ? (
-              <div className="flex items-center justify-between gap-2 rounded-md bg-trust/10 px-3 py-2 text-sm text-trust">
+              <div className="flex items-center justify-between gap-2 rounded-md bg-trust/10 px-3 py-2 text-sm text-trust-ink">
                 <span>
                   Code <span className="font-semibold">{appliedDiscount.code}</span> applied
                 </span>

@@ -1,6 +1,7 @@
 import { AccountNav } from "@/components/account/account-nav";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { SectionHeading } from "@/components/ui/section-heading";
+import { accountLoginPath } from "@/lib/customer-auth/return-to";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import type { Metadata } from "next";
 import { headers } from "next/headers";
@@ -66,8 +67,7 @@ export default async function AccountDashboardLayout({ children }: { children: R
     // `/account` fallback.
     const requestHeaders = await headers();
     const currentPath = requestHeaders.get("x-pathname");
-    const returnTo = encodeURIComponent(currentPath || "/account");
-    redirect(`/account/login?returnTo=${returnTo}`);
+    redirect(accountLoginPath(currentPath || "/account"));
   }
 
   return (

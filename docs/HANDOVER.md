@@ -124,7 +124,9 @@ Shopify credentials are **not** on this list — see "How the system actually wo
 ```bash
 npm run verify:101              # Local: db:setup, lint+typecheck+test+build, smoke, E2E,
                                  # dogfood E2E, then a Lighthouse audit against a real prod server
-npm run verify:staging:full     # Live staging probe + remote tests
+# Remote tests need a Preview/staging URL and refuse the production store (they write data);
+# for production use the GET-only mode: `... npm run verify:staging:full -- --production-readonly`
+TEST_BASE_URL=https://<preview-or-staging-host> npm run verify:staging:full
 npm run go-live:check -- --production   # Env checklist before promote — checks the current shell,
                                  # not Vercel itself; see the caveat in GO_LIVE_RUNBOOK.md's A2
 ```

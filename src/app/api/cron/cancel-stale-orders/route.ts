@@ -101,8 +101,11 @@ export async function POST(request: Request) {
       // Conditional, not a blind write: a concurrent /verify call or
       // webhook delivery for this same order may have just won the PAID
       // transition (or the stale-order window may have moved on) between
-      // the query above and here.
-      where: { id: order.id, status: "PENDING_PAYMENT", razorpayPaymentId: null },
+      // the query above and here. `adminNotes` is part of the match too
+      // (F-129): the appended value below is built from the notes read
+      // above, so a note staff saved in between must make this skip the
+      // order — the next run re-reads it — rather than overwrite that note.
+      where: { id: order.id, status: "PENDING_PAYMENT", razorpayPaymentId: null, adminNotes: order.adminNotes },
       data: {
         status: "CANCELLED",
         // F-334: cancelledAt — see status-transitions.ts's

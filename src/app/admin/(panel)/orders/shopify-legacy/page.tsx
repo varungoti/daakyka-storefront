@@ -3,6 +3,9 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Legacy Orders" };
 
 /**
  * Phase D4: the pre-D4 `/admin/orders` page, kept verbatim (same query,
@@ -34,8 +37,8 @@ export default async function AdminShopifyLegacyOrdersPage() {
         </Link>
         <h1 className="mt-2 font-display text-3xl font-bold text-ink">Legacy Shopify Orders</h1>
         <p className="text-muted">
-          Order events from Shopify webhooks — used for post-purchase journeys and revenue tracking before the
-          native catalog/checkout shipped. Not part of the `Order` table above.
+          Orders received from the previous Shopify store. They are kept for reference and revenue history, and are
+          separate from your main orders list.
         </p>
       </div>
 

@@ -15,10 +15,6 @@ export const CURRENCY_LOCALE: Record<SupportedCurrency, string> = {
   USD: "en-US",
 };
 
-export const PRICE_FILTER_MIN_INR = 2499;
-export const PRICE_FILTER_MAX_INR = 10999;
-export const PRICE_FILTER_DEFAULT_MAX_INR = 8999;
-
 export const currencyLabels: Record<SupportedCurrency, string> = {
   INR: "₹ INR",
   USD: "$ USD",

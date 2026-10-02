@@ -2,6 +2,9 @@ import { redirect } from "next/navigation";
 import { DiscountForm } from "@/components/admin/discount-form";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "New Discount" };
 
 export default async function NewDiscountPage() {
   const session = await getSession();

@@ -5,6 +5,8 @@ import { useWishlist } from "@/context/wishlist-provider";
 import { SearchDialog } from "@/components/search/search-dialog";
 import { CurrencyToggle } from "@/components/layout/currency-toggle";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
+import { countedLabel } from "@/lib/a11y/labels";
+import { preloadSearchIndex } from "@/lib/search/search-index";
 import type { NavItem, NavigationTree } from "@/lib/navigation/get-navigation";
 import { cn } from "@/lib/utils";
 import {
@@ -68,7 +70,9 @@ export function Header({ navigation }: { navigation: NavigationTree }) {
       >
         <div className="mx-auto grid max-w-[1320px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-3 py-4 sm:gap-4 sm:px-4 lg:px-8">
           <div className="flex items-center gap-1">
-            <IconButton label="Search" onClick={() => setSearchOpen(true)}>
+            {/* F-013: start downloading the search index on hover/focus so it is
+                already there when the dialog opens. */}
+            <IconButton label="Search" onClick={() => setSearchOpen(true)} onIntent={preloadSearchIndex}>
               <Search size={18} />
             </IconButton>
           </div>
@@ -144,6 +148,7 @@ function IconButton({
   label,
   badge,
   onClick,
+  onIntent,
   className,
   href,
 }: {
@@ -151,6 +156,9 @@ function IconButton({
   label: string;
   badge?: number;
   onClick?: () => void;
+  /** Fired when a pointer reaches or focus lands on the button, ahead of the
+   * click. */
+  onIntent?: () => void;
   className?: string;
   href?: string;
 }) {
@@ -158,6 +166,10 @@ function IconButton({
     "relative rounded-full p-2.5 text-ink transition hover:bg-lilac/60 hover:text-brand",
     className,
   );
+  // F-248: `aria-label` replaces the button's content as its name, so the
+  // count badge inside it was never announced — fold it into the label
+  // ("Cart, 2 items").
+  const accessibleName = countedLabel(label, badge);
   const content = (
     <>
       {children}
@@ -171,14 +183,21 @@ function IconButton({
 
   if (href) {
     return (
-      <Link href={href} aria-label={label} className={classes}>
+      <Link href={href} aria-label={accessibleName} className={classes}>
         {content}
       </Link>
     );
   }
 
   return (
-    <button type="button" aria-label={label} onClick={onClick} className={classes}>
+    <button
+      type="button"
+      aria-label={accessibleName}
+      onClick={onClick}
+      onPointerEnter={onIntent}
+      onFocus={onIntent}
+      className={classes}
+    >
       {content}
     </button>
   );
@@ -193,11 +212,23 @@ function isNavItemActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+// F-090: the desktop nav starts at `lg` (1024px), where eight labels at the
+// full xl padding and tracking don't fit on one row — "FOR HOSPITALS",
+// "SCHOOL UNIFORMS", "KIDS WEAR" and "SIZE GUIDE" each broke onto two lines on
+// an iPad in landscape. `whitespace-nowrap` keeps a label on one line at any
+// width, and the tighter lg spacing is what makes them all fit; xl restores the
+// roomier look.
+const NAV_ITEM_CLASSES =
+  "whitespace-nowrap px-2.5 py-3 text-xs font-bold uppercase tracking-[0.1em] transition-colors hover:text-brand xl:px-4 xl:tracking-[0.15em]";
+
 function DesktopNav({ items, pathname }: { items: NavItem[]; pathname: string }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const navRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const triggerRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  // True from a mousedown inside the nav until the matching mouseup — see
+  // the blur handler below.
+  const pointerDownInside = useRef(false);
 
   const clearCloseTimer = () => {
     if (closeTimer.current) {
@@ -220,6 +251,14 @@ function DesktopNav({ items, pathname }: { items: NavItem[]; pathname: string })
     clearCloseTimer();
     setOpenId(null);
     if (returnFocusTo) triggerRefs.current.get(returnFocusTo)?.focus();
+  };
+
+  // F-010: keyboard focus arriving on a top-level item other than the one
+  // whose panel is open (`id` is null for a plain link, which has no panel)
+  // closes that panel — the WAI disclosure-navigation pattern. Hover opens
+  // a panel too, so this also covers "mouse opened Shop, then Tab".
+  const closeUnlessOwnPanel = (id: string | null) => {
+    setOpenId((current) => (current !== null && current !== id ? null : current));
   };
 
   // Escape closes the open menu and returns focus to its trigger.
@@ -249,15 +288,36 @@ function DesktopNav({ items, pathname }: { items: NavItem[]; pathname: string })
     return () => document.removeEventListener("mousedown", onPointerDown);
   }, [openId]);
 
-  const openItem = items.find((item) => item.id === openId && item.kind !== "link");
+  useEffect(() => {
+    const onPointerUp = () => {
+      pointerDownInside.current = false;
+    };
+    document.addEventListener("mouseup", onPointerUp);
+    return () => document.removeEventListener("mouseup", onPointerUp);
+  }, []);
 
   return (
     <div
       ref={navRef}
       className="relative hidden border-t border-border/70 lg:block"
+      onMouseEnter={clearCloseTimer}
       onMouseLeave={scheduleClose}
+      onMouseDownCapture={() => {
+        pointerDownInside.current = true;
+      }}
+      onBlur={(event) => {
+        // F-010: close once focus has left the nav (trigger + panel) for
+        // anything outside it. A null relatedTarget is also what a mouse
+        // click on a non-focusable spot inside the panel produces (and every
+        // click on a link or button in Safari, which doesn't focus them) —
+        // closing then would unmount the panel before the click lands, so a
+        // mousedown inside the nav is ignored until its mouseup.
+        const next = event.relatedTarget as Node | null;
+        if (next ? navRef.current?.contains(next) : pointerDownInside.current) return;
+        closeNow();
+      }}
     >
-      <nav className="mx-auto flex max-w-[1320px] items-center justify-center gap-1 px-4 lg:px-8">
+      <nav aria-label="Primary" className="mx-auto flex max-w-[1320px] items-center justify-center gap-1 px-4 lg:px-8">
         {items.map((item) => {
           const active = isNavItemActive(pathname, item.href);
           const isOpen = openId === item.id;
@@ -267,10 +327,8 @@ function DesktopNav({ items, pathname }: { items: NavItem[]; pathname: string })
               <Link
                 key={item.id}
                 href={item.href}
-                className={cn(
-                  "px-4 py-3 text-xs font-bold uppercase tracking-[0.15em] transition-colors hover:text-brand",
-                  active ? "text-brand" : "text-ink",
-                )}
+                onFocus={() => closeUnlessOwnPanel(null)}
+                className={cn(NAV_ITEM_CLASSES, active ? "text-brand" : "text-ink")}
               >
                 {item.label}
               </Link>
@@ -289,10 +347,8 @@ function DesktopNav({ items, pathname }: { items: NavItem[]; pathname: string })
                 aria-expanded={isOpen}
                 aria-controls={`nav-panel-${item.id}`}
                 onClick={() => (isOpen ? closeNow(item.id) : openMenu(item.id))}
-                className={cn(
-                  "flex items-center gap-1 px-4 py-3 text-xs font-bold uppercase tracking-[0.15em] transition-colors hover:text-brand",
-                  active || isOpen ? "text-brand" : "text-ink",
-                )}
+                onFocus={() => closeUnlessOwnPanel(item.id)}
+                className={cn("flex items-center gap-1", NAV_ITEM_CLASSES, active || isOpen ? "text-brand" : "text-ink")}
               >
                 {item.label}
                 <ChevronDown
@@ -300,26 +356,33 @@ function DesktopNav({ items, pathname }: { items: NavItem[]; pathname: string })
                   className={cn("transition-transform", isOpen && "rotate-180")}
                 />
               </button>
+
+              {/* F-010: each panel is rendered right after its own trigger —
+                  not once after the whole <nav> — so Tab from an expanded
+                  trigger lands in its panel's links (and Shift+Tab from the
+                  first link returns to the trigger). Neither this wrapper
+                  nor the <nav> is positioned, so the panel's
+                  `absolute inset-x-0 top-full` still resolves against the
+                  full-width `relative` bar above and stays centered under
+                  the whole nav (never clipping off-screen for an item near
+                  the left/right edge — the common "mega menu bar"
+                  pattern), exactly as the old single shared panel did. */}
+              {isOpen && (
+                <div
+                  id={`nav-panel-${item.id}`}
+                  role="region"
+                  aria-label={`${item.label} menu`}
+                  className="absolute inset-x-0 top-full z-50 flex justify-center px-4"
+                >
+                  <div className="w-max max-w-[min(94vw,880px)] rounded-2xl border border-border bg-background p-6 shadow-[0_16px_40px_var(--shadow-tint)]">
+                    <NavPanel item={item} onNavigate={() => closeNow()} />
+                  </div>
+                </div>
+              )}
             </div>
           );
         })}
       </nav>
-
-      {/* A single shared panel centered under the whole nav bar (not
-          per-trigger), so it never clips off-screen for items near the
-          left/right edge — the common "mega menu bar" pattern. */}
-      {openItem && openItem.kind !== "link" && (
-        <div
-          id={`nav-panel-${openItem.id}`}
-          role="region"
-          aria-label={`${openItem.label} menu`}
-          className="absolute inset-x-0 top-full z-50 flex justify-center px-4"
-        >
-          <div className="w-max max-w-[min(94vw,880px)] rounded-2xl border border-border bg-background p-6 shadow-[0_16px_40px_var(--shadow-tint)]">
-            <NavPanel item={openItem} onNavigate={() => closeNow()} />
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -330,16 +393,22 @@ function NavPanel({ item, onNavigate }: { item: NavItem; onNavigate: () => void 
       <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 md:grid-cols-4">
         {item.tiles.map((tile) => (
           <div key={tile.href} className="w-40">
+            {/* The image link and the label link below go to the same place:
+                this one is hidden from assistive tech and the Tab order (one
+                stop per tile, not two), so its photo is decorative — its
+                alt text may be an internal media label (F-087). */}
             <Link
               href={tile.href}
               onClick={onNavigate}
+              aria-hidden="true"
+              tabIndex={-1}
               className="group block overflow-hidden rounded-xl border border-border bg-alt-surface"
             >
               <div className="relative aspect-[4/3] bg-lilac/40">
                 {tile.image ? (
                   <Image
                     src={tile.image.url}
-                    alt={tile.image.alt}
+                    alt=""
                     fill
                     loading="eager"
                     className="object-cover transition duration-300 group-hover:scale-105"
@@ -491,7 +560,7 @@ function MobileNavDrawer({
           </button>
         </div>
 
-        <nav className="flex-1 space-y-1 p-4">
+        <nav aria-label="Mobile" className="flex-1 space-y-1 p-4">
           {items.map((item) => {
             const active = isNavItemActive(pathname, item.href);
 

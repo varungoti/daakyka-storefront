@@ -4,10 +4,11 @@ import {
   type CredentialFieldState,
 } from "@/components/admin/integration-credential-form";
 import { IntegrationToggle } from "@/components/admin/integration-toggle";
-import { BrevoTestSend } from "@/components/admin/brevo-test-send";
+import { BrevoSetupActions } from "@/components/admin/brevo-setup-actions";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
+import { getUndeliveredEmailCount } from "@/lib/engagement/outbox";
 import {
   CREDENTIAL_FIELDS,
   getCredential,
@@ -15,6 +16,9 @@ import {
   type CredentialProvider,
 } from "@/lib/integrations/credential-store";
 import { getIntegrationStatuses } from "@/lib/integrations/status";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Integrations" };
 
 // Only these providers have the DB-backed enable/disable toggle
 // (src/lib/integrations/enabled.ts); Razorpay's "readiness" is derived
@@ -32,6 +36,7 @@ async function buildFieldStates(provider: CredentialProvider): Promise<Credentia
         key: field.key,
         label: field.label,
         secret: field.secret,
+        hint: field.hint,
         configured: meta.configured,
         updatedAt: meta.updatedAt,
         updatedByName: meta.updatedByName,
@@ -59,10 +64,17 @@ export default async function AdminIntegrationsPage() {
   // environment variables, or only one of API_KEY/FROM_EMAIL saved so far,
   // can leave the provider "configured" while still disabled — silently
   // stubbing every email. Surface that state explicitly instead of relying
-  // on the admin to notice the toggle pill above the form.
+  // on the admin to notice the toggle pill above the form. The "Send test
+  // email to me" button is shown whenever Brevo is configured, on or off:
+  // the auto-enable path means the owner who follows the normal setup never
+  // sees the "email is OFF" callout, and still needs an end-to-end check.
   const brevoStatus = envStatuses.find((item) => item.provider === "BREVO");
-  const brevoConfiguredButDisabled =
-    brevoStatus?.status === "configured" && !(settingsMap.BREVO?.enabled ?? false);
+  const brevoConfigured = brevoStatus?.status === "configured";
+  const brevoEnabled = settingsMap.BREVO?.enabled ?? false;
+  const brevoConfiguredButDisabled = brevoConfigured && !brevoEnabled;
+  // Turning Brevo on makes the outbox drain send every PENDING row, so the
+  // callout says how many are waiting before the owner flips it.
+  const waitingEmails = brevoConfiguredButDisabled ? (await getUndeliveredEmailCount()).pending : 0;
   const credentialFieldsByProvider: Record<CredentialProvider, CredentialFieldState[]> = {
     RAZORPAY: razorpayFields,
     BREVO: brevoFields,
@@ -121,8 +133,10 @@ export default async function AdminIntegrationsPage() {
             Paste real Razorpay and Brevo credentials here — no redeploy needed. Clearing a
             credential falls back to its environment variable, if one is set. Use{" "}
             <span className="font-semibold text-ink">Test connection</span> to confirm a saved key
-            actually works before relying on it. Saving both Brevo fields for the first time turns
-            the Brevo toggle above on automatically.
+            actually works before relying on it, and{" "}
+            <span className="font-semibold text-ink">Send test email to me</span> to confirm Brevo
+            delivers end to end. Saving both Brevo fields for the first time turns the Brevo toggle
+            above on automatically.
           </p>
         </div>
         <div className="grid gap-4 md:grid-cols-2">
@@ -133,17 +147,11 @@ export default async function AdminIntegrationsPage() {
           <div>
             <h3 className="mb-2 text-sm font-semibold text-ink">Brevo</h3>
             <IntegrationCredentialForm provider="BREVO" fields={credentialFieldsByProvider.BREVO} />
-            {brevoConfiguredButDisabled ? (
-              <div className="mt-3 space-y-2 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-900">
-                <p className="font-semibold">Your key is saved, but email sending is OFF.</p>
-                <p>
-                  Brevo shows as configured, but the provider toggle above is still disabled, so every
-                  email is still queued in stub mode. Turn it on above, or confirm it actually works
-                  first:
-                </p>
-                <BrevoTestSend />
-              </div>
-            ) : null}
+            <BrevoSetupActions
+              configured={brevoConfigured}
+              enabled={brevoEnabled}
+              waitingEmails={waitingEmails}
+            />
           </div>
         </div>
       </section>

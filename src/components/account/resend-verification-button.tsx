@@ -1,5 +1,6 @@
 "use client";
 
+import { cn } from "@/lib/utils";
 import { useState } from "react";
 
 /**
@@ -42,7 +43,10 @@ export function ResendVerificationButton({
 
   if (status === "sent") {
     return (
-      <p className={className ?? "text-sm font-medium text-trust"}>
+      // F-146: `className` is layout only (a margin, say) — it used to
+      // *replace* the text styling, so the Profile page's `-mt-2` left the
+      // confirmation in the default body size and ink colour.
+      <p className={cn("text-sm font-medium text-trust-ink", className)}>
         If that email needs verifying, a new link is on its way — check your inbox.
       </p>
     );

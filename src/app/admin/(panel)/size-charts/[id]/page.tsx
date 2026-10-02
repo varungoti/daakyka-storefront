@@ -3,6 +3,9 @@ import { SizeChartForm } from "@/components/admin/size-chart-form";
 import { getSizeChartForAdmin, SizeChartNotFoundError } from "@/lib/catalog/size-charts";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Edit Size Chart" };
 
 export default async function EditSizeChartPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();

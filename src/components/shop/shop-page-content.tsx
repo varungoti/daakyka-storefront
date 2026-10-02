@@ -7,6 +7,7 @@ import {
   ShopFeatureCards,
   ShopMixMatchPromo,
 } from "@/components/shop/shop-feature-cards";
+import { ShopUrlPendingMask, ShopUrlPendingScript } from "@/components/shop/shop-url-pending";
 import { TrustBar } from "@/components/layout/trust-bar";
 import { useCurrency } from "@/context/currency-provider";
 import { fabricFilters } from "@/data/navigation";
@@ -15,11 +16,18 @@ import {
   applyShopFiltersToSearchParams,
   countByCategory,
   defaultShopFilters,
+  deriveShopFacets,
   filterProducts,
   parseShopFiltersFromSearchParams,
   parseShopSearchQuery,
+  parseShopVisibleCount,
+  pruneFiltersToFacets,
+  SHOP_PAGE_SIZE,
+  withShopVisibleCount,
   type ShopFilters,
 } from "@/lib/shop/filters";
+import { SHOP_URL_PENDING_ATTR } from "@/lib/shop/url-pending";
+import { createUrlEchoGuard, sameShopFilters } from "@/lib/shop/url-sync";
 import type { CategoryTreeNode } from "@/lib/products";
 import type { Product } from "@/lib/types";
 import type { Testimonial } from "@/lib/types";
@@ -27,7 +35,7 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 function flattenSlugs(node: CategoryTreeNode): string[] {
   return [node.slug, ...node.children.flatMap(flattenSlugs)];
@@ -47,10 +55,11 @@ function buildCategoryDescendants(categories: CategoryTreeNode[]): Record<string
   return map;
 }
 
-/** A route-level immutable category scope may be supplied by a caller.
- * Query-string `?category=` is always a removable facet; category pages
- * already receive products limited to the route slug from the server.
- * Pulled out
+/** Whether the selected category is a facet the shopper picked (and so gets
+ * a removable chip / counts as an active filter), as opposed to
+ * `initialCategory`, a route-level scope a caller may pin the whole page to
+ * (it never counts, and "Clear all" resets back to it). A query-string
+ * `?category=` on a page with no pin is always a removable facet. Pulled out
  * as a pure function so it's unit-testable without rendering the component
  * (this repo has no jsdom/React Testing Library — see
  * shop-page-content.test.ts). */
@@ -111,7 +120,7 @@ export function buildActiveFilterChips(params: {
   if (filters.priceMax !== defaultShopFilters.priceMax) {
     chips.push({
       key: "price",
-      label: `Under ${formatPrice(filters.priceMax)}`,
+      label: `Up to ${formatPrice(filters.priceMax)}`,
       onRemove: () => setFilters({ ...filters, priceMax: defaultShopFilters.priceMax }),
     });
   }
@@ -152,6 +161,28 @@ const TestimonialsSection = dynamic(
 // result: MobileFilterDrawer is unconditionally rendered (controlled via
 // `open`), so it measured no unused-JS improvement and a worse median LCP.
 
+/**
+ * F-018: reads the URL's query string through `useSearchParams()` and hands
+ * it up — the only thing on /shop and /category/[slug] that depends on the
+ * request URL. Rendered inside its own Suspense boundary: on a prerendered
+ * route `useSearchParams()` makes the Client Component tree up to the nearest
+ * boundary render on the client only
+ * (node_modules/next/dist/docs/01-app/03-api-reference/04-functions/use-search-params.md,
+ * "Prerendering"), so this keeps that to a component that renders nothing,
+ * and the product grid stays in the static HTML. A layout effect, so a
+ * client-side navigation that mounts the page applies its filters before the
+ * first paint — and so does a hard load of a filtered URL, whose unfiltered
+ * server-rendered grid is kept from being painted until this has run (see
+ * src/lib/shop/url-pending.ts).
+ */
+function ShopUrlSync({ onSearch }: { onSearch: (search: string) => void }) {
+  const search = useSearchParams().toString();
+  useLayoutEffect(() => {
+    onSearch(search);
+  }, [search, onSearch]);
+  return null;
+}
+
 interface ShopPageHeading {
   eyebrow?: string;
   title: string;
@@ -164,7 +195,6 @@ interface ShopPageContentProps {
   testimonials: Testimonial[];
   categories?: CategoryTreeNode[];
   initialCategory?: string;
-  initialQuery?: string;
   fabricTechEnabled?: boolean;
   mixMatchEnabled?: boolean;
   /** Overrides the default all-apparel hero copy — used by /category/[slug]
@@ -200,7 +230,6 @@ export function ShopPageContent({
   testimonials,
   categories = [],
   initialCategory,
-  initialQuery,
   fabricTechEnabled = false,
   mixMatchEnabled = false,
   heading,
@@ -210,21 +239,74 @@ export function ShopPageContent({
   returnWindowDays = 30,
 }: ShopPageContentProps) {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const { formatPrice } = useCurrency();
 
   // Phase F5 fix: every facet (colour/size/fabric/price/on-sale/in-stock),
-  // not just category/q/sort, is parsed straight from the URL on mount —
-  // see src/lib/shop/filters.ts for the defensive parsing rules. This
-  // makes a filtered /shop or /category/[slug] link reload-stable: the
-  // grid you land on after a hard refresh is exactly the one you shared.
+  // not just category/q/sort, comes from the URL — see
+  // src/lib/shop/filters.ts for the defensive parsing rules. This makes a
+  // filtered /shop or /category/[slug] link reload-stable: the grid you
+  // land on after a hard refresh is exactly the one you shared.
+  //
+  // F-018: the route is prerendered, so the server (and the first client
+  // render, which has to match it) shows the unfiltered grid, and the URL's
+  // facets are applied right after hydration by ShopUrlSync below.
   const [filters, setFiltersState] = useState<ShopFilters>(() =>
-    parseShopFiltersFromSearchParams(searchParams, { category: initialCategory }),
+    parseShopFiltersFromSearchParams(null, { category: initialCategory }),
   );
-  const [query, setQueryState] = useState<string>(
-    () => parseShopSearchQuery(searchParams) || initialQuery || "",
-  );
+  const [query, setQueryState] = useState<string>("");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+  // F-021: how many cards "Load more" had revealed when this page was
+  // entered (`?show=`) — read from the URL once, on the first sync, because
+  // ProductGrid owns the live count from there on (it is re-keyed on this
+  // value, so a restored count mounts a fresh grid at that size). This is
+  // what makes Back from a product page (which remounts this component) land
+  // on the same expanded list.
+  const [initialVisibleCount, setInitialVisibleCount] = useState(SHOP_PAGE_SIZE);
+  const urlApplied = useRef(false);
+  const [echoGuard] = useState(createUrlEchoGuard);
+  // The results container the inline script marks while a hard load of a
+  // filtered URL waits to be hydrated (see ShopUrlPendingScript below).
+  const resultsRef = useRef<HTMLDivElement>(null);
+
+  /** Applies a URL query string to the page's state. Keeps the current
+   * state objects when the URL carries nothing new, so an echo of the page's
+   * own write (or an unrelated param) doesn't make the grid re-filter and
+   * collapse its "Load more" position. */
+  const applyUrlSearch = useCallback(
+    (search: string) => {
+      const urlParams = new URLSearchParams(search);
+      const nextFilters = parseShopFiltersFromSearchParams(urlParams, { category: initialCategory });
+      const nextQuery = parseShopSearchQuery(urlParams);
+      setFiltersState((current) => (sameShopFilters(current, nextFilters) ? current : nextFilters));
+      // Trimmed compare: the URL never carries the trailing space of a
+      // half-typed "scrub ", and that must not be typed over.
+      setQueryState((current) => (current.trim() === nextQuery ? current : nextQuery));
+      if (!urlApplied.current) {
+        urlApplied.current = true;
+        setInitialVisibleCount(parseShopVisibleCount(urlParams));
+      }
+    },
+    [initialCategory],
+  );
+
+  // The router's view of the URL (ShopUrlSync): the first load, and client
+  // navigations to this route with another query string (the search
+  // dialog's "Search all products", a menu or landing-page link such as
+  // /shop?category=...). Ignores the echoes of this page's own writes — see
+  // src/lib/shop/url-sync.ts.
+  const handleRouterSearch = useCallback(
+    (search: string) => {
+      if (!echoGuard.isEcho(search)) applyUrlSearch(search);
+      // The URL's filters are in state now. This runs in ShopUrlSync's layout
+      // effect, so the re-render those setState calls scheduled is flushed
+      // before the browser paints: lifting the mark here reveals the FILTERED
+      // grid, never the unfiltered one the server rendered. (A no-op on a
+      // client-side navigation and on every later URL change — the mark is only
+      // ever set by the inline script, at parse time of a hard load.)
+      resultsRef.current?.removeAttribute(SHOP_URL_PENDING_ATTR);
+    },
+    [applyUrlSearch, echoGuard],
+  );
 
   // Re-derives filters/query on browser back/forward, which change the
   // URL directly (via popstate) without going through this component's
@@ -237,17 +319,16 @@ export function ShopPageContent({
   // synchronize... Subscribe for updates from some external system,
   // calling setState in a callback function when external state
   // changes"). Reads `window.location.search` directly rather than the
-  // closed-over `searchParams` value so it doesn't depend on the
-  // relative timing of Next's own popstate handling vs. this listener.
+  // router's copy of the URL so it doesn't depend on the relative timing of
+  // Next's own popstate handling vs. this listener.
   useEffect(() => {
     const handlePopState = () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      setFiltersState(parseShopFiltersFromSearchParams(urlParams, { category: initialCategory }));
-      setQueryState(parseShopSearchQuery(urlParams) || initialQuery || "");
+      echoGuard.reset();
+      applyUrlSearch(window.location.search);
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [initialCategory, initialQuery]);
+  }, [applyUrlSearch, echoGuard]);
 
   /**
    * Single choke point for every filter/query change: updates React state
@@ -257,21 +338,15 @@ export function ShopPageContent({
    * query as two separate writes) would otherwise hit.
    *
    * This shallow-routes via the native History API instead of
-   * next/navigation's router.push/replace. /shop and /category/[slug]'s
-   * Server Components already read the `searchParams` prop for the
-   * pre-existing category/q/sort params, which — per
-   * node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/page.md
-   * ("searchParams is a Request-time API ... Using it will opt the page
-   * into dynamic rendering") — already makes both routes fully dynamic,
-   * *before* this fix. A real router.push/replace would therefore
-   * round-trip to the server on every single swatch/checkbox click.
+   * next/navigation's router.push/replace. The grid filters in memory, so a
+   * swatch/checkbox click has nothing to ask the server for (F-018: the
+   * route is prerendered and never sees these params at all).
    * history.pushState/replaceState update the address bar and history
    * stack — and, per Next's own "Shallow routing on the client" guide
    * (node_modules/next/dist/docs/01-app/02-guides/single-page-applications.md),
-   * stay in sync with usePathname/useSearchParams — without that
-   * round-trip, so filtering stays exactly as instant as it was before
-   * this fix, just URL-synced (shareable/reload-stable/back-forward-able)
-   * now too.
+   * stay in sync with usePathname/useSearchParams — so filtering stays
+   * instant, and is URL-synced (shareable/reload-stable/back-forward-able)
+   * too.
    *
    * push vs replace: a facet toggle (category, colour swatch, size,
    * fabric, on-sale, in-stock, sort) is one deliberate click, so it
@@ -299,11 +374,21 @@ export function ShopPageContent({
     const params = applyShopFiltersToSearchParams(window.location.search, nextFilters, nextQuery);
     const qs = params.toString();
     const href = qs ? `${pathname}?${qs}` : pathname;
+    echoGuard.noteOwnWrite(qs);
     if (options?.transient) {
       window.history.replaceState(null, "", href);
     } else {
       window.history.pushState(null, "", href);
     }
+  };
+
+  /** Keeps `?show=` in step with ProductGrid's "Load more" — always a
+   * `replaceState` (revealing more cards isn't a history step of its own). */
+  const handleVisibleCountChange = (count: number) => {
+    if (!syncUrl) return;
+    const qs = withShopVisibleCount(window.location.search, count).toString();
+    echoGuard.noteOwnWrite(qs);
+    window.history.replaceState(null, "", qs ? `${pathname}?${qs}` : pathname);
   };
 
   const setFilters = (next: ShopFilters, meta?: { transient?: boolean }) =>
@@ -356,6 +441,32 @@ export function ShopPageContent({
     [products],
   );
 
+  // release-hardening F-015/F-094/F-095: the Color, Size and Price Range
+  // options are what the products really have, not a fixed seed-era list.
+  // Colours and sizes follow the selected category (Kids Wear lists age
+  // bands, not S-3XL); the price range spans every product so it stays put.
+  // Derived from the same `products` prop on the server and the client, so
+  // hydration agrees.
+  const facets = useMemo(
+    () => deriveShopFacets(products, { category: filters.category, categoryDescendants }),
+    [products, filters.category, categoryDescendants],
+  );
+
+  // Switching category drops selected colours/sizes the new category has no
+  // product in — otherwise a "Size M" picked under All Products would carry
+  // into Kids Wear and hide everything there (F-095). Only the panel and
+  // drawer change the category, so only they go through this.
+  const handleFacetPanelChange = (next: ShopFilters, meta?: { transient?: boolean }) =>
+    setFilters(
+      next.category === filters.category
+        ? next
+        : pruneFiltersToFacets(
+            next,
+            deriveShopFacets(products, { category: next.category, categoryDescendants }),
+          ),
+      meta,
+    );
+
   const filteredProducts = useMemo(() => {
     const result = filterProducts(products, filters, categoryDescendants);
     if (!query.trim()) return result;
@@ -374,21 +485,19 @@ export function ShopPageContent({
   // guessing what's still applied. Each `onRemove` goes through the same
   // `setFilters`/`setQuery` choke point as every other facet change, so
   // history stays a normal `pushState`, not a special transient write.
-  const activeFilterChips = useMemo<ActiveFilterChip[]>(
-    () =>
-      buildActiveFilterChips({
-        filters,
-        query,
-        initialCategory,
-        categoryName: (slug) => filterCategories.find((c) => c.slug === slug)?.name ?? slug,
-        fabricLabel: (id) => fabricFilters.find((f) => f.id === id)?.label ?? id,
-        formatPrice,
-        setFilters,
-        setQuery,
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- setFilters/setQuery close over `filters`/`query` themselves and are recreated every render; including them would just re-run this on every render for no reason.
-    [filters, query, initialCategory, filterCategories, formatPrice],
-  );
+  // Rebuilt every render on purpose (a handful of small objects): the
+  // callbacks close over this render's `filters`/`query`, so memoising
+  // them would only add a stale-closure risk.
+  const activeFilterChips = buildActiveFilterChips({
+    filters,
+    query,
+    initialCategory,
+    categoryName: (slug) => filterCategories.find((c) => c.slug === slug)?.name ?? slug,
+    fabricLabel: (id) => fabricFilters.find((f) => f.id === id)?.label ?? id,
+    formatPrice,
+    setFilters,
+    setQuery,
+  });
 
   const pageTitle = heading?.title ?? "Shop All Apparel & Uniforms";
   const pageEyebrow = heading?.eyebrow ?? "Browse";
@@ -399,6 +508,11 @@ export function ShopPageContent({
 
   return (
     <>
+      {syncUrl && (
+        <Suspense fallback={null}>
+          <ShopUrlSync onSearch={handleRouterSearch} />
+        </Suspense>
+      )}
       {/* F-242: `py-6` (was `py-10`) on mobile — this band, the tall hero
           and a 1-column grid together pushed the first product off-screen
           by hundreds of px. */}
@@ -417,12 +531,16 @@ export function ShopPageContent({
           </>
         ) : null}
         <div className="relative mx-auto max-w-[1320px] px-4 lg:px-8">
-          <nav className="mb-3 text-sm text-muted md:mb-6">
+          <nav aria-label="Breadcrumb" className="mb-3 text-sm text-muted md:mb-6">
             <Link href="/" className="hover:text-brand">
               Home
             </Link>
-            <span className="mx-2">›</span>
-            <span className="font-semibold text-ink">{breadcrumbLabel}</span>
+            <span aria-hidden="true" className="mx-2">
+              ›
+            </span>
+            <span aria-current="page" className="font-semibold text-ink">
+              {breadcrumbLabel}
+            </span>
           </nav>
           <div className="max-w-2xl">
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">{pageEyebrow}</p>
@@ -438,18 +556,37 @@ export function ShopPageContent({
       </section>
 
       <section className="pt-4 pb-12 md:py-14">
-        <div className="mx-auto grid grid-cols-1 gap-10 px-4 lg:grid-cols-[280px_minmax(0,1fr)] lg:px-8">
+        {/* F-011: an explicit `grid-cols-1` (`minmax(0,1fr)`) rather than the
+            implicit `auto` track this used to have below `lg`, so the grid
+            column can shrink below the toolbar's min-content instead of
+            growing to it — that's what pushed /shop and /category 7px past
+            a 360px viewport. */}
+        {/* F-018: `data-shop-url-pending` is set on this container, while the
+            HTML is parsed, by ShopUrlPendingScript when the URL has shop params
+            (a hard load of a filtered link): it is `invisible` — with a
+            skeleton in its place — until handleRouterSearch has applied them, so
+            the unfiltered grid the prerender holds is never painted. React does
+            not know about the attribute, hence suppressHydrationWarning (dev
+            would otherwise warn about it as an extra server attribute). */}
+        <div
+          ref={resultsRef}
+          suppressHydrationWarning
+          className="group/results relative mx-auto grid max-w-[1320px] grid-cols-1 gap-10 px-4 data-[shop-url-pending]:invisible lg:grid-cols-[280px_minmax(0,1fr)] lg:px-8"
+        >
+          {syncUrl && <ShopUrlPendingScript />}
           <div className="hidden lg:block">
             <ShopFiltersPanel
               filters={filters}
-              onChange={setFilters}
+              onChange={handleFacetPanelChange}
               categories={filterCategories}
               categoryCounts={categoryCounts}
               totalCount={products.length}
               availableFabricIds={availableFabricIds}
+              facets={facets}
             />
           </div>
           <ProductGrid
+            key={initialVisibleCount}
             products={filteredProducts}
             totalCount={filteredProducts.length}
             sort={filters.sort}
@@ -459,7 +596,11 @@ export function ShopPageContent({
             onSearchQueryChange={setQuery}
             onClearFilters={hasActiveFilters ? clearAllFilters : undefined}
             activeFilters={activeFilterChips}
+            initialVisibleCount={initialVisibleCount}
+            onVisibleCountChange={handleVisibleCountChange}
+            eagerFirst
           />
+          {syncUrl && <ShopUrlPendingMask />}
         </div>
       </section>
 
@@ -467,11 +608,12 @@ export function ShopPageContent({
         open={mobileFiltersOpen}
         onClose={() => setMobileFiltersOpen(false)}
         filters={filters}
-        onChange={setFilters}
+        onChange={handleFacetPanelChange}
         categories={filterCategories}
         categoryCounts={categoryCounts}
         totalCount={products.length}
         availableFabricIds={availableFabricIds}
+        facets={facets}
         resultCount={filteredProducts.length}
         activeCount={activeFilterChips.length}
         onClearAll={clearAllFilters}

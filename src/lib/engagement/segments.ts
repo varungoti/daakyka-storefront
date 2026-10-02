@@ -1,4 +1,5 @@
 import { logAuditEvent } from "@/lib/auth/audit";
+import { diffFields } from "@/lib/auth/audit-diff";
 import { db } from "@/lib/db";
 import type { CustomerSegment } from "@/generated/prisma/client";
 import type { z } from "zod";
@@ -82,6 +83,7 @@ export async function createSegment(input: SegmentInput, userId: string): Promis
     action: "create",
     entity: "customer_segment",
     entityId: segment.id,
+    metadata: { name: segment.name, slug: segment.slug },
   });
 
   return segment;
@@ -114,7 +116,13 @@ export async function updateSegment(
     action: "update",
     entity: "customer_segment",
     entityId: id,
-    metadata: { name: updated.name },
+    // F-288: what moved, not just the new name. The criteria are a JSON rule
+    // set, so only the fact that they changed is recorded.
+    metadata: {
+      name: updated.name,
+      changes: diffFields(existing, updated, ["name", "slug", "description"]),
+      ...(existing.criteria !== updated.criteria ? { criteriaChanged: true } : {}),
+    },
   });
 
   return updated;

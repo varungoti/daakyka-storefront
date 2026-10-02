@@ -16,7 +16,7 @@ function ProductCardSkeleton() {
   return (
     <div className="overflow-hidden rounded-3xl border border-border">
       <Skeleton className="aspect-[4/5] w-full rounded-none" />
-      <div className="space-y-3 p-5">
+      <div className="space-y-3 p-3 sm:p-5">
         <Skeleton className="h-5 w-3/4" />
         <Skeleton className="h-4 w-1/3" />
         <Skeleton className="h-6 w-1/2" />
@@ -27,7 +27,8 @@ function ProductCardSkeleton() {
 
 function ProductCardsGridSkeleton({
   count = 8,
-  className = "grid gap-6 sm:grid-cols-2 xl:grid-cols-4",
+  // F-021/F-242: 2 columns on a phone, same as ProductGrid.
+  className = "grid grid-cols-2 gap-3 sm:gap-6 xl:grid-cols-4",
 }: {
   count?: number;
   className?: string;
@@ -42,16 +43,20 @@ function ProductCardsGridSkeleton({
 }
 
 /** Mirrors `ProductGrid`'s toolbar (src/components/shop/product-grid.tsx):
- * search input + "N products" / sort-by row. `withSearch` matches whether
- * the caller wires `onSearchQueryChange` (only `/shop` and `/category`
- * do — `SectionLandingPage`'s grid has no search box). */
+ * search input + "N products" / filter + sort-by row (stacked on a phone,
+ * inline from `sm`). `withSearch` matches whether the caller wires
+ * `onSearchQueryChange` (only `/shop` and `/category` do —
+ * `SectionLandingPage`'s grid has no search box). */
 function ProductGridToolbarSkeleton({ withSearch = true }: { withSearch?: boolean }) {
   return (
-    <div className="mb-6 flex flex-col gap-4 rounded-2xl border border-border bg-surface-elevated px-5 py-4">
+    <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-border bg-surface-elevated px-4 py-3 sm:mb-6 sm:gap-4 sm:px-5 sm:py-4">
       {withSearch && <Skeleton className="h-11 w-full rounded-full" />}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <Skeleton className="h-4 w-24" />
-        <Skeleton className="h-9 w-36 rounded-full" />
+        <div className="flex items-center gap-2 sm:gap-3">
+          <Skeleton className="h-9 flex-1 rounded-full sm:w-24 sm:flex-none lg:hidden" />
+          <Skeleton className="h-9 flex-1 rounded-full sm:w-36 sm:flex-none" />
+        </div>
       </div>
     </div>
   );
@@ -91,20 +96,21 @@ function ShopFiltersSkeleton() {
 export function ShopGridSkeleton({ showExtras = false }: { showExtras?: boolean }) {
   return (
     <>
-      <section className="relative overflow-hidden border-b border-border bg-alt-surface py-10 md:py-14">
+      <section className="relative overflow-hidden border-b border-border bg-alt-surface py-6 md:py-14">
         <div className="relative mx-auto max-w-[1320px] px-4 lg:px-8">
-          <Skeleton className="mb-6 h-4 w-32" />
+          <Skeleton className="mb-3 h-4 w-32 md:mb-6" />
           <div className="max-w-2xl space-y-3">
             <Skeleton className="h-3 w-20" />
             <Skeleton className="h-10 w-3/4 md:h-12" />
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-2/3" />
+            {/* The real hero hides its description below `sm` (F-242). */}
+            <Skeleton className="hidden h-4 w-full sm:block" />
+            <Skeleton className="hidden h-4 w-2/3 sm:block" />
           </div>
         </div>
       </section>
 
-      <section className="py-12 md:py-14">
-        <div className="mx-auto grid max-w-[1320px] gap-10 px-4 lg:grid-cols-[280px_1fr] lg:px-8">
+      <section className="pt-4 pb-12 md:py-14">
+        <div className="mx-auto grid max-w-[1320px] grid-cols-1 gap-10 px-4 lg:grid-cols-[280px_minmax(0,1fr)] lg:px-8">
           <ShopFiltersSkeleton />
           <div>
             <ProductGridToolbarSkeleton />

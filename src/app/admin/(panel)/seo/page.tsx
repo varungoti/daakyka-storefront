@@ -18,6 +18,9 @@ import {
 import { isWiredSeoPath } from "@/lib/seo/wired-paths";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "SEO" };
 
 export default async function AdminSeoPage() {
   const session = await getSession();
@@ -174,8 +177,9 @@ export default async function AdminSeoPage() {
           <div>
             <h2 className="font-display text-xl font-bold text-ink">SEO Overrides</h2>
             <p className="text-sm text-muted">
-              Editable per-page title/meta description overrides. Home (/) and Shop (/shop) are
-              read live by the storefront&apos;s page metadata.
+              Editable per-page title/meta description overrides. Home, Shop, Bulk Orders, About,
+              Contact, the Guides index and each guide page are read live by the storefront&apos;s
+              page metadata. An override on any other path is recorded but not applied.
             </p>
           </div>
           <Link

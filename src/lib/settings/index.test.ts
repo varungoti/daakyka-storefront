@@ -71,8 +71,18 @@ describe("setting validation", () => {
     assert.equal(settingSchemas["shipping.freeAbove"].safeParse(-1).success, false);
   });
 
-  it("rejects an empty announcement list", () => {
-    assert.equal(settingSchemas["announcement.messages"].safeParse([]).success, false);
+  // F-170: the schema used to require at least one message, so the owner
+  // could never switch the announcement messages off.
+  it("accepts an empty announcement list (it hides the messages)", () => {
+    const result = settingSchemas["announcement.messages"].safeParse([]);
+    assert.equal(result.success, true);
+    assert.deepEqual(result.data, []);
+  });
+
+  it("still bounds the announcement list: at most 10 lines of at most 200 characters, none blank", () => {
+    assert.equal(settingSchemas["announcement.messages"].safeParse(Array(11).fill("Sale")).success, false);
+    assert.equal(settingSchemas["announcement.messages"].safeParse(["x".repeat(201)]).success, false);
+    assert.equal(settingSchemas["announcement.messages"].safeParse(["   "]).success, false);
   });
 
   it("accepts a valid announcement list", () => {

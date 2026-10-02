@@ -30,10 +30,21 @@
  * list is for *remote* image hosts, and a same-origin request never
  * consults it.
  */
+/**
+ * `cdn.shopify.com` was removed from this list (F-307): nothing in the app
+ * references it any more (the Shopify Storefront product client is gone),
+ * and it is a multi-tenant host where ANY Shopify merchant can publish an
+ * arbitrary file. Leaving it allowlisted let anyone point /_next/image at an
+ * unrelated merchant's image and have this store's optimizer fetch and
+ * transcode it (billed to this project), and let /api/outfit/try-on accept
+ * it. If real SKU photography ever moves to Shopify's CDN, re-add the host
+ * together with a `pathname` restriction to this store's own file path
+ * rather than the bare hostname. services/ar-tryon/app/compositor.py keeps
+ * its own copy of this list; keep the two in sync.
+ */
 export const TRUSTED_IMAGE_HOSTS = [
   "images.unsplash.com",
   "images.pexels.com",
-  "cdn.shopify.com",
 ] as const;
 
 /**

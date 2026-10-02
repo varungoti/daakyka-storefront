@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
-import { revalidateProductStockForVariants } from "@/lib/products";
+import { publicStockCeiling, revalidateProductStockForVariants } from "@/lib/products";
 import { getSetting } from "@/lib/settings";
 import type { ShippingAddressInput } from "@/lib/validation/schemas";
 import {
@@ -129,14 +129,25 @@ export class InvalidVariantError extends Error {
 }
 
 export class OutOfStockError extends Error {
+  /** F-031: a capped ceiling (publicStockCeiling), not the exact on-hand
+   * count. This error's message and `available` go straight back to the
+   * shopper from the unauthenticated /api/checkout and /api/checkout/quote
+   * responses, so any caller could probe a variant with an oversized quantity
+   * and read its exact stock off the reply — undoing the PDP/search-payload
+   * cap. Below the cap it is still exact (the "Update qty to N" action
+   * needs it); the order itself is always checked against the real stock. */
+  public readonly available: number;
+
   constructor(
     public readonly variantId: string,
     public readonly productName: string,
     public readonly requested: number,
-    public readonly available: number,
+    available: number,
   ) {
-    super(`${productName} is out of stock (requested ${requested}, only ${available} available)`);
+    const ceiling = publicStockCeiling(available);
+    super(`${productName} is out of stock (requested ${requested}, only ${ceiling} available)`);
     this.name = "OutOfStockError";
+    this.available = ceiling;
   }
 }
 

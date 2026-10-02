@@ -1,25 +1,66 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
+import { FocusedStatus } from "@/components/ui/focused-status";
 import { HoneypotField } from "@/components/ui/honeypot-field";
 import { HONEYPOT_FIELD_NAME } from "@/lib/validation/honeypot";
 import { INDIAN_PHONE_HINT, normalizeIndianPhone } from "@/lib/validation/india";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /** F-132: the field names customerRegisterSchema (src/lib/validation/
  * schemas.ts) can report a `details.fieldErrors` entry for. */
 type RegisterFieldErrors = Partial<Record<"name" | "email" | "password" | "phone" | "consentGiven", string>>;
 
-export function RegisterForm({ returnTo }: { returnTo: string }) {
+/**
+ * F-136: shown in place of the form once the account exists. Registering sends
+ * a verification email (src/app/api/account/register/route.ts) and signs the
+ * customer in; without this they were redirected straight on and never learned
+ * the email existed — until a review was refused for an unverified address.
+ * "Continue" goes where the customer was headed (checkout, an order, /account).
+ * No router.refresh() before then: /account/register redirects a signed-in
+ * visitor straight to `returnTo`, which would skip this notice.
+ */
+export function RegisteredNotice({ email, returnTo }: { email: string; returnTo: string }) {
   const router = useRouter();
+  return (
+    <FocusedStatus className="space-y-3 rounded-3xl border border-trust/30 bg-trust/10 p-8 text-center">
+      <h2 className="font-display text-xl font-bold text-ink">Account created</h2>
+      <p className="text-sm text-muted">
+        We&rsquo;ve sent a verification link to <span className="font-semibold text-ink">{email}</span>. Check your
+        inbox (and spam folder) and open it to verify your email — you can keep shopping in the meantime.
+      </p>
+      <Button
+        className="mt-2 w-full"
+        onClick={() => {
+          router.push(returnTo);
+          router.refresh();
+        }}
+      >
+        Continue
+      </Button>
+    </FocusedStatus>
+  );
+}
+
+export function RegisterForm({ returnTo }: { returnTo: string }) {
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<RegisterFieldErrors>({});
   // F-042: an existing account gets its own message with real sign-in/
   // reset-password links, rather than the generic dead-end error text.
   const [emailTaken, setEmailTaken] = useState(false);
+  // F-136: the address the verification link was sent to, once registered.
+  const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // F-241: after a failed submit, move focus to the first field the server
+  // (or the client-side check) marked invalid — same as checkout does.
+  useEffect(() => {
+    if (Object.keys(fieldErrors).length === 0) return;
+    formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+  }, [fieldErrors]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -83,16 +124,24 @@ export function RegisterForm({ returnTo }: { returnTo: string }) {
         return;
       }
 
-      router.push(returnTo);
-      router.refresh();
+      // The session cookie is set already. Tell the customer to check their
+      // inbox before they move on (the notice's Continue button navigates).
+      setRegisteredEmail(String(form.get("email") ?? "").trim());
+      setStatus("idle");
     } catch {
       setStatus("error");
       setError("Something went wrong. Please try again.");
     }
   };
 
+  if (registeredEmail !== null) return <RegisteredNotice email={registeredEmail} returnTo={returnTo} />;
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl border border-border bg-surface-elevated p-8">
+    <form
+      ref={formRef}
+      onSubmit={handleSubmit}
+      className="space-y-4 rounded-3xl border border-border bg-surface-elevated p-8"
+    >
       <HoneypotField />
       <Field
         label="Full Name *"

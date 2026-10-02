@@ -30,6 +30,26 @@ export interface OrderTimelineStep {
   label: string;
   state: OrderTimelineStepState;
   description?: string;
+  /** F-300 fix: when this step was actually reached — only ever set on a
+   * "complete" step whose real `Order` timestamp is known (see
+   * OrderTimelineMilestones); the presentational view renders it in IST. */
+  at?: Date;
+}
+
+/**
+ * F-199 / F-300 fix: the `Order` timestamp columns the timeline reads
+ * (status-transitions.ts's orderStatusTimestampField is what writes them)
+ * — real facts, not guesses. A step is only dated, and a post-shipping
+ * REFUNDED/RETURNED only claims its shipped/delivered steps, when the
+ * matching column is set; `null`/omitted means "unknown", never "didn't
+ * happen" (an order that shipped before these columns existed has no
+ * `shippedAt`).
+ */
+export interface OrderTimelineMilestones {
+  placedAt?: Date | null;
+  paidAt?: Date | null;
+  shippedAt?: Date | null;
+  deliveredAt?: Date | null;
 }
 
 export interface OrderTimelineTerminalBanner {
@@ -40,16 +60,22 @@ export interface OrderTimelineTerminalBanner {
 
 export interface OrderTimeline {
   /** Forward-moving happy-path steps reached so far. For CANCELLED this
-   * is just "Placed" (see that case below for why); for every other
-   * status it's the full 4-step line. */
+   * is just "Placed" (see that case below for why); for REFUNDED/RETURNED
+   * only the steps the order really got through; for every other status
+   * it's the full 4-step line. */
   steps: OrderTimelineStep[];
-  /** Set only for CANCELLED/REFUNDED. When set, render this banner
-   * instead of continuing the remaining (unreached) steps. */
+  /** Set only for CANCELLED/REFUNDED/RETURNED. When set, render this
+   * banner instead of continuing the remaining (unreached) steps. */
   terminal: OrderTimelineTerminalBanner | null;
 }
 
-function placedStep(): OrderTimelineStep {
-  return { id: "placed", label: "Order placed", state: "complete" };
+/** Attaches a milestone's date to a step that's already complete. */
+function dated(step: OrderTimelineStep, at: Date | null | undefined): OrderTimelineStep {
+  return at ? { ...step, at } : step;
+}
+
+function placedStep(milestones: OrderTimelineMilestones): OrderTimelineStep {
+  return dated({ id: "placed", label: "Order placed", state: "complete" }, milestones.placedAt);
 }
 
 /** PAID/PROCESSING share one step ("confirmed"); the label reads
@@ -57,6 +83,25 @@ function placedStep(): OrderTimelineStep {
  * looks like a failed online payment (release brief, item 2). */
 function confirmedLabel(paymentMethod: PaymentMethod): string {
   return paymentMethod === "ORDER_REQUEST" ? "Order confirmed" : "Payment confirmed";
+}
+
+/** A "confirmed" step that has already happened. Dated by `paidAt` — the
+ * moment payment was received/recorded is the moment the order was
+ * confirmed (an ORDER_REQUEST order that shipped with no payment recorded
+ * simply has no date). */
+function confirmedStep(paymentMethod: PaymentMethod, milestones: OrderTimelineMilestones): OrderTimelineStep {
+  return dated(
+    { id: "confirmed", label: confirmedLabel(paymentMethod), state: "complete" },
+    milestones.paidAt,
+  );
+}
+
+function shippedStep(milestones: OrderTimelineMilestones): OrderTimelineStep {
+  return dated({ id: "shipped", label: "Shipped", state: "complete" }, milestones.shippedAt);
+}
+
+function deliveredStep(milestones: OrderTimelineMilestones): OrderTimelineStep {
+  return dated({ id: "delivered", label: "Delivered", state: "complete" }, milestones.deliveredAt);
 }
 
 export function getOrderTimeline(
@@ -74,20 +119,16 @@ export function getOrderTimeline(
    */
   hasCapturedPayment = true,
   /**
-   * F-199 fix: whether `Order.shippedAt`/`deliveredAt` are actually set —
-   * real columns (see status-transitions.ts's orderStatusTimestampField),
-   * not a guess the way `hasCapturedPayment` sometimes has to be. Only
-   * meaningful for REFUNDED and RETURNED, the statuses now reachable
-   * *after* shipping (SHIPPED/DELIVERED -> RETURNED -> REFUNDED, see
-   * ORDER_STATUS_TRANSITIONS) as well as before it (PAID -> REFUNDED
-   * directly). Both default to `false` — "never claim a step happened
-   * unless the caller actually says so" — so every existing caller/test
-   * that doesn't pass them keeps reading exactly as before (REFUNDED
-   * used to be reachable only from PAID, i.e. never shipped).
+   * F-199 / F-300 fix: the order's real timestamp columns — see
+   * OrderTimelineMilestones. They date the completed steps, tell an
+   * ORDER_REQUEST order whose payment an admin has recorded (`paidAt`)
+   * from one still awaiting confirmation, and decide which post-shipping
+   * steps a REFUNDED order (now reachable from SHIPPED/DELIVERED/RETURNED
+   * as well as PAID) can truthfully claim. Defaults to "nothing known" —
+   * never claim a step happened unless the caller actually says so — so a
+   * caller that omits it reads exactly as before.
    */
-  wasShipped = false,
-  wasDelivered = false,
-  wasPaid = false,
+  milestones: OrderTimelineMilestones = {},
 ): OrderTimeline {
   switch (status) {
     case "PENDING_PAYMENT": {
@@ -95,7 +136,7 @@ export function getOrderTimeline(
       return {
         terminal: null,
         steps: [
-          placedStep(),
+          placedStep(milestones),
           {
             id: "confirmed",
             label: isOrderRequest ? "Awaiting confirmation" : "Awaiting payment",
@@ -114,7 +155,7 @@ export function getOrderTimeline(
       return {
         terminal: null,
         steps: [
-          placedStep(),
+          placedStep(milestones),
           {
             id: "confirmed",
             label: confirmedLabel(paymentMethod),
@@ -130,11 +171,11 @@ export function getOrderTimeline(
       // Manual orders begin in PROCESSING before payment. Once the admin
       // records payment, paidAt remains set even if the order returns to
       // PROCESSING, so the customer sees the confirmed state.
-      if (paymentMethod === "ORDER_REQUEST" && !wasPaid) {
+      if (paymentMethod === "ORDER_REQUEST" && !milestones.paidAt) {
         return {
           terminal: null,
           steps: [
-            placedStep(),
+            placedStep(milestones),
             {
               id: "confirmed",
               label: "Awaiting confirmation",
@@ -149,8 +190,8 @@ export function getOrderTimeline(
       return {
         terminal: null,
         steps: [
-          placedStep(),
-          { id: "confirmed", label: confirmedLabel(paymentMethod), state: "complete" },
+          placedStep(milestones),
+          confirmedStep(paymentMethod, milestones),
           {
             id: "shipped",
             label: "Shipped",
@@ -166,9 +207,9 @@ export function getOrderTimeline(
       return {
         terminal: null,
         steps: [
-          placedStep(),
-          { id: "confirmed", label: confirmedLabel(paymentMethod), state: "complete" },
-          { id: "shipped", label: "Shipped", state: "complete" },
+          placedStep(milestones),
+          confirmedStep(paymentMethod, milestones),
+          shippedStep(milestones),
           { id: "delivered", label: "Delivered", state: "current", description: "On its way to you." },
         ],
       };
@@ -177,10 +218,10 @@ export function getOrderTimeline(
       return {
         terminal: null,
         steps: [
-          placedStep(),
-          { id: "confirmed", label: confirmedLabel(paymentMethod), state: "complete" },
-          { id: "shipped", label: "Shipped", state: "complete" },
-          { id: "delivered", label: "Delivered", state: "complete" },
+          placedStep(milestones),
+          confirmedStep(paymentMethod, milestones),
+          shippedStep(milestones),
+          deliveredStep(milestones),
         ],
       };
 
@@ -201,7 +242,7 @@ export function getOrderTimeline(
       // never actually charged.
       const neverPaid = paymentMethod === "RAZORPAY" && !hasCapturedPayment;
       return {
-        steps: [placedStep()],
+        steps: [placedStep(milestones)],
         terminal: {
           tone: "cancelled",
           label: neverPaid ? "Payment not completed" : "Order cancelled",
@@ -213,19 +254,16 @@ export function getOrderTimeline(
     }
 
     case "REFUNDED": {
-      // F-199 fix: two different journeys reach REFUNDED now
-      // (ORDER_STATUS_TRANSITIONS) — PAID -> REFUNDED directly (refunded
-      // before ever shipping) or RETURNED -> REFUNDED (shipped, and
-      // possibly delivered, before being sent back and refunded).
-      // wasShipped/wasDelivered are real Order columns, so — unlike
-      // CANCELLED's hasCapturedPayment hedge — the extra steps below
-      // state a fact rather than guess one.
-      const steps: OrderTimelineStep[] = [
-        placedStep(),
-        { id: "confirmed", label: confirmedLabel(paymentMethod), state: "complete" },
-      ];
-      if (wasShipped) steps.push({ id: "shipped", label: "Shipped", state: "complete" });
-      if (wasDelivered) steps.push({ id: "delivered", label: "Delivered", state: "complete" });
+      // F-199 fix: REFUNDED is reachable from PAID (refunded before ever
+      // shipping) and, now, from SHIPPED/DELIVERED/RETURNED
+      // (ORDER_STATUS_TRANSITIONS) — "confirmed" is always a fact (every
+      // path passes through a payment), but shipped/delivered only when
+      // the real `shippedAt`/`deliveredAt` columns say so, so — unlike
+      // CANCELLED's hasCapturedPayment hedge — the extra steps below state
+      // a fact rather than guess one.
+      const steps: OrderTimelineStep[] = [placedStep(milestones), confirmedStep(paymentMethod, milestones)];
+      if (milestones.shippedAt) steps.push(shippedStep(milestones));
+      if (milestones.deliveredAt) steps.push(deliveredStep(milestones));
       return {
         steps,
         terminal: {
@@ -241,11 +279,11 @@ export function getOrderTimeline(
       // (ORDER_STATUS_TRANSITIONS), so "shipped" is always a fact here —
       // only "delivered" depends on which of the two it came from.
       const steps: OrderTimelineStep[] = [
-        placedStep(),
-        { id: "confirmed", label: confirmedLabel(paymentMethod), state: "complete" },
-        { id: "shipped", label: "Shipped", state: "complete" },
+        placedStep(milestones),
+        confirmedStep(paymentMethod, milestones),
+        shippedStep(milestones),
       ];
-      if (wasDelivered) steps.push({ id: "delivered", label: "Delivered", state: "complete" });
+      if (milestones.deliveredAt) steps.push(deliveredStep(milestones));
       return {
         steps,
         // "refunded" tone (amber/RotateCcw in OrderTimelineView) reads
@@ -260,6 +298,56 @@ export function getOrderTimeline(
       };
     }
 
+    default: {
+      const exhaustiveCheck: never = status;
+      throw new Error(`Unhandled OrderStatus: ${String(exhaustiveCheck)}`);
+    }
+  }
+}
+
+export type OrderStatusHeroIcon = "clock" | "check" | "truck" | "cancelled" | "refunded";
+
+export interface OrderStatusHero {
+  icon: OrderStatusHeroIcon;
+  label: string;
+}
+
+/**
+ * F-120 fix: the heading and icon at the top of the order page
+ * (src/app/order/[number]/page.tsx — the page a guest reaches from their
+ * confirmation email) used to be a hard-coded "Order confirmed" with a
+ * check mark, whatever the order's status: a cancelled, refunded or
+ * still-unpaid order read "Order confirmed" directly above "Cancelled".
+ * Pure and keyed exhaustively by status (the `never` check below fails the
+ * type-check when the schema grows a new one) so each case is directly
+ * unit-testable without rendering the page; the page only maps `icon` to
+ * a lucide component. Mirrors getOrderTimeline's own framing — in
+ * particular an ORDER_REQUEST order only reads "confirmed" once an admin
+ * has recorded its payment (`paid`, from `Order.paidAt`), since
+ * create-order.ts puts it into PROCESSING before anyone has confirmed it.
+ */
+export function getOrderStatusHero(status: OrderStatus, paymentMethod: PaymentMethod, paid = false): OrderStatusHero {
+  switch (status) {
+    case "PENDING_PAYMENT":
+      return paymentMethod === "ORDER_REQUEST"
+        ? { icon: "clock", label: "Order received" }
+        : { icon: "clock", label: "Awaiting payment" };
+    case "PAID":
+      return { icon: "check", label: "Order confirmed" };
+    case "PROCESSING":
+      return paymentMethod === "ORDER_REQUEST" && !paid
+        ? { icon: "clock", label: "Order received" }
+        : { icon: "check", label: "Order confirmed" };
+    case "SHIPPED":
+      return { icon: "truck", label: "Order shipped" };
+    case "DELIVERED":
+      return { icon: "check", label: "Order delivered" };
+    case "CANCELLED":
+      return { icon: "cancelled", label: "Order cancelled" };
+    case "REFUNDED":
+      return { icon: "refunded", label: "Order refunded" };
+    case "RETURNED":
+      return { icon: "refunded", label: "Order returned" };
     default: {
       const exhaustiveCheck: never = status;
       throw new Error(`Unhandled OrderStatus: ${String(exhaustiveCheck)}`);

@@ -4,13 +4,16 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import {
   computeBackoffMs,
+  CUSTOMER_ORDER_EMAIL_KINDS,
   drainEmailOutbox,
   EMAIL_KIND,
   getUndeliveredEmailCount,
   MAX_ATTEMPTS,
   sendTransactionalEmail,
 } from "@/lib/engagement/outbox";
+import { isSealedBody, REDACTED_BODY, sealOutboxBody } from "@/lib/engagement/outbox-seal";
 import type { SendEmailInput, SendEmailResult } from "@/lib/engagement/providers/email";
+import { withEnv } from "../../../tests/helpers/env";
 
 /**
  * F7 fix (docs/audit-2026-09-19/correctness.md): the transactional-email
@@ -321,6 +324,182 @@ describe("email outbox (F7)", () => {
     });
   });
 
+  // F-043: a queued reset / verify / newsletter-confirm / order-access email
+  // carries a live credential. It must never sit in EmailOutbox.html as
+  // readable text — sealed while PENDING, a fixed placeholder once the row
+  // is terminal.
+  describe("credential-bearing bodies (F-043)", () => {
+    const RAW_TOKEN = `rawTokenForTheLeakTest${randomUUID().replace(/-/g, "")}`;
+    const linkHtml = `<p><a href="https://example.test/account/reset-password?token=${RAW_TOKEN}">Reset</a></p>`;
+    const linkText = `Reset: https://example.test/account/reset-password?token=${RAW_TOKEN}`;
+
+    function credentialInput(label: string): SendEmailInput {
+      return {
+        to: `outbox-secret-${label}-${randomUUID().slice(0, 8)}@example.com`,
+        subject: "Reset your password",
+        html: linkHtml,
+        text: linkText,
+      };
+    }
+
+    it("never stores the raw token readable while a reset email waits PENDING — the body is sealed, not plaintext", async () => {
+      const result = await sendTransactionalEmail(credentialInput("pending"), EMAIL_KIND.CUSTOMER_RESET_PASSWORD);
+      assert.equal(result.ok, false, "Brevo is not configured in the test environment");
+      assert.ok(result.outboxId);
+      createdIds.push(result.outboxId!);
+
+      const row = await db.emailOutbox.findUnique({ where: { id: result.outboxId! } });
+      assert.equal(row!.status, "PENDING");
+      assert.ok(isSealedBody(row!.html), "the credential body must be sealed at rest");
+      assert.ok(!row!.html.includes(RAW_TOKEN), "html must not contain the raw token");
+      assert.equal(row!.text, null, "the plain-text twin lives inside the sealed body, not in its own column");
+      assert.ok(!JSON.stringify(row).includes(RAW_TOKEN), "the token appears nowhere in the stored row");
+    });
+
+    it("drain opens a sealed row, sends the ORIGINAL body, then replaces the stored body with the placeholder", async () => {
+      const queued = await sendTransactionalEmail(credentialInput("drain"), EMAIL_KIND.CUSTOMER_RESET_PASSWORD);
+      createdIds.push(queued.outboxId!);
+
+      let sent: SendEmailInput | null = null;
+      const fakeSend = async (input: SendEmailInput): Promise<SendEmailResult> => {
+        sent = input;
+        return { ok: true, provider: "brevo", messageId: "m-1" };
+      };
+      const result = await drainEmailOutbox({ sendFn: fakeSend, ids: [queued.outboxId!] });
+
+      assert.equal(result.sent, 1);
+      assert.equal(sent!.html, linkHtml, "the customer receives the real link");
+      assert.equal(sent!.text, linkText);
+      const row = await db.emailOutbox.findUnique({ where: { id: queued.outboxId! } });
+      assert.equal(row!.status, "SENT");
+      assert.equal(row!.html, REDACTED_BODY);
+      assert.equal(row!.text, null);
+      assert.ok(!JSON.stringify(row).includes(RAW_TOKEN));
+    });
+
+    it("also blanks the body when a credential row reaches FAILED", async () => {
+      const queued = await sendTransactionalEmail(credentialInput("fail"), EMAIL_KIND.CUSTOMER_VERIFY_EMAIL);
+      createdIds.push(queued.outboxId!);
+      await db.emailOutbox.update({ where: { id: queued.outboxId! }, data: { attemptCount: MAX_ATTEMPTS - 1 } });
+
+      const fakeFail = async (): Promise<SendEmailResult> => ({ ok: false, provider: "brevo", error: "550 no such user" });
+      const result = await drainEmailOutbox({ sendFn: fakeFail, ids: [queued.outboxId!] });
+
+      assert.equal(result.failedTerminal, 1);
+      const row = await db.emailOutbox.findUnique({ where: { id: queued.outboxId! } });
+      assert.equal(row!.status, "FAILED");
+      assert.equal(row!.html, REDACTED_BODY);
+    });
+
+    it("keeps a sealed body intact across a retryable failure so the next attempt can still send it", async () => {
+      const queued = await sendTransactionalEmail(credentialInput("retry"), EMAIL_KIND.CUSTOMER_RESET_PASSWORD);
+      createdIds.push(queued.outboxId!);
+
+      const fakeFail = async (): Promise<SendEmailResult> => ({ ok: false, provider: "brevo", error: "temporary failure" });
+      await drainEmailOutbox({ sendFn: fakeFail, ids: [queued.outboxId!] });
+      const afterFail = await db.emailOutbox.findUnique({ where: { id: queued.outboxId! } });
+      assert.equal(afterFail!.status, "PENDING");
+      assert.ok(isSealedBody(afterFail!.html));
+
+      let sent: SendEmailInput | null = null;
+      const fakeOk = async (input: SendEmailInput): Promise<SendEmailResult> => {
+        sent = input;
+        return { ok: true, provider: "brevo" };
+      };
+      // Step past the failed attempt's 10-minute backoff; clear the reset
+      // TTL (1h) so this test is about the retry, not about expiry.
+      const later = new Date(Date.now() + 30 * 60 * 1000);
+      await db.emailOutbox.update({ where: { id: queued.outboxId! }, data: { expiresAt: null } });
+      const result = await drainEmailOutbox({ sendFn: fakeOk, ids: [queued.outboxId!], now: later });
+      assert.equal(result.sent, 1);
+      assert.equal(sent!.html, linkHtml);
+    });
+
+    it("blanks the body of a superseded reset row and of an expired one — their links are never going out", async () => {
+      const to = `outbox-secret-supersede-${randomUUID().slice(0, 8)}@example.com`;
+      const first = await sendTransactionalEmail({ ...credentialInput("first"), to }, EMAIL_KIND.CUSTOMER_RESET_PASSWORD);
+      createdIds.push(first.outboxId!);
+      const second = await sendTransactionalEmail({ ...credentialInput("second"), to }, EMAIL_KIND.CUSTOMER_RESET_PASSWORD);
+      createdIds.push(second.outboxId!);
+
+      const superseded = await db.emailOutbox.findUnique({ where: { id: first.outboxId! } });
+      assert.equal(superseded!.status, "EXPIRED");
+      assert.equal(superseded!.html, REDACTED_BODY);
+
+      await db.emailOutbox.update({ where: { id: second.outboxId! }, data: { expiresAt: new Date(Date.now() - 1000) } });
+      const result = await drainEmailOutbox({ sendFn: async () => ({ ok: true, provider: "brevo" }), ids: [second.outboxId!] });
+      assert.equal(result.expired, 1);
+      const expired = await db.emailOutbox.findUnique({ where: { id: second.outboxId! } });
+      assert.equal(expired!.status, "EXPIRED");
+      assert.equal(expired!.html, REDACTED_BODY);
+    });
+
+    it("still sends a credential row queued in plaintext before this fix, then redacts it", async () => {
+      const legacy = await db.emailOutbox.create({
+        data: {
+          to: `outbox-secret-legacy-${randomUUID().slice(0, 8)}@example.com`,
+          subject: "Legacy",
+          html: linkHtml,
+          kind: EMAIL_KIND.CUSTOMER_RESET_PASSWORD,
+          status: "PENDING",
+        },
+      });
+      createdIds.push(legacy.id);
+
+      let sent: SendEmailInput | null = null;
+      const result = await drainEmailOutbox({
+        sendFn: async (input) => {
+          sent = input;
+          return { ok: true, provider: "brevo" };
+        },
+        ids: [legacy.id],
+      });
+      assert.equal(result.sent, 1);
+      assert.equal(sent!.html, linkHtml);
+      const row = await db.emailOutbox.findUnique({ where: { id: legacy.id } });
+      assert.equal(row!.html, REDACTED_BODY);
+    });
+
+    it("fails (and redacts) a sealed row that can no longer be opened instead of retrying or sending it", async () => {
+      let sealedUnderOldSecret = "";
+      await withEnv({ AUTH_SECRET: "an-older-auth-secret-0123456789abcdefghij" }, () => {
+        sealedUnderOldSecret = sealOutboxBody({ html: linkHtml, text: linkText });
+      });
+      const row = await db.emailOutbox.create({
+        data: {
+          to: `outbox-secret-rotated-${randomUUID().slice(0, 8)}@example.com`,
+          subject: "Rotated",
+          html: sealedUnderOldSecret,
+          kind: EMAIL_KIND.CUSTOMER_RESET_PASSWORD,
+          status: "PENDING",
+        },
+      });
+      createdIds.push(row.id);
+
+      let sendCalls = 0;
+      const result = await drainEmailOutbox({
+        sendFn: async () => {
+          sendCalls += 1;
+          return { ok: true, provider: "brevo" };
+        },
+        ids: [row.id],
+      });
+      assert.equal(sendCalls, 0, "an unreadable body must never be sent");
+      assert.equal(result.failedTerminal, 1);
+      const updated = await db.emailOutbox.findUnique({ where: { id: row.id } });
+      assert.equal(updated!.status, "FAILED");
+      assert.equal(updated!.html, REDACTED_BODY);
+    });
+
+    it("leaves non-credential kinds exactly as before — the body is kept readable (the retention job ages it out)", async () => {
+      const input = testInput("noncred");
+      const result = await sendTransactionalEmail(input, EMAIL_KIND.ORDER_CONFIRMATION_ADMIN);
+      createdIds.push(result.outboxId!);
+      const row = await db.emailOutbox.findUnique({ where: { id: result.outboxId! } });
+      assert.equal(row!.html, input.html);
+    });
+  });
+
   describe("getUndeliveredEmailCount", () => {
     it("counts PENDING and FAILED rows, excluding SENT", async () => {
       const before = await getUndeliveredEmailCount();
@@ -353,6 +532,46 @@ describe("email outbox (F7)", () => {
       assert.equal(afterCounts.pending, before.pending + 1);
       assert.equal(afterCounts.failed, before.failed + 1);
       assert.equal(afterCounts.total, before.total + 2);
+    });
+
+    // F-209: the orders-page banner must not count verification / reset
+    // emails or the store's own admin copy as "order-related".
+    it("kinds filter counts only the requested kinds", async () => {
+      const kinds = [EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER] as const;
+      const before = await getUndeliveredEmailCount({ kinds });
+
+      const mk = async (kind: string, status: "PENDING" | "FAILED") => {
+        const row = await db.emailOutbox.create({
+          data: {
+            to: `outbox-test-kind-${randomUUID().slice(0, 8)}@example.com`,
+            subject: "Kind filter test",
+            html: "<p>test</p>",
+            kind,
+            status,
+          },
+        });
+        createdIds.push(row.id);
+      };
+      await mk(EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER, "PENDING");
+      await mk(EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER, "FAILED");
+      await mk(EMAIL_KIND.CUSTOMER_VERIFY_EMAIL, "PENDING");
+      await mk(EMAIL_KIND.CUSTOMER_RESET_PASSWORD, "FAILED");
+      await mk(EMAIL_KIND.ORDER_CONFIRMATION_ADMIN, "PENDING");
+
+      const after = await getUndeliveredEmailCount({ kinds });
+      assert.equal(after.pending, before.pending + 1);
+      assert.equal(after.failed, before.failed + 1);
+      assert.equal(after.total, before.total + 2);
+
+      assert.deepEqual(
+        [...CUSTOMER_ORDER_EMAIL_KINDS].sort(),
+        [
+          EMAIL_KIND.ORDER_CANCELLED_CUSTOMER,
+          EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER,
+          EMAIL_KIND.ORDER_REFUNDED_CUSTOMER,
+          EMAIL_KIND.ORDER_SHIPPED_CUSTOMER,
+        ].sort(),
+      );
     });
   });
 });

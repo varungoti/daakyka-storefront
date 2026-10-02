@@ -1,5 +1,6 @@
 import { ProductGrid } from "@/components/shop/product-grid";
-import { Button } from "@/components/ui/button";
+import { buttonClassNames } from "@/components/ui/button";
+import { publicImageAlt } from "@/lib/media/public-alt";
 import { PageHeroBand, PageContentSection } from "@/components/ui/page-shell";
 import { SectionHeading } from "@/components/ui/section-heading";
 import type { CategoryTreeNode } from "@/lib/products";
@@ -43,16 +44,12 @@ export function SectionLandingPage({
       <PageHeroBand innerClassName="max-w-3xl text-center" image={bannerImage}>
         <SectionHeading eyebrow={eyebrow} title={title} description={description} align="center" titleAs="h1" />
         <div className="mt-8 flex flex-wrap justify-center gap-3">
-          <Link href="#products">
-            <Button size="lg">
-              Shop {title}
-              <ArrowRight size={18} />
-            </Button>
+          <Link href="#products" className={buttonClassNames({ size: "lg" })}>
+            Shop {title}
+            <ArrowRight size={18} />
           </Link>
-          <Link href="/bulk-orders">
-            <Button variant="outline" size="lg">
-              Bulk Order Enquiry
-            </Button>
+          <Link href="/bulk-orders" className={buttonClassNames({ variant: "outline", size: "lg" })}>
+            Bulk Order Enquiry
           </Link>
         </div>
       </PageHeroBand>
@@ -71,7 +68,7 @@ export function SectionLandingPage({
                   {sub.image ? (
                     <Image
                       src={sub.image.url}
-                      alt={sub.image.alt ?? sub.name}
+                      alt={publicImageAlt(sub.image.alt, sub.name)}
                       fill
                       className="object-cover transition duration-300 group-hover:scale-105"
                       sizes="(max-width: 768px) 50vw, 25vw"
@@ -100,11 +97,16 @@ export function SectionLandingPage({
         <div className="mx-auto flex max-w-[1320px] flex-col items-center gap-6 px-4 text-center text-white lg:px-8">
           <h2 className="font-display text-2xl font-bold md:text-3xl">Ordering for a team?</h2>
           <p className="max-w-xl text-sm leading-relaxed text-white/85">{bulkNote}</p>
-          <Link href="/bulk-orders">
-            <Button variant="outline" size="lg" className="border-white text-white hover:bg-white hover:text-brand-violet">
-              Request a Bulk Quote
-              <ArrowRight size={18} />
-            </Button>
+          <Link
+            href="/bulk-orders"
+            className={buttonClassNames({
+              variant: "outline",
+              size: "lg",
+              className: "border-white text-white hover:bg-white hover:text-brand-violet",
+            })}
+          >
+            Request a Bulk Quote
+            <ArrowRight size={18} />
           </Link>
         </div>
       </section>

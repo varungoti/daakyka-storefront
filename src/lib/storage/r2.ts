@@ -17,6 +17,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
+import { readR2Env, type R2Env } from "./r2-env";
 
 export class StorageNotConfiguredError extends Error {
   constructor(message = "Cloudflare R2 storage is not configured") {
@@ -25,26 +26,9 @@ export class StorageNotConfiguredError extends Error {
   }
 }
 
-interface R2Env {
-  accountId: string;
-  accessKeyId: string;
-  secretAccessKey: string;
-  bucket: string;
-}
-
-// Accepts CLOUDFLARE_* names as a fallback to R2_* — this deployment's
-// .env was populated under the Cloudflare-prefixed names (account
-// dashboard convention) rather than this app's own R2_* convention.
-function readR2Env(): R2Env | null {
-  const accountId = process.env.R2_ACCOUNT_ID ?? process.env.CLOUDFLARE_ACCOUNT_ID;
-  const accessKeyId =
-    process.env.R2_ACCESS_KEY_ID ?? process.env.CLOUDFLARE_ACCESS_KEY_ID ?? process.env.CLOUDFLARE_ACCESS_KEY;
-  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY ?? process.env.CLOUDFLARE_SECRET_ACCESS_KEY;
-  const bucket = process.env.R2_BUCKET;
-  if (!accountId || !accessKeyId || !secretAccessKey || !bucket) return null;
-  return { accountId, accessKeyId, secretAccessKey, bucket };
-}
-
+// Env resolution (R2_* with CLOUDFLARE_* fallbacks) lives in ./r2-env so
+// src/lib/env.ts's boot-time check can share it without importing the S3 SDK.
+// The boot-time warning and this check therefore can never disagree (F-237).
 export function isR2Configured(): boolean {
   return readR2Env() !== null;
 }

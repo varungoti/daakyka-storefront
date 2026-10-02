@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { db } from "@/lib/db";
 
 /**
@@ -13,11 +14,15 @@ import { db } from "@/lib/db";
  * (src/lib/notifications.ts): a DB hiccup here must never break the
  * whole admin shell, so it swallows errors and returns 0 rather than
  * throwing.
+ *
+ * F-262: wrapped in React `cache()` — the admin layout (sidebar badge) and
+ * the dashboard page (tile) both ask for this in the same request, and
+ * share one query this way. Outside a render it just calls through.
  */
-export async function getPendingReviewCount(): Promise<number> {
+export const getPendingReviewCount = cache(async function getPendingReviewCount(): Promise<number> {
   try {
     return await db.review.count({ where: { status: "PENDING" } });
   } catch {
     return 0;
   }
-}
+});

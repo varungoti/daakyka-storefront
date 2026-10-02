@@ -19,6 +19,8 @@ export interface CredentialFieldMeta {
   /** Masked in the admin UI ("•••• configured") — every field here is,
    * except BREVO/FROM_EMAIL, which is plain config, not a secret. */
   secret: boolean;
+  /** Helper text shown under the field in the admin form. */
+  hint?: string;
 }
 
 export const CREDENTIAL_FIELDS: Record<CredentialProvider, CredentialFieldMeta[]> = {
@@ -29,7 +31,14 @@ export const CREDENTIAL_FIELDS: Record<CredentialProvider, CredentialFieldMeta[]
   ],
   BREVO: [
     { key: "API_KEY", label: "API Key", secret: true },
-    { key: "FROM_EMAIL", label: "From Email", secret: false },
+    {
+      key: "FROM_EMAIL",
+      label: "From Email",
+      secret: false,
+      // F-267: required (src/lib/integrations/status.ts won't call Brevo
+      // configured without it), and Brevo rejects any sender it hasn't verified.
+      hint: "Required. Use a sender address or domain you've verified in Brevo — otherwise Brevo rejects every email.",
+    },
   ],
 };
 

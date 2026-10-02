@@ -6,6 +6,9 @@ import { listSizeChartsForAdmin } from "@/lib/catalog/size-charts";
 import { descriptionToSafeHtml } from "@/lib/catalog/description-html";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Edit Product" };
 
 export default async function EditProductPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();

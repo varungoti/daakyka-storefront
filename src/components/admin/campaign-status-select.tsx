@@ -29,9 +29,13 @@ interface CampaignPreview {
 
 export function CampaignStatusSelect({
   campaignId,
+  campaignName,
   currentStatus,
 }: {
   campaignId: string;
+  /** Names the select for assistive tech ("Status for Diwali offer"), since
+   * the campaign lists render one per campaign. */
+  campaignName: string;
   currentStatus: CampaignStatus;
 }) {
   const router = useRouter();
@@ -152,6 +156,7 @@ export function CampaignStatusSelect({
         value={currentStatus}
         onChange={handleChange}
         disabled={pending}
+        aria-label={`Status for ${campaignName}`}
         className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold uppercase outline-none focus:border-brand disabled:cursor-not-allowed disabled:opacity-60"
       >
         {options.map((status) => (

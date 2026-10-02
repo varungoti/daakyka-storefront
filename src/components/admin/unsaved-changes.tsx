@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useState } from "react";
 
 /**
  * Release-hardening F-13 (docs/audit-2026-09-19/admin-ux.md): editing a
@@ -38,7 +38,11 @@ export const CONFIRM_MESSAGE = "You have unsaved changes. Leave without saving?"
 
 interface UnsavedChangesContextValue {
   dirty: boolean;
-  setDirty: (dirty: boolean) => void;
+  /** F-170: each form reports under its own `source` id, so two dirty forms
+   * on one page (Site Controls has four editors, Homepage has two) don't
+   * overwrite each other's flag — the page counts as dirty while *any*
+   * source is. */
+  setSourceDirty: (source: string, dirty: boolean) => void;
   /** Returns true when it's safe to proceed (nothing dirty, or the admin
    * confirmed leaving anyway). Used both by <GuardedLink> and by any
    * programmatic navigation (e.g. a "Back to list" button, Sign Out) that
@@ -48,8 +52,24 @@ interface UnsavedChangesContextValue {
 
 const UnsavedChangesContext = createContext<UnsavedChangesContextValue | null>(null);
 
+/** F-170: the next set of dirty sources once `source` reports `isDirty`.
+ * Returns `prev` itself when nothing changed, so React skips the re-render.
+ * Pure, so the multi-form bookkeeping is unit-testable without a DOM. */
+export function nextDirtySources(prev: ReadonlySet<string>, source: string, isDirty: boolean): ReadonlySet<string> {
+  if (prev.has(source) === isDirty) return prev;
+  const next = new Set(prev);
+  if (isDirty) next.add(source);
+  else next.delete(source);
+  return next;
+}
+
 export function UnsavedChangesProvider({ children }: { children: React.ReactNode }) {
-  const [dirty, setDirty] = useState(false);
+  const [dirtySources, setDirtySources] = useState<ReadonlySet<string>>(() => new Set());
+  const dirty = dirtySources.size > 0;
+
+  const setSourceDirty = useCallback((source: string, isDirty: boolean) => {
+    setDirtySources((prev) => nextDirtySources(prev, source, isDirty));
+  }, []);
 
   const confirmLeave = useCallback(() => {
     if (!dirty) return true;
@@ -60,39 +80,9 @@ export function UnsavedChangesProvider({ children }: { children: React.ReactNode
     return window.confirm(CONFIRM_MESSAGE);
   }, [dirty]);
 
-  const value = useMemo(() => ({ dirty, setDirty, confirmLeave }), [dirty, confirmLeave]);
-
-  return <UnsavedChangesContext.Provider value={value}>{children}</UnsavedChangesContext.Provider>;
-}
-
-function useUnsavedChangesContext(): UnsavedChangesContextValue {
-  const ctx = useContext(UnsavedChangesContext);
-  if (!ctx) {
-    throw new Error("useUnsavedChangesContext must be used within an UnsavedChangesProvider");
-  }
-  return ctx;
-}
-
-/**
- * Called by a form with its own computed `dirty` boolean (see
- * src/lib/admin/is-dirty.ts for the comparison helper forms use to compute
- * it). Registers the `beforeunload` guard for the browser
- * close/reload/typed-URL case, and publishes `dirty` to the shared context
- * so a <GuardedLink> anywhere on the page (e.g. the sidebar) knows to
- * confirm before navigating. Clears the shared flag on unmount so it never
- * outlives the form that set it.
- */
-export function useUnsavedChangesGuard(dirty: boolean): void {
-  const { setDirty } = useUnsavedChangesContext();
-
-  useEffect(() => {
-    setDirty(dirty);
-  }, [dirty, setDirty]);
-
-  useEffect(() => {
-    return () => setDirty(false);
-  }, [setDirty]);
-
+  // The browser-level guards hang off the *aggregate* flag (not each form's
+  // own), so two dirty forms add one `beforeunload` listener and one Back
+  // sentinel — not one prompt per form.
   useEffect(() => {
     if (!dirty) return;
     const handler = (event: BeforeUnloadEvent) => {
@@ -109,9 +99,42 @@ export function useUnsavedChangesGuard(dirty: boolean): void {
   // F-184: see installBackGuard's doc comment for how this actually works.
   useEffect(() => {
     if (!dirty) return;
-    if (typeof window === "undefined") return;
     return installBackGuard(window);
   }, [dirty]);
+
+  const value = useMemo(() => ({ dirty, setSourceDirty, confirmLeave }), [dirty, setSourceDirty, confirmLeave]);
+
+  return <UnsavedChangesContext.Provider value={value}>{children}</UnsavedChangesContext.Provider>;
+}
+
+function useUnsavedChangesContext(): UnsavedChangesContextValue {
+  const ctx = useContext(UnsavedChangesContext);
+  if (!ctx) {
+    throw new Error("useUnsavedChangesContext must be used within an UnsavedChangesProvider");
+  }
+  return ctx;
+}
+
+/**
+ * Called by a form with its own computed `dirty` boolean (see
+ * src/lib/admin/is-dirty.ts for the comparison helper forms use to compute
+ * it). Publishes `dirty` to the shared context — which owns the
+ * `beforeunload` and Back-button guards, and lets a <GuardedLink> anywhere
+ * on the page (e.g. the sidebar) know to confirm before navigating. Clears
+ * this form's flag on unmount so it never outlives the form that set it.
+ * Safe to call from several forms on the same page (see `setSourceDirty`).
+ */
+export function useUnsavedChangesGuard(dirty: boolean): void {
+  const { setSourceDirty } = useUnsavedChangesContext();
+  const source = useId();
+
+  useEffect(() => {
+    setSourceDirty(source, dirty);
+  }, [source, dirty, setSourceDirty]);
+
+  useEffect(() => {
+    return () => setSourceDirty(source, false);
+  }, [source, setSourceDirty]);
 }
 
 /** The minimal `window` surface `installBackGuard` needs — narrowed so a

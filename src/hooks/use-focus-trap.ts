@@ -2,8 +2,18 @@
 
 import { useEffect, useRef } from "react";
 
-const FOCUSABLE_SELECTOR =
-  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+// `:not([tabindex="-1"])` on every entry, not just the last: an element that
+// is focusable but deliberately out of the Tab order (an `<a tabIndex={-1}>`
+// listbox option, say) must never be picked as the first/last stop, or Tab
+// from the real last stop would never wrap.
+const FOCUSABLE_SELECTOR = [
+  'a[href]:not([tabindex="-1"])',
+  'button:not([disabled]):not([tabindex="-1"])',
+  'input:not([disabled]):not([tabindex="-1"])',
+  'select:not([disabled]):not([tabindex="-1"])',
+  'textarea:not([disabled]):not([tabindex="-1"])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(", ");
 
 /**
  * Shared focus-trap behavior for dialogs/drawers/menus: while `open`,
@@ -69,7 +79,13 @@ export function useFocusTrap<T extends HTMLElement>(
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       if (lockScroll) document.body.style.overflow = previousOverflow;
-      const restoreTo = options?.restoreFocusRef?.current ?? previouslyFocused;
+      // F-238: a `previouslyFocused` that is inside the container (an
+      // `autoFocus`ed field, which React focuses during commit — before
+      // this effect runs) is not where the user came from, and it is about
+      // to be unmounted; restoring to it silently drops focus to <body>.
+      const restoreTo =
+        options?.restoreFocusRef?.current ??
+        (previouslyFocused && !container?.contains(previouslyFocused) ? previouslyFocused : null);
       restoreTo?.focus?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onClose/options identity churn is fine to ignore here

@@ -5,6 +5,7 @@ import { useCurrency } from "@/context/currency-provider";
 import { Badge } from "@/components/ui/badge";
 import { StarRating } from "@/components/ui/star-rating";
 import { WishlistButton } from "@/components/wishlist/wishlist-button";
+import { quickAddLabel } from "@/lib/a11y/labels";
 import { computePercentOff } from "@/lib/pricing/percent-off";
 import { isSizeAvailableForColor, isVariantInStock, resolveVariant } from "@/lib/products/resolve-variant";
 import type { Product } from "@/lib/types";
@@ -12,7 +13,8 @@ import { cn } from "@/lib/utils";
 import { ShoppingBag } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useRef, useState } from "react";
 
 interface ProductCardProps {
   product: Product;
@@ -29,6 +31,28 @@ interface ProductCardProps {
    * next/image's own deprecated `priority` prop (see the `preload` prop
    * this sets below). */
   loadEagerly?: boolean;
+  /** F-021/F-242: set by the 2-column mobile listing grid (ProductGrid) —
+   * below `sm` the card is only ~170px wide there, so it gets tighter
+   * padding and smaller type, drops the "View Product" text and Quick Add
+   * (six size chips plus an "Add" button wrap badly at that width, and the
+   * whole photo already links to the PDP, which has its own full-size
+   * add-to-cart), and asks next/image for a half-viewport-wide image
+   * instead of a full-width one. Grids that still render one full-width
+   * card per row on a phone (collection pages, the PDP's related row, ...)
+   * leave this off and keep the full-size card. From `sm` up it changes
+   * nothing. */
+  compact?: boolean;
+  /** F-260: prefetch the product page when the shopper shows intent
+   * (pointer over the card, a touch on it, keyboard focus into it) instead
+   * of as soon as its link scrolls into the viewport, which is what a
+   * `<Link>` does by default. A listing is dozens of cards: scrolling /shop
+   * on a phone fired about 35-60 product-page prefetches (each a server
+   * round trip, and a PDP's prefetch is not small) for pages the shopper
+   * mostly never opens. `prefetch={false}` on a Link also switches off its
+   * own hover prefetch, so this does it by hand with `router.prefetch`.
+   * Set by ProductGrid; the short rows (the PDP's "You may also like",
+   * collection pages) keep the default. */
+  prefetchOnIntent?: boolean;
 }
 
 /**
@@ -48,8 +72,27 @@ interface ProductCardProps {
  *    ones.
  * No button-inside-anchor or anchor-inside-button remains.
  */
-export function ProductCard({ product, className, loadEagerly = false }: ProductCardProps) {
+export function ProductCard({
+  product,
+  className,
+  loadEagerly = false,
+  compact = false,
+  prefetchOnIntent = false,
+}: ProductCardProps) {
   const { formatPrice } = useCurrency();
+  const router = useRouter();
+  const productHref = `/products/${product.handle}`;
+  const prefetched = useRef(false);
+  const prefetchProduct = prefetchOnIntent
+    ? () => {
+        if (prefetched.current) return;
+        prefetched.current = true;
+        router.prefetch(productHref);
+      }
+    : undefined;
+  // `prefetch={false}` only when intent drives it; otherwise leave the Link's
+  // default (viewport) prefetching alone.
+  const linkPrefetch = prefetchOnIntent ? false : undefined;
   // release-hardening audit F-016: `product.image` and `product.colorName`
   // are now the same colour (see mapDbProductToUi's `defaultColor`) —
   // seeding this from `product.images[0]` instead of `product.image` was
@@ -71,8 +114,21 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
 
   return (
     <article
+      onPointerEnter={prefetchProduct}
+      onTouchStart={prefetchProduct}
+      onFocus={prefetchProduct}
       className={cn(
         "product-card-surface group hover:border-brand hover:shadow-sm relative overflow-hidden rounded-3xl border border-border transition-colors",
+        // F-239: the name/price link spans the card edge to edge, so the global
+        // :focus-visible outline (drawn outside the link) is clipped on the
+        // left and right by this card's overflow-hidden and only showed as two
+        // stray horizontal lines. A box-shadow ring on the card itself isn't
+        // clipped by its own overflow, so the ring follows the link's focus
+        // instead. Forced-colors mode (Windows High Contrast) strips
+        // box-shadow, so the link also keeps an inset, transparent outline —
+        // invisible normally, painted in a system colour there (see its
+        // className).
+        "has-[[data-card-link]:focus-visible]:ring-2 has-[[data-card-link]:focus-visible]:ring-brand has-[[data-card-link]:focus-visible]:ring-offset-2",
         className,
       )}
     >
@@ -83,7 +139,8 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
             name/price `<Link>` below already carries the accessible name
             for "go to this product". */}
         <Link
-          href={`/products/${product.handle}`}
+          href={productHref}
+          prefetch={linkPrefetch}
           aria-hidden="true"
           tabIndex={-1}
           className="block"
@@ -96,14 +153,23 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
               quality={75}
               unoptimized={displayImage.endsWith(".svg")}
               className="object-cover transition-transform duration-500 group-hover:scale-105"
-              sizes="(max-width: 640px) 50vw, (max-width: 1280px) 50vw, 25vw"
+              sizes={
+                compact
+                  ? "(max-width: 1279px) 50vw, 25vw"
+                  : "(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
+              }
               preload={loadEagerly}
               fetchPriority={loadEagerly ? "high" : undefined}
             />
           </div>
         </Link>
 
-        <div className="pointer-events-none absolute left-2 top-2 flex flex-col gap-2 sm:left-4 sm:top-4">
+        <div
+          className={cn(
+            "pointer-events-none absolute left-4 top-4 flex flex-col gap-2",
+            compact && "max-sm:left-2 max-sm:top-2",
+          )}
+        >
           {soldOut && (
             <Badge variant="bestseller" className="pointer-events-auto bg-ink text-white">
               Sold out
@@ -132,11 +198,14 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
           )}
         </div>
 
-        <WishlistButton product={product} className="absolute right-2 top-2 z-10 sm:right-4 sm:top-4" />
+        <WishlistButton
+          product={product}
+          className={cn("absolute right-4 top-4 z-10", compact && "max-sm:right-2 max-sm:top-2")}
+        />
       </div>
 
       {product.colors.length > 1 && (
-        <div className="flex items-center gap-1 px-3 pt-3 sm:gap-2 sm:px-5 sm:pt-4">
+        <div className={cn("flex items-center gap-2 px-5 pt-4", compact && "max-sm:gap-1 max-sm:px-3 max-sm:pt-3")}>
           {product.colors.slice(0, 5).map((color) => (
             // F-240: the visible swatch stays 16px (`span` below), but the
             // button itself is a 24px hit area — axe's target-size audit
@@ -152,6 +221,10 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
                 // even after the photo changed to a different one.
                 setSelectedColor(color.name);
                 const match = product.images?.find((img) => img.color === color.name);
+                // A colour with no photo of its own shows the placeholder
+                // rather than leaving the previous colour's photo under the
+                // new colour's name — same rule as the PDP gallery
+                // (selectProductGallery).
                 setDisplayImage(match?.url ?? "/placeholder-product.svg");
               }}
               aria-pressed={selectedColor === color.name}
@@ -170,36 +243,66 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
       )}
 
       <Link
-        href={`/products/${product.handle}`}
+        href={productHref}
+        prefetch={linkPrefetch}
+        data-card-link=""
         className={cn(
-          "block space-y-2 px-3 pb-2 sm:space-y-3 sm:px-5",
-          product.colors.length > 1 ? "pt-2 sm:pt-3" : "pt-3 sm:pt-4",
+          // Focus indicator: the card ring above in normal mode. Forced-colors
+          // mode strips box-shadow, so an inset outline (-2px, so the card's
+          // overflow-hidden can't clip it) is kept with a transparent colour:
+          // normal rendering shows nothing, forced-colors repaints it in a
+          // system colour. Never `outline-none` here — that leaves forced-colors
+          // users with no focus indicator at all. `!`: globals.css's unlayered
+          // :focus-visible outline otherwise beats these (layered) utilities.
+          "block space-y-3 px-5 pb-2 focus-visible:outline-2! focus-visible:-outline-offset-2! focus-visible:outline-transparent!",
+          product.colors.length > 1 ? "pt-3" : "pt-4",
+          compact && "max-sm:space-y-2 max-sm:px-3 max-sm:pb-3",
+          compact && (product.colors.length > 1 ? "max-sm:pt-2" : "max-sm:pt-3"),
         )}
       >
         <div>
-          <h3 className="font-display text-sm font-semibold leading-snug text-ink group-hover:text-brand sm:text-lg">
+          <h3
+            className={cn(
+              "font-display text-lg font-semibold leading-snug text-ink group-hover:text-brand",
+              compact && "max-sm:text-sm",
+            )}
+          >
             {product.name}
           </h3>
-          <p className="text-xs text-muted sm:text-sm">{selectedColor}</p>
+          <p className={cn("text-sm text-muted", compact && "max-sm:text-xs")}>{selectedColor}</p>
         </div>
-        <div className="flex items-end justify-between gap-2">
-          <div className="flex items-baseline gap-2">
-            <p className="font-display text-base font-bold text-ink sm:text-xl">{formatPrice(product.price)}</p>
+        {/* Both rows may wrap: a phone-width compact card has only ~114px of
+            content (320px viewport), less than price + MRP + rating side by
+            side, and the card is `overflow-hidden`, so anything that didn't
+            fit used to be clipped silently — no scroll bar, no error, just a
+            rating with its number and count missing. The rating itself is
+            condensed to one star below `sm` (see StarRating) so that it fits
+            on a line of its own even at 320px. */}
+        <div className="flex flex-wrap items-end justify-between gap-x-2 gap-y-1">
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <p className={cn("font-display text-xl font-bold text-ink", compact && "max-sm:text-base")}>
+              {formatPrice(product.price)}
+            </p>
             {product.compareAtPrice !== undefined && product.compareAtPrice > product.price && (
               // F-313: labelled "MRP", same as the PDP — an unlabelled
               // strikethrough price next to a "% Off" badge is exactly the
               // pattern counsel flagged as a misleading-reference-price risk.
-              <p className="text-xs text-muted sm:text-sm">
+              <p className={cn("text-sm text-muted", compact && "max-sm:text-xs")}>
                 <span aria-hidden="true">MRP </span>
                 <s>{formatPrice(product.compareAtPrice)}</s>
               </p>
             )}
           </div>
           {product.reviewCount > 0 && (
-            <StarRating rating={product.rating} reviewCount={product.reviewCount} />
+            <StarRating rating={product.rating} reviewCount={product.reviewCount} condenseOnPhone={compact} />
           )}
         </div>
-        <span className="hidden text-xs font-semibold uppercase tracking-wide text-brand group-hover:underline sm:inline-block">
+        <span
+          className={cn(
+            "inline-block text-xs font-semibold uppercase tracking-wide text-brand group-hover:underline",
+            compact && "max-sm:hidden",
+          )}
+        >
           View Product
         </span>
       </Link>
@@ -207,12 +310,10 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
       {/* F-006: sold-out products get the badge above, not a Quick Add
           that can only ever fail at checkout — the PDP link still gets
           them to "Notify me when available".
-          F-021/F-242: hidden below `sm` — at the ~170px width a 2-column
-          mobile card gets, six size chips plus an "Add" button wrap onto
-          several lines; the whole photo is now a link to the PDP, which
-          has its own full-size add-to-cart. */}
+          F-021/F-242: a `compact` card (2-column phone grid) hides this
+          below `sm` — see that prop's doc comment. */}
       {!soldOut && (
-        <div className="hidden px-5 pb-5 sm:block">
+        <div className={cn("px-5 pb-5", compact && "max-sm:hidden")}>
           <QuickAddPanel product={product} selectedColor={selectedColor} />
         </div>
       )}
@@ -222,7 +323,8 @@ export function ProductCard({ product, className, loadEagerly = false }: Product
 
 /**
  * "Quick add": a size picker + add-to-cart action that appears on
- * hover/focus on desktop (`md:` breakpoint) and stays visible on mobile.
+ * hover/focus on desktop (`md:` breakpoint) and stays visible on mobile
+ * (except on a `compact` card below `sm` — see where it's rendered above).
  * Deliberately kept as a sibling of the product `<Link>` (see the a11y
  * note above) so its buttons never nest inside an anchor.
  */
@@ -284,7 +386,7 @@ function QuickAddPanel({ product, selectedColor }: { product: Product; selectedC
         "md:group-focus-within:pointer-events-auto md:group-focus-within:max-h-24 md:group-focus-within:pt-3 md:group-focus-within:opacity-100",
       )}
     >
-      <div className="flex flex-wrap gap-1">
+      <div role="group" aria-label={`Size for ${product.name}`} className="flex flex-wrap gap-1">
         {product.sizes.slice(0, 6).map((s) => {
           const inStock = isSizeAvailableForColor(product.variants, s, defaultColor);
           return (
@@ -310,6 +412,9 @@ function QuickAddPanel({ product, selectedColor }: { product: Product; selectedC
         type="button"
         onClick={handleAdd}
         disabled={isLoading || soldOutSelection}
+        // F-248: the visible text is just "Quick Add" — say which product and
+        // size, since every card renders one.
+        aria-label={quickAddLabel(product.name, size, justAdded ? "added" : soldOutSelection ? "soldOut" : "idle")}
         className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-ink px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <ShoppingBag size={14} />

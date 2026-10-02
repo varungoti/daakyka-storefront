@@ -3,6 +3,9 @@ import { SeoRecordForm } from "@/components/admin/seo-record-form";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { getSeoRecordForAdmin, SeoPageRecordNotFoundError } from "@/lib/seo/records";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Edit SEO Override" };
 
 export default async function EditSeoRecordPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();

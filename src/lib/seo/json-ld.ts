@@ -6,14 +6,32 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://daakyka.com";
 export const SITE_NAME = "DAAKYKA Apparels";
 
 /**
+ * The site-wide share image — what src/app/opengraph-image.tsx renders
+ * (same `alt`/`size` as that file's own exports). Next only attaches that
+ * file-convention image to a page whose own `openGraph` doesn't replace the
+ * root's (see baseOpenGraph's doc comment below), so a page that sets
+ * `openGraph` for its `url` has to name the image itself or it ships with
+ * no `og:image`/`twitter:image` at all.
+ */
+export const DEFAULT_OG_IMAGE = {
+  url: "/opengraph-image",
+  width: 1200,
+  height: 630,
+  alt: "DAAKYKA Apparels — Hospital, School & Institutional Uniforms",
+};
+
+/**
  * release-hardening F-151: the root layout's `openGraph` only carries
  * `type`/`siteName`/`locale` (title/description are deliberately absent —
  * see that file's doc comment). Next's metadata resolution merges
  * `openGraph` shallowly per segment, so a page that sets its *own*
  * `openGraph` object for any reason (a per-page `url`, a product image,
  * an article type) replaces the whole thing and silently drops
- * `siteName`/`locale`/`type` unless it re-states them. Every such
- * override should spread this instead of hand-repeating those three keys.
+ * `siteName`/`locale`/`type` — and the `opengraph-image.tsx` file-convention
+ * image the root segment attached — unless it re-states them. Every such
+ * override should spread this instead of hand-repeating those keys; a page
+ * with a better image (a product photo, a blog hero) overrides `images`
+ * after the spread.
  */
 export function baseOpenGraph<T extends "website" | "article" = "website">(path: string, type?: T) {
   return {
@@ -27,6 +45,7 @@ export function baseOpenGraph<T extends "website" | "article" = "website">(path:
     siteName: SITE_NAME,
     locale: "en_IN",
     url: canonicalPath(path),
+    images: [DEFAULT_OG_IMAGE],
   };
 }
 
@@ -123,12 +142,15 @@ export function toAbsoluteUrl(url: string): string {
   return /^https?:\/\//i.test(url) ? url : `${siteUrlBase()}${url.startsWith("/") ? "" : "/"}${url}`;
 }
 
-// Matches src/lib/products/index.ts's own (unexported) constant of the same
-// name — the fallback image for a product with zero real photos. Neither
-// Google's structured-data image guidelines nor social unfurlers accept an
-// SVG, so it's filtered out below rather than published (release-hardening
-// F-110) instead of widening that module's public surface for one constant.
-const PLACEHOLDER_PRODUCT_IMAGE = "/placeholder-product.svg";
+/**
+ * Matches src/lib/products/index.ts's own (unexported) constant of the same
+ * name — the fallback image for a product with zero real photos. Neither
+ * Google's structured-data image guidelines nor social unfurlers accept an
+ * SVG, so it's never published as a JSON-LD `image` or an `og:image`
+ * (release-hardening F-110). Exported so the PDP's `generateMetadata` shares
+ * this one copy rather than re-declaring it.
+ */
+export const PLACEHOLDER_PRODUCT_IMAGE = "/placeholder-product.svg";
 
 export function productJsonLd(product: {
   name: string;
@@ -152,8 +174,11 @@ export function productJsonLd(product: {
   // Merchant Center / Rich Results — both optional and both built from the
   // same admin-editable settings the PDP's shipping/returns copy already
   // reads (src/app/products/[handle]/page.tsx), so they can't drift out of
-  // sync with what's shown to the shopper.
-  shipping?: { flatRateInr: number };
+  // sync with what's shown to the shopper. `freeAboveInr` is the same
+  // threshold checkout uses (`subtotal >= freeAbove ? 0 : flatRate` in
+  // /api/checkout/quote), so a product that alone clears it advertises free
+  // shipping rather than the flat rate it would never actually be charged.
+  shipping?: { flatRateInr: number; freeAboveInr?: number };
   returnWindowDays?: number;
   // release-hardening F-311: India Legal Metrology declarations, optional
   // so every existing caller (admin SEO preview, tests) keeps compiling
@@ -228,7 +253,11 @@ export function productJsonLd(product: {
               "@type": "OfferShippingDetails",
               shippingRate: {
                 "@type": "MonetaryAmount",
-                value: product.shipping.flatRateInr,
+                value:
+                  product.shipping.freeAboveInr !== undefined &&
+                  lowPrice >= product.shipping.freeAboveInr
+                    ? 0
+                    : product.shipping.flatRateInr,
                 currency: "INR",
               },
               shippingDestination: { "@type": "DefinedRegion", addressCountry: "IN" },

@@ -6,6 +6,9 @@ import Link from "next/link";
 
 export async function JournalSection() {
   const posts = (await getPublishedBlogPosts()).slice(0, 3);
+  // F-051: the journal is database-only now, so with nothing published there
+  // is nothing to show — hide the section rather than render a bare heading.
+  if (posts.length === 0) return null;
 
   return (
     <section className="bg-alt-surface py-12 md:py-16">

@@ -1,4 +1,5 @@
 import { WishlistTab } from "@/components/account/account-tabs";
+import { accountLoginPath } from "@/lib/customer-auth/return-to";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
@@ -21,7 +22,7 @@ export const metadata: Metadata = { title: "My Wishlist" };
  */
 export default async function AccountWishlistPage() {
   const session = await getCustomerSession();
-  if (!session) redirect("/account/login?returnTo=/account/wishlist");
+  if (!session) redirect(accountLoginPath("/account/wishlist"));
 
   return <WishlistTab />;
 }

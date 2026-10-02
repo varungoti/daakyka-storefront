@@ -1,5 +1,8 @@
 import { BlogPostEditor } from "@/components/admin/blog-post-editor";
 import { requireAdminPage } from "@/lib/auth/require-admin-page";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "New Article" };
 
 // F-062: this page had no permission check at all — any authenticated
 // admin role could open the editor, and a deactivated/demoted admin with

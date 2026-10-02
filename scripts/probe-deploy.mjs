@@ -1,12 +1,21 @@
 /**
  * Probe a deployed storefront for launch readiness.
  *
+ * Safe against production by default: no check changes stored data (the one
+ * POST, a login for an unknown email, is rejected before anything is written).
+ * `--write-probes` adds the virtual try-on POST, which can call a paid
+ * rendering service; use it only against a Preview/staging deployment
+ * (F-076, F-077). While Mix & Match is switched off (the default) that route
+ * answers 404 and the probe reports it as skipped, not failed (F-304).
+ *
  * Usage:
  *   TEST_BASE_URL=https://your-app.vercel.app npm run probe:deploy
  *   TEST_BASE_URL=https://your-app.vercel.app npm run probe:deploy -- --staging
+ *   TEST_BASE_URL=https://your-preview.vercel.app npm run probe:deploy -- --write-probes
  */
 const base = process.env.TEST_BASE_URL ?? process.env.PLAYWRIGHT_BASE_URL;
 const isStaging = process.argv.includes("--staging");
+const writeProbes = process.argv.includes("--write-probes");
 
 if (!base) {
   console.error("Set TEST_BASE_URL to your deployment URL.");
@@ -95,36 +104,54 @@ async function main() {
     }
   });
 
-  await check("GET /mix-and-match/studio", async () => {
+  // The studio is an optional page an admin switches on (pages.mixMatch.enabled,
+  // off by default), so a 404 is the correct state for a default install, not a
+  // failed deploy. Only an enabled studio that renders the wrong page fails.
+  await check("GET /mix-and-match/studio (optional page)", async () => {
     const response = await fetch(`${base}/mix-and-match/studio`);
+    if (response.status === 404) {
+      console.log("      studio is switched off (pages.mixMatch.enabled) - skipping its content check");
+      return;
+    }
     if (!response.ok) throw new Error(`status ${response.status}`);
     const html = await response.text();
-    if (html.includes("Studio unavailable")) {
-      throw new Error("NEXT_PUBLIC_OUTFIT_STUDIO not enabled");
-    }
     if (!html.includes("Virtual Try-On Studio")) {
       throw new Error("studio page missing expected heading");
     }
   });
 
-  await check("POST /api/outfit/try-on responds", async () => {
-    const topImageUrl =
-      "https://images.unsplash.com/photo-1666887360684-8082fc98ebd2?auto=format&fit=crop&w=800&q=80";
-    const response = await fetch(`${base}/api/outfit/try-on`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        gender: "female",
-        topImageUrl,
-        color: "Navy",
-      }),
+  if (writeProbes) {
+    await check("POST /api/outfit/try-on responds", async () => {
+      const topImageUrl =
+        "https://images.unsplash.com/photo-1666887360684-8082fc98ebd2?auto=format&fit=crop&w=800&q=80";
+      const response = await fetch(`${base}/api/outfit/try-on`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          gender: "female",
+          topImageUrl,
+          color: "Navy",
+        }),
+      });
+      // The route answers a JSON 404 while the optional Mix & Match feature is
+      // switched off (pages.mixMatch.enabled, the default; F-304). That is the
+      // correct state, not a failed deploy. An HTML 404 means the route itself is
+      // missing from this build, which must still fail.
+      if (response.status === 404) {
+        const switchedOff = (response.headers.get("content-type") ?? "").includes("application/json");
+        if (!switchedOff) throw new Error("status 404 (route missing from this deployment)");
+        console.log("      try-on is switched off (pages.mixMatch.enabled) - skipping its response check");
+        return;
+      }
+      if (!response.ok) throw new Error(`status ${response.status}`);
+      const body = await response.json();
+      if (!body.ok || typeof body.resultImageUrl !== "string") {
+        throw new Error("missing resultImageUrl in try-on response");
+      }
     });
-    if (!response.ok) throw new Error(`status ${response.status}`);
-    const body = await response.json();
-    if (!body.ok || typeof body.resultImageUrl !== "string") {
-      throw new Error("missing resultImageUrl in try-on response");
-    }
-  });
+  } else {
+    console.log("  skip POST /api/outfit/try-on (write probe; pass --write-probes on a staging deployment)");
+  }
 
   await check("WhatsApp FAB on homepage", async () => {
     const response = await fetch(`${base}/`);
@@ -137,7 +164,9 @@ async function main() {
     await check("robots.txt disallows indexing on staging", async () => {
       const response = await fetch(`${base}/robots.txt`);
       const text = await response.text();
-      if (!/disallow:\s*\//i.test(text)) {
+      // Anchored to a bare `Disallow: /` line: `Disallow: /admin` alone
+      // must not count as "indexing is blocked".
+      if (!/^\s*disallow:\s*\/\s*$/im.test(text)) {
         throw new Error("robots.txt does not disallow /");
       }
     });

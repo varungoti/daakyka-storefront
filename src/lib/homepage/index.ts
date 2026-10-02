@@ -1,4 +1,6 @@
 import { revalidateTag, unstable_cache } from "next/cache";
+import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
+import type { RevalidateProfile } from "@/lib/cache/admin-revalidate";
 import { db } from "@/lib/db";
 import { getSiteImage } from "@/lib/media/get-site-image";
 import { homepageSectionSchemas, isHomepageSectionKey } from "@/lib/validation/schemas";
@@ -314,7 +316,7 @@ export async function getHeroSlidesContentForAdmin(): Promise<HeroSlidesContent>
  * revalidateTag).
  */
 export function revalidateHomepageCache(
-  revalidate: (tag: string, profile: string | { expire?: number }) => void = revalidateTag,
+  revalidate: (tag: string, profile: RevalidateProfile) => void = revalidateTag,
 ): void {
   try {
     // F-214 fix: "max" is stale-while-revalidate (node_modules/next/dist/docs/
@@ -324,7 +326,7 @@ export function revalidateHomepageCache(
     // showed the old hero/offer/etc. `{ expire: 0 }` is the documented way
     // to force the next read to be fresh instead of stale (updateTag isn't
     // available here — this runs from Route Handlers, not Server Actions).
-    revalidate(HOMEPAGE_CACHE_TAG, { expire: 0 });
+    revalidate(HOMEPAGE_CACHE_TAG, ADMIN_REVALIDATE_PROFILE);
   } catch {
     // No static generation store in this context (unit tests, scripts) —
     // nothing to revalidate. Same defensive pattern as
@@ -367,6 +369,14 @@ export async function updateHomepageSection(
   // parameter for why existing callers are unaffected until they pass it.
   expectedUpdatedAt?: Date,
 ) {
+  // F-288: what the section held before, so the audit row can say which of
+  // its top-level fields this save changed (best-effort — a failed read must
+  // never block the save itself).
+  const previousContent = await db.homepageSection
+    .findUnique({ where: { key }, select: { content: true } })
+    .then((row) => row?.content ?? null)
+    .catch(() => null);
+
   let section;
   if (expectedUpdatedAt) {
     const { count } = await db.homepageSection.updateMany({
@@ -387,11 +397,15 @@ export async function updateHomepageSection(
   }
 
   const { logAuditEvent } = await import("@/lib/auth/audit");
+  const { changedContentKeys } = await import("@/lib/auth/audit-diff");
   await logAuditEvent({
     userId,
     action: "update",
     entity: "homepage_section",
     entityId: key,
+    // F-288: this row used to carry no metadata at all. The content itself is
+    // large (slides, copy), so only which fields changed is recorded.
+    metadata: { key, changedFields: changedContentKeys(previousContent, content) },
   });
 
   revalidateHomepageCache();

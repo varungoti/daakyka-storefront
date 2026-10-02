@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   blogMedia,
@@ -15,6 +15,7 @@ import {
   withImageWidth,
 } from "@/data/media/catalog";
 import { products } from "@/data/products";
+import { isInternalMediaLabel } from "@/lib/media/public-alt";
 
 function assertHttpsUrl(url: string) {
   assert.match(url, /^https:\/\//);
@@ -93,5 +94,47 @@ describe("media catalog", () => {
   it("uses curated scrub media keys", () => {
     assert.ok(Object.keys(scrubMedia).length >= 10);
     assertHttpsUrl(scrubMedia.vNeckLilac);
+  });
+});
+
+/**
+ * F-272: /shop/bespoke, /our-story and /shop used to show a grey "image"
+ * placeholder icon (and the alts were admin slot labels). These pin that no
+ * marketing image a shopper sees is the placeholder graphic, and that the
+ * sections that used it describe their pictures.
+ */
+describe("marketing imagery is real, described artwork (F-272)", () => {
+  const flatten = (value: unknown): string[] =>
+    typeof value === "string" ? [value] : Object.values(value as object).flatMap(flatten);
+
+  it("no catalog image points at a placeholder graphic", () => {
+    for (const [group, urls] of Object.entries({ daakykaMedia, scrubMedia, marketingMedia, categoryMedia, blogMedia, testimonialAvatars })) {
+      for (const url of flatten(urls)) {
+        assert.ok(!/placeholder/i.test(url), `${group} still has a placeholder: ${url}`);
+      }
+    }
+  });
+
+  const SECTIONS = [
+    "src/components/home/bespoke-section.tsx",
+    "src/components/home/insights-strip.tsx",
+    "src/components/shop/shop-feature-cards.tsx",
+  ];
+
+  it("the bespoke, 4-way-stretch and shop feature sections never reference a placeholder", () => {
+    for (const file of SECTIONS) {
+      const source = readFileSync(join(process.cwd(), file), "utf8");
+      assert.ok(!/placeholder/i.test(source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "")), `${file} renders a placeholder`);
+    }
+  });
+
+  it("their images carry a real description, not an admin slot label or a repeated heading", () => {
+    for (const file of SECTIONS) {
+      const source = readFileSync(join(process.cwd(), file), "utf8");
+      for (const match of source.matchAll(/\balt="([^"]+)"/g)) {
+        assert.equal(isInternalMediaLabel(match[1]), false, `${file}: alt "${match[1]}" reads like a slot label`);
+        assert.ok(match[1].trim().split(/\s+/).length >= 3, `${file}: alt "${match[1]}" is too terse to describe a picture`);
+      }
+    }
   });
 });

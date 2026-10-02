@@ -54,3 +54,16 @@ export function resolveCdnObjectKey(segments: string[]): string | null {
 
   return decoded.join("/");
 }
+
+/** Tag every /cdn response carries, so an operator can purge all served
+ * media at once (Vercel dashboard: CDN > Caches > Purge cache > Cache Tag)
+ * — e.g. for a takedown — without knowing individual keys. */
+export const CDN_CACHE_TAG = "cdn-media";
+
+/** Per-object tag for one /cdn response, so deleting an object can purge
+ * exactly its cached copy. Object keys are generated server-side
+ * (`media/<usage>/<yyyy>/<mm>/<uuid>.webp`), so they're well within a tag's
+ * 256-byte limit and never contain the comma that delimits tags. */
+export function cdnCacheTagForKey(key: string): string {
+  return `${CDN_CACHE_TAG}:${key}`;
+}

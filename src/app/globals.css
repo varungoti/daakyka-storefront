@@ -75,6 +75,30 @@
 
 html {
   scroll-behavior: smooth;
+  /* F-247 (WCAG 2.2 SC 2.4.11 Focus Not Obscured): the storefront header is
+     `sticky top-0` (about 75px tall on a phone, about 112px from `lg`,
+     where the desktop nav row appears), so without this a Shift+Tab or an
+     in-page anchor could leave the focused element, or an anchor target,
+     entirely behind it. scroll-padding shrinks the area the browser treats
+     as visible when it scrolls something into view (focus, anchors,
+     scrollIntoView). It replaces the per-section `scroll-mt-24` hacks. */
+  scroll-padding-top: 5.5rem;
+}
+
+@media (min-width: 1024px) {
+  html {
+    scroll-padding-top: 7.5rem;
+  }
+}
+
+/* F-247: the mobile PDP's sticky Add to Cart bar (md:hidden, about 80px)
+   covers the bottom of the viewport while it is showing — it flags itself
+   with data-sticky-cta on <html> (mobile-sticky-add-to-cart.tsx) so the
+   padding only applies when something is actually there. */
+@media (max-width: 767px) {
+  html[data-sticky-cta] {
+    scroll-padding-bottom: calc(5.5rem + env(safe-area-inset-bottom));
+  }
 }
 
 body {
@@ -112,6 +136,32 @@ textarea::placeholder {
 :focus-visible {
   outline: 2px solid var(--brand-purple);
   outline-offset: 2px;
+}
+
+/* F-246: the plum ring is only about 1.4:1 against the violet utility bar
+   (and ~2.3:1 against the dark lightbox), well under the 3:1 non-text
+   minimum (SC 1.4.11) — and the utility bar's links are the first tab stops
+   after the skip link on every page. Controls *inside* these dark surfaces
+   get a white ring instead. A descendant selector, not a custom property:
+   an element that is itself bg-brand-violet (a pill on a white page) keeps
+   its plum ring, since that ring is drawn on the white page. Unlayered on
+   purpose, like the rule above: an unlayered outline beats Tailwind's
+   layered focus-visible:outline-* utilities, so a utility couldn't do this. */
+.bg-brand-violet :focus-visible,
+.bg-plum :focus-visible,
+.bg-ink\/95 :focus-visible {
+  outline-color: #fff;
+}
+
+/* Inline links inside policy-page prose (legal/policy-page.tsx). The link
+   colour (--brand-purple) is only ~1.3:1 away from the body text colour
+   (--muted), so colour alone doesn't set a link apart from its sentence
+   (WCAG 1.4.1, axe link-in-text-block) — underline them. Scoped to
+   .prose-policy on purpose: nav, cards and buttons must not pick this up. */
+.prose-policy a {
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -199,6 +249,22 @@ textarea::placeholder {
 
 .animate-scale-in {
   animation: scale-in 0.7s ease-out 0.1s both;
+}
+
+/* F-091: the top navigation progress bar (layout/navigation-progress.tsx).
+   Eases towards 85% and waits there for the new page; the reduced-motion rule
+   above collapses it to a static bar. */
+@keyframes nav-progress {
+  from {
+    width: 0;
+  }
+  to {
+    width: 85%;
+  }
+}
+
+.animate-nav-progress {
+  animation: nav-progress 8s cubic-bezier(0.1, 0.7, 0.3, 1) both;
 }
 
 @keyframes breathe {

@@ -1,12 +1,24 @@
 import { LoginForm } from "@/components/admin/login-form";
+import { getSession } from "@/lib/auth/session";
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 
 export const metadata: Metadata = {
   title: "Admin Login",
   robots: { index: false, follow: false },
 };
 
-export default function AdminLoginPage() {
+export default async function AdminLoginPage() {
+  // F-171: an already-signed-in admin who opened /admin/login (a bookmark,
+  // the Back button) was shown the sign-in form again instead of being
+  // taken to their dashboard. getSession() is the full DB-backed check
+  // (still active, session not revoked), so a stale cookie still sees the
+  // form — and the (panel) layout, which redirects here on any non-ok
+  // session, can never loop back.
+  if (await getSession()) {
+    redirect("/admin/dashboard");
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-lavender/40 px-4">
       <div className="w-full max-w-md">

@@ -1,6 +1,7 @@
 import { brand } from "@/data/brand";
 import { seoLandingPages } from "@/data/seo-landing-pages";
-import { getSeoOverrideForPath } from "@/lib/seo/records";
+import { listLiveSeoOverrides } from "@/lib/seo/records";
+import { ABOUT_PAGE, BULK_ORDERS_PAGE, CONTACT_PAGE, GUIDES_INDEX_PAGE } from "@/lib/seo/static-pages";
 import { isPageEnabled, isSaleEnabled } from "@/lib/settings";
 
 export interface SeoPageAudit {
@@ -43,26 +44,25 @@ const HOME_DEFAULT_TITLE = "DAAKYKA Apparels | Quality Uniforms & Linens for Pan
 const HOME_DEFAULT_DESCRIPTION =
   "Expertly designed, meticulously crafted. Hospital linens, medical scrubs, school uniforms, and corporate wear by Babaji Enterprises — Hyderabad, Pan India delivery.";
 
-const staticPages: Omit<SeoPageAudit, "status" | "issues">[] = [
+export const STATIC_SEO_PAGES: Omit<SeoPageAudit, "status" | "issues">[] = [
   { path: "/", title: HOME_DEFAULT_TITLE, metaDescription: HOME_DEFAULT_DESCRIPTION, h1: "Expertly Designed, Meticulously Crafted" },
   { path: "/shop", title: "Shop All Scrubs", metaDescription: "Browse premium medical scrubs with advanced filters for color, size, fabric technology, and price.", h1: "Shop All Scrubs" },
   { path: "/mix-and-match", title: "Mix & Match Builder", metaDescription: "Build your perfect scrub set with live preview, fabric selection, and personalization.", h1: "Create Your Perfect Fit" },
   { path: "/fabric-technology", title: "Fabric Technology", metaDescription: "Explore 4-way stretch, liquid repellent, anti-microbial, and sustainable fabric technologies.", h1: "The Science Behind The Scrub" },
-  // F-052: /about, /contact and /bulk-orders don't actually render an <h1>
-  // — each uses <SectionHeading> directly with no `titleAs="h1"`, which
-  // defaults to <h2> (confirmed by reading src/app/about/page.tsx,
-  // src/app/contact/page.tsx and src/app/bulk-orders/page.tsx and their
-  // shared src/components/ui/section-heading.tsx). The audit used to claim
-  // an h1 for all three, hiding a real gap from the SEO Manager report.
-  { path: "/bulk-orders", title: "Bulk Orders", metaDescription: "Hospital and institutional uniform quotes with logo embroidery and Pan India delivery." },
+  // F-052: /bulk-orders, /about, /contact and /guides take their title,
+  // description and <h1> from src/lib/seo/static-pages.ts — the same constants
+  // the pages render — so this list can't drift from them (it used to re-type
+  // the strings, and claimed an <h1> those pages did not yet render). Each page
+  // passes `titleAs="h1"`, which audit.test.ts checks against the page source.
+  { path: "/bulk-orders", title: BULK_ORDERS_PAGE.title, metaDescription: BULK_ORDERS_PAGE.description, h1: BULK_ORDERS_PAGE.h1 },
   { path: "/for-hospitals", title: "For Hospitals", metaDescription: "Scrubs, patient gowns, staff uniforms, and hospital linens by Babaji Enterprises — Pan India delivery.", h1: "Uniforms & Linens for Hospitals" },
   { path: "/school-uniforms", title: "School Uniforms", metaDescription: "Shirts, tunics, trousers, skirts, blazers, and sportswear for schools by DAAKYKA Apparels.", h1: "School Uniforms" },
   { path: "/kids-wear", title: "Kids Wear", metaDescription: "Everyday kids' wear — T-shirts, joggers, frocks, co-ords, and hoodies from DAAKYKA Apparels.", h1: "Kids Wear" },
   { path: "/our-story", title: "Our Story", metaDescription: `${brand.name} by ${brand.legalName} — ${brand.tagline}. ${brand.description}`, h1: brand.tagline },
-  { path: "/about", title: "About Us", metaDescription: `${brand.name} by ${brand.legalName} — ${brand.tagline}.` },
-  { path: "/contact", title: "Contact", metaDescription: `Contact ${brand.name} — ${brand.location.city}. Pan India institutional uniforms.` },
+  { path: "/about", title: ABOUT_PAGE.title, metaDescription: ABOUT_PAGE.description, h1: ABOUT_PAGE.h1 },
+  { path: "/contact", title: CONTACT_PAGE.title, metaDescription: CONTACT_PAGE.description, h1: CONTACT_PAGE.h1 },
   { path: "/blog", title: "Journal", metaDescription: "Style, fit, and fabric insights for healthcare professionals.", h1: "From Our Journal" },
-  { path: "/guides", title: "Medical Apparel Guides", metaDescription: "Buying guides, fabric science, and hospital uniform resources from DAAKYKA Apparels.", h1: "Medical Apparel Guides" },
+  { path: "/guides", title: GUIDES_INDEX_PAGE.title, metaDescription: GUIDES_INDEX_PAGE.description, h1: GUIDES_INDEX_PAGE.h1 },
   { path: "/size-guide", title: "Size Guide", metaDescription: "Find your perfect scrub fit with DAAKYKA size guide.", h1: "Size Guide" },
 ];
 
@@ -108,25 +108,20 @@ export async function getStaticSeoAudits(): Promise<SeoPageAudit[]> {
     h1: page.h1,
   }));
 
-  const [fabricTechEnabled, mixMatchEnabled, saleEnabled, homeOverride, shopOverride] = await Promise.all([
+  const [fabricTechEnabled, mixMatchEnabled, saleEnabled, liveOverrideByPath] = await Promise.all([
     isPageEnabled("fabricTech"),
     isPageEnabled("mixMatch"),
     isSaleEnabled(),
-    // F-052 fix: "/" and "/shop" are the only paths whose admin override
-    // (src/lib/seo/records.ts's getSeoOverrideForPath) actually reaches the
-    // live <title>/<meta description> (see src/app/page.tsx and
-    // src/app/shop/page.tsx). The audit used to always show the hardcoded
-    // default for these two, so /shop kept showing "needs meta" after an
-    // admin had already fixed it with a live override.
-    getSeoOverrideForPath("/"),
-    getSeoOverrideForPath("/shop"),
-  ]);
-  const liveOverrideByPath = new Map([
-    ["/", homeOverride],
-    ["/shop", shopOverride],
+    // F-052 fix: only the paths in WIRED_SEO_PATHS (home, shop, bulk-orders,
+    // about, contact, the guides index and each guide) have an admin override
+    // (src/lib/seo/records.ts) that reaches the live <title>/<meta
+    // description>. The audit used to always show the hardcoded default for
+    // those, so /shop kept showing "needs meta" after an admin had already
+    // fixed it with a live override.
+    listLiveSeoOverrides(),
   ]);
 
-  const pages = [...staticPages, ...guidePages, ...(saleEnabled ? [saleAuditEntry] : [])]
+  const pages = [...STATIC_SEO_PAGES, ...guidePages, ...(saleEnabled ? [saleAuditEntry] : [])]
     .filter((page) => {
       if (page.path === "/fabric-technology") return fabricTechEnabled;
       if (page.path === "/mix-and-match") return mixMatchEnabled;

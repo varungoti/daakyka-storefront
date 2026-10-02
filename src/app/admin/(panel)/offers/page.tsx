@@ -5,6 +5,9 @@ import { getSession } from "@/lib/auth/session";
 import { listOffersForAdmin } from "@/lib/offers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Offers" };
 
 export default async function AdminOffersPage() {
   const session = await getSession();
@@ -80,7 +83,7 @@ export default async function AdminOffersPage() {
         })}
         {offers.length === 0 && (
           <p className="col-span-full rounded-3xl border border-dashed border-border p-8 text-center text-muted">
-            No offers configured. Run database seed to load defaults.
+            No offers yet — create your first one with New Offer.
           </p>
         )}
       </section>

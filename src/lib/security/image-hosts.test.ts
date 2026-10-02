@@ -36,6 +36,11 @@ describe("isTrustedImageUrl", () => {
     assert.equal(isTrustedImageUrl("https://daakyka.com/photo.jpg"), false);
   });
 
+  it("rejects cdn.shopify.com — a multi-tenant upload host, removed under F-307", () => {
+    assert.equal(isTrustedImageUrl("https://cdn.shopify.com/s/files/1/0533/2089/files/x.png"), false);
+    assert.ok(!(TRUSTED_IMAGE_HOSTS as readonly string[]).includes("cdn.shopify.com"));
+  });
+
   it("rejects malformed input without throwing", () => {
     assert.doesNotThrow(() => isTrustedImageUrl("not-a-url"));
     assert.equal(isTrustedImageUrl("not-a-url"), false);

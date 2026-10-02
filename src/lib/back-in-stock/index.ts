@@ -1,6 +1,15 @@
 import { db } from "@/lib/db";
 import { Prisma } from "@/generated/prisma/client";
 import { EMAIL_KIND, sendTransactionalEmail } from "@/lib/engagement/outbox";
+import { escapeHtml } from "@/lib/email/html";
+import {
+  button,
+  emailSiteUrl,
+  loadEmailFooter,
+  paragraph,
+  renderEmailLayout,
+  type EmailFooter,
+} from "@/lib/email/layout";
 
 /**
  * Shopify-parity gap (docs/audit-2026-09-19/storefront-ux.md — "Notify
@@ -19,19 +28,29 @@ import { EMAIL_KIND, sendTransactionalEmail } from "@/lib/engagement/outbox";
  *    remember to hook this, or restock notifications silently stop firing
  *    for whatever forgets.
  *  - No hook is actually needed: subscribeToBackInStock below only ever
- *    creates a subscription when the variant's stock is server-verified to
- *    be <= 0 at signup time. That means a PENDING (notifiedAt: null)
- *    subscription row is, by construction, evidence that someone is
- *    waiting on a variant that was out of stock when they asked. So
- *    "pending subscription whose variant now has stock > 0" *is* the
- *    0->positive transition — no separate bookkeeping column or hook is
- *    needed on ProductVariant at all, and it's correct regardless of which
- *    of the several write paths brought the stock back.
+ *    creates a subscription when the variant is server-verified to be
+ *    unavailable (sold out, or switched off) at signup time. That means a
+ *    PENDING (notifiedAt: null) subscription row is, by construction,
+ *    evidence that someone is waiting on a variant that was unavailable
+ *    when they asked. So "pending subscription whose variant is now
+ *    purchasable" *is* the unavailable->available transition — no
+ *    separate bookkeeping column or hook is needed on ProductVariant at
+ *    all, and it's correct regardless of which of the several write paths
+ *    brought the stock back.
  *  - The established cron convention (authorizeCron + claimCronRun/
  *    intervalRunKey, registered in vercel.json — see
  *    src/app/api/cron/drain-email-outbox/route.ts for the closest
  *    analogue) already exists for exactly this shape of "periodically
  *    reconcile something against current DB state" job.
+ *
+ * F-029: "can be bought" is one definition, shared with the product page
+ * (isVariantInStock in src/lib/products/resolve-variant.ts, which the page
+ * feeds `available = active && stock > 0`) — an active variant of an
+ * ACTIVE product in an active category, with stock. The signup form is
+ * shown for any variant the page treats as unavailable (sold out *or*
+ * switched off), so signup accepts exactly those; the sweep only ever
+ * notifies a variant that satisfies the full definition, and leaves the
+ * rest of its subscriptions pending.
  *
  * Sends go through the durable transactional email outbox
  * (sendTransactionalEmail — src/lib/engagement/outbox.ts), never a
@@ -43,6 +62,12 @@ import { EMAIL_KIND, sendTransactionalEmail } from "@/lib/engagement/outbox";
 function normalizeEmail(raw: string): string {
   return raw.trim().toLowerCase();
 }
+
+/** Where a variant must sit for a shopper to actually reach and buy it:
+ * the PDP resolves a product by slug only when it is ACTIVE and its
+ * category is active (queryProductByHandleFromDb). A link to anything else
+ * is a 404. */
+const REACHABLE_PRODUCT = { status: "ACTIVE", category: { active: true } } as const;
 
 export class BackInStockVariantNotFoundError extends Error {
   constructor() {
@@ -87,10 +112,24 @@ export async function subscribeToBackInStock(
 
   const variant = await db.productVariant.findUnique({
     where: { id: variantId },
-    select: { id: true, productId: true, stock: true },
+    select: {
+      id: true,
+      productId: true,
+      stock: true,
+      active: true,
+      product: { select: { status: true, category: { select: { active: true } } } },
+    },
   });
-  if (!variant) throw new BackInStockVariantNotFoundError();
-  if (variant.stock > 0) throw new BackInStockVariantInStockError();
+  // A draft/archived product (or one in a deactivated category) has no
+  // storefront page, so there is nothing to be notified about.
+  if (!variant || variant.product.status !== REACHABLE_PRODUCT.status || !variant.product.category.active) {
+    throw new BackInStockVariantNotFoundError();
+  }
+  // Same test as the PDP: only a variant that is active AND has stock is
+  // "in stock". An inactive variant with leftover stock is unavailable on
+  // the page, so it must be subscribable here too (it used to 400 with
+  // "currently in stock" for a form the page itself had just shown).
+  if (variant.active && variant.stock > 0) throw new BackInStockVariantInStockError();
 
   try {
     await db.backInStockSubscription.create({
@@ -124,15 +163,33 @@ interface RestockedVariant {
   color: string;
 }
 
-function buildRestockEmail(variant: RestockedVariant): { subject: string; html: string; text: string } {
-  const base = (process.env.NEXT_PUBLIC_SITE_URL ?? "https://daakyka.com").replace(/\/$/, "");
-  const url = `${base}/products/${encodeURIComponent(variant.product.slug)}`;
-  const label = `${variant.product.name} (${variant.size} / ${variant.color})`;
-  return {
-    subject: `Back in stock: ${variant.product.name}`,
-    html: `<p>Good news — <strong>${label}</strong> is back in stock.</p><p><a href="${url}">Shop it now</a> before it sells out again.</p>`,
-    text: `${label} is back in stock: ${url}`,
-  };
+/** "Name (M / Navy)" — a variant with no colour (or no size) must not
+ * render as "(M / )". */
+function variantLabel(variant: RestockedVariant): string {
+  const options = [variant.size, variant.color].map((part) => part.trim()).filter(Boolean);
+  return options.length > 0 ? `${variant.product.name} (${options.join(" / ")})` : variant.product.name;
+}
+
+function buildRestockEmail(
+  variant: RestockedVariant,
+  footer: EmailFooter,
+): { subject: string; html: string; text: string } {
+  const url = `${emailSiteUrl()}/products/${encodeURIComponent(variant.product.slug)}`;
+  const label = variantLabel(variant);
+  const subject = `Back in stock: ${variant.product.name}`;
+  // F-029: the name/size/colour are admin-typed free text — escaped before
+  // they go near the HTML.
+  const { html, text } = renderEmailLayout({
+    subject,
+    heading: "Back in stock",
+    bodyHtml:
+      paragraph(`Good news &mdash; <strong>${escapeHtml(label)}</strong> is back in stock.`) +
+      button("Shop it now", url) +
+      paragraph("Grab it before it sells out again."),
+    bodyText: `Good news - ${label} is back in stock.\n\nShop it now: ${url}\n\nGrab it before it sells out again.`,
+    footer,
+  });
+  return { subject, html, text };
 }
 
 /**
@@ -162,8 +219,17 @@ export async function sweepBackInStock(now: Date = new Date()): Promise<SweepBac
     return { variantsWithPendingSubscriptions: 0, variantsRestocked: 0, notified: 0 };
   }
 
+  // F-029: only a variant a shopper can actually buy right now — active, in
+  // an ACTIVE product in an active category (otherwise the email's link
+  // 404s or lands on a size the page still shows as unavailable). A
+  // subscription on anything else stays pending until that changes.
   const restockedVariants = await db.productVariant.findMany({
-    where: { id: { in: pending.map((p) => p.variantId) }, stock: { gt: 0 } },
+    where: {
+      id: { in: pending.map((p) => p.variantId) },
+      stock: { gt: 0 },
+      active: true,
+      product: REACHABLE_PRODUCT,
+    },
     select: {
       id: true,
       stock: true,
@@ -173,13 +239,14 @@ export async function sweepBackInStock(now: Date = new Date()): Promise<SweepBac
     },
   });
 
+  const footer = await loadEmailFooter();
   let notified = 0;
   for (const variant of restockedVariants) {
     const subscriptions = await db.backInStockSubscription.findMany({
       where: { variantId: variant.id, notifiedAt: null },
     });
 
-    const email = buildRestockEmail(variant);
+    const email = buildRestockEmail(variant, footer);
 
     for (const subscription of subscriptions) {
       // Claim first — the CAS itself is the "consumed" marker (see doc

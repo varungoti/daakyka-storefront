@@ -1,4 +1,4 @@
-import { describe, it, after } from "node:test";
+import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { DELETE as deleteCredential, POST as postCredential } from "@/app/api/admin/integrations/[provider]/credentials/route";
 import { POST as postBrevoTest } from "@/app/api/admin/integrations/brevo/test/route";
@@ -10,11 +10,37 @@ import {
   setCredential,
 } from "@/lib/integrations/credential-store";
 import { isRazorpayConfigured } from "@/lib/payments/razorpay";
-import { withEnv } from "../helpers/env";
 import { findAnyAdminId } from "../helpers/admin-user";
+import { TEST_CREDENTIAL_KEY } from "../helpers/credential-key";
+import { withEnv } from "../helpers/env";
+import { stashIntegrationState } from "../helpers/integration-state";
 
 // The audit-logged credential change needs an acting admin id that still
 // exists when the write lands — see tests/helpers/admin-user.ts.
+
+// File-level fixtures. A clean CI runner has no .env, so without a key every
+// setCredential() below throws (F-249); a developer's own key is left alone.
+// The suite also assumes no Razorpay/Brevo credential or Brevo integration
+// row exists, so the real rows are set aside for the run and put back
+// afterwards instead of being deleted (F-080).
+let restoreIntegrationState: (() => Promise<void>) | undefined;
+let injectedCredentialKey = false;
+
+before(async () => {
+  if (!process.env.CREDENTIAL_ENCRYPTION_KEY) {
+    process.env.CREDENTIAL_ENCRYPTION_KEY = TEST_CREDENTIAL_KEY;
+    injectedCredentialKey = true;
+  }
+  restoreIntegrationState = await stashIntegrationState({
+    credentialProviders: ["RAZORPAY", "BREVO"],
+    settingProviders: ["BREVO"],
+  });
+});
+
+after(async () => {
+  await restoreIntegrationState?.();
+  if (injectedCredentialKey) delete process.env.CREDENTIAL_ENCRYPTION_KEY;
+});
 
 function jsonRequest(url: string, method: string, body: unknown): Request {
   return new Request(url, {
@@ -25,10 +51,6 @@ function jsonRequest(url: string, method: string, body: unknown): Request {
 }
 
 describe("credential-store: getCredential/setCredential/clearCredential round trip", () => {
-  after(async () => {
-    await db.integrationCredential.deleteMany({ where: { provider: "RAZORPAY", key: "KEY_ID" } });
-  });
-
   it("returns null for a credential that was never set", async () => {
     assert.equal(await getCredential("RAZORPAY", "KEY_ID"), null);
     assert.equal((await getCredentialMeta("RAZORPAY", "KEY_ID")).configured, false);
@@ -134,10 +156,6 @@ describe("credential-store: getCredential/setCredential/clearCredential round tr
 });
 
 describe("POST/DELETE /api/admin/integrations/[provider]/credentials", () => {
-  after(async () => {
-    await db.integrationCredential.deleteMany({ where: { provider: "RAZORPAY", key: "KEY_SECRET" } });
-  });
-
   it("rejects with 401/403 when called with no session (permission-gated, matching every other admin route)", async () => {
     // requireAdminPermission's getSession() call falls back to
     // "no session" whenever it runs outside a real Next.js request scope
@@ -195,10 +213,6 @@ describe("POST /api/admin/integrations/brevo/test (F-267)", () => {
 });
 
 describe("set-then-read round trip never exposes the value in a JSON response", () => {
-  after(async () => {
-    await db.integrationCredential.deleteMany({ where: { provider: "BREVO", key: "API_KEY" } });
-  });
-
   it("the POST response body never contains the submitted secret", async () => {
     const adminId = await findAnyAdminId();
     const secretValue = "brevo-super-secret-value-should-never-appear";
@@ -213,5 +227,40 @@ describe("set-then-read round trip never exposes the value in a JSON response", 
     // route returns on a successful (authenticated) POST.
     const routeShapedResponse = { provider: "BREVO", key: "API_KEY", ...meta };
     assert.ok(!JSON.stringify(routeShapedResponse).includes(secretValue));
+  });
+});
+
+// F-080: the suites above borrow the real Razorpay/Brevo rows, so the thing
+// that makes that safe — the stash puts the original rows back byte for byte
+// and removes whatever the test wrote — is itself pinned here.
+describe("stashIntegrationState keeps an owner's configured integrations intact (F-080)", () => {
+  it("empties the scope during the run, then restores the original rows and drops test leftovers", async () => {
+    const adminId = await findAnyAdminId();
+    await setCredential("RAZORPAY", "KEY_ID", "rzp_test_owner_value", adminId);
+    await db.integrationSetting.create({ data: { provider: "BREVO", enabled: true, config: '{"note":"owner"}' } });
+    const credentialBefore = await db.integrationCredential.findUniqueOrThrow({
+      where: { provider_key: { provider: "RAZORPAY", key: "KEY_ID" } },
+    });
+    const settingBefore = await db.integrationSetting.findUniqueOrThrow({ where: { provider: "BREVO" } });
+
+    const restore = await stashIntegrationState({
+      credentialProviders: ["RAZORPAY"],
+      settingProviders: ["BREVO"],
+    });
+    assert.equal(await getCredential("RAZORPAY", "KEY_ID"), null, "the scope must start empty");
+    assert.equal(await db.integrationSetting.findUnique({ where: { provider: "BREVO" } }), null);
+
+    // What a test would leave behind.
+    await setCredential("RAZORPAY", "KEY_SECRET", "left-behind-by-a-test", adminId);
+    await db.integrationSetting.create({ data: { provider: "BREVO", enabled: false } });
+
+    await restore();
+    assert.equal(await getCredential("RAZORPAY", "KEY_ID"), "rzp_test_owner_value");
+    assert.equal(await getCredential("RAZORPAY", "KEY_SECRET"), null, "test leftovers are removed");
+    assert.deepEqual(
+      await db.integrationCredential.findUniqueOrThrow({ where: { provider_key: { provider: "RAZORPAY", key: "KEY_ID" } } }),
+      credentialBefore,
+    );
+    assert.deepEqual(await db.integrationSetting.findUniqueOrThrow({ where: { provider: "BREVO" } }), settingBefore);
   });
 });

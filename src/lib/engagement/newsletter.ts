@@ -1,6 +1,9 @@
 import { randomBytes } from "node:crypto";
 import { db } from "@/lib/db";
 import { EMAIL_KIND, sendTransactionalEmail } from "@/lib/engagement/outbox";
+import { escapeHtml } from "@/lib/email/html";
+import { button, loadEmailFooter, paragraph, renderEmailLayout } from "@/lib/email/layout";
+import { logUndeliveredEmailLink } from "@/lib/email/dev-log";
 import { triggerJourneys } from "@/lib/engagement/journey-triggers";
 
 /** Random, unguessable, URL-safe — same shape/entropy as
@@ -22,29 +25,50 @@ function confirmUrlFor(token: string): string {
  * outbox cron once Brevo is actually reachable, the same guarantee every
  * other transactional sender (order notify, customer-auth mailer) already
  * has; see src/lib/engagement/outbox.ts's header comment. Still logs a
- * "[dev]"-prefixed link on any non-ok result so the flow stays
- * testable/verifiable without Brevo configured — that's now a convenience
- * breadcrumb, not the only record of the send. Never throws.
+ * "[dev]"-prefixed link on any non-ok result *outside production* so the
+ * flow stays testable/verifiable without Brevo configured — that's a
+ * convenience breadcrumb, not the only record of the send. F-043: in
+ * production the link and address are never logged (a confirm link is a
+ * live credential — see src/lib/email/dev-log.ts), and the queued body is
+ * sealed at rest by the outbox. Never throws.
  */
 async function sendConfirmationEmail(email: string, token: string): Promise<void> {
   const confirmUrl = confirmUrlFor(token);
 
   try {
-    const result = await sendTransactionalEmail(
-      {
-        to: email,
-        subject: "Confirm your DAAKYKA Apparels newsletter subscription",
-        html: `<p>Thanks for subscribing to DAAKYKA Apparels updates.</p><p><a href="${confirmUrl}">Confirm your subscription</a> to start receiving them.</p><p>If you didn't request this, you can ignore this email — you won't be subscribed unless you click the link.</p>`,
-        text: `Confirm your subscription: ${confirmUrl}`,
-      },
-      EMAIL_KIND.NEWSLETTER_CONFIRM,
-    );
+    const subject = "Confirm your DAAKYKA Apparels newsletter subscription";
+    const footer = await loadEmailFooter();
+    const { html, text } = renderEmailLayout({
+      subject,
+      heading: "Confirm your subscription",
+      bodyHtml:
+        paragraph("Thanks for subscribing to DAAKYKA Apparels updates. Please confirm your subscription to start receiving them.") +
+        button("Confirm subscription", confirmUrl) +
+        paragraph(
+          `<span style="font-size:13px;color:#6b6475;">If the button doesn&rsquo;t work, copy and paste this link into your browser:<br><a href="${escapeHtml(confirmUrl)}" style="color:#8a347d;word-break:break-all;">${escapeHtml(confirmUrl)}</a></span>`,
+        ) +
+        paragraph("If you didn&rsquo;t request this, you can ignore this email &mdash; you won&rsquo;t be subscribed unless you click the link."),
+      bodyText: [
+        "Thanks for subscribing to DAAKYKA Apparels updates. Please confirm your subscription to start receiving them.",
+        `Confirm your subscription: ${confirmUrl}`,
+        "If you didn't request this, you can ignore this email - you won't be subscribed unless you click the link.",
+      ].join("\n\n"),
+      footer,
+    });
+    const result = await sendTransactionalEmail({ to: email, subject, html, text }, EMAIL_KIND.NEWSLETTER_CONFIRM);
     if (!result.ok) {
-      console.log(`[dev] newsletter confirm link for ${email}: ${confirmUrl}`);
+      logUndeliveredEmailLink({
+        scope: "newsletter",
+        label: "newsletter confirm link",
+        to: email,
+        link: confirmUrl,
+        provider: result.provider,
+        outboxId: result.outboxId,
+      });
     }
   } catch (error) {
-    console.log(`[dev] newsletter confirm link for ${email}: ${confirmUrl}`);
-    console.warn("[newsletter] confirmation email send threw", error);
+    logUndeliveredEmailLink({ scope: "newsletter", label: "newsletter confirm link", to: email, link: confirmUrl });
+    console.warn("[newsletter] confirmation email send threw", error instanceof Error ? error.message : "unknown error");
   }
 }
 

@@ -11,6 +11,7 @@ import {
   OrderNotFoundError,
   OrderRequestPaymentOnlyError,
   OrderUpdateConflictError,
+  orderUpdateSchema,
   RefundAcknowledgementRequiredError,
   streamOrdersCsv,
   updateOrderAdmin,
@@ -38,6 +39,7 @@ const createdOrderIds: string[] = [];
 const createdProductIds: string[] = [];
 const createdCategoryIds: string[] = [];
 const createdCustomerIds: string[] = [];
+const createdDiscountIds: string[] = [];
 
 /**
  * Release-hardening Finding B: a real Product/ProductVariant, plus an
@@ -106,6 +108,9 @@ function baseOrderData(overrides: Partial<Prisma.OrderUncheckedCreateInput> = {}
 after(async () => {
   if (createdOrderIds.length > 0) {
     await db.order.deleteMany({ where: { id: { in: createdOrderIds } } }).catch(() => {});
+  }
+  if (createdDiscountIds.length > 0) {
+    await db.discount.deleteMany({ where: { id: { in: createdDiscountIds } } }).catch(() => {});
   }
   if (createdProductIds.length > 0) {
     await db.product.deleteMany({ where: { id: { in: createdProductIds } } }).catch(() => {});
@@ -548,6 +553,260 @@ describe("orders admin service (Phase D4)", () => {
 
     const afterRefund = await db.productVariant.findUnique({ where: { id: variant.id } });
     assert.equal(afterRefund?.stock, 1, "a refund alone does not make a return sellable");
+  });
+
+  // F-199 fix: the order-request payment journey and the post-shipping
+  // refund/return journeys.
+
+  it("F-199: an order-request marked paid and then cancelled still gets its checkout-time stock back", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createOrderRequestOrder(5, 2);
+    await updateOrderAdmin(order.id, { status: "PAID" }, adminId);
+
+    const cancelled = await updateOrderAdmin(order.id, { status: "CANCELLED" }, adminId);
+    assert.equal(cancelled.status, "CANCELLED");
+
+    const after = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(after?.stock, 5, "PAID order-requests still hold their stock — cancelling must restore it");
+  });
+
+  it("F-199: an order-request marked paid and then refunded before shipping gets its stock back too", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createOrderRequestOrder(5, 2);
+    await updateOrderAdmin(order.id, { status: "PAID" }, adminId);
+
+    const refunded = await updateOrderAdmin(order.id, { status: "REFUNDED" }, adminId);
+    assert.equal(refunded.status, "REFUNDED");
+
+    const after = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(after?.stock, 5);
+  });
+
+  it("F-199: recording an order-request's payment keeps how it was received in the order's History", async () => {
+    const adminId = await findAnyAdminId();
+    const { order } = await createOrderRequestOrder(5, 1);
+
+    const updated = await updateOrderAdmin(
+      order.id,
+      { status: "PAID", payment: { method: "UPI", reference: "UTR-123456" } },
+      adminId,
+    );
+    assert.equal(updated.status, "PAID");
+    assert.ok(updated.paidAt, "paidAt is stamped when the payment is recorded");
+
+    const history = await getOrderHistory(order.id);
+    const entry = history.find((row) => row.toStatus === "PAID");
+    assert.ok(entry, "the PROCESSING -> PAID change is in the History");
+    assert.deepEqual(entry.paymentRecorded, { method: "UPI", reference: "UTR-123456" });
+
+    const withoutReference = await createOrderRequestOrder(5, 1);
+    await updateOrderAdmin(withoutReference.order.id, { status: "PAID", payment: { method: "COD" } }, adminId);
+    const plainHistory = await getOrderHistory(withoutReference.order.id);
+    assert.deepEqual(plainHistory.find((row) => row.toStatus === "PAID")?.paymentRecorded, {
+      method: "COD",
+      reference: null,
+    });
+  });
+
+  it("F-199: payment details go with PAID, SHIPPED, DELIVERED or on their own (never with a cancel/refund/return), and restockReturnedItems only with RETURNED", () => {
+    assert.equal(orderUpdateSchema.safeParse({ status: "PAID", payment: { method: "UPI" } }).success, true);
+    assert.equal(orderUpdateSchema.safeParse({ status: "DELIVERED", payment: { method: "COD" } }).success, true);
+    assert.equal(orderUpdateSchema.safeParse({ status: "SHIPPED", payment: { method: "UPI" } }).success, true);
+    // Alone: the cash-on-delivery case, where the order has shipped and only the payment is news.
+    assert.equal(orderUpdateSchema.safeParse({ payment: { method: "COD", reference: "RCPT-1" } }).success, true);
+    assert.equal(orderUpdateSchema.safeParse({ adminNotes: "x", payment: { method: "UPI" } }).success, true);
+    for (const status of ["CANCELLED", "REFUNDED", "RETURNED"] as const) {
+      assert.equal(orderUpdateSchema.safeParse({ status, payment: { method: "UPI" } }).success, false, status);
+    }
+    assert.equal(orderUpdateSchema.safeParse({ status: "PAID", payment: { method: "BITCOIN" } }).success, false);
+    assert.equal(orderUpdateSchema.safeParse({}).success, false, "still needs at least one field");
+    assert.equal(orderUpdateSchema.safeParse({ status: "RETURNED", restockReturnedItems: true }).success, true);
+    assert.equal(orderUpdateSchema.safeParse({ status: "REFUNDED", restockReturnedItems: true }).success, false);
+    assert.equal(orderUpdateSchema.safeParse({ adminNotes: "x", restockReturnedItems: true }).success, false);
+  });
+
+  // F-199 review fix: an order-request paid after it shipped (cash on
+  // delivery) has no PAID edge to go through (SHIPPED and DELIVERED are
+  // fulfilment states), so its payment is recorded with no status move.
+
+  it("F-199: a cash-on-delivery order-request is shipped, delivered and then has its payment recorded, with status and stock untouched", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createOrderRequestOrder(5, 2);
+    await updateOrderAdmin(order.id, { status: "SHIPPED", trackingNumber: "TRK-COD", courier: "Bluedart" }, adminId);
+    const delivered = await updateOrderAdmin(order.id, { status: "DELIVERED" }, adminId);
+    assert.equal(delivered.status, "DELIVERED");
+    assert.equal(delivered.paidAt, null, "nothing has been paid yet: delivery alone never records a payment");
+
+    const recorded = await updateOrderAdmin(
+      order.id,
+      { payment: { method: "COD", reference: "COD-RCPT-77" } },
+      adminId,
+    );
+    assert.equal(recorded.status, "DELIVERED", "recording a payment is not a status change");
+    assert.ok(recorded.paidAt, "paidAt is stamped");
+    assert.equal(recorded.deliveredAt?.getTime(), delivered.deliveredAt?.getTime(), "the delivery date is untouched");
+
+    const after = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(after?.stock, 3, "recording a payment never touches stock");
+
+    const history = await getOrderHistory(order.id);
+    const entry = history.at(-1);
+    assert.ok(entry, "the payment is in the History");
+    assert.equal(entry.fromStatus, null, "no status change is claimed");
+    assert.equal(entry.toStatus, null);
+    assert.deepEqual(entry.paymentRecorded, { method: "COD", reference: "COD-RCPT-77" });
+
+    const detail = await getOrderForAdmin(order.id);
+    assert.ok(detail.paidAt, "the admin detail (and so the order page) now reads as paid");
+    assert.ok(detail.shippedAt, "and exposes when it shipped");
+  });
+
+  it("F-199: a payment can be recorded together with SHIPPED -> DELIVERED, or while the order is still Shipped", async () => {
+    const adminId = await findAnyAdminId();
+
+    const shippedOnly = await createOrderRequestOrder(5, 1);
+    await updateOrderAdmin(shippedOnly.order.id, { status: "SHIPPED", trackingNumber: "TRK-S1", courier: "Bluedart" }, adminId);
+    const whileShipped = await updateOrderAdmin(shippedOnly.order.id, { payment: { method: "UPI" } }, adminId);
+    assert.equal(whileShipped.status, "SHIPPED");
+    assert.ok(whileShipped.paidAt);
+
+    const together = await createOrderRequestOrder(5, 1);
+    await updateOrderAdmin(together.order.id, { status: "SHIPPED", trackingNumber: "TRK-S2", courier: "Bluedart" }, adminId);
+    const deliveredAndPaid = await updateOrderAdmin(
+      together.order.id,
+      { status: "DELIVERED", payment: { method: "COD" } },
+      adminId,
+    );
+    assert.equal(deliveredAndPaid.status, "DELIVERED");
+    assert.ok(deliveredAndPaid.paidAt);
+    assert.ok(deliveredAndPaid.deliveredAt);
+    const entry = (await getOrderHistory(together.order.id)).find((row) => row.toStatus === "DELIVERED");
+    assert.deepEqual(entry?.paymentRecorded, { method: "COD", reference: null });
+  });
+
+  it("F-199: a payment is recorded only once, only for an order-request, and never on a cancelled order", async () => {
+    const adminId = await findAnyAdminId();
+
+    // Already recorded.
+    const paidOnce = await createOrderRequestOrder(5, 1);
+    await updateOrderAdmin(paidOnce.order.id, { status: "SHIPPED", trackingNumber: "TRK-P1", courier: "Bluedart" }, adminId);
+    const first = await updateOrderAdmin(paidOnce.order.id, { payment: { method: "COD" } }, adminId);
+    await assert.rejects(
+      () => updateOrderAdmin(paidOnce.order.id, { payment: { method: "UPI" } }, adminId),
+      OrderRequestPaymentOnlyError,
+    );
+    const unchanged = await db.order.findUniqueOrThrow({ where: { id: paidOnce.order.id } });
+    assert.equal(unchanged.paidAt?.getTime(), first.paidAt?.getTime(), "the first payment's date is never overwritten");
+
+    // A RAZORPAY order's payment is captured online: nothing for an admin to record.
+    const razorpay = await createRazorpayOrderAtStatus("DELIVERED", 3, 1);
+    await assert.rejects(
+      () => updateOrderAdmin(razorpay.order.id, { payment: { method: "COD" } }, adminId),
+      OrderRequestPaymentOnlyError,
+    );
+
+    // A cancelled order has no money to record.
+    const cancelled = await createOrderRequestOrder(5, 1);
+    await updateOrderAdmin(cancelled.order.id, { status: "CANCELLED" }, adminId);
+    await assert.rejects(
+      () => updateOrderAdmin(cancelled.order.id, { payment: { method: "UPI" } }, adminId),
+      OrderRequestPaymentOnlyError,
+    );
+    const stillCancelled = await db.order.findUniqueOrThrow({ where: { id: cancelled.order.id } });
+    assert.equal(stillCancelled.paidAt, null);
+  });
+
+  it("F-199: refunding a cash-on-delivery order paid after delivery keeps the payment date and never restocks", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createOrderRequestOrder(5, 2);
+    await updateOrderAdmin(order.id, { status: "SHIPPED", trackingNumber: "TRK-COD2", courier: "Bluedart" }, adminId);
+    await updateOrderAdmin(order.id, { status: "DELIVERED", payment: { method: "COD" } }, adminId);
+
+    const refunded = await updateOrderAdmin(order.id, { status: "REFUNDED" }, adminId);
+    assert.equal(refunded.status, "REFUNDED");
+    assert.ok(refunded.paidAt, "the recorded payment date survives the refund");
+    const after = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(after?.stock, 3, "a refund after delivery must not add phantom stock back");
+  });
+
+  it("F-199: a delivered order-request can be refunded outright without touching stock", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createOrderRequestOrder(5, 2);
+    await updateOrderAdmin(order.id, { status: "SHIPPED", trackingNumber: "TRK-REFUND", courier: "Bluedart" }, adminId);
+    await updateOrderAdmin(order.id, { status: "DELIVERED" }, adminId);
+
+    const refunded = await updateOrderAdmin(order.id, { status: "REFUNDED" }, adminId);
+    assert.equal(refunded.status, "REFUNDED");
+
+    const after = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(after?.stock, 3, "a refund after delivery must not add phantom stock back");
+  });
+
+  it("F-199: refunding a shipped, captured RAZORPAY order needs the acknowledgement and doesn't restock", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createRazorpayOrderAtStatus("SHIPPED", 3, 2);
+
+    await assert.rejects(
+      () => updateOrderAdmin(order.id, { status: "REFUNDED" }, adminId),
+      RefundAcknowledgementRequiredError,
+    );
+
+    const refunded = await updateOrderAdmin(order.id, { status: "REFUNDED", acknowledgeExternalRefund: true }, adminId);
+    assert.equal(refunded.status, "REFUNDED");
+
+    const after = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(after?.stock, 1);
+  });
+
+  it("F-199: marking a delivered order returned with 'add back to stock' restocks it exactly once", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createRazorpayOrderAtStatus("DELIVERED", 3, 2);
+
+    const returned = await updateOrderAdmin(order.id, { status: "RETURNED", restockReturnedItems: true }, adminId);
+    assert.equal(returned.status, "RETURNED");
+    const afterReturn = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(afterReturn?.stock, 3, "the two returned units are sellable again");
+
+    const history = await getOrderHistory(order.id);
+    assert.equal(history.find((row) => row.toStatus === "RETURNED")?.restockedUnits, 2);
+
+    // The later refund never adds the same units a second time.
+    await updateOrderAdmin(order.id, { status: "REFUNDED", acknowledgeExternalRefund: true }, adminId);
+    const afterRefund = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(afterRefund?.stock, 3);
+
+    // ...and a repeat of the same return can't restock again either.
+    await assert.rejects(
+      () => updateOrderAdmin(order.id, { status: "RETURNED", restockReturnedItems: true }, adminId),
+      InvalidOrderStatusTransitionError,
+    );
+    const afterRepeat = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(afterRepeat?.stock, 3);
+  });
+
+  it("F-199: restocking a return does not release the customer's discount redemption", async () => {
+    const adminId = await findAnyAdminId();
+    const { order, variant } = await createRazorpayOrderAtStatus("DELIVERED", 3, 1);
+    const discount = await db.discount.create({
+      data: {
+        code: `F199-${randomUUID().slice(0, 8).toUpperCase()}`,
+        type: "FIXED",
+        value: 100,
+        redeemedCount: 1,
+      },
+    });
+    createdDiscountIds.push(discount.id);
+    await db.order.update({ where: { id: order.id }, data: { discountId: discount.id } });
+    await db.discountRedemption.create({ data: { discountId: discount.id, orderId: order.id, email: order.email } });
+
+    await updateOrderAdmin(order.id, { status: "RETURNED", restockReturnedItems: true }, adminId);
+
+    const afterReturn = await db.productVariant.findUnique({ where: { id: variant.id } });
+    assert.equal(afterReturn?.stock, 3, "stock is added back (2 left after sale + 1 returned)");
+    const redemption = await db.discountRedemption.findUnique({ where: { orderId: order.id } });
+    assert.ok(redemption, "the code was used — a return doesn't hand the redemption back");
+    const unchangedDiscount = await db.discount.findUniqueOrThrow({ where: { id: discount.id } });
+    assert.equal(unchangedDiscount.redeemedCount, 1);
   });
 
   it("OrderUpdateConflictError is exported and constructs a useful message", () => {

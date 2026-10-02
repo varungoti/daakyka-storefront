@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { getVariantGridError, type VariantRow } from "@/components/admin/product-variant-editor";
 
 // F-179: getVariantGridError is the single source of truth ProductForm uses
@@ -44,5 +45,17 @@ describe("getVariantGridError", () => {
   it("flags a duplicate SKU across two otherwise-distinct rows", () => {
     const error = getVariantGridError([row({ sku: "DK-SAME" }), row({ size: "L", sku: "DK-SAME" })]);
     assert.ok(error);
+  });
+});
+
+// F-065: the variants table scrolls sideways inside its own box on a phone.
+// Its `sr-only` labels are position:absolute, so they are only clipped by that
+// box when the box is itself positioned; without `relative` they sat past the
+// table's right edge and widened the whole page to ~700px on a 375px screen
+// (measured in a 375px browser: scrollWidth 697 -> 375 with it).
+describe("variants table scroll container", () => {
+  it("is a positioned box, so the table's sr-only labels stay inside its clipping", () => {
+    const source = readFileSync("src/components/admin/product-variant-editor.tsx", "utf8");
+    assert.match(source, /className="relative overflow-x-auto[^"]*">\s*<table/);
   });
 });

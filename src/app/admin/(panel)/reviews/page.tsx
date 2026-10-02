@@ -3,6 +3,9 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { listReviewsForAdmin } from "@/lib/reviews/moderate-review";
 import { ReviewsAdminClient } from "./reviews-admin-client";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Reviews" };
 
 /**
  * Phase D2: the review moderation queue, replacing the Phase B2/C5

@@ -16,7 +16,11 @@ describe("robots.ts", () => {
     await withEnv({ NEXT_PUBLIC_ALLOW_INDEXING: undefined, VERCEL_ENV: undefined }, () => {
       const result = robots();
       assert.deepEqual(result.rules, [
-        { userAgent: "*", allow: "/", disallow: ["/admin/", "/api/", "/checkout", "/account"] },
+        {
+          userAgent: "*",
+          allow: "/",
+          disallow: ["/admin/", "/api/", "/checkout", "/account", "/order/"],
+        },
       ]);
       assert.equal(typeof result.sitemap, "string");
       assert.ok((result.sitemap as string).endsWith("/sitemap.xml"));
@@ -27,13 +31,17 @@ describe("robots.ts", () => {
     await withEnv({ NEXT_PUBLIC_ALLOW_INDEXING: "true", VERCEL_ENV: undefined }, () => {
       const result = robots();
       assert.deepEqual(result.rules, [
-        { userAgent: "*", allow: "/", disallow: ["/admin/", "/api/", "/checkout", "/account"] },
+        {
+          userAgent: "*",
+          allow: "/",
+          disallow: ["/admin/", "/api/", "/checkout", "/account", "/order/"],
+        },
       ]);
     });
   });
 
   // F-045: /account (login, orders, addresses, ...) must never be indexable.
-  it("disallows /account", async () => {
+  it("disallows /account and /order/ (F-045)", async () => {
     await withEnv({ NEXT_PUBLIC_ALLOW_INDEXING: undefined, VERCEL_ENV: undefined }, () => {
       const result = robots();
       const rules = Array.isArray(result.rules) ? result.rules : [result.rules];
@@ -41,6 +49,7 @@ describe("robots.ts", () => {
         Array.isArray(rule.disallow) ? rule.disallow : rule.disallow ? [rule.disallow] : [],
       );
       assert.ok(disallow.includes("/account"));
+      assert.ok(disallow.includes("/order/"));
     });
   });
 

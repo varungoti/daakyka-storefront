@@ -2,6 +2,7 @@ import { revalidateTag, unstable_cache } from "next/cache";
 import { z } from "zod";
 import { brand } from "@/data/brand";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
 import { db } from "@/lib/db";
 import type { Prisma } from "@/generated/prisma/client";
 
@@ -78,7 +79,11 @@ export const settingSchemas: { [K in SettingKey]: z.ZodType<SettingValueMap[K]> 
   "pages.mixMatch.enabled": z.boolean(),
   "sale.enabled": z.boolean(),
   "header.bulkCta.enabled": z.boolean(),
-  "announcement.messages": z.array(z.string().trim().min(1).max(200)).min(1).max(10),
+  // F-170: an empty list is a valid value — it's how the owner hides the
+  // announcement messages (the storefront bar renders nothing for them, and
+  // does NOT fall back to the brand defaults — see announcement-bar.tsx).
+  // This used to be `.min(1)`, so the bar could never be switched off.
+  "announcement.messages": z.array(z.string().trim().min(1).max(200)).max(10),
   "shipping.flatRate": z.number().min(0).max(100_000),
   "shipping.freeAbove": z.number().min(0).max(10_000_000),
   "contact.phone": z.string().trim().min(6).max(30),
@@ -179,6 +184,13 @@ export async function setSetting<K extends SettingKey>(
 ): Promise<SettingValueMap[K]> {
   const parsed = settingSchemas[key].parse(value);
 
+  // F-288: the value being replaced, for the audit row (best-effort — a failed
+  // read must never block the save itself).
+  const previous = await db.siteSetting
+    .findUnique({ where: { key }, select: { value: true } })
+    .then((row) => (row ? row.value : null))
+    .catch(() => null);
+
   if (expectedUpdatedAt) {
     // A row that doesn't exist yet can't be stale — `updateMany` matches
     // zero rows either way, so an existence check comes first to tell
@@ -206,11 +218,16 @@ export async function setSetting<K extends SettingKey>(
     action: "update",
     entity: "site_setting",
     entityId: key,
-    metadata: { value: parsed },
+    // F-288: `value` alone said what a setting became, never what it was —
+    // so a shipping fee or announcement edit could not be reconstructed.
+    metadata: { value: parsed, previousValue: previous },
   });
 
   try {
-    revalidateTag(SETTINGS_CACHE_TAG, "max");
+    // F-214: immediate ({ expire: 0 }), not "max" — a saved setting (shipping
+    // fee, announcement, contact details) must show on the very next read,
+    // and create-order.ts prices shipping from these same cached reads.
+    revalidateTag(SETTINGS_CACHE_TAG, ADMIN_REVALIDATE_PROFILE);
   } catch {
     // No static generation store in this context (unit tests, scripts) —
     // nothing to revalidate.

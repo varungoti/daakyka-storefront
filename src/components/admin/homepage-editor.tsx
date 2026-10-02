@@ -41,11 +41,20 @@ export function HomepageEditor({
     setErrorMessage(null);
     setFieldErrors({});
     const query = savedAt ? `?updatedAt=${encodeURIComponent(savedAt.toISOString())}` : "";
-    const response = await fetch(`/api/admin/homepage/hero${query}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(content),
-    });
+    let response: Response;
+    try {
+      response = await fetch(`/api/admin/homepage/hero${query}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(content),
+      });
+    } catch {
+      // F-219: a network failure used to throw out of save() and leave the
+      // editor on "Saving…" forever.
+      setStatus("error");
+      setErrorMessage("Save failed — check your connection and try again.");
+      return;
+    }
     const body = await response.json().catch(() => ({}));
 
     if (!response.ok) {

@@ -2,12 +2,7 @@ import { revalidateTag } from "next/cache";
 import type { ReviewStatus } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
 import { db } from "@/lib/db";
-import {
-  deleteUnattachedMediaAsset,
-  MediaAssetAttachedError,
-  MediaAssetInUseError,
-  MediaAssetNotFoundError,
-} from "@/lib/media/store";
+import { reclaimMediaAssetIfUnused } from "@/lib/media/store";
 import { PRODUCTS_CACHE_TAG, productCacheTag } from "@/lib/products";
 
 /**
@@ -112,16 +107,13 @@ async function loadReviewWithProductSlug(reviewId: string) {
 async function deleteRejectedReviewPhotos(photoIds: readonly string[]): Promise<void> {
   for (const photoId of photoIds) {
     try {
-      await deleteUnattachedMediaAsset(photoId);
+      await reclaimMediaAssetIfUnused(photoId);
     } catch (error) {
-      if (
-        error instanceof MediaAssetNotFoundError ||
-        error instanceof MediaAssetInUseError ||
-        error instanceof MediaAssetAttachedError
-      ) {
-        continue;
-      }
-      throw error;
+      // The status write above has already committed, so an unexpected
+      // failure here (a DB hiccup) must not turn a successful rejection
+      // into a 500 the moderator would retry; the photo just waits for
+      // scripts/cleanup-orphaned-media.ts like any other orphan.
+      console.error(`Couldn't delete rejected review photo ${photoId}`, error);
     }
   }
 }

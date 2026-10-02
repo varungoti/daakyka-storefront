@@ -24,8 +24,9 @@ export default function CollectionsPage() {
         <SectionHeading
           eyebrow="Browse"
           title="Shop Collections"
-          description="Curated groups to help you find the right scrubs faster."
+          description="Curated groups to help you find the right products faster."
           align="center"
+          titleAs="h1"
         />
       </PageHeroBand>
 

@@ -3,6 +3,9 @@ import { redirect } from "next/navigation";
 import { listSizeChartsForAdmin } from "@/lib/catalog/size-charts";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Size Charts" };
 
 export default async function AdminSizeChartsPage() {
   const session = await getSession();

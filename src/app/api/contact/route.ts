@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     const bodyResult = await readJsonBody(request);
     if (!bodyResult.ok) return bodyResult.response;
 
-    if (isHoneypotTripped(bodyResult.data)) {
+    if (isHoneypotTripped(bodyResult.data, "contact")) {
       // Fake success, no DB write: gives a bot no signal it was caught.
       return NextResponse.json({ id: "ok", message: "Enquiry received" });
     }

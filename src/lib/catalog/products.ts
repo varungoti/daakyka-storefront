@@ -1,6 +1,8 @@
 import { revalidateTag } from "next/cache";
 import { z } from "zod";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { changedFieldNames, diffFields } from "@/lib/auth/audit-diff";
+import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
 import { db } from "@/lib/db";
 import { CATEGORIES_CACHE_TAG, PRODUCTS_CACHE_TAG, productCacheTag } from "@/lib/products";
 import { Prisma } from "@/generated/prisma/client";
@@ -8,6 +10,7 @@ import type { Product, ProductGender, ProductStatus } from "@/generated/prisma/c
 import { slugify } from "@/lib/catalog/category-validation";
 import { assertUniqueVariants, generateSku } from "@/lib/catalog/product-validation";
 import { prepareDescriptionForStorage } from "@/lib/catalog/description-html";
+import { reclaimMediaAssetIfUnused } from "@/lib/media/store";
 
 /**
  * Phase B1: admin CRUD for `Product`, `ProductVariant`, and `ProductImage`,
@@ -265,9 +268,12 @@ export class VariantStockConflictError extends Error {
 // Cache
 // ---------------------------------------------------------------------------
 
+// F-032: ADMIN_REVALIDATE_PROFILE ({ expire: 0 }), not "max" — every caller
+// here is an admin write, and "max" served the OLD price / a just-unpublished
+// product to the next request (the owner checking their own change).
 function safeRevalidate(tag: string) {
   try {
-    revalidateTag(tag, "max");
+    revalidateTag(tag, ADMIN_REVALIDATE_PROFILE);
   } catch {
     // No static generation store in this context (unit/integration tests,
     // one-off scripts) — nothing to revalidate.
@@ -400,6 +406,43 @@ export async function createProduct(input: ProductInput, userId: string): Promis
   return created;
 }
 
+/** F-288: the Product columns whose before -> after is written to the audit
+ * row on update. `description` is deliberately absent — see updateProduct. */
+const PRODUCT_AUDITED_FIELDS = [
+  "name",
+  "slug",
+  "status",
+  "price",
+  "compareAtPrice",
+  "categoryId",
+  "featured",
+  "isNew",
+  "gender",
+  "shortDescription",
+  "fabric",
+  "care",
+  "countryOfOrigin",
+  "netQuantity",
+  "hsnCode",
+  "tags",
+  "sizeChartId",
+  "seoTitle",
+  "seoDescription",
+] as const;
+
+/** The dedicated audit action a status change corresponds to — the same
+ * names publishProduct / unpublishProduct / archiveProduct / unarchiveProduct
+ * write — or null when the status did not change. */
+export function productStatusChangeAction(
+  from: ProductStatus,
+  to: ProductStatus,
+): "publish" | "unpublish" | "archive" | "unarchive" | null {
+  if (from === to) return null;
+  if (to === "ACTIVE") return "publish";
+  if (to === "ARCHIVED") return "archive";
+  return from === "ACTIVE" ? "unpublish" : "unarchive";
+}
+
 export async function updateProduct(
   id: string,
   input: ProductUpdateInput,
@@ -476,13 +519,36 @@ export async function updateProduct(
 
   const updated = await db.product.update({ where: { id }, data });
 
+  // F-288: the row used to carry only {name, slug}, so a price drop or a
+  // status flip left no trace of what it was. `changes` is the before ->
+  // after of every field that actually moved; a description is long HTML,
+  // so only the fact that it changed is recorded.
   await logAuditEvent({
     userId,
     action: "update",
     entity: "product",
     entityId: updated.id,
-    metadata: { name: updated.name, slug: updated.slug },
+    metadata: {
+      name: updated.name,
+      slug: updated.slug,
+      changes: diffFields(existing, updated, PRODUCT_AUDITED_FIELDS),
+      ...(changedFieldNames(existing, updated, ["description"]).length > 0 ? { descriptionChanged: true } : {}),
+    },
   });
+
+  // F-288: a status change made through this PATCH is a publish / unpublish /
+  // archive just as much as the dedicated /publish route is, and is logged
+  // as one so the audit trail's "who put this live" query finds it.
+  const statusAction = productStatusChangeAction(existing.status, updated.status);
+  if (statusAction) {
+    await logAuditEvent({
+      userId,
+      action: statusAction,
+      entity: "product",
+      entityId: updated.id,
+      metadata: { slug: updated.slug, fromStatus: existing.status, toStatus: updated.status, via: "update" },
+    });
+  }
 
   revalidateProduct(updated.slug, categoryChanged);
   if (existing.slug !== updated.slug) revalidateProduct(existing.slug);
@@ -511,6 +577,12 @@ export async function deleteProduct(id: string, userId: string): Promise<void> {
     throw new ProductDeleteBlockedError(orderCount);
   }
 
+  // F-362: remember the gallery's media before the cascade removes the
+  // ProductImage rows, so the now-unreferenced photos can be reclaimed below.
+  const galleryMediaIds = (await db.productImage.findMany({ where: { productId: id }, select: { mediaId: true } })).map(
+    (image) => image.mediaId,
+  );
+
   await db.product.delete({ where: { id } });
 
   await logAuditEvent({
@@ -522,6 +594,17 @@ export async function deleteProduct(id: string, userId: string): Promise<void> {
   });
 
   revalidateProduct(existing.slug, true);
+
+  // F-362: best-effort, after the cascade has removed the ProductImage rows
+  // (the attached-guard would refuse otherwise). Assets another product, a
+  // category, a hero slide or a review still uses are skipped by the guards.
+  for (const mediaId of new Set(galleryMediaIds)) {
+    try {
+      await reclaimMediaAssetIfUnused(mediaId);
+    } catch (error) {
+      console.error("Couldn't reclaim deleted product's image", error);
+    }
+  }
 }
 
 export async function publishProduct(id: string, userId: string): Promise<Product> {
@@ -662,6 +745,75 @@ function variantKey(size: string, color: string): string {
   return `${size.trim().toLowerCase()}::${color.trim().toLowerCase()}`;
 }
 
+/** Bounds an audit row: a product has a few dozen variants at most, but a
+ * pathological import must not write a megabyte of metadata. */
+const MAX_AUDITED_VARIANTS = 60;
+
+interface ExistingVariantSnapshot {
+  size: string;
+  color: string;
+  sku: string;
+  price: { toNumber(): number } | null;
+  stock: number;
+  active: boolean;
+  _count: { orderItems: number; backInStockSubscriptions: number };
+}
+
+/**
+ * F-288: what a variant-grid save actually changed — per SKU, the stock,
+ * price, active flag, SKU and size/colour it moved from and to — plus the
+ * rows it added and removed. Built from the rows loaded before the
+ * transaction and the incoming grid, mirroring replaceVariants's own
+ * "which stock write actually applies" rule (an unchanged stock with an
+ * `expectedStock` is not written, so it is not reported either).
+ */
+function describeVariantChanges(
+  toUpdate: { existing: ExistingVariantSnapshot; input: VariantInput }[],
+  toCreate: VariantInput[],
+  toRemove: ExistingVariantSnapshot[],
+): Record<string, unknown> {
+  const updated = toUpdate.flatMap(({ existing: row, input }) => {
+    const stockWritten = input.expectedStock === undefined || input.expectedStock !== input.stock;
+    const changes = diffFields(
+      row,
+      {
+        sku: input.sku.trim(),
+        size: input.size.trim(),
+        color: input.color.trim(),
+        price: input.price ?? null,
+        stock: stockWritten ? input.stock : row.stock,
+        active: input.active ?? true,
+      },
+      ["sku", "size", "color", "price", "stock", "active"],
+    );
+    return Object.keys(changes).length > 0 ? [{ sku: row.sku, changes }] : [];
+  });
+  const added = toCreate.map((v) => ({
+    sku: v.sku.trim(),
+    size: v.size.trim(),
+    color: v.color.trim(),
+    stock: v.stock,
+    price: v.price ?? null,
+    active: v.active ?? true,
+  }));
+  const removed = toRemove.map((row) => ({
+    sku: row.sku,
+    stock: row.stock,
+    // Mirrors the transaction: a variant with order history or a waiting
+    // back-in-stock signup is deactivated rather than deleted.
+    outcome: row._count.orderItems > 0 || row._count.backInStockSubscriptions > 0 ? "deactivated" : "deleted",
+  }));
+
+  const truncated =
+    updated.length > MAX_AUDITED_VARIANTS || added.length > MAX_AUDITED_VARIANTS || removed.length > MAX_AUDITED_VARIANTS;
+  return {
+    ...(updated.length > 0 ? { variantChanges: updated.slice(0, MAX_AUDITED_VARIANTS) } : {}),
+    ...(added.length > 0 ? { variantsAdded: added.slice(0, MAX_AUDITED_VARIANTS) } : {}),
+    ...(removed.length > 0 ? { variantsRemoved: removed.slice(0, MAX_AUDITED_VARIANTS) } : {}),
+    ...(truncated ? { truncated: true } : {}),
+  };
+}
+
 /**
  * F-023/F-336 (release-hardening P0 anchor): syncs the admin form's
  * variant grid against the DB with a per-row diff instead of the old
@@ -726,6 +878,11 @@ export async function replaceVariants(productId: string, variants: VariantInput[
       id: true,
       size: true,
       color: true,
+      // F-288: what each row held before this save, for the audit diff below.
+      sku: true,
+      price: true,
+      stock: true,
+      active: true,
       _count: { select: { orderItems: true, backInStockSubscriptions: true } },
     },
   });
@@ -812,7 +969,15 @@ export async function replaceVariants(productId: string, variants: VariantInput[
     action: "update",
     entity: "product_variants",
     entityId: productId,
-    metadata: { count: variants.length, created: toCreate.length, updated: toUpdate.length, removed: toRemove.length },
+    metadata: {
+      count: variants.length,
+      created: toCreate.length,
+      updated: toUpdate.length,
+      removed: toRemove.length,
+      // F-288: the row used to carry only these counts — nothing about which
+      // SKU's stock or price moved, or what it moved from.
+      ...describeVariantChanges(toUpdate, toCreate, toRemove),
+    },
   });
 
   revalidateProduct(product.slug);
@@ -873,6 +1038,16 @@ export async function removeProductImage(productId: string, imageId: string, use
 
   await logAuditEvent({ userId, action: "delete", entity: "product_image", entityId: imageId, metadata: { productId: image.productId } });
   revalidateProduct(image.product.slug);
+
+  // F-362: a photo removed from its only product used to stay in R2 and the
+  // media library forever, still publicly downloadable. Reclaim it now; the
+  // guards leave it alone if it is still attached elsewhere or otherwise in
+  // use, and a failure here must never fail the removal itself.
+  try {
+    await reclaimMediaAssetIfUnused(image.mediaId);
+  } catch (error) {
+    console.error("Couldn't reclaim removed product image", error);
+  }
 }
 
 export async function setImageColor(productId: string, imageId: string, color: string | null, userId: string) {
@@ -881,7 +1056,14 @@ export async function setImageColor(productId: string, imageId: string, color: s
 
   const updated = await db.productImage.update({ where: { id: imageId }, data: { color }, include: { media: true } });
 
-  await logAuditEvent({ userId, action: "update", entity: "product_image", entityId: imageId, metadata: { color } });
+  // F-288: which product the photo belongs to, and what the colour was.
+  await logAuditEvent({
+    userId,
+    action: "update",
+    entity: "product_image",
+    entityId: imageId,
+    metadata: { productId, color, changes: diffFields(image, updated, ["color"]) },
+  });
   revalidateProduct(image.product.slug);
   return updated;
 }
@@ -905,7 +1087,13 @@ export async function setImageSizeScope(
     data: { size, appliesToAllSizes },
     include: { media: true },
   });
-  await logAuditEvent({ userId, action: "update", entity: "product_image", entityId: imageId, metadata: { size, appliesToAllSizes } });
+  await logAuditEvent({
+    userId,
+    action: "update",
+    entity: "product_image",
+    entityId: imageId,
+    metadata: { productId, size, appliesToAllSizes, changes: diffFields(image, updated, ["size", "appliesToAllSizes"]) },
+  });
   revalidateProduct(image.product.slug);
   return updated;
 }
@@ -916,7 +1104,13 @@ export async function updateImageAlt(productId: string, imageId: string, alt: st
 
   const updated = await db.productImage.update({ where: { id: imageId }, data: { alt }, include: { media: true } });
 
-  await logAuditEvent({ userId, action: "update", entity: "product_image", entityId: imageId, metadata: { alt } });
+  await logAuditEvent({
+    userId,
+    action: "update",
+    entity: "product_image",
+    entityId: imageId,
+    metadata: { productId, alt, changes: diffFields(image, updated, ["alt"]) },
+  });
   revalidateProduct(image.product.slug);
   return updated;
 }
@@ -950,7 +1144,7 @@ export async function reorderProductImages(productId: string, imageId: string, d
     db.productImage.update({ where: { id: other.id }, data: { sortOrder: self.sortOrder } }),
   ]);
 
-  await logAuditEvent({ userId, action: "update", entity: "product_image", entityId: imageId, metadata: { reorder: direction } });
+  await logAuditEvent({ userId, action: "update", entity: "product_image", entityId: imageId, metadata: { productId, reorder: direction } });
   revalidateProduct(product.slug);
   return true;
 }
@@ -1118,27 +1312,36 @@ export async function listProductsForAdmin(options: ListProductsForAdminOptions 
     stockFilter: options.stockFilter,
   });
 
-  const countRows = await db.$queryRaw<{ count: number }[]>(Prisma.sql`
-    SELECT COUNT(*)::int AS count
-    ${PRODUCT_LIST_FROM_SQL}
-    ${whereSql}
-  `);
-  const total = countRows[0]?.count ?? 0;
-
   const pageSize = Math.min(Math.max(options.pageSize ?? 24, 1), 100);
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const page = Math.min(Math.max(options.page ?? 1, 1), totalPages);
-  const skip = (page - 1) * pageSize;
-
   const sort = options.sort ?? "updated-desc";
-  const pageRows = await db.$queryRaw<{ id: string }[]>(Prisma.sql`
-    SELECT p.id
-    ${PRODUCT_LIST_FROM_SQL}
-    ${whereSql}
-    ORDER BY ${buildProductOrderBySql(sort)}
-    LIMIT ${pageSize} OFFSET ${skip}
-  `);
-  const ids = pageRows.map((r) => r.id);
+  const fetchPageIds = async (pageNumber: number) =>
+    (
+      await db.$queryRaw<{ id: string }[]>(Prisma.sql`
+        SELECT p.id
+        ${PRODUCT_LIST_FROM_SQL}
+        ${whereSql}
+        ORDER BY ${buildProductOrderBySql(sort)}
+        LIMIT ${pageSize} OFFSET ${(pageNumber - 1) * pageSize}
+      `)
+    ).map((r) => r.id);
+
+  // F-262: the total and the requested page's ids don't depend on each other
+  // unless the requested page turns out to be past the end — so ask for both
+  // at once and only re-query (clamped) in that rare case, instead of always
+  // paying two sequential round trips.
+  const requestedPage = Math.max(options.page ?? 1, 1);
+  const [countRows, requestedIds] = await Promise.all([
+    db.$queryRaw<{ count: number }[]>(Prisma.sql`
+      SELECT COUNT(*)::int AS count
+      ${PRODUCT_LIST_FROM_SQL}
+      ${whereSql}
+    `),
+    fetchPageIds(requestedPage),
+  ]);
+  const total = countRows[0]?.count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(requestedPage, totalPages);
+  const ids = page === requestedPage ? requestedIds : await fetchPageIds(page);
   if (ids.length === 0) {
     return { items: [], total, page, pageSize, totalPages };
   }
@@ -1149,19 +1352,12 @@ export async function listProductsForAdmin(options: ListProductsForAdminOptions 
       category: { select: { id: true, name: true, slug: true } },
       variants: { select: { stock: true } },
       images: { orderBy: { sortOrder: "asc" }, take: 1, include: { media: { select: { url: true, source: true } } } },
-      _count: { select: { images: true } },
+      // F-262: the AI badge needs to know if *any* image (not just the
+      // thumbnail) is AI-sourced. A filtered relation count answers that in
+      // this same query — it used to be a second, sequential round trip.
+      _count: { select: { images: { where: { media: { source: "AI" } } } } },
     },
   });
-
-  // AI badge needs to know if *any* image (not just the thumbnail) is AI-sourced.
-  const aiImageProductIds = new Set(
-    (
-      await db.productImage.findMany({
-        where: { productId: { in: ids }, media: { source: "AI" } },
-        select: { productId: true },
-      })
-    ).map((r) => r.productId),
-  );
 
   // Rehydrated via a plain `id IN (...)` findMany, which doesn't preserve
   // the raw query's own ORDER BY — re-applied here against just this one
@@ -1181,7 +1377,7 @@ export async function listProductsForAdmin(options: ListProductsForAdminOptions 
       compareAtPrice: row.compareAtPrice ? Number(row.compareAtPrice) : null,
       totalStock: row.variants.reduce((sum, v) => sum + v.stock, 0),
       status: row.status,
-      hasAiImage: aiImageProductIds.has(row.id),
+      hasAiImage: row._count.images > 0,
       thumbnailUrl: row.images[0]?.media.url ?? null,
       updatedAt: row.updatedAt,
     }));
@@ -1324,12 +1520,57 @@ export interface BulkActionResult {
   skipped?: BulkActionSkippedProduct[];
 }
 
+/** F-288: the action's parameters plus a per-product before -> after, for the
+ * audit row of a bulk action. Only the products the action actually changed
+ * appear in the maps. */
+function bulkActionAuditDetails(
+  input: BulkActionInput,
+  changed: { id: string; price: { toNumber(): number }; status: ProductStatus }[],
+  extra: { newPrices: Map<string, number>; stockBefore: { productId: string; _sum: { stock: number | null } }[] },
+): Record<string, unknown> {
+  switch (input.action) {
+    case "publish":
+    case "archive": {
+      const to = input.action === "publish" ? "ACTIVE" : "ARCHIVED";
+      return { statusChanges: Object.fromEntries(changed.map((p) => [p.id, { from: p.status, to }])) };
+    }
+    case "move-category":
+      return { categoryId: input.categoryId };
+    case "adjust-price-pct":
+      return {
+        percent: input.percent,
+        priceChanges: Object.fromEntries(
+          changed.map((p) => [p.id, { from: p.price.toNumber(), to: extra.newPrices.get(p.id) ?? null }]),
+        ),
+      };
+    case "set-stock":
+      return {
+        stock: input.stock,
+        previousStockTotals: Object.fromEntries(extra.stockBefore.map((row) => [row.productId, row._sum.stock ?? 0])),
+      };
+  }
+}
+
 export async function performBulkAction(input: BulkActionInput, userId: string): Promise<BulkActionResult> {
   const products = await db.product.findMany({
     where: { id: { in: input.ids } },
-    select: { id: true, slug: true, name: true, price: true, compareAtPrice: true },
+    select: { id: true, slug: true, name: true, price: true, compareAtPrice: true, status: true },
   });
   if (products.length === 0) return { action: input.action, affected: 0 };
+
+  // F-288: stock is overwritten for every variant of the matched products, so
+  // the totals they held before are read first for the audit row.
+  const stockBefore =
+    input.action === "set-stock"
+      ? await db.productVariant.groupBy({
+          by: ["productId"],
+          where: { productId: { in: input.ids } },
+          _sum: { stock: true },
+        })
+      : [];
+  // Filled by adjust-price-pct from the UPDATE's own RETURNING, so the audit
+  // row records the price each product actually landed on.
+  const newPrices = new Map<string, number>();
 
   const skipped: BulkActionSkippedProduct[] = [];
   // Products actually mutated by this call — defaults to every matched
@@ -1411,7 +1652,7 @@ export async function performBulkAction(input: BulkActionInput, userId: string):
       // override doesn't (or ends up priced *below* the sale).
       const percent = input.percent;
       const updatedIds = await db.$transaction(async (tx) => {
-        const updatedProducts = await tx.$queryRaw<{ id: string }[]>`
+        const updatedProducts = await tx.$queryRaw<{ id: string; price: number }[]>`
           UPDATE "Product" AS p
           SET price = GREATEST(1, ROUND(p.price * (1 + ${percent}::numeric / 100))),
               "updatedAt" = now()
@@ -1427,8 +1668,9 @@ export async function performBulkAction(input: BulkActionInput, userId: string):
                 AND p."compareAtPrice" IS NOT NULL
                 AND p."compareAtPrice" <= GREATEST(1, ROUND(v.price * (1 + ${percent}::numeric / 100)))
             )
-          RETURNING p.id
+          RETURNING p.id, p.price::float8 AS price
         `;
+        for (const row of updatedProducts) newPrices.set(row.id, Number(row.price));
         const ids = updatedProducts.map((p) => p.id);
         if (ids.length > 0) {
           // Scoped to exactly the products whose base price just passed
@@ -1469,6 +1711,10 @@ export async function performBulkAction(input: BulkActionInput, userId: string):
       count: changed.length,
       ids: input.ids,
       ...(skipped.length > 0 ? { skippedIds: skipped.map((s) => s.id) } : {}),
+      // F-288: the parameters and the before -> after the action produced.
+      // They used to be missing entirely: "adjust-price-pct, 3 products"
+      // did not say by how much, or from what.
+      ...bulkActionAuditDetails(input, changed, { newPrices, stockBefore }),
     },
   });
 

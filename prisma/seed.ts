@@ -5,6 +5,7 @@ import { createPrismaClient } from "../src/lib/create-prisma-client";
 import { DEFAULT_ADMIN_SEED_EMAIL, isInsecureSeedPassword } from "../src/lib/auth/seed-defaults";
 import { isVercel } from "../src/lib/env";
 import { settingDefaults } from "../src/lib/settings";
+import { runSeededContentCorrections } from "./seed-corrections";
 import type { Prisma } from "../src/generated/prisma/client";
 import bcrypt from "bcryptjs";
 
@@ -16,7 +17,8 @@ const prisma = createPrismaClient();
  * SettingValueMap (src/lib/settings/index.ts) — getSetting()/setSetting()
  * and /admin/site-controls only ever read/write the fixed keys declared
  * there, so these rows are invisible to the admin UI and safe to share the
- * table with real settings.
+ * table with real settings. (The markers for the catalogue and journey
+ * corrections live next to that logic, in ./seed-corrections.ts.)
  */
 const CONTENT_SEED_MARKER_KEY = "seed.contentSeededAt";
 const LEGACY_ACCOUNTS_SEED_MARKER_KEY = "seed.legacyAccountsHandledAt";
@@ -495,6 +497,12 @@ async function main() {
       create: { key: UNHONOURED_OFFERS_SEED_MARKER_KEY, value: new Date().toISOString() },
     });
   }
+
+  // F-097 / F-273 / F-070: correct the rows an earlier seed already created
+  // (production's included) — see ./seed-corrections.ts. The order relative
+  // to ensureContentSeeded() doesn't matter: a fresh database has nothing
+  // legacy for it to match.
+  await runSeededContentCorrections(prisma);
 
   await ensureContentSeeded();
 

@@ -1,12 +1,13 @@
 import { OrderPrintButton } from "@/components/account/order-print-button";
+import { OrderStatusBadge } from "@/components/account/order-status-badge";
 import { OrderTimelineView } from "@/components/account/order-timeline";
 import { OrderTrackingCard } from "@/components/account/order-tracking-card";
 import { brand } from "@/data/brand";
+import { formatCurrencyAmount } from "@/lib/currency/convert";
 import { getCustomerSession } from "@/lib/customer-auth/session";
-import type { OrderStatus, PaymentMethod } from "@/generated/prisma/client";
 import { checkOrderPageRateLimit, getAuthorizedOrder } from "@/lib/orders/get-order";
 import { formatReceiptDate, getReceiptPaymentSummary } from "@/lib/orders/receipt";
-import { getOrderTimeline } from "@/lib/orders/timeline";
+import { getOrderStatusHero, getOrderTimeline, type OrderStatusHeroIcon } from "@/lib/orders/timeline";
 import { getClientIp } from "@/lib/security/rate-limit";
 import { getSetting } from "@/lib/settings";
 import type { ShippingAddressInput } from "@/lib/validation/schemas";
@@ -17,73 +18,36 @@ import { headers } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+// F-120 fix: neutral title — this page is also where a cancelled, refunded
+// or still-unpaid order lands, so "Order Confirmation" would be wrong for
+// those. No order number here: this is metadata a link unfurler could cache.
 export const metadata: Metadata = {
-  title: "Order Confirmation",
+  title: "Your order",
   robots: { index: false, follow: false },
 };
 
+// F-127: was `maximumFractionDigits: 0`, which rounded a stored 638.97 total
+// to "₹639" while the customer is charged (and emailed) ₹638.97.
 function formatInr(amount: number): string {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(amount);
+  return formatCurrencyAmount(amount, "INR");
 }
-
-const STATUS_LABELS: Record<string, string> = {
-  PENDING_PAYMENT: "Awaiting payment",
-  PAID: "Paid",
-  PROCESSING: "Processing",
-  SHIPPED: "Shipped",
-  DELIVERED: "Delivered",
-  CANCELLED: "Cancelled",
-  REFUNDED: "Refunded",
-  // F-199 fix: reachable now (a shipped/delivered order can be returned —
-  // see status-transitions.ts).
-  RETURNED: "Returned",
-};
 
 /**
- * F-067 fix: this heading used to be a hard-coded "Order confirmed" with a
- * check icon for every status, including CANCELLED and REFUNDED — actively
- * misleading, not just a missing feature. Mirrors getOrderTimeline's own
- * per-status framing (src/lib/orders/timeline.ts) at the top of the page.
- *
- * F-120 fix: that first pass still left two cases showing "Order
- * confirmed" when nothing had actually been confirmed yet — an unpaid
- * RAZORPAY order (PENDING_PAYMENT, reachable any time this page is opened
- * from an emailed link before payment completes, not just right after
- * checkout) and an ORDER_REQUEST order still awaiting our team's
- * confirmation (PENDING_PAYMENT/PROCESSING — see getOrderTimeline's own
- * PROCESSING case for why PROCESSING means something different for
- * ORDER_REQUEST than for RAZORPAY). Also added RETURNED, now reachable
- * (status-transitions.ts) — it used to silently fall through to the
- * default "Order confirmed" case.
+ * F-067 / F-120 fix: the heading used to be a hard-coded "Order confirmed"
+ * with a check icon for every status, including CANCELLED, REFUNDED and an
+ * order still awaiting payment — actively misleading, not just a missing
+ * feature. getOrderStatusHero (src/lib/orders/timeline.ts) picks the
+ * per-status wording and is what's unit-tested; this only maps its icon
+ * key to a component, with a colour that doesn't read as success for a
+ * cancelled or refunded order.
  */
-function getStatusHero(status: OrderStatus, paymentMethod: PaymentMethod): { Icon: typeof CheckCircle2; label: string } {
-  switch (status) {
-    case "PENDING_PAYMENT":
-      return paymentMethod === "ORDER_REQUEST"
-        ? { Icon: Clock, label: "Order received" }
-        : { Icon: Clock, label: "Awaiting payment" };
-    case "PROCESSING":
-      return paymentMethod === "ORDER_REQUEST"
-        ? { Icon: Clock, label: "Order received" }
-        : { Icon: CheckCircle2, label: "Order confirmed" };
-    case "SHIPPED":
-      return { Icon: Truck, label: "Order shipped" };
-    case "DELIVERED":
-      return { Icon: CheckCircle2, label: "Order delivered" };
-    case "CANCELLED":
-      return { Icon: XCircle, label: "Order cancelled" };
-    case "REFUNDED":
-      return { Icon: RotateCcw, label: "Order refunded" };
-    case "RETURNED":
-      return { Icon: RotateCcw, label: "Order returned" };
-    default:
-      return { Icon: CheckCircle2, label: "Order confirmed" };
-  }
-}
+const HERO_ICONS: Record<OrderStatusHeroIcon, { Icon: typeof CheckCircle2; className: string }> = {
+  clock: { Icon: Clock, className: "text-brand" },
+  check: { Icon: CheckCircle2, className: "text-brand" },
+  truck: { Icon: Truck, className: "text-brand" },
+  cancelled: { Icon: XCircle, className: "text-red-600" },
+  refunded: { Icon: RotateCcw, className: "text-amber-700" },
+};
 
 export default async function OrderConfirmationPage({
   params,
@@ -154,19 +118,18 @@ export default async function OrderConfirmationPage({
   // inviting the shopper to pay again for a charge that already went
   // through.
   const isConfirmingPayment = order.status === "PENDING_PAYMENT" && payment === "confirming";
-  const hero = getStatusHero(order.status, order.paymentMethod);
+  const hero = getOrderStatusHero(order.status, order.paymentMethod, order.paidAt !== null);
+  const { Icon: HeroIcon, className: heroIconClass } = HERO_ICONS[hero.icon];
   // F-141 fix precedent (src/lib/orders/timeline.ts): only matters for a
   // RAZORPAY order's CANCELLED wording — see that function's doc comment.
-  // F-199 fix: shippedAt/deliveredAt are real columns, used only for the
-  // (now reachable) RETURNED and post-shipping REFUNDED cases.
-  const timeline = getOrderTimeline(
-    order.status,
-    order.paymentMethod,
-    order.razorpayPaymentId !== null,
-    order.shippedAt !== null,
-    order.deliveredAt !== null,
-    order.paidAt !== null,
-  );
+  // The real timestamp columns date each step and decide which
+  // post-shipping steps a returned/refunded order can claim.
+  const timeline = getOrderTimeline(order.status, order.paymentMethod, order.razorpayPaymentId !== null, {
+    placedAt: order.createdAt,
+    paidAt: order.paidAt,
+    shippedAt: order.shippedAt,
+    deliveredAt: order.deliveredAt,
+  });
   // F-328: the receipt's own "Placed <date>" / payment-status line — see
   // src/lib/orders/receipt.ts for why these are pure, separately-tested
   // helpers rather than inline JSX logic.
@@ -182,17 +145,29 @@ export default async function OrderConfirmationPage({
     <div className="mx-auto max-w-3xl px-4 py-16 lg:px-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-3 text-brand">
-            {isConfirmingPayment ? <Loader2 size={32} className="animate-spin" /> : <hero.Icon size={32} />}
+          <div className="flex items-center gap-3">
+            {isConfirmingPayment ? (
+              <Loader2 size={32} className="animate-spin text-brand" />
+            ) : (
+              <HeroIcon size={32} className={heroIconClass} />
+            )}
             <h1 className="font-display text-3xl font-bold text-ink">
               {isConfirmingPayment ? "Payment received — confirming" : hero.label}
             </h1>
           </div>
-          <p className="mt-2 text-muted">
-            Order <span className="font-semibold text-ink">{order.number}</span> — status:{" "}
-            <span className="font-semibold text-ink">
-              {isConfirmingPayment ? "Confirming payment" : (STATUS_LABELS[order.status] ?? order.status)}
+          <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-muted">
+            <span>
+              Order <span className="font-semibold text-ink">{order.number}</span> — status:
             </span>
+            {/* F-120 fix: the shared badge (not a local label map) so this
+                page reads the same as the account order pages — in
+                particular "Order Received" for an unconfirmed
+                ORDER_REQUEST order rather than a bare "Processing". */}
+            {isConfirmingPayment ? (
+              <span className="font-semibold text-ink">Confirming payment</span>
+            ) : (
+              <OrderStatusBadge status={order.status} paymentMethod={order.paymentMethod} paid={order.paidAt !== null} />
+            )}
           </p>
           {/* F-328: order date + payment status — a printed receipt with
               neither was one of this finding's core gaps. Skipped while

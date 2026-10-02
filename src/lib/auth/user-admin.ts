@@ -1,9 +1,16 @@
 import { Prisma, type AdminRole, type User } from "@/generated/prisma/client";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { diffFields } from "@/lib/auth/audit-diff";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { isLocked, recordFailedLogin } from "@/lib/auth/lockout";
 import { isInsecureSeedPassword } from "@/lib/auth/seed-defaults";
 import { generateTempPassword } from "@/lib/auth/temp-password";
+import {
+  buildUserUpdateData,
+  isSelfRoleChangeBlocked,
+  wouldRemoveLastSuperAdmin,
+  type UserUpdateInput,
+} from "@/lib/auth/user-updates";
 import { db } from "@/lib/db";
 
 /**
@@ -131,6 +138,88 @@ export async function inviteUser(input: InviteUserInput, actingUserId: string): 
     }
     throw err;
   }
+}
+
+export type UpdatedAdminUser = Pick<User, "id" | "email" | "name" | "role" | "active">;
+
+/**
+ * PATCH /api/admin/users/[id]'s business rules — name/role/active edits —
+ * split out of the route so they're testable without a request scope (see
+ * the file comment above).
+ *
+ * F-172: the "at least one active SUPER_ADMIN must remain" rule used to be
+ * count-then-update outside any transaction, so two Super Admins demoting
+ * each other at the same moment both counted "one other Super Admin left",
+ * both passed, and none were left. Now, when an update would take an active
+ * SUPER_ADMIN out of that state, the check and the write run in one
+ * transaction that first row-locks every active SUPER_ADMIN
+ * (`SELECT ... FOR NO KEY UPDATE`): the second of two racing changes waits
+ * for the first to commit, then counts against what's actually committed and
+ * is refused. NO KEY UPDATE (not plain FOR UPDATE) because that's the mode an
+ * ordinary `UPDATE` takes, so racing changes still exclude each other, while
+ * it doesn't block the foreign-key check every audit-log insert makes against
+ * its acting user. Unrelated edits (a name change, a non-admin's role) take
+ * no lock.
+ */
+export async function updateAdminUser(
+  id: string,
+  input: UserUpdateInput,
+  actingUserId: string,
+): Promise<UpdatedAdminUser> {
+  if (id === actingUserId && !input.active) {
+    throw new UserSelfActionBlockedError("Cannot deactivate your own account");
+  }
+
+  const { user, previous } = await db.$transaction(async (tx) => {
+    const existing = await tx.user.findUnique({ where: { id }, select: { active: true, role: true, name: true } });
+    if (!existing) throw new UserNotFoundError(id);
+
+    if (isSelfRoleChangeBlocked(id, actingUserId, existing.role, input.role)) {
+      throw new UserSelfActionBlockedError("Cannot change your own role");
+    }
+
+    const staysActiveSuperAdmin = input.role === "SUPER_ADMIN" && input.active;
+    const leavesSuperAdmin = existing.role === "SUPER_ADMIN" && existing.active && !staysActiveSuperAdmin;
+    if (leavesSuperAdmin) {
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "role" = 'SUPER_ADMIN' AND "active" = true FOR NO KEY UPDATE`;
+      const otherActiveSuperAdminCount = await tx.user.count({
+        where: { role: "SUPER_ADMIN", active: true, id: { not: id } },
+      });
+      if (wouldRemoveLastSuperAdmin(existing, input, otherActiveSuperAdminCount)) {
+        throw new LastSuperAdminError();
+      }
+    }
+
+    // sessionVersion revocation (v1 2.3): deactivating a user or changing
+    // their role invalidates every session already issued to them, so a
+    // demoted/deactivated admin can't keep using a cookie minted before the
+    // change until it naturally expires (see src/lib/auth/session.ts).
+    // Decision logic lives in src/lib/auth/user-updates.ts.
+    const { data } = buildUserUpdateData(existing, input);
+    const updated = await tx.user.update({
+      where: { id },
+      data,
+      select: { id: true, email: true, name: true, role: true, active: true },
+    });
+    return { user: updated, previous: existing };
+  });
+
+  await logAuditEvent({
+    userId: actingUserId,
+    action: "update",
+    entity: "user",
+    entityId: id,
+    // F-288: this used to hold only the NEW values, so a promotion to
+    // SUPER_ADMIN showed the new role and nothing about what it replaced.
+    metadata: {
+      ...input,
+      fromRole: previous.role,
+      fromActive: previous.active,
+      changes: diffFields(previous, user, ["name", "role", "active"]),
+    },
+  });
+
+  return user;
 }
 
 export async function resetUserPassword(

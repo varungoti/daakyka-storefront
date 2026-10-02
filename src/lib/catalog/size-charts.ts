@@ -1,6 +1,8 @@
-import { revalidateTag, unstable_cache } from "next/cache";
+import { revalidateTag } from "next/cache";
 import { z } from "zod";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
+import { boundedCache } from "@/lib/cache/bounded-cache";
 import { db } from "@/lib/db";
 import { CATEGORIES_CACHE_TAG, PRODUCTS_CACHE_TAG } from "@/lib/products";
 import type { CategorySection, Prisma, SizeChart } from "@/generated/prisma/client";
@@ -62,9 +64,10 @@ export class SizeChartInUseError extends Error {
   }
 }
 
+// F-032: immediate ({ expire: 0 }) — see src/lib/cache/admin-revalidate.ts.
 function safeRevalidate(tag: string) {
   try {
-    revalidateTag(tag, "max");
+    revalidateTag(tag, ADMIN_REVALIDATE_PROFILE);
   } catch {
     // No static generation store in this context — nothing to revalidate.
   }
@@ -275,9 +278,17 @@ async function fetchSizeChartsForDisplay(): Promise<SizeChartSectionGroup[]> {
     }));
 }
 
-const cachedSizeChartsForDisplay = unstable_cache(fetchSizeChartsForDisplay, ["size-charts-display"], {
-  tags: [CATEGORIES_CACHE_TAG],
-});
+// F-273 (review follow-up): bounded, not tag-only. prisma/seed-corrections.ts
+// re-points categories at the right chart (and rewrites the Kids Wear chart)
+// from inside the Vercel build, where revalidateTag cannot be called, so an
+// unbounded entry cached before that deploy would keep showing the old chart
+// on /size-guide and every product page until an admin happened to save a
+// category or chart. See src/lib/cache/bounded-cache.ts.
+const cachedSizeChartsForDisplay = boundedCache(
+  fetchSizeChartsForDisplay,
+  ["size-charts-display"],
+  [CATEGORIES_CACHE_TAG],
+);
 
 /** Every active category's size chart, grouped by CategorySection, for
  * the public /size-guide page. Falls back to an empty array (rather than
@@ -322,10 +333,11 @@ async function fetchSizeChartForProduct(productId: string): Promise<SizeChartFor
  * has one configured. Falls back to `null` (not a throw) on any DB
  * error, same rationale as getSizeChartsForDisplay above. */
 export async function getSizeChartForProduct(productId: string): Promise<SizeChartForDisplay | null> {
-  const cached = unstable_cache(
+  // Bounded for the same reason as cachedSizeChartsForDisplay above.
+  const cached = boundedCache(
     () => fetchSizeChartForProduct(productId),
     ["size-chart-for-product", productId],
-    { tags: [CATEGORIES_CACHE_TAG, PRODUCTS_CACHE_TAG] },
+    [CATEGORIES_CACHE_TAG, PRODUCTS_CACHE_TAG],
   );
 
   try {

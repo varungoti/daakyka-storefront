@@ -290,9 +290,10 @@ async function handleRefundProcessed(
   }
 
   // Auto-restock only pre-shipment (PAID/PROCESSING) — once an order has
-  // SHIPPED/DELIVERED, whether the goods actually come back is a real
-  // question this webhook can't answer, so that case is left for manual
-  // review rather than silently adding phantom stock back.
+  // SHIPPED/DELIVERED/RETURNED, whether the goods actually come back (or
+  // were already restocked by the admin's "return to stock" option) is a
+  // real question this webhook can't answer, so that case is left for
+  // manual review rather than silently adding phantom stock back.
   let restocked = false;
   await db.$transaction(
     async (tx) => {
@@ -318,13 +319,20 @@ async function handleRefundProcessed(
         return;
       }
 
+      // F-199: RETURNED -> REFUNDED is a valid admin edge, so a full refund on
+      // an order an admin already marked RETURNED must land on REFUNDED too
+      // (it matched neither updateMany before and stayed RETURNED). Never
+      // restocks here: that is the admin's explicit "return to stock" choice
+      // on the RETURNED transition.
+      const postShipNote =
+        order.status === "RETURNED"
+          ? "Refunded via Razorpay after the order was marked returned — this refund did not change stock."
+          : "Refunded via Razorpay after shipment — review whether the item(s) were returned before restocking.";
       const postShipTransition = await tx.order.updateMany({
-        where: { id: order.id, status: { in: ["SHIPPED", "DELIVERED"] } },
+        where: { id: order.id, status: { in: ["SHIPPED", "DELIVERED", "RETURNED"] } },
         data: {
           status: "REFUNDED",
-          adminNotes: [order.adminNotes, "Refunded via Razorpay after shipment — review whether the item(s) were returned before restocking."]
-            .filter(Boolean)
-            .join("\n"),
+          adminNotes: [order.adminNotes, postShipNote].filter(Boolean).join("\n"),
         },
       });
       if (postShipTransition.count === 1) {

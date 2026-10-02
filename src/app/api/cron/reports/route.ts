@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authorizeCron } from "@/lib/cron/authorize";
-import { claimCronRun, dailyRunKey } from "@/lib/cron/idempotency";
+import { dailyRunKey, runWithCronClaim } from "@/lib/cron/idempotency";
 import { db } from "@/lib/db";
 import {
   buildWeeklyGrowthReport,
@@ -8,19 +8,7 @@ import {
 } from "@/lib/reports/weekly-growth";
 import { dispatchHermesTask } from "@/lib/hermes/client";
 
-export async function POST(request: Request) {
-  if (!authorizeCron(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  // Runs once/week per vercel.json ("0 7 * * 1") — a calendar-date runKey
-  // still guards correctly here since the schedule only ever fires it once
-  // within any given date.
-  const { claimed } = await claimCronRun("reports", dailyRunKey());
-  if (!claimed) {
-    return NextResponse.json({ ok: true, alreadyRan: true });
-  }
-
+async function buildAndQueueWeeklyReport() {
   const report = await buildWeeklyGrowthReport(7);
   const markdown = formatWeeklyGrowthReportMarkdown(report);
 
@@ -69,7 +57,27 @@ export async function POST(request: Request) {
     },
   });
 
-  return NextResponse.json({ ok: true, report });
+  return report;
+}
+
+export async function POST(request: Request) {
+  if (!authorizeCron(request)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Runs once/week per vercel.json ("0 7 * * 1") — a calendar-date runKey
+  // still guards correctly here since the schedule only ever fires it once
+  // within any given date.
+  //
+  // F-277: runWithCronClaim gives the claim back if the report throws —
+  // otherwise one transient DB error lost the whole week's report (a
+  // same-day manual re-run answered "alreadyRan").
+  const outcome = await runWithCronClaim("reports", dailyRunKey(), buildAndQueueWeeklyReport);
+  if (!outcome.claimed) {
+    return NextResponse.json({ ok: true, alreadyRan: true });
+  }
+
+  return NextResponse.json({ ok: true, report: outcome.result });
 }
 
 export async function GET(request: Request) {

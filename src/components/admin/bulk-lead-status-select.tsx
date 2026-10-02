@@ -8,9 +8,13 @@ const statusOptions: BulkLeadStatus[] = ["NEW", "CONTACTED", "QUOTED", "WON", "L
 
 export function BulkLeadStatusSelect({
   leadId,
+  leadName,
   currentStatus,
 }: {
   leadId: string;
+  /** The organisation this row belongs to — names the select for assistive
+   * tech ("Status for Apollo Hospitals"), since the list renders one per lead. */
+  leadName: string;
   currentStatus: BulkLeadStatus;
 }) {
   const router = useRouter();
@@ -54,6 +58,7 @@ export function BulkLeadStatusSelect({
         value={value}
         disabled={pending}
         onChange={(e) => updateStatus(e.target.value as BulkLeadStatus)}
+        aria-label={`Status for ${leadName}`}
         className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold uppercase outline-none focus:border-brand disabled:opacity-60"
       >
         {statusOptions.map((status) => (

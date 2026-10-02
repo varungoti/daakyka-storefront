@@ -4,9 +4,14 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import type { ApprovalExecutionResult } from "@/lib/hermes/approval-executor";
+import { canApproveHermesApproval } from "@/lib/hermes/approval-permissions";
 import { getHermesMode, isHermesInlineRuntime, isHermesRuntimeConfigured } from "@/lib/hermes/client";
+import { humanizeHermesLabel } from "@/lib/hermes/labels";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Hermes" };
 
 export default async function AdminHermesPage() {
   const session = await getSession();
@@ -38,7 +43,7 @@ export default async function AdminHermesPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <StatCard label="Operating Mode" value={mode.replace(/_/g, " ")} />
+        <StatCard label="Operating Mode" value={humanizeHermesLabel(mode)} />
         <StatCard label="Runtime" value={configured ? runtimeLabel : "Not configured"} />
         <StatCard label="Pending Approvals" value={String(pendingCount)} />
       </div>
@@ -80,12 +85,19 @@ export default async function AdminHermesPage() {
             <li key={item.id} className="rounded-2xl border border-border px-4 py-4">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                  <p className="text-xs font-bold uppercase tracking-wide text-brand">{item.type}</p>
+                  <p className="text-xs font-bold tracking-wide text-brand">{humanizeHermesLabel(item.type)}</p>
                   <p className="font-semibold text-ink">{item.title}</p>
                   <p className="mt-1 text-sm text-muted">{item.summary}</p>
                   <ExecutionPreview title={item.title} result={item.executionResult as ApprovalExecutionResult | null} />
                 </div>
-                <HermesApprovalActions approvalId={item.id} currentStatus={item.status} />
+                {/* F-293: approving creates the entity itself, so hide Approve for a
+                    role that lacks that entity's permission (the API 403s anyway). */}
+                <HermesApprovalActions
+                  approvalId={item.id}
+                  itemTitle={item.title}
+                  currentStatus={item.status}
+                  canApprove={canApproveHermesApproval(session.role, item.type)}
+                />
               </div>
             </li>
           ))}
@@ -101,11 +113,11 @@ export default async function AdminHermesPage() {
           {tasks.map((task) => (
             <li key={task.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border px-4 py-3 text-sm">
               <div>
-                <p className="font-semibold text-ink">{task.type.replace(/_/g, " ")}</p>
-                <p className="text-muted">{task.mode} · {task.createdAt.toLocaleString("en-IN")}</p>
+                <p className="font-semibold text-ink">{humanizeHermesLabel(task.type)}</p>
+                <p className="text-muted">{humanizeHermesLabel(task.mode)} · {task.createdAt.toLocaleString("en-IN")}</p>
               </div>
               <span className="rounded-full bg-lavender/50 px-2.5 py-1 text-xs font-semibold">
-                {task.status}
+                {humanizeHermesLabel(task.status)}
               </span>
             </li>
           ))}

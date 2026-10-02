@@ -5,6 +5,9 @@ import { db } from "@/lib/db";
 import { getSubscriberCounts } from "@/lib/dashboard/subscriber-metrics";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Engagement" };
 
 export default async function EngagementPage() {
   const session = await getSession();
@@ -60,7 +63,7 @@ export default async function EngagementPage() {
         <QuickLink href="/admin/templates" title="Message Templates" desc="Email and WhatsApp template library" />
         <QuickLink href="/admin/campaigns" title="Campaign Planner" desc="Draft and approve outreach campaigns" />
         <QuickLink href="/admin/journeys" title="Customer Journeys" desc="Welcome, bulk, and post-purchase flows" />
-        <QuickLink href="/admin/intelligence" title="Product Intelligence" desc="Best sellers, bundles, SEO gaps" />
+        <QuickLink href="/admin/intelligence" title="Product Intelligence" desc="Top-rated products, review gaps, most viewed" />
         <QuickLink href="/admin/hermes" title="Hermes Agent" desc="AI recommendations with approval queue" />
       </div>
 
@@ -76,7 +79,7 @@ export default async function EngagementPage() {
                   {campaign.template?.name ?? "No template"}
                 </p>
               </div>
-              <CampaignStatusSelect campaignId={campaign.id} currentStatus={campaign.status} />
+              <CampaignStatusSelect campaignId={campaign.id} campaignName={campaign.name} currentStatus={campaign.status} />
             </li>
           ))}
           {campaigns.length === 0 && <p className="text-sm text-muted">No campaigns yet.</p>}

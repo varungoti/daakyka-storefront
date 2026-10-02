@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { sweepBackInStock } from "@/lib/back-in-stock";
 import { authorizeCron } from "@/lib/cron/authorize";
-import { claimCronRun, intervalRunKey } from "@/lib/cron/idempotency";
+import { intervalRunKey, runWithCronClaim } from "@/lib/cron/idempotency";
 
 /**
  * Shopify-parity gap: restock-detection sweep for back-in-stock "Notify
@@ -28,13 +28,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { claimed } = await claimCronRun("back-in-stock", intervalRunKey(SCHEDULE_WINDOW_MINUTES));
-  if (!claimed) {
+  // F-277: runWithCronClaim gives the claim back if the sweep throws, so a
+  // transient failure doesn't make this tick's re-run answer "alreadyRan".
+  const outcome = await runWithCronClaim("back-in-stock", intervalRunKey(SCHEDULE_WINDOW_MINUTES), () =>
+    sweepBackInStock(),
+  );
+  if (!outcome.claimed) {
     return NextResponse.json({ ok: true, alreadyRan: true });
   }
 
-  const result = await sweepBackInStock();
-  return NextResponse.json({ ok: true, ...result });
+  return NextResponse.json({ ok: true, ...outcome.result });
 }
 
 export async function GET(request: Request) {

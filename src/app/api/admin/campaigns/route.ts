@@ -45,6 +45,8 @@ export async function POST(request: Request) {
     action: "create",
     entity: "campaign",
     entityId: campaign.id,
+    // F-288: this row used to carry no metadata at all.
+    metadata: { name: campaign.name, channel: campaign.channel, status: campaign.status },
   });
 
   return NextResponse.json(campaign, { status: 201 });

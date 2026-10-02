@@ -4,15 +4,11 @@ import { requireAdminPermission } from "@/lib/auth/admin-api";
 import {
   deleteUser,
   LastSuperAdminError,
+  updateAdminUser,
   UserDeleteBlockedError,
   UserNotFoundError,
   UserSelfActionBlockedError,
 } from "@/lib/auth/user-admin";
-import {
-  buildUserUpdateData,
-  isSelfRoleChangeBlocked,
-  wouldRemoveLastSuperAdmin,
-} from "@/lib/auth/user-updates";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 
 interface RouteParams {
@@ -32,68 +28,27 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   if (!bodyResult.ok) return bodyResult.response;
 
   const { userUpdateSchema } = await import("@/lib/validation/schemas");
-  const { logAuditEvent } = await import("@/lib/auth/audit");
-  const { db } = await import("@/lib/db");
 
   const parsed = userUpdateSchema.safeParse(bodyResult.data);
   if (!parsed.success) {
-    return NextResponse.json({ error: "Validation failed" }, { status: 400 });
+    // F-172: this used to send a bare "Validation failed" with no `issues`,
+    // so the admin UI had nothing to say about *which* field was wrong.
+    return NextResponse.json({ error: "Validation failed", issues: parsed.error.issues }, { status: 400 });
   }
 
-  if (id === session!.id && !parsed.data.active) {
-    return NextResponse.json({ error: "Cannot deactivate your own account" }, { status: 400 });
-  }
-
-  const existing = await db.user.findUnique({
-    where: { id },
-    select: { active: true, role: true },
-  });
-  if (!existing) {
-    return NextResponse.json({ error: "User not found" }, { status: 404 });
-  }
-
-  if (isSelfRoleChangeBlocked(id, session!.id, existing.role, parsed.data.role)) {
-    return NextResponse.json({ error: "Cannot change your own role" }, { status: 400 });
-  }
-
-  const otherActiveSuperAdminCount = await db.user.count({
-    where: { role: "SUPER_ADMIN", active: true, id: { not: id } },
-  });
-  if (wouldRemoveLastSuperAdmin(existing, parsed.data, otherActiveSuperAdminCount)) {
-    return NextResponse.json(
-      { error: "At least one active SUPER_ADMIN must remain" },
-      { status: 400 },
-    );
-  }
-
-  // sessionVersion revocation (v1 2.3): deactivating a user or changing
-  // their role invalidates every session already issued to them, so a
-  // demoted/deactivated admin can't keep using a cookie minted before the
-  // change until it naturally expires (see src/lib/auth/session.ts's
-  // getSession(), which rejects a JWT whose embedded `sv` no longer
-  // matches the User row). Decision logic lives in
-  // src/lib/auth/user-updates.ts so it can be unit-tested directly.
-  const { data: updateData } = buildUserUpdateData(existing, parsed.data);
-
+  // The rules (no self-deactivation / self-role-change, the last active
+  // SUPER_ADMIN must remain — checked atomically) and the sessionVersion
+  // revocation decision live in updateAdminUser (src/lib/auth/user-admin.ts)
+  // so they're testable without a request scope.
   try {
-    const user = await db.user.update({
-      where: { id },
-      data: updateData,
-      select: { id: true, email: true, name: true, role: true, active: true },
-    });
-
-    await logAuditEvent({
-      userId: session!.id,
-      action: "update",
-      entity: "user",
-      entityId: id,
-      metadata: parsed.data,
-    });
-
+    const user = await updateAdminUser(id, parsed.data, session!.id);
     return NextResponse.json(user);
   } catch (err) {
-    if (isRecordNotFound(err)) {
+    if (err instanceof UserNotFoundError || isRecordNotFound(err)) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+    if (err instanceof UserSelfActionBlockedError || err instanceof LastSuperAdminError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
     }
     throw err;
   }

@@ -59,6 +59,19 @@ export interface GetApprovedReviewsResult {
 export const DEFAULT_REVIEWS_PAGE_SIZE = 10;
 
 /**
+ * F-256: the product page is prerendered now, so what it reads is cached
+ * until the next revalidation. The fail-soft default below ("never throw",
+ * an empty result) is right for a per-request read, but on a page that is
+ * cached it would pin "no reviews" — and a JSON-LD without an aggregate
+ * rating — for the whole revalidation window after one database blip.
+ * `strict` lets such a caller get the error instead, so a failed render
+ * leaves the last good page in place (or isn't cached at all).
+ */
+export interface ReviewReadOptions {
+  strict?: boolean;
+}
+
+/**
  * Pure histogram/average math over a list of ratings — extracted so it's
  * unit-testable without a database. `getReviewSummary` below is a thin
  * DB-backed wrapper around this.
@@ -90,19 +103,26 @@ export function anonymizeReviewerName(fullName: string): string {
   return `${first} ${second[0].toUpperCase()}.`;
 }
 
-export async function getReviewSummary(productId: string): Promise<ReviewSummary> {
+export async function getReviewSummary(
+  productId: string,
+  { strict = false }: ReviewReadOptions = {},
+): Promise<ReviewSummary> {
   try {
     const rows = await db.review.findMany({
       where: { productId, status: "APPROVED" },
       select: { rating: true },
     });
     return computeReviewSummary(rows.map((row) => row.rating));
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     return computeReviewSummary([]);
   }
 }
 
-async function resolveReviewPhotos(photoIds: string[]): Promise<Map<string, ReviewPhoto>> {
+async function resolveReviewPhotos(
+  photoIds: string[],
+  strict: boolean,
+): Promise<Map<string, ReviewPhoto>> {
   if (photoIds.length === 0) return new Map();
   try {
     const assets = await db.mediaAsset.findMany({
@@ -110,7 +130,8 @@ async function resolveReviewPhotos(photoIds: string[]): Promise<Map<string, Revi
       select: { id: true, url: true, alt: true },
     });
     return new Map(assets.map((asset) => [asset.id, { url: asset.url, alt: asset.alt ?? undefined }]));
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     return new Map();
   }
 }
@@ -131,6 +152,7 @@ function sortOrderFor(sort: ReviewSort | undefined) {
 export async function getApprovedReviews(
   productId: string,
   options: GetApprovedReviewsOptions = {},
+  { strict = false }: ReviewReadOptions = {},
 ): Promise<GetApprovedReviewsResult> {
   const page = options.page && options.page > 0 ? Math.floor(options.page) : 1;
   const pageSize = options.pageSize && options.pageSize > 0 ? Math.floor(options.pageSize) : DEFAULT_REVIEWS_PAGE_SIZE;
@@ -148,7 +170,7 @@ export async function getApprovedReviews(
     ]);
 
     const allPhotoIds = [...new Set(rows.flatMap((row) => row.photoIds))];
-    const photoMap = await resolveReviewPhotos(allPhotoIds);
+    const photoMap = await resolveReviewPhotos(allPhotoIds, strict);
 
     const reviews: DisplayReview[] = rows.map((row) => ({
       id: row.id,
@@ -164,7 +186,8 @@ export async function getApprovedReviews(
     }));
 
     return { reviews, total, page, pageSize, hasMore: page * pageSize < total };
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     return { reviews: [], total: 0, page, pageSize, hasMore: false };
   }
 }

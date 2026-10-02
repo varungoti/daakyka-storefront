@@ -711,6 +711,22 @@ export function getSeoLandingPage(slug: string) {
   return seoLandingPages.find((p) => p.slug === slug);
 }
 
+/**
+ * release-hardening F-048: every landing page's legacy root `path`
+ * (/doctor-scrubs, /nurse-uniforms, ...) permanently redirects to its
+ * /guides/<slug> page (see next.config.ts's `redirects()`), but the guides'
+ * own `shopHref`/`secondaryHref` still pointed at those legacy paths — so a
+ * shopper (and a crawler) clicking from one guide to another paid a 308 hop
+ * for a URL that was never meant to be linked. This maps such an href to the
+ * final URL (`/hospital-uniforms` is the one that redirects to a section
+ * landing page instead of a guide) and leaves every other href untouched.
+ */
+export function resolveLegacyGuidePath(href: string): string {
+  if (href === "/hospital-uniforms") return "/for-hospitals";
+  const page = seoLandingPages.find((p) => p.path === href);
+  return page ? `/guides/${page.slug}` : href;
+}
+
 export function getCollection(handle: string) {
   return collectionPages.find((c) => c.handle === handle);
 }

@@ -44,19 +44,30 @@ deploy will even build.
 | `npm run test:dogfood` | Full exploratory crawl (51 tests) |
 | `npm run verify` | Lint + test + build |
 | `npm run verify:101` | **101% gate** — predeploy + Lighthouse |
-| `npm run verify:staging:full` | Live staging probe + smoke + E2E + dogfood |
 | `npm run verify:predeploy` | Pre-deploy gate (build + smoke + e2e + dogfood) |
-| `npm run verify:staging` | Smoke + E2E against deployed URL |
-| `npm run verify:staging:full` | Probe + smoke + E2E + dogfood on live staging |
+| `npm run verify:staging` | Smoke + E2E against a Preview/staging URL (`TEST_BASE_URL`); refuses production |
+| `npm run verify:staging:full` | Probe + smoke + E2E + dogfood on a Preview/staging URL (`TEST_BASE_URL`, no default). The suites write data, so it refuses the production store; `-- --production-readonly` runs only GET-only checks against production |
 | `npm run go-live:check` | Env checklist + next steps for staging/production |
 | `npm run bootstrap:staging` | Generate staging secrets + env template |
 | `npm run check:deploy-env` | Validate staging env vars before deploy |
-| `npm run probe:deploy` | Post-deploy health + security probe |
+| `npm run probe:deploy` | Post-deploy health + security probe (GET-only; `-- --write-probes` adds the try-on POST, staging only) |
 | `npm run audit:lighthouse` | Lighthouse scores for key pages |
 | `npm run lint` | Run ESLint |
 | `npm run db:migrate` | **Dev only** — `prisma migrate dev`; can reset the database. Never run against production (use `prisma migrate deploy`, e.g. via `db:setup` or `scripts/go-live.mjs`) |
 | `npm run db:seed` | Seed admin user, homepage sections, blog posts |
 | `npm run db:setup` | `prisma migrate deploy` + seed in one step — safe for production |
+
+### Where tests may run
+
+`npm test`, `verify:101` and `verify:predeploy` create and delete orders, customers and admin users, so
+they refuse to start unless `DATABASE_URL` (and `MIGRATION_DATABASE_URL`) is a local database —
+`localhost`, `127.0.0.1`, `::1` or the compose service `postgres` — and never the production Supabase
+database (`SUPABASE_DATABASE_URL`, or any `*.supabase.co/.com` host). Set `ALLOW_REMOTE_TEST_DB=1` only for a
+remote database that is genuinely disposable; it never lifts the production refusal. The Playwright config
+loads `.env` like the tsx test scripts do. Browser tests that write data only run against a local server
+(or a staging deployment with `E2E_ALLOW_MUTATIONS=1`), and never against production. Mix & Match and Fabric
+Technology are off by default, so the dogfood and smoke suites expect them to 404; set
+`CI_OPTIONAL_PAGES_ENABLED=1` when they are switched on.
 
 ## Environment
 

@@ -69,3 +69,34 @@ describe("Content-Security-Policy — Razorpay checkout script & telemetry (F-11
     );
   });
 });
+
+/**
+ * F-221 / F-307: the framework fingerprint header is off, /cdn media gets its
+ * own locked-down policy, and the image optimizer / CSP no longer trust the
+ * Shopify CDN. script-src keeps 'unsafe-inline' on purpose (nonces would force
+ * every page to render dynamically; see the comment in next.config.ts).
+ */
+describe("next.config.ts header hardening (F-221, F-307)", () => {
+  it("does not send X-Powered-By", () => {
+    assert.equal(nextConfig.poweredByHeader, false);
+  });
+
+  it("gives /cdn responses a policy that allows nothing, after the catch-all so it wins", async () => {
+    const groups = (await nextConfig.headers?.()) ?? [];
+    assert.equal(groups[0].source, "/(.*)", "the global policy must stay first (a later rule overrides an earlier one)");
+    const cdnIndex = groups.findIndex((group) => group.source === "/cdn/:path*");
+    assert.ok(cdnIndex > 0, "expected a /cdn/:path* header group after the catch-all");
+    const csp = groups[cdnIndex].headers.find((header) => header.key === "Content-Security-Policy");
+    assert.ok(csp);
+    assert.match(csp!.value, /default-src 'none'/);
+    assert.match(csp!.value, /sandbox/);
+    assert.ok(!csp!.value.includes("script-src"));
+  });
+
+  it("does not trust cdn.shopify.com for images, in remotePatterns or in img-src", async () => {
+    const patterns = nextConfig.images?.remotePatterns ?? [];
+    assert.ok(!patterns.some((pattern) => "hostname" in pattern && pattern.hostname === "cdn.shopify.com"));
+    const csp = await getCspHeaderValue();
+    assert.ok(!directive(csp, "img-src").includes("cdn.shopify.com"));
+  });
+});

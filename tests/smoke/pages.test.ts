@@ -145,6 +145,77 @@ describe("smoke — storefront pages", () => {
   });
 });
 
+/**
+ * release-hardening SEO polish (F-012, F-089, F-101, F-147, F-151): head-level
+ * checks that need the rendered page — Next's metadata merging (a page that
+ * sets its own `openGraph`/`alternates` replaces the root layout's whole
+ * object) can't be asserted from the page modules alone.
+ */
+describe("smoke — SEO head", () => {
+  async function fetchHtml(path: string): Promise<{ status: number; html: string }> {
+    const response = await fetch(`${BASE}${path}`);
+    return { status: response.status, html: await response.text() };
+  }
+
+  const metaContent = (html: string, attr: "name" | "property", key: string) =>
+    html.match(new RegExp(`<meta ${attr}="${key}" content="([^"]*)"`))?.[1];
+  const canonicalHref = (html: string) => html.match(/<link rel="canonical" href="([^"]*)"/)?.[1];
+
+  it("F-012: unknown products, categories, collections and URLs answer a real 404", async () => {
+    for (const path of [
+      "/products/does-not-exist-xyz",
+      "/category/does-not-exist-xyz",
+      "/collections/does-not-exist-xyz",
+      "/totally-bogus-url-xyz",
+    ]) {
+      assert.equal(await fetchStatus(path), 404, `${path} should be a 404, not a streamed 200`);
+    }
+  });
+
+  it("F-012: the root 404 has its own title and no canonical or 'index, follow' robots tag", async () => {
+    const { status, html } = await fetchHtml("/totally-bogus-url-xyz");
+    assert.equal(status, 404);
+    assert.match(html, /<title>Page not found \|/);
+    assert.equal(canonicalHref(html), undefined);
+    assert.doesNotMatch(html, /<meta name="robots" content="index/);
+  });
+
+  it("F-089: serves /favicon.ico and a theme-color meta tag", async () => {
+    assert.equal(await fetchStatus("/favicon.ico"), 200);
+    const { html } = await fetchHtml("/");
+    assert.equal(metaContent(html, "name", "theme-color"), "#8A347D");
+  });
+
+  it("F-147/F-151: legal, contact and collection pages self-canonicalize and set og:url", async () => {
+    for (const path of ["/returns", "/terms", "/contact", "/bulk-orders", "/size-guide", "/collections"]) {
+      const { status, html } = await fetchHtml(path);
+      assert.equal(status, 200, path);
+      assert.ok(canonicalHref(html)?.endsWith(path), `${path} canonical was ${canonicalHref(html)}`);
+      assert.ok(metaContent(html, "property", "og:url")?.endsWith(path), `${path} og:url`);
+      assert.ok(metaContent(html, "property", "og:image"), `${path} should keep a share image`);
+    }
+  });
+
+  it("F-101: /category/for-hospitals canonicalizes to the /for-hospitals landing page", async () => {
+    const { html } = await fetchHtml("/category/for-hospitals");
+    assert.ok(canonicalHref(html)?.endsWith("/for-hospitals"));
+  });
+
+  it("F-019: /shop and category pages have exactly one <h1>", async () => {
+    for (const path of ["/shop", "/category/for-hospitals"]) {
+      const { html } = await fetchHtml(path);
+      assert.equal((html.match(/<h1[\s>]/g) ?? []).length, 1, `${path} should have a single h1`);
+    }
+  });
+
+  it("F-045/F-147: account and unsubscribe pages are noindex", async () => {
+    for (const path of ["/account/login", "/unsubscribe", "/newsletter/confirmed"]) {
+      const { html } = await fetchHtml(path);
+      assert.match(html, /<meta name="robots" content="noindex/, `${path} should be noindex`);
+    }
+  });
+});
+
 describe("smoke — server reachability", () => {
   it("server is reachable at TEST_BASE_URL", async () => {
     try {

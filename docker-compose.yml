@@ -40,6 +40,10 @@ services:
     environment:
       PORT: 8080
       AR_TRYON_API_KEY: ${AR_TRYON_API_KEY:-}
+      # The service answers 401 to everything without a key unless this is 1.
+      # Safe here because the port is published on 127.0.0.1 only. Export it
+      # (or AR_TRYON_API_KEY) before `docker compose up -d ar-tryon`.
+      AR_TRYON_ALLOW_UNAUTH: ${AR_TRYON_ALLOW_UNAUTH:-}
 
 volumes:
   daakyka_pg_data:

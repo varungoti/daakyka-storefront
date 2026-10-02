@@ -1,6 +1,7 @@
 "use client";
 
 import { useWishlist } from "@/context/wishlist-provider";
+import { wishlistToggleLabel } from "@/lib/a11y/labels";
 import { cn } from "@/lib/utils";
 import type { Product } from "@/lib/types";
 import { Heart } from "lucide-react";
@@ -17,7 +18,9 @@ export function WishlistButton({ product, className }: WishlistButtonProps) {
   return (
     <button
       type="button"
-      aria-label={active ? "Remove from wishlist" : "Add to wishlist"}
+      // F-248: name the product — a listing renders dozens of these, all
+      // otherwise announced as the same "Add to wishlist".
+      aria-label={wishlistToggleLabel(product.name, active)}
       aria-pressed={active}
       className={cn(
         "rounded-full bg-surface-elevated p-2.5 shadow-sm transition hover:text-brand",

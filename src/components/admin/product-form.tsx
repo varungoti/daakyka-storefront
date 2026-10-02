@@ -128,6 +128,13 @@ export function ProductForm({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  // F-065: below md the sticky bar keeps only Save + the listing switch and
+  // tucks the rest behind a "More" menu, so it no longer covers a quarter
+  // of a phone screen.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreMenuId = useId();
+  const duplicateHintId = useId();
+  const deleteHintId = useId();
 
   const flatCategories = useMemo(() => flattenCategories(categoryOptions), [categoryOptions]);
   const selectedCategory = categoryOptions.find((c) => c.id === categoryId);
@@ -636,6 +643,7 @@ export function ProductForm({
         <select
           value={categoryId}
           onChange={(e) => setCategoryId(e.target.value)}
+          aria-label="Product category"
           aria-invalid={Boolean(fieldErrors.categoryId)}
           aria-describedby={fieldErrors.categoryId ? "product-category-error" : undefined}
           className={inputClass}
@@ -802,7 +810,12 @@ export function ProductForm({
         </div>
       </section>
 
-      <div className="sticky bottom-4 z-10 flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-surface p-4 shadow-lg">
+      <div
+        className="sticky bottom-4 z-10 flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-surface p-4 shadow-lg max-md:bottom-2 max-md:gap-2 max-md:p-2"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setMoreOpen(false);
+        }}
+      >
         {/* F-176: rendered here, as the bar's own first (full-width) row,
             instead of as a separate element right above it — a save error
             used to be scrolled to the bottom of the viewport, exactly
@@ -817,7 +830,7 @@ export function ProductForm({
           onClick={saveDraft}
           disabled={saveStatus === "saving" || !name.trim() || !price || Boolean(variantGridError)}
           title={variantGridError ?? ""}
-          className="rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+          className="rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50 max-md:min-h-11 max-md:flex-1 max-md:px-4"
         >
           {saveStatus === "saving" ? "Saving…" : status === "DRAFT" ? "Save draft" : "Save changes"}
         </button>
@@ -828,7 +841,9 @@ export function ProductForm({
             pre-save this now runs first failed). Requiring `!dirty` too is
             the safety net under that fix: it stays accurate even if a
             future caller sets `saved` without going through saveDraft(). */}
-        {saved && !dirty && !errorMessage ? <span className="text-xs font-medium text-green-700">Saved.</span> : null}
+        {saved && !dirty && !errorMessage ? (
+          <span className="text-xs font-medium text-green-700 max-md:order-last max-md:basis-full max-md:text-center">Saved.</span>
+        ) : null}
 
         {status === "ARCHIVED" ? (
           // F-185: previously this branch fell through to the plain
@@ -838,7 +853,7 @@ export function ProductForm({
           // delete. Unarchive needs `products:manage`, not
           // `products:publish` (see the /publish route's own comment), so
           // it's never gated on `canPublish`.
-          <button type="button" onClick={unarchive} disabled={!productId || busyAction === "unarchive"} className="rounded-full bg-brand px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">
+          <button type="button" onClick={unarchive} disabled={!productId || busyAction === "unarchive"} className="rounded-full bg-brand px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11 max-md:px-4">
             Unarchive
           </button>
         ) : (
@@ -850,7 +865,7 @@ export function ProductForm({
             onClick={status === "ACTIVE" ? unpublish : publish}
             disabled={!canPublish || !productId || busyAction !== null || saveStatus === "saving"}
             title={!canPublish ? "Requires products:publish" : !productId ? "Save this product before listing" : status === "ACTIVE" ? "Unlist this product" : "List this product"}
-            className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11"
           >
             <span aria-hidden="true" className={`relative h-5 w-9 rounded-full transition-colors ${status === "ACTIVE" ? "bg-green-600" : "bg-gray-300"}`}>
               <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${status === "ACTIVE" ? "translate-x-[18px]" : "translate-x-0.5"}`} />
@@ -859,50 +874,99 @@ export function ProductForm({
           </button>
         )}
 
-        {isEdit && (
-          // F-184: duplicate() copies the last *saved* DB row — with no
-          // guard, a dirty form's edits were silently dropped (the copy
-          // never reflected them) with no warning, unlike every other
-          // navigation away from a dirty form.
-          <span title={dirty ? "Save your changes before duplicating" : ""}>
-            <button
-              type="button"
-              onClick={duplicate}
-              disabled={dirty || busyAction === "duplicate"}
-              className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-muted hover:bg-lilac/40 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Duplicate
-            </button>
-          </span>
-        )}
-
-        {isEdit && status !== "ARCHIVED" && (
-          <button type="button" onClick={archive} disabled={busyAction === "archive"} className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-muted hover:bg-lilac/40">
-            Archive
-          </button>
-        )}
-
-        {isEdit && (
-          <span title={canDelete ? "" : "Only draft or archived products with no orders can be deleted"}>
-            <button type="button" onClick={remove} disabled={!canDelete || busyAction === "delete"} className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-red-600 disabled:cursor-not-allowed disabled:opacity-40">
-              Delete
-            </button>
-          </span>
-        )}
-
+        {/* F-065: on phones these four actions sit in a popover opened by the
+            "More" button; from md up the wrapper is `display: contents`, so
+            they are laid out inline in the bar exactly as before. One set of
+            buttons either way (no duplicated handlers or state). */}
         <button
           type="button"
-          onClick={() => {
-            // F-13: a plain router.push here would silently discard a
-            // dirty form exactly like the reported bug — this is the same
-            // confirmLeave() the sidebar's GuardedLink uses.
-            if (!confirmLeave()) return;
-            router.push("/admin/products");
-          }}
-          className="ml-auto rounded-full px-5 py-2.5 text-sm font-semibold text-muted hover:bg-lilac/40"
+          aria-expanded={moreOpen}
+          aria-controls={moreMenuId}
+          onClick={() => setMoreOpen((open) => !open)}
+          className="inline-flex min-h-11 items-center rounded-full border border-border px-4 py-2 text-sm font-semibold text-ink md:hidden"
         >
-          Back to list
+          More
+          <span aria-hidden="true" className="ml-1">{moreOpen ? "▾" : "▴"}</span>
         </button>
+
+        <div
+          id={moreMenuId}
+          onClick={() => setMoreOpen(false)}
+          className={
+            moreOpen
+              ? "max-md:absolute max-md:bottom-full max-md:right-0 max-md:mb-2 max-md:flex max-md:w-64 max-md:max-w-full max-md:flex-col max-md:gap-1 max-md:rounded-2xl max-md:border max-md:border-border max-md:bg-surface max-md:p-2 max-md:shadow-lg md:contents"
+              : "max-md:hidden md:contents"
+          }
+        >
+          {isEdit && (
+            // F-184: duplicate() copies the last *saved* DB row — with no
+            // guard, a dirty form's edits were silently dropped (the copy
+            // never reflected them) with no warning, unlike every other
+            // navigation away from a dirty form.
+            <span title={dirty ? "Save your changes before duplicating" : ""} className="max-md:block">
+              <button
+                type="button"
+                onClick={duplicate}
+                disabled={dirty || busyAction === "duplicate"}
+                aria-describedby={dirty ? duplicateHintId : undefined}
+                className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-muted hover:bg-lilac/40 disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11 max-md:w-full max-md:text-left"
+              >
+                Duplicate
+              </button>
+              {/* A `title` tooltip is unreachable on touch, so the reason a
+                  button is disabled is also written out on phones. */}
+              {dirty ? (
+                <span id={duplicateHintId} className="mt-1 block px-1 text-[11px] text-muted md:hidden">
+                  Save your changes before duplicating.
+                </span>
+              ) : null}
+            </span>
+          )}
+
+          {isEdit && status !== "ARCHIVED" && (
+            <button
+              type="button"
+              onClick={archive}
+              disabled={busyAction === "archive"}
+              className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-muted hover:bg-lilac/40 max-md:min-h-11 max-md:w-full max-md:text-left"
+            >
+              Archive
+            </button>
+          )}
+
+          {isEdit && (
+            <span title={canDelete ? "" : "Only draft or archived products with no orders can be deleted"} className="max-md:block">
+              <button
+                type="button"
+                onClick={remove}
+                disabled={!canDelete || busyAction === "delete"}
+                aria-describedby={canDelete ? undefined : deleteHintId}
+                className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-red-600 disabled:cursor-not-allowed disabled:opacity-40 max-md:min-h-11 max-md:w-full max-md:text-left"
+              >
+                Delete
+              </button>
+              {canDelete ? null : (
+                <span id={deleteHintId} className="mt-1 block px-1 text-[11px] text-muted md:hidden">
+                  Only draft or archived products with no orders can be deleted.
+                </span>
+              )}
+            </span>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              // F-13: a plain router.push here would silently discard a
+              // dirty form exactly like the reported bug — this is the same
+              // confirmLeave() the sidebar's GuardedLink uses.
+              if (!confirmLeave()) return;
+              router.push("/admin/products");
+            }}
+            className="ml-auto rounded-full px-5 py-2.5 text-sm font-semibold text-muted hover:bg-lilac/40 max-md:ml-0 max-md:min-h-11 max-md:w-full max-md:text-left"
+          >
+            Back to list
+          </button>
+        </div>
       </div>
     </div>
   );

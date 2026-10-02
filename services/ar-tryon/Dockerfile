@@ -1,4 +1,8 @@
-FROM python:3.11-slim
+# F-305: pinned by digest (the multi-arch index of python:3.11-slim, 3.11.17 on Debian
+# trixie, resolved 2026-10-02) so a rebuild cannot silently pick up a different base image.
+# Dependabot (.github/dependabot.yml, docker ecosystem) proposes the bump; to refresh by hand:
+#   docker buildx imagetools inspect python:3.11-slim   (use the top-level Digest)
+FROM python:3.11-slim@sha256:bab1b7ef4b450c81002278d035eff85ebe394ae94df904f7a3ba14f7e16e487b
 
 WORKDIR /app
 

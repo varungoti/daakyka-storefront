@@ -91,7 +91,9 @@ function die(message) {
   if (completedStages.includes("deployed to Vercel production")) {
     console.error(
       "The new code is already live. If it's broken for real users, roll back with " +
-        "`npx vercel rollback` to return to the previous production deployment while you investigate.",
+        "`npx vercel rollback <deployment>` to return to the previous production deployment while you " +
+        "investigate. Check the target first with `node scripts/check-rollback-target.mjs <deployment>`: " +
+        "a deployment built before 2026-09-22 points production at the old Neon database.",
     );
   }
   process.exit(1);
@@ -446,8 +448,15 @@ try {
   homepageHtml = await response.text();
   console.log(`  -> ${response.status} ${response.statusText}, ${homepageHtml.length} bytes`);
   if (response.status !== 200) die(`the deployed site answered ${response.status}.`);
+  // F-309: this used to only warn. A 200 that isn't this store's homepage
+  // (a Vercel login page, a generic error shell, another project's site) must
+  // not be reported as "Live".
   if (!/DAAKYKA/i.test(homepageHtml)) {
-    console.log("  WARNING: response did not contain 'DAAKYKA' — check the page manually.");
+    die(
+      `the homepage at ${deployedUrl} answered 200 but does not contain "DAAKYKA" — this is not the ` +
+        "store's own page (a Vercel login/protection page or an error shell, most likely). Check the " +
+        "resolved URL and the deployment in the Vercel dashboard before announcing a launch.",
+    );
   }
 } catch (error) {
   die(`could not reach the deployed site: ${error.message}`);

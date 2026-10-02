@@ -2,10 +2,13 @@ import { ContactForm } from "@/components/contact/contact-form";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
 import { brand } from "@/data/brand";
+import { resolveContactIntent } from "@/app/contact/contact-intent";
 import { whatsappHref } from "@/lib/contact/whatsapp";
 import { getSiteImage } from "@/lib/media/get-site-image";
 import { canonicalPath } from "@/lib/seo/canonical";
 import { baseOpenGraph } from "@/lib/seo/json-ld";
+import { withSeoOverride } from "@/lib/seo/records";
+import { CONTACT_PAGE } from "@/lib/seo/static-pages";
 import { getSetting } from "@/lib/settings";
 import { Clock, MapPin, MessageCircle } from "lucide-react";
 import type { Metadata } from "next";
@@ -14,30 +17,26 @@ import Link from "next/link";
 // release-hardening F-147/F-151: this used to be only {title, description},
 // so /contact inherited the root layout's canonical (the homepage) and its
 // og:title/og:url — a B2B lead page that isn't its own canonical URL.
-export const metadata: Metadata = {
-  title: "Contact",
-  description: `Contact ${brand.name} — ${brand.legalName}, ${brand.location.city}. Pan India institutional uniforms and medical apparel.`,
-  alternates: { canonical: canonicalPath("/contact") },
-  openGraph: baseOpenGraph("/contact"),
-};
+// F-052: an admin override saved for /contact in /admin/seo lands here too.
+export async function generateMetadata(): Promise<Metadata> {
+  return withSeoOverride("/contact", {
+    title: CONTACT_PAGE.title,
+    description: CONTACT_PAGE.description,
+    alternates: { canonical: canonicalPath("/contact") },
+    openGraph: baseOpenGraph("/contact"),
+  });
+}
 
 interface ContactPageProps {
   searchParams: Promise<{ intent?: string; type?: string }>;
 }
 
-const typeMap = {
-  general: "GENERAL",
-  institutional: "INSTITUTIONAL",
-  bulk: "BULK_ORDER",
-  support: "SUPPORT",
-} as const;
-
 export default async function ContactPage({ searchParams }: ContactPageProps) {
   const params = await searchParams;
-  // F-154: this ternary used to return "GENERAL" either way — checkout
-  // help never actually preset the form's enquiry type to Product Support.
-  const defaultType =
-    typeMap[params.type as keyof typeof typeMap] ?? (params.intent === "checkout" ? "SUPPORT" : "GENERAL");
+  // F-154: /contact?intent=checkout (the "Having trouble? Contact us" link
+  // under Place Order and on the checkout error page) gets help-with-your-
+  // order copy and opens the form on Product Support — see contact-intent.ts.
+  const { defaultType, isCheckoutHelp, heading } = resolveContactIntent(params);
   const [heroImage, contactWhatsapp, contactAddress, contactPhone, contactEmail, grievanceName, grievanceDesignation, grievancePhone, grievanceEmail] =
     await Promise.all([
       getSiteImage("contact.banner"),
@@ -63,12 +62,8 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
         <SectionHeading
           eyebrow="Get in Touch"
           titleAs="h1"
-          title={params.intent === "checkout" ? "Need Help With Your Order?" : "Contact DAAKYKA"}
-          description={
-            params.intent === "checkout"
-              ? "Tell us what went wrong at checkout and our team will call or WhatsApp you back — your cart is saved on this device."
-              : "Questions about scrubs, hospital linens, school uniforms, or bulk institutional orders? Reach out to Babaji Enterprises."
-          }
+          title={heading.title}
+          description={heading.description}
           align="center"
         />
       </PageHeroBand>
@@ -123,7 +118,7 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
                     href={whatsappHref(contactWhatsapp, brand.web.whatsappMessage)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="mt-3 inline-flex text-sm font-semibold text-trust hover:underline"
+                    className="mt-3 inline-flex text-sm font-semibold text-trust-ink hover:underline"
                   >
                     Open WhatsApp →
                   </Link>
@@ -165,14 +160,14 @@ export default async function ContactPage({ searchParams }: ContactPageProps) {
                 href={brand.web.domain}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-brand hover:underline"
+                className="text-brand underline underline-offset-2"
               >
                 daakyka.com
               </a>
             </p>
           </div>
 
-          <ContactForm defaultType={defaultType} />
+          <ContactForm defaultType={defaultType} checkoutHelp={isCheckoutHelp} />
         </div>
       </PageContentSection>
     </>

@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { GripVertical } from "lucide-react";
 import {
   addStagedImage,
@@ -17,6 +17,10 @@ import { summarizeFailuresByMessage, uploadErrorMessage, uploadFilesSequentially
 import { prepareImageForUpload } from "@/lib/media/prepare-upload";
 import { MediaLibraryBrowser } from "@/components/admin/media-library-browser";
 import { cn } from "@/lib/utils";
+
+/** The product-image API's cap on alt text (F-366) — a longer value would
+ * make attaching this staged image to the new product fail. */
+const MAX_ALT_LENGTH = 300;
 
 interface GeneratedCandidate {
   id: string;
@@ -75,6 +79,21 @@ export function StagedProductImageGallery({
   const [overIndex, setOverIndex] = useState<number | null>(null);
   const [candidates, setCandidates] = useState<GeneratedCandidate[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  // F-358: same stale-closure guard as ProductImageGallery — an upload
+  // batch awaits for as long as the network takes, during which the admin
+  // can remove or re-tag another photo; writing back the `images` prop
+  // captured when the batch started would silently undo that. Every write
+  // goes through `commit`, which also updates this ref synchronously so
+  // two writes in the same tick build on each other.
+  const latestImages = useRef(images);
+  useEffect(() => {
+    latestImages.current = images;
+  }, [images]);
+
+  function commit(next: StagedImage[]) {
+    latestImages.current = next;
+    onChange(next);
+  }
 
   /**
    * F-324: see ProductImageGallery's identical fix — a 429 from
@@ -104,7 +123,6 @@ export function StagedProductImageGallery({
         return fetch("/api/admin/media", { method: "POST", body: form });
       });
 
-      let current = images;
       const failures: { file: File; message: string }[] = [];
 
       for (const { file, response, retriedAfterRateLimit } of outcomes) {
@@ -122,9 +140,12 @@ export function StagedProductImageGallery({
           });
           continue;
         }
-        const body = await response.json();
-        current = addStagedImage(current, { mediaAssetId: body.asset.id, url: body.asset.url, alt: aiFields.name ?? "", color: null, origin: "new" });
-        onChange(current);
+        const body = await response.json().catch(() => null);
+        if (typeof body?.asset?.id !== "string" || typeof body?.asset?.url !== "string") {
+          failures.push({ file, message: "Unexpected response from the server" });
+          continue;
+        }
+        commit(addStagedImage(latestImages.current, { mediaAssetId: body.asset.id, url: body.asset.url, alt: aiFields.name ?? "", color: null, origin: "new" }));
       }
 
       const uploadNotice = summarizeFailuresByMessage(failures);
@@ -177,7 +198,7 @@ export function StagedProductImageGallery({
     // Unlike the saved gallery, nothing needs attaching here — the
     // generate call above already created a real MediaAsset for each
     // candidate, so accepting one just means staging it.
-    onChange(addStagedImages(images, selected.map((c) => ({ mediaAssetId: c.id, url: c.url, alt: aiFields.name ?? "", color: null, origin: "new" as const }))));
+    commit(addStagedImages(latestImages.current, selected.map((c) => ({ mediaAssetId: c.id, url: c.url, alt: aiFields.name ?? "", color: null, origin: "new" as const }))));
     setCandidates([]);
   }
 
@@ -188,34 +209,43 @@ export function StagedProductImageGallery({
    * "library"` so `remove()` below knows not to delete it.
    *
    * F-192: takes the whole multi-select batch and stages it with a single
-   * `onChange` — see stageLibraryAssets in staged-images.ts for why one
-   * call per picked asset would keep only the last one. */
+   * `commit` — see stageLibraryAssets in staged-images.ts for why one call
+   * per picked asset would keep only the last one. It builds on the
+   * latest-state ref (F-358), not the `images` prop, so an upload that
+   * finishes while the picker is open is not dropped. */
   function addLibraryAssets(assets: { id: string; url: string; alt: string | null }[]) {
-    onChange(stageLibraryAssets(images, assets, aiFields.name ?? ""));
+    commit(stageLibraryAssets(latestImages.current, assets, aiFields.name ?? ""));
     setPickerOpen(false);
   }
 
   async function remove(mediaAssetId: string) {
-    const staged = images.find((img) => img.mediaAssetId === mediaAssetId);
+    const staged = latestImages.current.find((img) => img.mediaAssetId === mediaAssetId);
     // A library-picked asset is only ever *unstaged* here, never deleted —
     // it may already be attached to other products, or just belongs in the
     // library regardless of this draft (see StagedImage.origin's doc
     // comment in staged-images.ts). Only a photo *this session* freshly
     // uploaded/generated is actually removed from storage on "Remove".
     if (staged?.origin === "library") {
-      onChange(removeStagedImage(images, mediaAssetId));
+      commit(removeStagedImage(latestImages.current, mediaAssetId));
       return;
     }
     setRemovingId(mediaAssetId);
     setNotice(null);
-    const response = await fetch(`/api/admin/media/${mediaAssetId}`, { method: "DELETE" });
+    let response: Response;
+    try {
+      response = await fetch(`/api/admin/media/${mediaAssetId}`, { method: "DELETE" });
+    } catch {
+      setRemovingId(null);
+      setNotice("Couldn't reach the server — check your connection and try again.");
+      return;
+    }
     setRemovingId(null);
     if (!response.ok) {
       const body = await response.json().catch(() => ({}));
       setNotice(body?.error ?? "Couldn't remove that image — try again.");
       return;
     }
-    onChange(removeStagedImage(images, mediaAssetId));
+    commit(removeStagedImage(latestImages.current, mediaAssetId));
   }
 
   return (
@@ -265,6 +295,7 @@ export function StagedProductImageGallery({
           onChange={(e) => setPromptOverride(e.target.value)}
           rows={2}
           placeholder="Optional prompt override — leave blank to auto-fill from name, category, gender and fabric"
+          aria-label="Image generation prompt override"
           className="w-full rounded-lg border border-border bg-surface p-2 text-xs text-ink"
         />
         <div className="flex items-center gap-2">
@@ -325,7 +356,7 @@ export function StagedProductImageGallery({
                 const from = dragIndex;
                 setDragIndex(null);
                 setOverIndex(null);
-                if (from !== null && from !== index) onChange(moveArrayItem(images, from, index));
+                if (from !== null && from !== index) commit(moveArrayItem(latestImages.current, from, index));
               }}
               className={cn(
                 "space-y-2 rounded-xl border border-border p-2 transition",
@@ -357,7 +388,8 @@ export function StagedProductImageGallery({
               </div>
               <select
                 value={img.color ?? ""}
-                onChange={(e) => onChange(updateStagedImage(images, img.mediaAssetId, { color: e.target.value || null }))}
+                onChange={(e) => commit(updateStagedImage(latestImages.current, img.mediaAssetId, { color: e.target.value || null }))}
+                aria-label={`Colour tag for image ${index + 1}`}
                 className="w-full rounded border border-border p-1 text-xs"
               >
                 <option value="">No colour tag</option>
@@ -369,8 +401,10 @@ export function StagedProductImageGallery({
               </select>
               <input
                 value={img.alt ?? ""}
-                onChange={(e) => onChange(updateStagedImage(images, img.mediaAssetId, { alt: e.target.value }))}
+                onChange={(e) => commit(updateStagedImage(latestImages.current, img.mediaAssetId, { alt: e.target.value }))}
                 placeholder="Alt text"
+                aria-label={`Alt text for image ${index + 1}`}
+                maxLength={MAX_ALT_LENGTH}
                 className="w-full rounded border border-border p-1 text-xs"
               />
               <div className="flex items-center justify-between text-[11px]">
@@ -378,7 +412,7 @@ export function StagedProductImageGallery({
                   <button
                     type="button"
                     disabled={index === 0}
-                    onClick={() => onChange(moveStagedImage(images, img.mediaAssetId, "up"))}
+                    onClick={() => commit(moveStagedImage(latestImages.current, img.mediaAssetId, "up"))}
                     aria-label="Move image up"
                     className="rounded border border-border px-1.5 py-0.5 disabled:opacity-30"
                   >
@@ -387,7 +421,7 @@ export function StagedProductImageGallery({
                   <button
                     type="button"
                     disabled={index === images.length - 1}
-                    onClick={() => onChange(moveStagedImage(images, img.mediaAssetId, "down"))}
+                    onClick={() => commit(moveStagedImage(latestImages.current, img.mediaAssetId, "down"))}
                     aria-label="Move image down"
                     className="rounded border border-border px-1.5 py-0.5 disabled:opacity-30"
                   >

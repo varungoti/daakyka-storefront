@@ -2,6 +2,8 @@ import { describe, it, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { db } from "@/lib/db";
 import { reviewHermesApproval } from "@/lib/hermes/approval-executor";
+import { canApproveHermesApproval } from "@/lib/hermes/approval-permissions";
+import { blogPostSchema } from "@/lib/validation/schemas";
 import { PATCH as patchApproval } from "@/app/api/admin/hermes/approvals/[id]/route";
 import { GET as cronHermesGet, POST as cronHermesPost, isWeeklyScanDue } from "@/app/api/cron/hermes/route";
 import { findAnyAdminId } from "../helpers/admin-user";
@@ -19,6 +21,7 @@ import { withEnv } from "../helpers/env";
 
 const createdApprovalIds: string[] = [];
 const createdCampaignNames: string[] = [];
+const createdBlogSlugs: string[] = [];
 
 function baseApproval(overrides: Partial<Parameters<typeof db.hermesApproval.create>[0]["data"]> = {}) {
   return {
@@ -37,6 +40,9 @@ after(async () => {
   }
   if (createdCampaignNames.length > 0) {
     await db.campaign.deleteMany({ where: { name: { in: createdCampaignNames } } }).catch(() => {});
+  }
+  if (createdBlogSlugs.length > 0) {
+    await db.blogPostRecord.deleteMany({ where: { slug: { in: createdBlogSlugs } } }).catch(() => {});
   }
 });
 
@@ -106,6 +112,134 @@ describe("reviewHermesApproval idempotency (Phase G)", () => {
     const adminId = await findAnyAdminId();
     const result = await reviewHermesApproval("does-not-exist", "APPROVED", adminId);
     assert.equal(result, null);
+  });
+});
+
+// F-213: approving a blog_draft stored a plain string in BlogPostRecord.content
+// (every reader expects a JSON array of paragraphs) under a title-derived slug
+// that kept punctuation ("hermes:-blog-draft"). Opening the draft in the CMS
+// then crashed the admin error boundary.
+describe("Hermes blog_draft approval produces a post the CMS can open (F-213)", () => {
+  async function approveBlogDraft(titleSuffix: string, payload: Record<string, unknown>) {
+    const adminId = await findAnyAdminId();
+    const approval = await db.hermesApproval.create({
+      data: {
+        type: "blog_draft",
+        title: `Hermes: blog draft ${titleSuffix}`,
+        summary: "Draft ready for review: how to care for hospital linens.",
+        payload: JSON.stringify(payload),
+        status: "PENDING",
+      },
+    });
+    createdApprovalIds.push(approval.id);
+    const result = await reviewHermesApproval(approval.id, "APPROVED", adminId);
+    assert.ok(result);
+    assert.equal(result.execution?.action, "blog_draft_created");
+    const post = await db.blogPostRecord.findUniqueOrThrow({ where: { id: result.execution!.entityId } });
+    createdBlogSlugs.push(post.slug);
+    return { post, approval, adminId };
+  }
+
+  it("stores the body as a JSON array of paragraphs, even with no draftContent in the payload", async () => {
+    const { post } = await approveBlogDraft(`no-body ${Date.now()}`, {});
+    const parsed: unknown = JSON.parse(post.content);
+    assert.ok(Array.isArray(parsed) && parsed.length >= 1 && parsed.every((p) => typeof p === "string"));
+  });
+
+  it("splits a plain-text draftContent into paragraphs on blank lines", async () => {
+    const { post } = await approveBlogDraft(`text-body ${Date.now()}`, {
+      draftContent: "First paragraph.\n\nSecond paragraph.\n\n\nThird paragraph.",
+    });
+    assert.deepEqual(JSON.parse(post.content), ["First paragraph.", "Second paragraph.", "Third paragraph."]);
+  });
+
+  it("keeps an array draftContent as-is", async () => {
+    const { post } = await approveBlogDraft(`array-body ${Date.now()}`, { draftContent: ["One.", "Two."] });
+    assert.deepEqual(JSON.parse(post.content), ["One.", "Two."]);
+  });
+
+  it("derives a slug the blog schema accepts (no colon or spaces), and the draft passes blogPostSchema as saved", async () => {
+    const { post } = await approveBlogDraft(`Slug Check ${Date.now()}`, {});
+    assert.match(post.slug, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
+    assert.ok(!post.slug.startsWith("hermes"), "the 'Hermes:' title prefix is not part of the slug");
+
+    const resaved = blogPostSchema.safeParse({
+      slug: post.slug,
+      title: post.title,
+      excerpt: post.excerpt,
+      category: post.category,
+      author: post.author,
+      publishedAt: post.publishedAt.toISOString().slice(0, 10),
+      readTime: post.readTime,
+      image: post.image,
+      content: JSON.parse(post.content),
+      status: post.status,
+    });
+    assert.equal(
+      resaved.success,
+      true,
+      "the owner must be able to open the draft in the editor and save it without fixing the slug or image first",
+    );
+  });
+
+  it("normalises an unsafe payload slug the same way", async () => {
+    const { post } = await approveBlogDraft(`payload-slug ${Date.now()}`, { slug: "Hermes: How To Care?? " });
+    assert.equal(post.slug, "hermes-how-to-care");
+  });
+
+  // F-293: the approval route's own audit row says an approval happened, but
+  // nothing recorded which blog post / campaign it created.
+  it("audit-logs the blog post it creates, attributed to the approver", async () => {
+    const { post, approval, adminId } = await approveBlogDraft(`audit ${Date.now()}`, {});
+    const row = await db.auditLog.findFirst({ where: { entity: "blog_post", entityId: post.id, action: "create" } });
+    assert.ok(row, "expected a create audit row for the Hermes-created blog post");
+    assert.equal(row.userId, adminId);
+    assert.deepEqual(JSON.parse(row.metadata ?? "{}"), { source: "hermes", approvalId: approval.id });
+  });
+});
+
+describe("Hermes campaign_draft approval is audit-logged (F-293)", () => {
+  it("records a create audit row for the campaign, attributed to the approver", async () => {
+    const adminId = await findAnyAdminId();
+    const data = baseApproval();
+    createdCampaignNames.push(data.title.replace(/^Campaign:\s*/i, ""));
+    const approval = await db.hermesApproval.create({ data });
+    createdApprovalIds.push(approval.id);
+
+    const result = await reviewHermesApproval(approval.id, "APPROVED", adminId);
+    assert.equal(result?.execution?.action, "campaign_draft_created");
+
+    const row = await db.auditLog.findFirst({
+      where: { entity: "campaign", entityId: result!.execution!.entityId, action: "create" },
+    });
+    assert.ok(row, "expected a create audit row for the Hermes-created campaign");
+    assert.equal(row.userId, adminId);
+    assert.deepEqual(JSON.parse(row.metadata ?? "{}"), { source: "hermes", approvalId: approval.id });
+  });
+});
+
+// F-293: PATCH only checked hermes:manage, which SEO_MANAGER has without
+// engagement:manage — so it could approve a campaign draft into existence
+// that it then couldn't even open. Approving needs the permission of the
+// entity it creates. (The route itself can't be driven with a session here —
+// see the note at the top of this file — so the decision it makes is tested.)
+describe("canApproveHermesApproval (F-293)", () => {
+  it("requires campaign permissions to approve a campaign_draft", () => {
+    assert.equal(canApproveHermesApproval("SEO_MANAGER", "campaign_draft"), false);
+    assert.equal(canApproveHermesApproval("CONTENT_EDITOR", "campaign_draft"), false);
+    assert.equal(canApproveHermesApproval("MARKETING_ADMIN", "campaign_draft"), true);
+    assert.equal(canApproveHermesApproval("SUPER_ADMIN", "campaign_draft"), true);
+  });
+
+  it("requires blog permissions to approve a blog_draft", () => {
+    assert.equal(canApproveHermesApproval("SEO_MANAGER", "blog_draft"), true);
+    assert.equal(canApproveHermesApproval("MARKETING_ADMIN", "blog_draft"), true);
+    assert.equal(canApproveHermesApproval("VIEWER", "blog_draft"), false);
+  });
+
+  it("needs nothing beyond hermes:manage for notification-only item types", () => {
+    assert.equal(canApproveHermesApproval("SEO_MANAGER", "daily_seo_health_scan"), true);
+    assert.equal(canApproveHermesApproval("SEO_MANAGER", "something_unknown"), true);
   });
 });
 

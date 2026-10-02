@@ -19,9 +19,17 @@ export async function POST(request: Request) {
     // which let anyone probe whether a given address is a confirmed
     // subscriber. See subscribeToNewsletter's doc comment for the matching
     // consent fix.
-    const CONFIRMATION_RESPONSE = { ok: true, message: "Check your inbox to confirm your subscription." } as const;
+    //
+    // F-086: the message itself used to say "Check your inbox to confirm",
+    // which is untrue for an address that is already subscribed (no email is
+    // sent) — but saying "you're already subscribed" is exactly the oracle F-050
+    // closed. It is worded so it is true for every address instead.
+    const CONFIRMATION_RESPONSE = {
+      ok: true,
+      message: "If this address isn't already subscribed, a confirmation link is on its way — check your inbox.",
+    } as const;
 
-    if (isHoneypotTripped(bodyResult.data)) {
+    if (isHoneypotTripped(bodyResult.data, "newsletter")) {
       return NextResponse.json(CONFIRMATION_RESPONSE);
     }
 

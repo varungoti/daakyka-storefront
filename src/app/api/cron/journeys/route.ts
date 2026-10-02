@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authorizeCron } from "@/lib/cron/authorize";
-import { claimCronRun, intervalRunKey } from "@/lib/cron/idempotency";
+import { intervalRunKey, runWithCronClaim } from "@/lib/cron/idempotency";
 import { processDueEnrollments } from "@/lib/engagement/journey-engine";
 
 // F-073/F-079/F-275 fix: runs every 15 minutes per vercel.json
@@ -28,13 +28,14 @@ export async function POST(request: Request) {
   // day actually do anything (every later one that same day would see the
   // same key already claimed and short-circuit) — intervalRunKey(15) gives
   // each 15-minute window its own key, matching the schedule.
-  const { claimed } = await claimCronRun("journeys", intervalRunKey(15));
-  if (!claimed) {
+  // F-277: a run that throws gives its claim back (see runWithCronClaim),
+  // so the next tick or a manual re-run isn't told "alreadyRan".
+  const outcome = await runWithCronClaim("journeys", intervalRunKey(15), () => processDueEnrollments());
+  if (!outcome.claimed) {
     return NextResponse.json({ ok: true, alreadyRan: true, processed: 0 });
   }
 
-  const result = await processDueEnrollments();
-  return NextResponse.json({ ok: true, ...result });
+  return NextResponse.json({ ok: true, ...outcome.result });
 }
 
 export async function GET(request: Request) {

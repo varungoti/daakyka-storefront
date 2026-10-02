@@ -59,6 +59,7 @@ export function GuestBuyersTable() {
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder="Search by email…"
+        aria-label="Search guest buyers by email"
         className="w-72 rounded-xl border border-border p-2 text-sm"
       />
 
@@ -70,7 +71,9 @@ export function GuestBuyersTable() {
               <th className="p-3">Orders</th>
               <th className="p-3">Total spent</th>
               <th className="p-3">Last order</th>
-              <th className="p-3" />
+              <th className="p-3">
+                <span className="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody>

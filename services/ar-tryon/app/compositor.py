@@ -17,16 +17,15 @@ _POSE: mp.solutions.pose.Pose | None = None
 
 # Kept in sync with storefront/src/lib/security/image-hosts.ts's
 # TRUSTED_IMAGE_HOSTS (daakyka.com was dropped from that list on
-# 2026-09-20 — see the doc comment there — and removed from here to
-# match; cdn.shopify.com stays, since the storefront keeps it for when
-# live SKU photography moves there). The Next.js route already rejects
-# an untrusted topImageUrl/bottomImageUrl before it ever reaches this
-# service, but this service can also be called directly, so it enforces
-# the same allowlist itself rather than trusting the caller.
+# 2026-09-20, and cdn.shopify.com — a multi-tenant host anyone can upload
+# to, and unused by the storefront — was dropped under F-307; see the doc
+# comments there — and both were removed from here to match). The Next.js
+# route already rejects an untrusted topImageUrl/bottomImageUrl before it
+# ever reaches this service, but this service can also be called directly,
+# so it enforces the same allowlist itself rather than trusting the caller.
 ALLOWED_IMAGE_HOSTS = {
     "images.unsplash.com",
     "images.pexels.com",
-    "cdn.shopify.com",
 }
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB

@@ -4,7 +4,9 @@ import { OrderStatusBadge } from "@/components/account/order-status-badge";
 import { OrderTimelineView } from "@/components/account/order-timeline";
 import { OrderTrackingCard } from "@/components/account/order-tracking-card";
 import { brand } from "@/data/brand";
+import { formatCurrencyAmount } from "@/lib/currency/convert";
 import { db } from "@/lib/db";
+import { accountLoginPath } from "@/lib/customer-auth/return-to";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import { getAuthorizedOrder } from "@/lib/orders/get-order";
 import { formatReceiptDate, getReceiptPaymentSummary } from "@/lib/orders/receipt";
@@ -20,10 +22,10 @@ import { notFound, redirect } from "next/navigation";
 
 export const metadata: Metadata = { title: "Order Details" };
 
+// F-127: was `maximumFractionDigits: 0`, which rounded a stored 638.97 total
+// to "₹639" while the customer is charged (and emailed) ₹638.97.
 function formatInr(amount: number): string {
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(
-    amount,
-  );
+  return formatCurrencyAmount(amount, "INR");
 }
 
 // Own key namespace (not get-order.ts's `order-page:` bucket used by the
@@ -58,7 +60,7 @@ export default async function AccountOrderDetailPage({
   // here before this ever renders — this per-page redirect only matters
   // for a cookie that exists but no longer verifies, and must carry the
   // order number the shopper actually asked for, not the bare list.
-  if (!session) redirect(`/account/login?returnTo=${encodeURIComponent(`/account/orders/${number}`)}`);
+  if (!session) redirect(accountLoginPath(`/account/orders/${encodeURIComponent(number)}`));
 
   const requestHeaders = await headers();
   const ip = getClientIp({ headers: requestHeaders } as unknown as Request);
@@ -71,7 +73,7 @@ export default async function AccountOrderDetailPage({
     if (!rateLimit.ok) {
       return (
         <div className="mx-auto max-w-3xl px-4 py-24 text-center">
-          <h1 className="font-display text-2xl font-bold text-ink">Too many requests</h1>
+          <h2 className="font-display text-2xl font-bold text-ink">Too many requests</h2>
           <p className="mt-2 text-muted">You&rsquo;ve checked this a few too many times in a row — please wait a minute and try again.</p>
         </div>
       );
@@ -84,16 +86,14 @@ export default async function AccountOrderDetailPage({
   const address = order.shippingAddress as unknown as ShippingAddressInput;
   // F-141 fix: see getOrderTimeline's doc comment — only matters for a
   // RAZORPAY order that never captured a payment.
-  // F-199 fix: shippedAt/deliveredAt are real columns, used only for the
-  // (now reachable) RETURNED and post-shipping REFUNDED cases.
-  const timeline = getOrderTimeline(
-    order.status,
-    order.paymentMethod,
-    order.razorpayPaymentId !== null,
-    order.shippedAt !== null,
-    order.deliveredAt !== null,
-    order.paidAt !== null,
-  );
+  // F-300 fix: the real timestamp columns date each step (in IST) and
+  // decide which post-shipping steps a returned/refunded order can claim.
+  const timeline = getOrderTimeline(order.status, order.paymentMethod, order.razorpayPaymentId !== null, {
+    placedAt: order.createdAt,
+    paidAt: order.paidAt,
+    shippedAt: order.shippedAt,
+    deliveredAt: order.deliveredAt,
+  });
   // F-300 fix: "Write a review" is hidden once the customer already has
   // one for that product (Review has @@unique([productId, customerId])) —
   // one batched query for every product this delivered order shipped,
@@ -135,13 +135,13 @@ export default async function AccountOrderDetailPage({
 
       <div className="mt-3 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl font-bold text-ink">{order.number}</h1>
+          <h2 className="font-display text-2xl font-bold text-ink">{order.number}</h2>
           <p className="text-sm text-muted">
             Placed {placedDate} · {paymentSummary}
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <OrderStatusBadge status={order.status} paymentMethod={order.paymentMethod} />
+          <OrderStatusBadge status={order.status} paymentMethod={order.paymentMethod} paid={order.paidAt !== null} />
           <OrderPrintButton />
         </div>
       </div>
@@ -211,6 +211,8 @@ export default async function AccountOrderDetailPage({
                           variantTitle={item.variantLabel}
                           price={item.variant.price !== null ? Number(item.variant.price) : Number(item.variant.product.price)}
                           image={item.imageUrl}
+                          quantity={item.quantity}
+                          stock={item.variant.stock}
                         />
                       )}
                     </div>

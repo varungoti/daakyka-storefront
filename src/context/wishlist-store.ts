@@ -1,24 +1,28 @@
-import type { Product } from "@/lib/types";
+import { normalizeStoredWishlist, type WishlistEntry } from "@/lib/wishlist/entries";
 
 const STORAGE_KEY = "daakyka-wishlist";
-const EMPTY_ITEMS: Product[] = [];
+const EMPTY_ITEMS: WishlistEntry[] = [];
 
-let cachedItems: Product[] = EMPTY_ITEMS;
+let cachedItems: WishlistEntry[] = EMPTY_ITEMS;
 let hydrated = false;
 const listeners = new Set<() => void>();
 
-function loadFromStorage(): Product[] {
+function loadFromStorage(): WishlistEntry[] {
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
     if (!stored) return EMPTY_ITEMS;
-    const parsed = JSON.parse(stored) as unknown;
-    return Array.isArray(parsed) ? (parsed as Product[]) : EMPTY_ITEMS;
+    const { items, changed } = normalizeStoredWishlist(JSON.parse(stored) as unknown);
+    // F-113: a list saved before the wishlist kept only id + handle holds a
+    // full product copy per item (about 5 KB each, with a price that never
+    // updates) — write the slim form back so that data is not kept around.
+    if (changed) persist(items);
+    return items.length > 0 ? items : EMPTY_ITEMS;
   } catch {
     return EMPTY_ITEMS;
   }
 }
 
-function persist(items: Product[]) {
+function persist(items: WishlistEntry[]) {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   } catch {
@@ -36,7 +40,7 @@ function emitChange() {
  * first read (client only) and thereafter returns the cached reference so
  * React can bail out when nothing changed.
  */
-export function getWishlistSnapshot(): Product[] {
+export function getWishlistSnapshot(): WishlistEntry[] {
   if (!hydrated) {
     cachedItems = loadFromStorage();
     hydrated = true;
@@ -44,7 +48,7 @@ export function getWishlistSnapshot(): Product[] {
   return cachedItems;
 }
 
-export function getServerWishlistSnapshot(): Product[] {
+export function getServerWishlistSnapshot(): WishlistEntry[] {
   return EMPTY_ITEMS;
 }
 
@@ -64,7 +68,7 @@ export function subscribeToWishlist(onStoreChange: () => void): () => void {
 }
 
 export function setWishlistItems(
-  updater: Product[] | ((current: Product[]) => Product[]),
+  updater: WishlistEntry[] | ((current: WishlistEntry[]) => WishlistEntry[]),
 ): void {
   const next = typeof updater === "function" ? updater(getWishlistSnapshot()) : updater;
   cachedItems = next;

@@ -10,6 +10,8 @@ export interface CredentialFieldState {
   configured: boolean;
   updatedAt: string | null;
   updatedByName: string | null;
+  /** Helper text shown under the input. */
+  hint?: string;
   /** Only populated for non-secret fields (e.g. BREVO/FROM_EMAIL) — secret
    * fields never have their value sent to the browser. */
   currentValue?: string;
@@ -110,6 +112,7 @@ export function IntegrationCredentialForm({
               {field.updatedAt ? ` on ${new Date(field.updatedAt).toLocaleDateString()}` : ""}
             </p>
           ) : null}
+          {field.hint ? <p className="text-xs text-muted">{field.hint}</p> : null}
           <div className="flex flex-wrap items-center gap-2">
             <input
               id={`${provider}-${field.key}`}

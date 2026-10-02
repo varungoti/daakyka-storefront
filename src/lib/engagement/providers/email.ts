@@ -1,5 +1,7 @@
+import { htmlToText } from "@/lib/email/html";
 import { getCredential } from "@/lib/integrations/credential-store";
 import { isIntegrationEnabled } from "@/lib/integrations/enabled";
+import { isProviderConfigured } from "@/lib/integrations/status";
 import { getSetting } from "@/lib/settings";
 
 export interface SendEmailInput {
@@ -37,11 +39,46 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     };
   }
 
-  // isIntegrationEnabled("BREVO") above already confirmed a key exists
-  // somewhere (DB or env) — resolve the same way here, DB-first.
+  return sendViaBrevo(input);
+}
+
+/**
+ * F-267: the admin Integrations page's "Send test email to me" — the same
+ * send as sendEmail, but it does not require the provider toggle to be ON.
+ * Its whole point is to prove a freshly saved key + From Email work BEFORE
+ * the owner turns email on (turning it on releases every queued email), so
+ * gating it on the toggle made the test fail in exactly the state it is
+ * offered in. A provider with no key or no From Email still can't send.
+ */
+export async function sendTestEmail(input: SendEmailInput): Promise<SendEmailResult> {
+  if (!(await isProviderConfigured("BREVO"))) {
+    return {
+      ok: false,
+      provider: "stub",
+      error: "Brevo isn't configured yet — save an API key and a From Email first",
+    };
+  }
+
+  return sendViaBrevo(input);
+}
+
+async function sendViaBrevo(input: SendEmailInput): Promise<SendEmailResult> {
+  // Both callers have already confirmed a key exists somewhere (DB or
+  // env) — resolve the same way here, DB-first.
   const apiKey = (await getCredential("BREVO", "API_KEY")) ?? process.env.BREVO_API_KEY!;
-  const fromEmail =
-    (await getCredential("BREVO", "FROM_EMAIL")) ?? process.env.BREVO_FROM_EMAIL ?? "noreply@daakyka.com";
+  // F-267: no invented fallback sender. A From Email that isn't a verified
+  // Brevo sender makes every send fail at Brevo, so isProviderConfigured
+  // (src/lib/integrations/status.ts) already treats a missing one as "not
+  // configured", which both callers check first — this is only the guard
+  // for the credential being cleared between that check and this read.
+  const fromEmail = (await getCredential("BREVO", "FROM_EMAIL")) ?? process.env.BREVO_FROM_EMAIL;
+  if (!fromEmail) {
+    return {
+      ok: false,
+      provider: "stub",
+      error: "Brevo From Email is not set — email not sent",
+    };
+  }
   const fromName = process.env.BREVO_FROM_NAME ?? "DAAKYKA Apparels";
   // F-351 fix: sender-only meant every customer reply to a transactional or
   // marketing email landed on noreply@ — nobody monitors that inbox, so
@@ -66,7 +103,9 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
         ...(replyToEmail ? { replyTo: { email: replyToEmail } } : {}),
         subject: input.subject,
         htmlContent: input.html,
-        textContent: input.text ?? input.html.replace(/<[^>]+>/g, ""),
+        // F-041: the old `html.replace(/<[^>]+>/g, "")` fallback dropped every
+        // link and ran sentences together; htmlToText keeps `label (url)`.
+        textContent: input.text ?? htmlToText(input.html),
         ...(input.headers ? { headers: input.headers } : {}),
       }),
       // F-269 fix: an unbounded fetch here used to let a slow/hung Brevo

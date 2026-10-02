@@ -3,6 +3,9 @@ import { OfferForm } from "@/components/admin/offer-form";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { getOfferForAdmin, OfferNotFoundError } from "@/lib/offers";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Edit Offer" };
 
 export default async function EditOfferPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();

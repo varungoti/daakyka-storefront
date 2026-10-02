@@ -108,7 +108,8 @@ in the variant editor UI and again server-side in `replaceVariants()`, so the ru
 ```
 product_slug, product_name, category_slug, short_description, description, price,
 compare_at_price, fabric, care, gender, tags, seo_title, seo_description,
-size, color, color_hex, sku, stock, variant_active, generate_images
+size, color, color_hex, sku, stock, variant_active, generate_images,
+country_of_origin, net_quantity, hsn_code
 ```
 
 Required per row: `product_slug`, `product_name`, `category_slug`, `price`, `size`, `color`,
@@ -125,6 +126,11 @@ Notes on parsing:
   match), anything else (including blank) as false — except `variant_active` defaults to **true**
   when left blank.
 - `compare_at_price`, if set, must be greater than `price` — same rule as the admin form.
+- `country_of_origin`, `net_quantity` and `hsn_code` are the product's Legal Metrology / GST
+  fields (the product form's Compliance section), appended after `generate_images` so the older
+  columns keep their positions. A file **without** these columns leaves the stored values untouched
+  (so an older export is safe to re-import); a file **with** them treats a blank cell as "clear
+  this field", the same as blanking the form field. Export always writes all three.
 - SKUs are checked for duplicates **within the file itself** (error) and against SKUs that already
   exist in the DB (warning — that row will update the existing variant, not create a new one).
 

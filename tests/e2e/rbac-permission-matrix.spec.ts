@@ -5,6 +5,7 @@ import {
   createSessionsForAllRoles,
   type RoleSession,
 } from "./helpers/rbac-sessions";
+import { residueWritesAllowed } from "./helpers/target";
 
 /**
  * release-hardening item 2 (F13, docs/audit-2026-09-19/correctness.md):
@@ -93,7 +94,10 @@ const MATRIX: MatrixCase[] = [
   { permission: "testimonials:manage", allowRole: "CONTENT_EDITOR", denyRole: "VIEWER", route: { kind: "api", method: "GET", path: "/api/admin/testimonials" } },
   // VIEWER is one of only three roles with audit:view — worth proving a
   // narrow role's one real permission actually works, not just denials.
-  { permission: "audit:view", allowRole: "VIEWER", denyRole: "BULK_ORDER_MANAGER", route: { kind: "page", path: "/admin/audit-logs", allowedMarker: "Audit Logs" } },
+  // The marker is the page heading's closing tag, not the bare words: a denied
+  // request streams the page's <title> ("Audit Logs", set by its metadata) before
+  // the redirect lands, so the words alone matched for a role that was denied.
+  { permission: "audit:view", allowRole: "VIEWER", denyRole: "BULK_ORDER_MANAGER", route: { kind: "page", path: "/admin/audit-logs", allowedMarker: "Audit Logs</h1>" } },
   { permission: "settings:manage", allowRole: "SUPER_ADMIN", denyRole: "VIEWER", route: { kind: "api", method: "PATCH", path: "/api/admin/settings/shipping.flatRate" } },
   { permission: "settings:marketing", allowRole: "MARKETING_ADMIN", denyRole: "VIEWER", route: { kind: "api", method: "PATCH", path: "/api/admin/settings/sale.enabled" } },
   { permission: "hermes:manage", allowRole: "MARKETING_ADMIN", denyRole: "VIEWER", route: { kind: "api", method: "POST", path: "/api/admin/hermes/tasks" } },
@@ -135,6 +139,15 @@ async function fetchPageBody(
 }
 
 test.describe("RBAC permission matrix (real HTTP, one request per role)", () => {
+  // The sessions are minted by writing admin users straight into DATABASE_URL
+  // and signing with AUTH_SECRET, so this only means something against a
+  // server this machine started on that same database. Against a remote
+  // deployment it would write users into the wrong database and fail (F-077).
+  test.skip(
+    !residueWritesAllowed,
+    "needs the target server's own database and AUTH_SECRET: runs against a local server, or with E2E_ALLOW_MUTATIONS=1",
+  );
+
   let sessions: Record<AdminRole, RoleSession>;
 
   test.beforeAll(async () => {

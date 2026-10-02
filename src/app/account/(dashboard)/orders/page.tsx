@@ -1,5 +1,7 @@
 import { EmptyState } from "@/components/account/account-tabs";
 import { OrderStatusBadge } from "@/components/account/order-status-badge";
+import { formatCurrencyAmount } from "@/lib/currency/convert";
+import { accountLoginPath } from "@/lib/customer-auth/return-to";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import { formatDateIST } from "@/lib/format/datetime";
 import { listOrdersForCustomer } from "@/lib/orders/customer-orders";
@@ -16,10 +18,10 @@ export const metadata: Metadata = { title: "My Orders" };
 // concern, so it should just fall back to page 1 instead of 500ing.
 const pageParamSchema = z.coerce.number().int().min(1).max(100_000).catch(1);
 
+// F-127: was `maximumFractionDigits: 0`, which rounded a stored 638.97 total
+// to "₹639" while the customer is charged (and emailed) ₹638.97.
 function formatInr(amount: number): string {
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(
-    amount,
-  );
+  return formatCurrencyAmount(amount, "INR");
 }
 
 /**
@@ -35,11 +37,12 @@ export default async function AccountOrdersPage({
 }: {
   searchParams: Promise<{ page?: string }>;
 }) {
-  const session = await getCustomerSession();
-  if (!session) redirect("/account/login?returnTo=/account/orders");
-
   const { page: rawPage } = await searchParams;
   const page = pageParamSchema.parse(rawPage);
+
+  const session = await getCustomerSession();
+  // F-131: back to the page of the list they were on, not always page 1.
+  if (!session) redirect(accountLoginPath(page > 1 ? `/account/orders?page=${page}` : "/account/orders"));
 
   const { items, page: currentPage, totalPages, total } = await listOrdersForCustomer(session.id, { page });
 
@@ -71,7 +74,7 @@ export default async function AccountOrdersPage({
               </p>
             </div>
             <div className="flex items-center gap-4">
-              <OrderStatusBadge status={order.status} paymentMethod={order.paymentMethod} />
+              <OrderStatusBadge status={order.status} paymentMethod={order.paymentMethod} paid={order.paidAt !== null} />
               <p className="font-display text-lg font-bold text-ink">{formatInr(order.total)}</p>
             </div>
           </div>

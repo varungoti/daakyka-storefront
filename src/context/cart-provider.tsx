@@ -85,7 +85,7 @@ function clampToMax(quantity: number, maxQuantity: number | undefined): number {
   return typeof maxQuantity === "number" ? Math.min(quantity, Math.max(0, maxQuantity)) : quantity;
 }
 
-function applyLocalAdds(current: Cart, inputs: AddToCartInput[]): Cart {
+function applyLocalAdds(current: Cart, inputs: AddToCartInput[], cartId: string): Cart {
   let lines = current.lines;
 
   for (const input of inputs) {
@@ -118,7 +118,7 @@ function applyLocalAdds(current: Cart, inputs: AddToCartInput[]): Cart {
     }
   }
 
-  return buildLocalCart(lines);
+  return buildLocalCart(lines, cartId);
 }
 
 export function CartProvider({ children }: { children: ReactNode }) {
@@ -212,8 +212,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
           }
 
           if (data.degraded) {
-            const next = applyLocalAdds(getCartSnapshot(), inputs);
             const nextCartId = getCartIdSnapshot() || createLocalCartId();
+            const next = applyLocalAdds(getCartSnapshot(), inputs, nextCartId);
             setCartState({ cart: next, cartId: nextCartId });
             setIsOpen(true);
             return next;
@@ -224,8 +224,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
           return data.cart;
         }
 
-        const next = applyLocalAdds(getCartSnapshot(), inputs);
         const nextCartId = getCartIdSnapshot() || createLocalCartId();
+        const next = applyLocalAdds(getCartSnapshot(), inputs, nextCartId);
         setCartState({ cart: next, cartId: nextCartId });
         setIsOpen(true);
         return next;
@@ -263,8 +263,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
           getCartSnapshot().lines.map((line) =>
             line.id === lineId ? { ...line, quantity: clampToMax(quantity, line.maxQuantity) } : line,
           ),
+          currentCartId || createLocalCartId(),
         );
-        setCartState({ cart: next });
+        setCartState({ cart: next, cartId: next.id });
       } finally {
         setIsLoading(false);
       }
@@ -288,8 +289,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
             return;
           }
         }
-        const next = buildLocalCart(getCartSnapshot().lines.filter((line) => line.id !== lineId));
-        setCartState({ cart: next });
+        const next = buildLocalCart(
+          getCartSnapshot().lines.filter((line) => line.id !== lineId),
+          currentCartId || createLocalCartId(),
+        );
+        setCartState({ cart: next, cartId: next.id });
       } finally {
         setIsLoading(false);
       }

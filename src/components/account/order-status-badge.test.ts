@@ -34,6 +34,22 @@ describe("getOrderStatusLabel", () => {
     assert.equal(getOrderStatusLabel("DELIVERED", "ORDER_REQUEST"), "Delivered");
   });
 
+  // F-199 fix: an admin can now record an order-request's payment
+  // (PROCESSING -> PAID), after which it may go back to PROCESSING to be
+  // packed — it must not read "Order Received" (unconfirmed) again then.
+  it("an ORDER_REQUEST order whose payment has been recorded reads its plain status, never 'Order Received'", () => {
+    assert.equal(getOrderStatusLabel("PROCESSING", "ORDER_REQUEST", true), "Processing");
+    assert.equal(getOrderStatusLabel("PAID", "ORDER_REQUEST", true), "Paid");
+    assert.equal(getOrderStatusLabel("PROCESSING", "ORDER_REQUEST", false), "Order Received");
+  });
+
+  it("reads RETURNED and REFUNDED plainly for an order-request, paid or not", () => {
+    for (const paid of [true, false]) {
+      assert.equal(getOrderStatusLabel("RETURNED", "ORDER_REQUEST", paid), "Returned");
+      assert.equal(getOrderStatusLabel("REFUNDED", "ORDER_REQUEST", paid), "Refunded");
+    }
+  });
+
   it("covers every OrderStatus value without throwing, for both payment methods", () => {
     for (const status of orderStatusValues) {
       for (const paymentMethod of ["RAZORPAY", "ORDER_REQUEST"] as const) {

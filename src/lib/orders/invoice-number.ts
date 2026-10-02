@@ -1,5 +1,10 @@
 import { db } from "@/lib/db";
-import type { OrderStatus } from "@/generated/prisma/client";
+import { isInvoiceEligible } from "@/lib/orders/invoice-document";
+
+// F-199: the pure "is this order's status invoice-eligible" rule lives in
+// invoice-document.ts (no database import, so it is unit-testable); it is
+// re-exported here so existing importers keep working.
+export { isInvoiceEligible };
 
 /**
  * release-hardening F-195: a real, sequential GST invoice number
@@ -28,17 +33,6 @@ import type { OrderStatus } from "@/generated/prisma/client";
  * that gets cancelled before anyone ever prints an invoice for it.
  */
 
-// Matches PURCHASE_COUNTING_ORDER_STATUSES in src/lib/reviews/create-review.ts
-// — the same "a real sale happened" definition. PENDING_PAYMENT never
-// reaches here; CANCELLED/REFUNDED deliberately never get a number (the
-// printed document is a "not a tax invoice" notice instead — see the
-// invoice page).
-const INVOICE_ELIGIBLE_STATUSES = new Set<OrderStatus>(["PAID", "PROCESSING", "SHIPPED", "DELIVERED"]);
-
-export function isInvoiceEligible(status: OrderStatus): boolean {
-  return INVOICE_ELIGIBLE_STATUSES.has(status);
-}
-
 /** "2026-27" for any date between 1 Apr 2026 and 31 Mar 2027 (India's
  * financial year), the format GST invoice numbers conventionally use. */
 export function financialYearLabel(date: Date): string {
@@ -57,9 +51,10 @@ function invoicePrefixFor(fy: string): string {
  * Returns the order's existing invoice number, or assigns and returns a new
  * one if the order has reached an invoice-eligible status and doesn't have
  * one yet. Returns null for an order that hasn't reached one of those
- * statuses (a PENDING_PAYMENT/ORDER_REQUEST-not-yet-paid, CANCELLED, or
- * REFUNDED order) — the invoice page renders those as a proforma/cancelled
- * notice instead of a numbered tax document.
+ * statuses (a PENDING_PAYMENT/ORDER_REQUEST-not-yet-paid, CANCELLED,
+ * REFUNDED or RETURNED order) — the invoice page renders those as a
+ * proforma/cancelled/credit-note notice instead of a numbered tax document
+ * (see getInvoiceDocument).
  */
 export async function ensureInvoiceNumber(orderId: string): Promise<string | null> {
   const order = await db.order.findUnique({

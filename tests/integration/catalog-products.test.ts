@@ -13,15 +13,20 @@ import {
   performBulkAction,
   ProductCategoryNotFoundError,
   ProductDeleteBlockedError,
+  ProductImageNotFoundError,
   ProductNotDraftError,
   ProductNotFoundError,
   ProductNotPublishableError,
   ProductSlugConflictError,
   ProductStatusPermissionError,
   publishProduct,
+  removeProductImage,
+  reorderProductImages,
   replaceVariants,
+  setImageColor,
   unpublishProduct,
   unarchiveProduct,
+  updateImageAlt,
   updateProduct,
   VariantOwnershipError,
   VariantStockConflictError,
@@ -560,6 +565,164 @@ describe("products admin service (Phase B1)", () => {
     });
   });
 
+  // F-288: audit rows used to say "this product was updated" and nothing
+  // else — a price dropped to ₹1 and a status flipped live left only
+  // {name, slug}. Every update row now carries the before -> after.
+  describe("F-288: audit rows record what actually changed", () => {
+    /** The shape of the metadata these rows carry — only what the tests read. */
+    type AuditMeta = {
+      name?: string;
+      changes: Record<string, { from: unknown; to: unknown }>;
+      descriptionChanged?: boolean;
+      fromStatus?: string;
+      toStatus?: string;
+      updated?: number;
+      variantChanges?: unknown;
+      variantsAdded: { sku: string }[];
+      variantsRemoved?: unknown;
+      bulkAction?: string;
+      ids?: string[];
+      statusChanges: Record<string, unknown>;
+      percent?: number;
+      priceChanges: Record<string, unknown>;
+      stock?: number;
+      previousStockTotals: Record<string, number>;
+    };
+    async function auditRows(entity: string, entityId: string) {
+      const rows = await db.auditLog.findMany({ where: { entity, entityId }, orderBy: { createdAt: "asc" } });
+      return rows.map((row) => ({ action: row.action, metadata: JSON.parse(row.metadata ?? "{}") as AuditMeta }));
+    }
+
+    it("updateProduct records the old and new price and status, and logs the PATCH as a publish", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `Audit Price ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+      await replaceVariants(product.id, [{ size: "S", color: "Navy", sku: `DK-AUD1-${unique}`, stock: 5, active: true }], adminId);
+
+      await updateProduct(product.id, { price: 1, status: "ACTIVE" }, adminId);
+
+      const rows = await auditRows("product", product.id);
+      const update = rows.find((row) => row.action === "update");
+      assert.ok(update, "an update row");
+      assert.deepEqual(update.metadata.changes.price, { from: 500, to: 1 });
+      assert.deepEqual(update.metadata.changes.status, { from: "DRAFT", to: "ACTIVE" });
+      assert.equal(update.metadata.name, `Audit Price ${unique}`);
+
+      const publish = rows.find((row) => row.action === "publish");
+      assert.ok(publish, "a status change through PATCH must also be logged as a publish");
+      assert.equal(publish.metadata.fromStatus, "DRAFT");
+      assert.equal(publish.metadata.toStatus, "ACTIVE");
+    });
+
+    it("logs an unpublish / archive made through PATCH under its own action name", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `Audit Status ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+      await replaceVariants(product.id, [{ size: "S", color: "Navy", sku: `DK-AUD2-${unique}`, stock: 5, active: true }], adminId);
+      await publishProduct(product.id, adminId);
+
+      await updateProduct(product.id, { status: "DRAFT" }, adminId);
+      await updateProduct(product.id, { status: "ARCHIVED" }, adminId);
+
+      const actions = (await auditRows("product", product.id)).map((row) => row.action);
+      assert.ok(actions.includes("unpublish"));
+      assert.ok(actions.includes("archive"));
+    });
+
+    it("an ordinary save that re-sends unchanged fields records no changes and no phantom status event", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `Audit Noop ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+
+      await updateProduct(product.id, { name: product.name, price: 500, status: "DRAFT" }, adminId);
+
+      const rows = await auditRows("product", product.id);
+      const update = rows.find((row) => row.action === "update");
+      assert.deepEqual(update?.metadata.changes, {});
+      assert.ok(!rows.some((row) => ["publish", "unpublish", "archive", "unarchive"].includes(row.action)));
+    });
+
+    it("flags a description edit without copying the (long) HTML into the audit row", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `Audit Desc ${unique}`, categoryId, price: 500, description: "<p>first</p>" }, adminId);
+      createdProductIds.push(product.id);
+
+      await updateProduct(product.id, { description: "<p>a brand new secret-marker description</p>" }, adminId);
+
+      const rows = await db.auditLog.findMany({ where: { entity: "product", entityId: product.id, action: "update" } });
+      assert.equal(rows.length, 1);
+      assert.equal(JSON.parse(rows[0].metadata!).descriptionChanged, true);
+      assert.ok(!rows[0].metadata!.includes("secret-marker"));
+    });
+
+    it("replaceVariants records each SKU's stock/price/active change, and the variants it added and removed", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const product = await createProduct({ name: `Audit Variants ${unique}`, categoryId, price: 500 }, adminId);
+      createdProductIds.push(product.id);
+      const synced = await replaceVariants(
+        product.id,
+        [
+          { size: "S", color: "Navy", sku: `DK-AUDV-${unique}-S`, stock: 5, active: true },
+          { size: "M", color: "Navy", sku: `DK-AUDV-${unique}-M`, stock: 9, active: true },
+        ],
+        adminId,
+      );
+      const small = synced.find((variant) => variant.size === "S")!;
+
+      await replaceVariants(
+        product.id,
+        [
+          { id: small.id, size: "S", color: "Navy", sku: small.sku, stock: 7, price: 450, active: false },
+          { size: "L", color: "Navy", sku: `DK-AUDV-${unique}-L`, stock: 3, active: true },
+        ],
+        adminId,
+      );
+
+      const rows = await auditRows("product_variants", product.id);
+      const last = rows[rows.length - 1];
+      assert.equal(last.metadata.updated, 1);
+      assert.deepEqual(last.metadata.variantChanges, [
+        {
+          sku: small.sku,
+          changes: {
+            price: { from: null, to: 450 },
+            stock: { from: 5, to: 7 },
+            active: { from: true, to: false },
+          },
+        },
+      ]);
+      assert.deepEqual(last.metadata.variantsAdded.map((v) => v.sku), [`DK-AUDV-${unique}-L`]);
+      assert.deepEqual(last.metadata.variantsRemoved, [{ sku: `DK-AUDV-${unique}-M`, stock: 9, outcome: "deleted" }]);
+    });
+
+    it("performBulkAction records the percent with each product's old and new price, the stock value, and status changes", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const a = await createProduct({ name: `Audit Bulk A ${unique}`, categoryId, price: 100 }, adminId);
+      createdProductIds.push(a.id);
+      await replaceVariants(a.id, [{ size: "S", color: "Navy", sku: `DK-AUDB-${unique}`, stock: 4, active: true }], adminId);
+
+      const latestBulk = async () => {
+        const rows = await db.auditLog.findMany({
+          where: { entity: "product", action: "bulk-update" },
+          orderBy: { createdAt: "desc" },
+          take: 20,
+        });
+        return rows.map((row) => JSON.parse(row.metadata ?? "{}") as AuditMeta).filter((meta) => meta.ids?.includes(a.id));
+      };
+
+      await performBulkAction({ action: "publish", ids: [a.id] }, adminId);
+      await performBulkAction({ action: "adjust-price-pct", ids: [a.id], percent: 10 }, adminId);
+      await performBulkAction({ action: "set-stock", ids: [a.id], stock: 50 }, adminId);
+
+      const byAction = new Map((await latestBulk()).map((meta) => [meta.bulkAction ?? "", meta]));
+      assert.deepEqual(byAction.get("publish")?.statusChanges[a.id], { from: "DRAFT", to: "ACTIVE" });
+      assert.equal(byAction.get("adjust-price-pct")?.percent, 10);
+      assert.deepEqual(byAction.get("adjust-price-pct")?.priceChanges[a.id], { from: 100, to: 110 });
+      assert.equal(byAction.get("set-stock")?.stock, 50);
+      assert.equal(byAction.get("set-stock")?.previousStockTotals[a.id], 4);
+    });
+  });
+
   it("duplicateProduct copies variants and images with a new slug and DRAFT status", async () => {
     const unique = randomUUID().slice(0, 8);
     const product = await createProduct({ name: `Original ${unique}`, categoryId, price: 500 }, adminId);
@@ -654,6 +817,62 @@ describe("products admin service (Phase B1)", () => {
       sorted.items.map((p) => p.id),
       [low.id, high.id],
     );
+  });
+
+  // F-262: the total and the requested page are fetched together, and a
+  // page past the end is re-queried clamped to the last page.
+  it("listProductsForAdmin clamps a page past the end to the last page, with its rows", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const first = await createProduct({ name: `Clamp ${unique} A`, categoryId, price: 100 }, adminId);
+    const second = await createProduct({ name: `Clamp ${unique} B`, categoryId, price: 100 }, adminId);
+    const third = await createProduct({ name: `Clamp ${unique} C`, categoryId, price: 100 }, adminId);
+    createdProductIds.push(first.id, second.id, third.id);
+
+    const beyond = await listProductsForAdmin({ search: `Clamp ${unique}`, sort: "name-asc", pageSize: 2, page: 99 });
+    assert.equal(beyond.page, 2);
+    assert.equal(beyond.totalPages, 2);
+    assert.deepEqual(
+      beyond.items.map((p) => p.id),
+      [third.id],
+    );
+
+    const none = await listProductsForAdmin({ search: `Clamp ${unique} no-such-product`, page: 5 });
+    assert.equal(none.total, 0);
+    assert.equal(none.page, 1);
+    assert.deepEqual(none.items, []);
+  });
+
+  // F-262: hasAiImage now comes from a filtered relation count in the same
+  // query as the rows — it must still flag *any* AI-sourced image, not just
+  // the first (thumbnail) one.
+  it("listProductsForAdmin flags hasAiImage when any image of the product is AI-sourced", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const withAi = await createProduct({ name: `Ai Badge ${unique} With`, categoryId, price: 100 }, adminId);
+    const withoutAi = await createProduct({ name: `Ai Badge ${unique} Without`, categoryId, price: 100 }, adminId);
+    createdProductIds.push(withAi.id, withoutAi.id);
+    const mediaKey = (label: string) => `test/ai-badge-${label}-${unique}.webp`;
+    const makeMedia = (label: string, source: "UPLOAD" | "AI") =>
+      db.mediaAsset.create({
+        data: { key: mediaKey(label), url: `/cdn/${mediaKey(label)}`, usage: "PRODUCT", source },
+      });
+    const upload = await makeMedia("upload", "UPLOAD");
+    const ai = await makeMedia("ai", "AI");
+    const plain = await makeMedia("plain", "UPLOAD");
+    try {
+      // The AI image is the second one, so the thumbnail (sortOrder 0) is an upload.
+      await db.productImage.create({ data: { productId: withAi.id, mediaId: upload.id, sortOrder: 0 } });
+      await db.productImage.create({ data: { productId: withAi.id, mediaId: ai.id, sortOrder: 1 } });
+      await db.productImage.create({ data: { productId: withoutAi.id, mediaId: plain.id, sortOrder: 0 } });
+
+      const result = await listProductsForAdmin({ search: `Ai Badge ${unique}`, sort: "name-asc" });
+      const byId = new Map(result.items.map((item) => [item.id, item]));
+      assert.equal(byId.get(withAi.id)?.hasAiImage, true);
+      assert.equal(byId.get(withAi.id)?.thumbnailUrl, `/cdn/${mediaKey("upload")}`);
+      assert.equal(byId.get(withoutAi.id)?.hasAiImage, false);
+    } finally {
+      await db.productImage.deleteMany({ where: { productId: { in: [withAi.id, withoutAi.id] } } });
+      await db.mediaAsset.deleteMany({ where: { id: { in: [upload.id, ai.id, plain.id] } } });
+    }
   });
 
   // F-192
@@ -1012,5 +1231,142 @@ describe("products admin routes without a session", () => {
     });
     const response = await bulkRoute(request);
     assert.ok(response.status === 401 || response.status === 403);
+  });
+});
+
+// F-194: the image PATCH/DELETE helpers used to look the image up by imageId
+// alone, so /products/{A}/images/{imageOfB} silently edited or removed
+// product B's image (and revalidated B) while the URL claimed to act on A.
+describe("product image helpers are scoped to the product in the URL (F-194)", () => {
+  it("refuses to change or remove another product's image, and leaves it untouched", async () => {
+    const suffix = randomUUID();
+    const adminId = await findAnyAdminId();
+    const category = await db.category.create({
+      data: { name: `Image Scope ${suffix}`, slug: `image-owner-scope-${suffix}`, section: "GENERAL" },
+    });
+    const productA = await db.product.create({
+      data: { name: "Image Owner A", slug: `image-owner-a-${suffix}`, categoryId: category.id, price: 499 },
+    });
+    const productB = await db.product.create({
+      data: { name: "Image Owner B", slug: `image-owner-b-${suffix}`, categoryId: category.id, price: 499 },
+    });
+    const mediaA = await db.mediaAsset.create({
+      data: { key: `test/image-owner-a-${suffix}.webp`, url: `/cdn/test/image-owner-a-${suffix}.webp`, usage: "PRODUCT" },
+    });
+    const mediaB = await db.mediaAsset.create({
+      data: { key: `test/image-owner-b-${suffix}.webp`, url: `/cdn/test/image-owner-b-${suffix}.webp`, usage: "PRODUCT" },
+    });
+    try {
+      const imageA = await db.productImage.create({ data: { productId: productA.id, mediaId: mediaA.id, color: "Navy", alt: "A" } });
+      const imageB = await db.productImage.create({ data: { productId: productB.id, mediaId: mediaB.id, color: "Navy", alt: "B" } });
+
+      // Every helper, called with product A's id and product B's image id.
+      await assert.rejects(() => setImageColor(productA.id, imageB.id, "Red", adminId), ProductImageNotFoundError);
+      await assert.rejects(() => updateImageAlt(productA.id, imageB.id, "hijacked", adminId), ProductImageNotFoundError);
+      await assert.rejects(() => removeProductImage(productA.id, imageB.id, adminId), ProductImageNotFoundError);
+      await assert.rejects(() => reorderProductImages(productA.id, imageB.id, "up", adminId), ProductImageNotFoundError);
+
+      const untouched = await db.productImage.findUniqueOrThrow({ where: { id: imageB.id } });
+      assert.equal(untouched.color, "Navy");
+      assert.equal(untouched.alt, "B");
+
+      // The matching product/image pair still works.
+      const recoloured = await setImageColor(productA.id, imageA.id, "Red", adminId);
+      assert.equal(recoloured.color, "Red");
+      const renamed = await updateImageAlt(productA.id, imageA.id, "A renamed", adminId);
+      assert.equal(renamed.alt, "A renamed");
+
+      // F-288: the audit rows say which product the photo belongs to and
+      // what changed (they used to be a bare {alt} / {color}).
+      const imageRows = await db.auditLog.findMany({
+        where: { entity: "product_image", entityId: imageA.id, action: "update" },
+        orderBy: { createdAt: "asc" },
+      });
+      const [colorRow, altRow] = imageRows.map((row) => JSON.parse(row.metadata!) as { productId: string; changes: Record<string, unknown> });
+      assert.equal(colorRow.productId, productA.id);
+      assert.deepEqual(colorRow.changes, { color: { from: "Navy", to: "Red" } });
+      assert.equal(altRow.productId, productA.id);
+      assert.deepEqual(altRow.changes, { alt: { from: "A", to: "A renamed" } });
+
+      await removeProductImage(productA.id, imageA.id, adminId);
+      assert.equal(await db.productImage.findUnique({ where: { id: imageA.id } }), null);
+    } finally {
+      await db.product.deleteMany({ where: { id: { in: [productA.id, productB.id] } } });
+      await db.mediaAsset.deleteMany({ where: { id: { in: [mediaA.id, mediaB.id] } } });
+      await db.category.delete({ where: { id: category.id } });
+    }
+  });
+});
+
+// F-362: a photo removed from its only product (or left behind by a deleted
+// product) used to stay in R2 and the media library forever — still publicly
+// downloadable through /cdn. It is now reclaimed, unless something else
+// (another product, a category, a review, a hero slide) still uses it.
+describe("removed and deleted product photos are reclaimed (F-362)", () => {
+  async function setup() {
+    const suffix = randomUUID();
+    const adminId = await findAnyAdminId();
+    const category = await db.category.create({
+      data: { name: `Reclaim ${suffix}`, slug: `reclaim-${suffix}`, section: "GENERAL" },
+    });
+    async function product(label: string) {
+      return db.product.create({
+        data: { name: `Reclaim ${label}`, slug: `reclaim-${label}-${suffix}`, categoryId: category.id, price: 499 },
+      });
+    }
+    async function media(label: string) {
+      return db.mediaAsset.create({
+        data: { key: `test/reclaim-${label}-${suffix}.webp`, url: `/cdn/test/reclaim-${label}-${suffix}.webp`, usage: "PRODUCT" },
+      });
+    }
+    return { suffix, adminId, category, product, media };
+  }
+
+  it("removing a product's only use of a photo deletes the asset; a photo still attached to another product survives", async () => {
+    const { adminId, category, product, media } = await setup();
+    const productA = await product("a");
+    const productB = await product("b");
+    const sole = await media("sole");
+    const shared = await media("shared");
+    try {
+      const soleImage = await db.productImage.create({ data: { productId: productA.id, mediaId: sole.id } });
+      const sharedOnA = await db.productImage.create({ data: { productId: productA.id, mediaId: shared.id } });
+      await db.productImage.create({ data: { productId: productB.id, mediaId: shared.id } });
+
+      await removeProductImage(productA.id, soleImage.id, adminId);
+      assert.equal(await db.productImage.findUnique({ where: { id: soleImage.id } }), null);
+      assert.equal(await db.mediaAsset.findUnique({ where: { id: sole.id } }), null, "an unreferenced photo must be reclaimed");
+
+      await removeProductImage(productA.id, sharedOnA.id, adminId);
+      assert.equal(await db.productImage.findUnique({ where: { id: sharedOnA.id } }), null);
+      assert.ok(await db.mediaAsset.findUnique({ where: { id: shared.id } }), "a photo another product still uses must survive");
+    } finally {
+      await db.product.deleteMany({ where: { id: { in: [productA.id, productB.id] } } });
+      await db.mediaAsset.deleteMany({ where: { id: { in: [sole.id, shared.id] } } });
+      await db.category.delete({ where: { id: category.id } });
+    }
+  });
+
+  it("deleting a draft product reclaims its gallery photos, except ones another product still uses", async () => {
+    const { adminId, category, product, media } = await setup();
+    const doomed = await product("doomed");
+    const other = await product("other");
+    const only = await media("only");
+    const shared = await media("shared");
+    try {
+      await db.productImage.create({ data: { productId: doomed.id, mediaId: only.id } });
+      await db.productImage.create({ data: { productId: doomed.id, mediaId: shared.id } });
+      await db.productImage.create({ data: { productId: other.id, mediaId: shared.id } });
+
+      await deleteProduct(doomed.id, adminId);
+      assert.equal(await db.product.findUnique({ where: { id: doomed.id } }), null);
+      assert.equal(await db.mediaAsset.findUnique({ where: { id: only.id } }), null, "the deleted product's own photo must be reclaimed");
+      assert.ok(await db.mediaAsset.findUnique({ where: { id: shared.id } }), "a photo another product still uses must survive");
+      assert.equal(await db.productImage.count({ where: { productId: other.id } }), 1);
+    } finally {
+      await db.product.deleteMany({ where: { id: { in: [doomed.id, other.id] } } });
+      await db.mediaAsset.deleteMany({ where: { id: { in: [only.id, shared.id] } } });
+      await db.category.delete({ where: { id: category.id } });
+    }
   });
 });

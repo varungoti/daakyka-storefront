@@ -90,12 +90,14 @@ import {
   inviteUser,
   LastSuperAdminError,
   resetUserPassword,
+  updateAdminUser,
   UserDeleteBlockedError,
   UserEmailConflictError,
   UserNotFoundError,
   UserSelfActionBlockedError,
   WeakPasswordError,
 } from "@/lib/auth/user-admin";
+import { JourneyNotFoundError, updateJourneyStatus } from "@/lib/engagement/journeys";
 import { verifyPassword } from "@/lib/auth/password";
 import { POST as postUser } from "@/app/api/admin/users/route";
 import { DELETE as deleteUserRoute } from "@/app/api/admin/users/[id]/route";
@@ -229,6 +231,21 @@ describe("segments admin CRUD", () => {
     await assert.rejects(() => getSegmentForAdmin(segment.id), SegmentNotFoundError);
   });
 
+  it("audit rows record the segment's name on create and what changed on edit (F-288)", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const segment = await createSegment({ name: `Audit Segment ${unique}`, slug: `audit-segment-${unique}`, criteria: { source: "footer" } }, adminId);
+    createdIds.push(segment.id);
+    await updateSegment(segment.id, { description: "now described", criteria: { source: "checkout" } }, adminId);
+
+    const rows = await db.auditLog.findMany({ where: { entity: "customer_segment", entityId: segment.id }, orderBy: { createdAt: "asc" } });
+    const [created, updated] = rows.map(
+      (row) => JSON.parse(row.metadata ?? "{}") as { name?: string; slug?: string; changes?: Record<string, unknown>; criteriaChanged?: boolean },
+    );
+    assert.equal(created.slug, `audit-segment-${unique}`);
+    assert.deepEqual(updated.changes, { description: { from: null, to: "now described" } });
+    assert.equal(updated.criteriaChanged, true);
+  });
+
   it("createSegment rejects a slug already used by another segment", async () => {
     const unique = randomUUID().slice(0, 8);
     const first = await createSegment({ name: `Dup ${unique}`, slug: `dup-segment-${unique}` }, adminId);
@@ -296,6 +313,24 @@ describe("templates admin CRUD", () => {
   after(async () => {
     if (createdCampaignIds.length) await db.campaign.deleteMany({ where: { id: { in: createdCampaignIds } } }).catch(() => {});
     if (createdIds.length) await db.messageTemplate.deleteMany({ where: { id: { in: createdIds } } }).catch(() => {});
+  });
+
+  it("audit rows record what a template edit changed, flagging the body without copying it (F-288)", async () => {
+    const template = await createTemplate(
+      { name: `Audit Template ${randomUUID().slice(0, 8)}`, channel: "EMAIL", body: "original body text" },
+      adminId,
+    );
+    createdIds.push(template.id);
+    await updateTemplate(template.id, { subject: "A new subject", body: "rewritten secret-marker body" }, adminId);
+
+    const rows = await db.auditLog.findMany({ where: { entity: "message_template", entityId: template.id }, orderBy: { createdAt: "asc" } });
+    const [created, updated] = rows.map(
+      (row) => JSON.parse(row.metadata ?? "{}") as { channel?: string; changes?: Record<string, unknown>; bodyChanged?: boolean },
+    );
+    assert.equal(created.channel, "EMAIL");
+    assert.deepEqual(updated.changes, { subject: { from: null, to: "A new subject" } });
+    assert.equal(updated.bodyChanged, true);
+    assert.ok(!(rows[1].metadata ?? "").includes("secret-marker"));
   });
 
   it("full round trip: create -> read -> update -> delete", async () => {
@@ -445,6 +480,29 @@ describe("offers admin CRUD", () => {
     await assert.rejects(() => getOfferForAdmin(offer.id), OfferNotFoundError);
   });
 
+  // F-288: offers (and segments / templates below) wrote create rows with no
+  // metadata at all and update rows with only the new name.
+  it("audit rows record what was created and what an edit changed (F-288)", async () => {
+    const offer = await createOffer(
+      { name: `Audit Offer ${randomUUID().slice(0, 8)}`, type: "bundle", description: "d", active: true },
+      adminId,
+    );
+    createdIds.push(offer.id);
+    await updateOffer(offer.id, { active: false, config: { discount: "15%" } }, adminId);
+
+    const rows = await db.auditLog.findMany({
+      where: { entity: "offer_recommendation", entityId: offer.id },
+      orderBy: { createdAt: "asc" },
+    });
+    const [created, updated] = rows.map(
+      (row) => JSON.parse(row.metadata ?? "{}") as { name?: string; active?: boolean; changes?: Record<string, unknown>; configChanged?: boolean },
+    );
+    assert.equal(created.name, offer.name);
+    assert.equal(created.active, true);
+    assert.deepEqual(updated.changes, { active: { from: true, to: false } });
+    assert.equal(updated.configChanged, true);
+  });
+
   it("routes reject with 401/403 without a session", async () => {
     assert.ok([401, 403].includes((await getOffers()).status));
     assert.ok(
@@ -522,6 +580,35 @@ describe("SEO records admin CRUD", () => {
         ),
       SeoPagePathNotWiredError,
     );
+  });
+
+  it("updateSeoRecord rejects repointing a record onto a path the storefront never reads", async () => {
+    // F-052: the create guard alone left a side door, since an API caller
+    // could create a wired record and then PATCH its path to anything. A
+    // legacy off-wired row keeps its other fields editable (round trip
+    // above) but cannot be moved onto another unwired path.
+    const unique = randomUUID().slice(0, 8);
+    const record = await db.seoPageRecord.create({
+      data: {
+        path: `/test-seo-repoint-${unique}`,
+        title: "Repoint Test",
+        metaDescription: "A test meta description.",
+        status: "ok",
+        issues: "[]",
+      },
+    });
+    createdIds.push(record.id);
+
+    await assert.rejects(
+      () => updateSeoRecord(record.id, { path: `/test-seo-still-not-wired-${unique}` }, adminId),
+      SeoPagePathNotWiredError,
+    );
+    const unchanged = await getSeoRecordForAdmin(record.id);
+    assert.equal(unchanged.path, `/test-seo-repoint-${unique}`);
+
+    // Passing the same path back is not a move, so it is still accepted.
+    const same = await updateSeoRecord(record.id, { path: record.path, title: "Repoint Test 2" }, adminId);
+    assert.equal(same.title, "Repoint Test 2");
   });
 
   it("createSeoRecord rejects a wired path already in use", async () => {
@@ -927,8 +1014,9 @@ describe("campaigns admin routes (F-217)", () => {
 // deliberate, separate concern from whether a past-due campaign is picked
 // up at all, which is what this test is asserting. Both the enabled flag
 // (setIntegrationEnabled) AND a configured key (isProviderConfigured, via
-// BREVO_API_KEY here rather than the encrypted DB credential store, which
-// needs CREDENTIAL_ENCRYPTION_KEY) are required for isIntegrationEnabled
+// BREVO_API_KEY + BREVO_FROM_EMAIL here rather than the encrypted DB
+// credential store, which needs CREDENTIAL_ENCRYPTION_KEY — F-267: Brevo
+// isn't "configured" without a From Email) are required for isIntegrationEnabled
 // to report true — see src/lib/integrations/enabled.ts.
 describe("processDueScheduledCampaigns picks up a past-due SCHEDULED campaign (F-217)", () => {
   const createdSegmentIds: string[] = [];
@@ -978,7 +1066,7 @@ describe("processDueScheduledCampaigns picks up a past-due SCHEDULED campaign (F
     });
     createdCampaignIds.push(campaign.id);
 
-    const { processed, results } = await withEnv({ BREVO_API_KEY: "test-key" }, () =>
+    const { processed, results } = await withEnv({ BREVO_API_KEY: "test-key", BREVO_FROM_EMAIL: "orders@example.com" }, () =>
       processDueScheduledCampaigns(),
     );
     assert.ok(processed >= 1, "expected at least the seeded past-due campaign to be processed");
@@ -994,5 +1082,206 @@ describe("processDueScheduledCampaigns picks up a past-due SCHEDULED campaign (F
     // actually picked up and processed instead of sitting forever the way
     // a scheduledAt=NULL row used to.
     assert.notEqual(refetched?.status, "SCHEDULED");
+  });
+});
+
+// F-172: PATCH /api/admin/users/[id]'s rules now live in updateAdminUser
+// (callable without a request scope). Its last-SUPER_ADMIN check used to be
+// count-then-update outside a transaction, so two Super Admins demoting each
+// other at once could leave none.
+describe("updateAdminUser (F-172)", () => {
+  let adminId: string;
+  const createdUserIds: string[] = [];
+
+  before(async () => {
+    adminId = await findAnyAdminId();
+  });
+
+  after(async () => {
+    if (createdUserIds.length) await db.user.deleteMany({ where: { id: { in: createdUserIds } } }).catch(() => {});
+  });
+
+  async function inviteTestUser(role: "VIEWER" | "SUPER_ADMIN", label: string) {
+    const unique = randomUUID().slice(0, 8);
+    const slug = label.toLowerCase().replace(/\W+/g, "-");
+    const invited = await inviteUser({ name: label, email: `${slug}-${unique}@example.com`, role }, adminId);
+    createdUserIds.push(invited.user.id);
+    return invited.user;
+  }
+
+  /** Holds a row lock on every active SUPER_ADMIN, exactly as an in-flight
+   * updateAdminUser call does, until `release()` is called. */
+  async function holdSuperAdminLock() {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let lockAcquired!: () => void;
+    const locked = new Promise<void>((resolve) => {
+      lockAcquired = resolve;
+    });
+    const holder = db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "role" = 'SUPER_ADMIN' AND "active" = true FOR NO KEY UPDATE`;
+      lockAcquired();
+      await hold;
+    });
+    await locked;
+    return {
+      async release() {
+        release();
+        await holder;
+      },
+    };
+  }
+
+  it("renames a user without revoking their sessions", async () => {
+    const user = await inviteTestUser("VIEWER", "Rename Me");
+    const before = await db.user.findUnique({ where: { id: user.id }, select: { sessionVersion: true } });
+
+    const updated = await updateAdminUser(user.id, { name: "Renamed Person", role: "VIEWER", active: true }, adminId);
+
+    assert.equal(updated.name, "Renamed Person");
+    const after = await db.user.findUnique({ where: { id: user.id }, select: { sessionVersion: true, name: true } });
+    assert.equal(after!.name, "Renamed Person");
+    assert.equal(after!.sessionVersion, before!.sessionVersion, "a plain name change must not log the admin out");
+  });
+
+  it("a role change or deactivation revokes the target's sessions", async () => {
+    const user = await inviteTestUser("VIEWER", "Demote Me");
+    const before = await db.user.findUnique({ where: { id: user.id }, select: { sessionVersion: true } });
+
+    await updateAdminUser(user.id, { name: user.name, role: "CONTENT_EDITOR", active: true }, adminId);
+    const afterRole = await db.user.findUnique({ where: { id: user.id }, select: { sessionVersion: true, role: true } });
+    assert.equal(afterRole!.role, "CONTENT_EDITOR");
+    assert.equal(afterRole!.sessionVersion, before!.sessionVersion + 1);
+
+    await updateAdminUser(user.id, { name: user.name, role: "CONTENT_EDITOR", active: false }, adminId);
+    const afterDeactivate = await db.user.findUnique({ where: { id: user.id }, select: { sessionVersion: true, active: true } });
+    assert.equal(afterDeactivate!.active, false);
+    assert.equal(afterDeactivate!.sessionVersion, before!.sessionVersion + 2);
+  });
+
+  // F-288: the audit row held only the NEW role, so a promotion to
+  // SUPER_ADMIN never said what it replaced.
+  it("records the previous role and active flag alongside the new ones in the audit row (F-288)", async () => {
+    const user = await inviteTestUser("VIEWER", "Audit Role");
+
+    await updateAdminUser(user.id, { name: user.name, role: "CONTENT_EDITOR", active: true }, adminId);
+    await updateAdminUser(user.id, { name: user.name, role: "CONTENT_EDITOR", active: false }, adminId);
+
+    const rows = await db.auditLog.findMany({
+      where: { entity: "user", entityId: user.id, action: "update" },
+      orderBy: { createdAt: "asc" },
+    });
+    assert.equal(rows.length, 2);
+    const [promotion, deactivation] = rows.map(
+      (row) =>
+        JSON.parse(row.metadata!) as {
+          role: string;
+          fromRole: string;
+          fromActive: boolean;
+          changes: Record<string, { from: unknown; to: unknown }>;
+        },
+    );
+    assert.equal(promotion.role, "CONTENT_EDITOR");
+    assert.equal(promotion.fromRole, "VIEWER");
+    assert.deepEqual(promotion.changes, { role: { from: "VIEWER", to: "CONTENT_EDITOR" } });
+    assert.equal(deactivation.fromActive, true);
+    assert.deepEqual(deactivation.changes, { active: { from: true, to: false } });
+  });
+
+  it("throws UserNotFoundError for an unknown id", async () => {
+    await assert.rejects(
+      () => updateAdminUser("does-not-exist", { name: "Nobody", role: "VIEWER", active: true }, adminId),
+      UserNotFoundError,
+    );
+  });
+
+  it("refuses self-deactivation and a self role change, with the messages the admin UI shows", async () => {
+    await assert.rejects(
+      () => updateAdminUser(adminId, { name: "Me", role: "SUPER_ADMIN", active: false }, adminId),
+      (err: unknown) => err instanceof UserSelfActionBlockedError && err.message === "Cannot deactivate your own account",
+    );
+    await assert.rejects(
+      () => updateAdminUser(adminId, { name: "Me", role: "VIEWER", active: true }, adminId),
+      (err: unknown) => err instanceof UserSelfActionBlockedError && err.message === "Cannot change your own role",
+    );
+    const me = await db.user.findUnique({ where: { id: adminId }, select: { role: true, active: true } });
+    assert.equal(me!.role, "SUPER_ADMIN");
+    assert.equal(me!.active, true);
+  });
+
+  it("demoting a Super Admin waits for any in-flight change to the Super Admin set (the atomic last-admin guard)", async () => {
+    const racer = await inviteTestUser("SUPER_ADMIN", "Race Admin");
+    const lock = await holdSuperAdminLock();
+
+    let settled = false;
+    let update: Promise<unknown>;
+    try {
+      update = updateAdminUser(racer.id, { name: racer.name, role: "VIEWER", active: true }, adminId).then((result) => {
+        settled = true;
+        return result;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      assert.equal(settled, false, "the demotion must wait while another change holds the Super Admin lock");
+    } finally {
+      await lock.release();
+    }
+
+    await update;
+    const after = await db.user.findUnique({ where: { id: racer.id }, select: { role: true } });
+    assert.equal(after!.role, "VIEWER");
+  });
+
+  it("a change that doesn't touch the Super Admin set never waits on that lock", async () => {
+    const viewer = await inviteTestUser("VIEWER", "No Lock Needed");
+    const lock = await holdSuperAdminLock();
+
+    try {
+      const updated = await Promise.race([
+        updateAdminUser(viewer.id, { name: "No Lock Needed 2", role: "VIEWER", active: true }, adminId),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("blocked on the Super Admin lock")), 2000)),
+      ]);
+      assert.equal(updated.name, "No Lock Needed 2");
+    } finally {
+      await lock.release();
+    }
+  });
+});
+
+// F-219: PATCH /api/admin/journeys/[id] on an unknown id crashed with an
+// unhandled Prisma P2025 (a 500) instead of answering 404.
+describe("updateJourneyStatus (F-219)", () => {
+  let adminId: string;
+  const createdJourneyIds: string[] = [];
+
+  before(async () => {
+    adminId = await findAnyAdminId();
+  });
+
+  after(async () => {
+    if (createdJourneyIds.length) {
+      await db.customerJourney.deleteMany({ where: { id: { in: createdJourneyIds } } }).catch(() => {});
+    }
+  });
+
+  it("changes a journey's status and writes an audit row", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const journey = await db.customerJourney.create({
+      data: { name: `Status Test ${unique}`, slug: `status-test-${unique}`, trigger: "newsletter_signup", status: "DRAFT" },
+    });
+    createdJourneyIds.push(journey.id);
+
+    const updated = await updateJourneyStatus(journey.id, "ACTIVE", adminId);
+    assert.equal(updated.status, "ACTIVE");
+
+    const audit = await db.auditLog.findFirst({
+      where: { entity: "customer_journey", entityId: journey.id, action: "update_status" },
+    });
+    assert.ok(audit, "the status change must be audit logged");
+  });
+
+  it("throws JourneyNotFoundError (not a raw Prisma error) for an unknown id", async () => {
+    await assert.rejects(() => updateJourneyStatus("does-not-exist", "ACTIVE", adminId), JourneyNotFoundError);
   });
 });

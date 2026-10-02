@@ -3,10 +3,12 @@
  *
  * Usage: npm run verify:101
  */
-import { spawn, spawnSync, execSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
+import { assertDisposableRun } from "./lib/assert-disposable-db.mjs";
+import { ensurePortFree, killPort, wantsKillPort } from "./lib/kill-port.mjs";
 
 const PORT = process.env.PORT ?? "3000";
 const BASE = `http://localhost:${PORT}`;
@@ -33,31 +35,14 @@ const env = {
   CRON_SECRET: process.env.CRON_SECRET ?? "predeploy-cron-secret",
 };
 
-function killPort(port) {
-  try {
-    if (process.platform === "win32") {
-      const output = execSync(`netstat -ano | findstr :${port}`, {
-        encoding: "utf8",
-        stdio: ["pipe", "pipe", "ignore"],
-      });
-      const pids = new Set();
-      for (const line of output.split("\n")) {
-        const match = line.trim().match(/\s+(\d+)\s*$/);
-        if (match && match[1] !== "0") pids.add(match[1]);
-      }
-      for (const pid of pids) {
-        try {
-          execSync(`taskkill /PID ${pid} /F`, { stdio: "ignore" });
-        } catch {
-          /* ignore */
-        }
-      }
-    } else {
-      execSync(`lsof -ti:${port} | xargs kill -9 2>/dev/null || true`, { stdio: "ignore", shell: true });
-    }
-  } catch {
-    /* port free */
-  }
+// F-080: this gate runs `db:setup` and the whole suite (which creates and
+// deletes orders, customers and admin users) against env.DATABASE_URL. Refuse
+// anything that is not a disposable local database before spawning anything.
+try {
+  assertDisposableRun(env);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : error);
+  process.exit(1);
 }
 
 function runSync(label, command, args) {
@@ -86,9 +71,12 @@ let exitCode = 1;
 try {
   await mkdir("dogfood-output", { recursive: true });
 
-  runSync("Pre-deploy gate", "node", ["scripts/predeploy-verify.mjs"]);
+  // Forward --kill-port so one flag covers both stages.
+  runSync("Pre-deploy gate", "node", ["scripts/predeploy-verify.mjs", ...process.argv.slice(2)]);
 
-  killPort(PORT);
+  // predeploy-verify stops its own server before exiting; anything still on
+  // the port now is not ours, so it needs the same explicit opt-in.
+  ensurePortFree(PORT, { allowKill: wantsKillPort() });
   console.log("\n==> Starting server for Lighthouse");
   const server = spawn("npm", ["run", "start"], { env, shell: true, stdio: "ignore" });
   server.unref();
@@ -97,13 +85,15 @@ try {
     await waitForServer();
     runSync("Lighthouse audit", "npm", ["run", "audit:lighthouse"]);
   } finally {
-    setTimeout(() => killPort(PORT), 500);
+    killPort(PORT);
   }
 
   const stamp = {
     completedAt: new Date().toISOString(),
     gate: "verify:101",
-    stagingUrl: process.env.STAGING_URL ?? "https://storefront-nu-woad.vercel.app",
+    // F-077: no production fallback — that alias is the live store, not a
+    // staging deployment. Recorded only when a real staging URL was given.
+    stagingUrl: process.env.STAGING_URL ?? null,
     automatedChecks: {
       unit: 56,
       integration: 17,

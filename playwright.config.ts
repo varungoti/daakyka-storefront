@@ -1,4 +1,12 @@
+import { existsSync } from "node:fs";
 import { defineConfig, devices } from "@playwright/test";
+
+// Playwright never reads .env on its own, but the specs need ADMIN_SEED_PASSWORD
+// (and rbac-sessions needs DATABASE_URL and AUTH_SECRET), and the error that
+// asks for them says "set it in .env" (F-252). Load it the way the tsx test
+// scripts do (--env-file-if-exists=.env): a variable already exported in the
+// shell wins over the file, and a missing file is fine (CI exports everything).
+if (existsSync(".env")) process.loadEnvFile(".env");
 
 process.env.DISABLE_RATE_LIMIT = "1";
 

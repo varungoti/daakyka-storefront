@@ -47,6 +47,59 @@ export async function claimCronRun(job: string, runKey: string): Promise<ClaimCr
   }
 }
 
+/**
+ * F-277: gives a claim back. The CronRun row is written *before* the job
+ * body runs (that is what makes a duplicate trigger harmless), so a job
+ * that then throws — a transient DB error, a pool exhausted mid-run — used
+ * to leave the claim behind: every later invocation for the same window
+ * answered `alreadyRan`, the weekly report was lost for the week, and a
+ * manual `vercel crons run` the same day did nothing. Best-effort: if the
+ * release itself fails the original error still propagates, and the worst
+ * case is the old behaviour (the window stays claimed).
+ */
+export async function releaseCronRun(job: string, runKey: string): Promise<void> {
+  try {
+    await db.cronRun.deleteMany({ where: { job, runKey } });
+  } catch (error) {
+    console.warn(
+      `[cron] could not release the CronRun claim for ${job}:${runKey}:`,
+      error instanceof Error ? error.message : error,
+    );
+  }
+}
+
+export type CronClaimOutcome<T> = { claimed: false } | { claimed: true; result: T };
+
+/**
+ * Claims (job, runKey), runs `run`, and releases the claim again if `run`
+ * throws so the next invocation (or a manual re-run) does the work instead
+ * of being told it already happened. The error is rethrown untouched — the
+ * route still answers 500, which is what lets the platform's own retry and
+ * the owner's alerting notice the failure.
+ *
+ * `runKey` is passed in (not recomputed) so a run that straddles a bucket
+ * boundary releases the very row it created.
+ *
+ * A job that fails half-way may have done part of its work (a report
+ * notification written before a later step threw); the retry then repeats
+ * that part. Duplicating a notification is the cheaper failure than
+ * silently skipping the whole day or week.
+ */
+export async function runWithCronClaim<T>(
+  job: string,
+  runKey: string,
+  run: () => Promise<T>,
+): Promise<CronClaimOutcome<T>> {
+  const { claimed } = await claimCronRun(job, runKey);
+  if (!claimed) return { claimed: false };
+  try {
+    return { claimed: true, result: await run() };
+  } catch (error) {
+    await releaseCronRun(job, runKey);
+    throw error;
+  }
+}
+
 /** UTC calendar date, e.g. "2026-09-18" — for jobs that run at most once a
  * day (journeys, campaigns, hermes, reports per vercel.json's schedules). */
 export function dailyRunKey(now: Date = new Date()): string {

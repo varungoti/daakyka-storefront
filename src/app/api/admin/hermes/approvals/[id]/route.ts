@@ -1,25 +1,15 @@
 import { NextResponse } from "next/server";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { logAuditEvent } from "@/lib/auth/audit";
-import { hasPermission } from "@/lib/auth/rbac";
 import { db } from "@/lib/db";
 import { reviewHermesApproval } from "@/lib/hermes/approval-executor";
+import { canApproveHermesApproval, requiredPermissionForApproval } from "@/lib/hermes/approval-permissions";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { z } from "zod";
 
 const schema = z.object({
   status: z.enum(["APPROVED", "REJECTED"]),
 });
-
-// F-293: PATCH here only ever checked `hermes:manage`, which SEO_MANAGER
-// has without `engagement:manage` — but approving a "campaign_draft"
-// creates a Campaign row directly (executeHermesApproval), bypassing
-// POST /api/admin/campaigns' own `engagement:manage` check entirely. Only
-// campaign_draft needs a second permission today: blog_draft only needs
-// `blog:manage`, which every role with `hermes:manage` already has.
-const APPROVAL_TYPE_PERMISSIONS: Partial<Record<string, "engagement:manage">> = {
-  campaign_draft: "engagement:manage",
-};
 
 export async function PATCH(
   request: Request,
@@ -36,12 +26,21 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid status" }, { status: 400 });
   }
 
+  // F-293: approving creates a real Campaign / blog post, so the approver
+  // needs that entity's own permission, not just hermes:manage (see
+  // approval-permissions.ts). A missing approval falls through to the 404
+  // from reviewHermesApproval below.
   if (parsed.data.status === "APPROVED") {
     const existing = await db.hermesApproval.findUnique({ where: { id }, select: { type: true } });
-    const requiredPermission = existing ? APPROVAL_TYPE_PERMISSIONS[existing.type] : undefined;
-    if (requiredPermission && !hasPermission(session!.role, requiredPermission)) {
+    if (existing && !canApproveHermesApproval(session!.role, existing.type)) {
+      const required = requiredPermissionForApproval(existing.type);
       return NextResponse.json(
-        { error: "Approving this item requires campaign permissions" },
+        {
+          error:
+            required === "engagement:manage"
+              ? "Approving campaign drafts requires campaign permissions"
+              : "You don't have permission to approve this type of item",
+        },
         { status: 403 },
       );
     }

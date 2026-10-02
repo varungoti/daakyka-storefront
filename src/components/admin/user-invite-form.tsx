@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { FormErrorBanner } from "@/components/admin/form-error-banner";
 import { adminRoles, formatRole } from "@/lib/auth/rbac";
+import { formatApiError } from "@/lib/validation/format-api-error";
 import type { AdminRole } from "@/generated/prisma/client";
 
 export function UserInviteForm() {
@@ -14,24 +16,37 @@ export function UserInviteForm() {
 
   const [status, setStatus] = useState<"idle" | "saving" | "error" | "done">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [tempPassword, setTempPassword] = useState<string | null>(null);
   const [createdEmail, setCreatedEmail] = useState<string | null>(null);
 
   const invite = async () => {
     setStatus("saving");
     setErrorMessage(null);
+    setFieldErrors({});
 
-    const response = await fetch("/api/admin/users", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: name.trim(), email: email.trim(), role }),
-    });
+    let response: Response;
+    try {
+      response = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), email: email.trim(), role }),
+      });
+    } catch {
+      setStatus("error");
+      setErrorMessage("Couldn't create the user — check your connection and try again.");
+      return;
+    }
 
     const body = await response.json().catch(() => ({}));
 
     if (!response.ok) {
+      // F-172: an invalid email showed only the generic "Validation failed"
+      // — the route's `issues` carry the per-field reason.
+      const { summary, fieldErrors: fe } = formatApiError(body, "Couldn't create the user — check the fields above.");
       setStatus("error");
-      setErrorMessage(body?.error ?? "Couldn't create the user — check the fields above.");
+      setErrorMessage(summary);
+      setFieldErrors(fe);
       return;
     }
 
@@ -71,23 +86,25 @@ export function UserInviteForm() {
   return (
     <div className="max-w-lg space-y-4 rounded-2xl border border-border bg-surface p-6">
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Name">
+        <Field label="Name" error={fieldErrors.name}>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
+            aria-invalid={Boolean(fieldErrors.name)}
             className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
           />
         </Field>
-        <Field label="Email">
+        <Field label="Email" error={fieldErrors.email}>
           <input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            aria-invalid={Boolean(fieldErrors.email)}
             className="w-full rounded-xl border border-border p-2.5 text-sm text-ink outline-none focus:border-brand"
           />
         </Field>
       </div>
-      <Field label="Role">
+      <Field label="Role" error={fieldErrors.role}>
         <select
           value={role}
           onChange={(e) => setRole(e.target.value as AdminRole)}
@@ -101,7 +118,7 @@ export function UserInviteForm() {
         </select>
       </Field>
 
-      {errorMessage ? <p className="text-sm text-red-600">{errorMessage}</p> : null}
+      <FormErrorBanner message={errorMessage} />
 
       <button
         type="button"
@@ -115,11 +132,12 @@ export function UserInviteForm() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs font-semibold text-muted">{label}</span>
       {children}
+      {error ? <span className="mt-1 block text-[11px] text-red-600">{error}</span> : null}
     </label>
   );
 }

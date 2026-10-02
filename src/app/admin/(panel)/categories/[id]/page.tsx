@@ -4,6 +4,9 @@ import { CategoryNotFoundError, getCategoryForAdmin, listCategoryOptions } from 
 import { listSizeChartsForAdmin } from "@/lib/catalog/size-charts";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Edit Category" };
 
 export default async function EditCategoryPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await getSession();

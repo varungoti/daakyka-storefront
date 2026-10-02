@@ -2,17 +2,27 @@ import { SectionLandingPage } from "@/components/category/section-landing-page";
 import { getSiteImage } from "@/lib/media/get-site-image";
 import { getCategoryBySlug, getProducts } from "@/lib/products";
 import { canonicalPath } from "@/lib/seo/canonical";
+import { getCategorySeoOverride, resolveCategoryMetadata } from "@/lib/seo/category-seo";
+import { baseOpenGraph } from "@/lib/seo/json-ld";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 const CATEGORY_SLUG = "school-uniforms";
 
-export const metadata: Metadata = {
+const FALLBACK_METADATA = {
   title: "School Uniforms",
   description:
     "Shirts, tunics, trousers, skirts, pinafores, made-to-measure blazers, sweaters, and sportswear for schools — by DAAKYKA Apparels, Pan India delivery.",
-  alternates: { canonical: canonicalPath("/school-uniforms") },
 };
+
+// release-hardening F-098/F-151: see src/app/for-hospitals/page.tsx.
+export async function generateMetadata(): Promise<Metadata> {
+  return {
+    ...resolveCategoryMetadata(FALLBACK_METADATA, await getCategorySeoOverride(CATEGORY_SLUG)),
+    alternates: { canonical: canonicalPath("/school-uniforms") },
+    openGraph: baseOpenGraph("/school-uniforms"),
+  };
+}
 
 export default async function SchoolUniformsPage() {
   const category = await getCategoryBySlug(CATEGORY_SLUG);

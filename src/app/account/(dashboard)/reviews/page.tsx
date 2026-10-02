@@ -1,4 +1,5 @@
 import { ReviewsTab } from "@/components/account/account-tabs";
+import { accountLoginPath } from "@/lib/customer-auth/return-to";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import { db } from "@/lib/db";
 import type { Metadata } from "next";
@@ -14,7 +15,7 @@ export const metadata: Metadata = { title: "My Reviews" };
  */
 export default async function AccountReviewsPage() {
   const session = await getCustomerSession();
-  if (!session) redirect("/account/login?returnTo=/account/reviews");
+  if (!session) redirect(accountLoginPath("/account/reviews"));
 
   const reviews = await db.review.findMany({
     where: { customerId: session.id },

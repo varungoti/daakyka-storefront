@@ -3,6 +3,7 @@ import { shouldUseSecureSessionCookie } from "@/lib/auth/session-cookie";
 import { db } from "@/lib/db";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
+import { cache } from "react";
 
 // 30-day fixed expiry, re-issued on login only (not a sliding/refresh-on-
 // activity window). The admin session (src/lib/auth/session.ts) doesn't
@@ -156,7 +157,9 @@ export async function verifyCustomerSessionTokenResult(token: string): Promise<C
   };
 }
 
-export async function getCustomerSessionResult(): Promise<CustomerSessionResult> {
+// F-262: request-scoped memoization (React `cache()`), so a layout and the
+// page under it that both read the shopper's session share one user lookup.
+export const getCustomerSessionResult = cache(async function getCustomerSessionResult(): Promise<CustomerSessionResult> {
   let token: string | undefined;
   try {
     const cookieStore = await cookies();
@@ -171,7 +174,7 @@ export async function getCustomerSessionResult(): Promise<CustomerSessionResult>
   if (!token) return { status: "unauthenticated" };
 
   return verifyCustomerSessionTokenResult(token);
-}
+});
 
 /** Thin `CustomerSessionUser | null` wrapper over
  * {@link getCustomerSessionResult} for the existing callers that don't

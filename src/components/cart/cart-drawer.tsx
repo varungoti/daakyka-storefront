@@ -1,5 +1,6 @@
 "use client";
 
+import { useMotionInitial } from "@/components/layout/lazy-motion-provider";
 import { Button, buttonClassNames } from "@/components/ui/button";
 import { useCart } from "@/context/cart-provider";
 import { useCurrency } from "@/context/currency-provider";
@@ -7,7 +8,7 @@ import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { Minus, Plus, ShoppingBag, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, m } from "framer-motion";
 import { useEffect, useState } from "react";
 
 /** F-121: a cart line the server no longer considers fully purchasable,
@@ -37,6 +38,8 @@ export function CartDrawer() {
   } = useCart();
   const { formatPrice } = useCurrency();
   const panelRef = useFocusTrap<HTMLDivElement>(isOpen, closeCart, { lockScroll: true });
+  const overlayInitial = useMotionInitial({ opacity: 0 });
+  const panelInitial = useMotionInitial({ x: "100%" });
 
   const [problem, setProblem] = useState<CartLineProblem | null>(null);
   const cartItemsKey = cart.lines.map((line) => `${line.variantId}:${line.quantity}`).sort().join("|");
@@ -94,23 +97,23 @@ export function CartDrawer() {
     <AnimatePresence>
       {isOpen && (
         <>
-          <motion.button
+          <m.button
             type="button"
             aria-label="Close cart overlay"
             className="fixed inset-0 z-[60] bg-overlay-scrim backdrop-blur-sm"
-            initial={{ opacity: 0 }}
+            initial={overlayInitial}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={closeCart}
           />
-          <motion.aside
+          <m.aside
             ref={panelRef}
             tabIndex={-1}
             role="dialog"
             aria-modal="true"
             aria-label="Shopping cart"
             className="fixed inset-y-0 right-0 z-[70] flex w-full max-w-md flex-col bg-surface shadow-2xl outline-none"
-            initial={{ x: "100%" }}
+            initial={panelInitial}
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ type: "spring", damping: 28, stiffness: 260 }}
@@ -213,11 +216,12 @@ export function CartDrawer() {
                             </p>
                           )}
                           <div className="mt-auto flex items-center justify-between pt-3">
-                            {/* F-240: the steppers measured 22x22 — the pill
-                                keeps its visual size, but each button is now
-                                a 32px hit area (`grid h-8 w-8`). */}
+                            {/* F-240: the steppers measured 22x22 — each button
+                                is now a 32px hit area (`grid h-8 w-8`), with
+                                the pill's padding and gap tightened so it
+                                stays about the same width as before. */}
                             {!isUnavailable && (
-                              <div className="flex items-center gap-2 rounded-full border border-border px-1 py-0.5">
+                              <div className="flex items-center gap-0.5 rounded-full border border-border px-1 py-0.5">
                                 <button
                                   type="button"
                                   aria-label="Decrease quantity"
@@ -250,7 +254,7 @@ export function CartDrawer() {
                             <button
                               type="button"
                               onClick={() => removeLine(line.id)}
-                              className="min-h-8 px-2 text-xs font-semibold text-muted hover:text-brand"
+                              className="min-h-8 text-xs font-semibold text-muted hover:text-brand"
                               disabled={isLoading}
                             >
                               Remove
@@ -290,7 +294,7 @@ export function CartDrawer() {
                 </Button>
               </div>
             )}
-          </motion.aside>
+          </m.aside>
         </>
       )}
     </AnimatePresence>

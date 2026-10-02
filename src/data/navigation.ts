@@ -11,30 +11,12 @@ export const announcementItems = brand.announcementMessages;
 // which replaced the old static `footerLinks` export that used to live
 // here.
 
-export const colorFilters = [
-  { name: "Lilac Purple", hex: "#C4B5FD" },
-  { name: "Midnight Navy", hex: "#1E3A5F" },
-  { name: "Sage Green", hex: "#86A789" },
-  { name: "Cloud White", hex: "#F5F5F4" },
-  { name: "Charcoal", hex: "#374151" },
-  { name: "Rose Blush", hex: "#F9A8D4" },
-  { name: "Ocean Teal", hex: "#2DD4BF" },
-  { name: "Warm Sand", hex: "#D6C4A8" },
-];
-
-export const sizeFilters = [
-  "XXS",
-  "XS",
-  "S",
-  "M",
-  "L",
-  "XL",
-  "2XL",
-  "3XL",
-  "4XL",
-  "5XL",
-];
-
+// The shop's Color, Size and Price facets are NOT defined here: they used to
+// be fixed lists written for the seed catalogue ("Midnight Navy", XXS-5XL),
+// which never matched a real product (F-015/F-095). They are derived from the
+// live products by `deriveShopFacets` in src/lib/shop/filters.ts. Fabric
+// Technology stays a fixed list because `fabricTech` is a fixed vocabulary
+// (see `FabricTech`).
 export const fabricFilters = [
   { id: "4-way-stretch", label: "4-Way Stretch" },
   { id: "liquid-repellent", label: "Liquid Repellent" },

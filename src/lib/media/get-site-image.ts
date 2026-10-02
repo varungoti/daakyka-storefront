@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { db } from "@/lib/db";
+import { publicImageAlt } from "@/lib/media/public-alt";
 
 /**
  * Phase E2: the storefront's read path for manifest-declared site images
@@ -29,7 +30,9 @@ async function readSiteImageFromDb(slot: string): Promise<SiteImage | null> {
   try {
     const asset = await db.mediaAsset.findUnique({ where: { slot } });
     if (!asset) return null;
-    return { url: asset.url, alt: asset.alt ?? "" };
+    // F-087: a generated asset's alt is its admin slot label ("Contact —
+    // Banner") — see public-alt.ts. "" renders the image as decorative.
+    return { url: asset.url, alt: publicImageAlt(asset.alt) };
   } catch {
     // DB unavailable (e.g. at build time, or a local script without a
     // running Postgres) — callers fall back to a placeholder either way.

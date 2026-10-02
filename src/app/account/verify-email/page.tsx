@@ -42,7 +42,11 @@ export default async function VerifyEmailPage({ searchParams }: VerifyEmailPageP
       <PageContentSection className="text-center">
         <p className="mx-auto max-w-md text-sm text-muted">
           {result.ok
-            ? "Thanks — your email address is now verified."
+            ? result.alreadyVerified
+              ? // F-136: a spent link on an account that is verified — most often
+                // a mail scanner opened it first, or it was clicked twice.
+                "Your email address is already verified — you're all set."
+              : "Thanks — your email address is now verified."
             : result.error}
         </p>
         {!result.ok && session && !session.emailVerifiedAt && (

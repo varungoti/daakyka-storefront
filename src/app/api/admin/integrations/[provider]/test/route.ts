@@ -78,7 +78,17 @@ async function testBrevo(): Promise<TestResult> {
         body && typeof body === "object" && "email" in body && typeof body.email === "string"
           ? body.email
           : null;
-      return { ok: true, message: email ? `Brevo accepted the key — account: ${email}` : "Brevo accepted the API key." };
+      const accepted = email ? `Brevo accepted the key — account: ${email}` : "Brevo accepted the API key.";
+      // F-267: a valid key alone sends nothing — Brevo needs a verified
+      // sender, and the integration isn't "configured" without a From Email.
+      const fromEmail = await resolveCredential("BREVO", "FROM_EMAIL", "BREVO_FROM_EMAIL");
+      if (!fromEmail) {
+        return {
+          ok: false,
+          message: `${accepted} But no From Email is set yet — add a sender verified in Brevo, or no email will be sent.`,
+        };
+      }
+      return { ok: true, message: accepted };
     }
     if (response.status === 401) {
       return { ok: false, message: "Brevo rejected the API key (401 Unauthorized)." };

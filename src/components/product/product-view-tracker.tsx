@@ -43,6 +43,14 @@ export function getSessionId(): string | undefined {
   return id;
 }
 
+/**
+ * F-314: first-party product-view beacon. It has no on-page UI to attach a
+ * notice to, so the disclosure lives in the privacy policy instead (src/app/
+ * privacy-policy/page.tsx: "What we collect" lists the product-view and cart
+ * usage signals, "Cookies and browser storage" the random per-tab session id).
+ * It sends only that id, the product handle and name: no cookie and no
+ * personal identifier.
+ */
 export function ProductViewTracker({
   handle,
   name,

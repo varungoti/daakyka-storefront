@@ -2,12 +2,14 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   announcementContentSchema,
+  blogPostSchema,
   bulkOrderSchema,
   checkoutSchema,
   checkoutVerifySchema,
   customerAddressSchema,
   customerAddressUpdateSchema,
   customerForgotPasswordSchema,
+  customerProfileUpdateSchema,
   customerRegisterSchema,
   customerResetPasswordSchema,
   discountSchema,
@@ -32,7 +34,10 @@ import {
   testimonialUpdateSchema,
   trustStatsContentSchema,
   userInviteSchema,
+  userUpdateSchema,
 } from "@/lib/validation/schemas";
+import { formatApiError } from "@/lib/validation/format-api-error";
+import { buildAddressPayload } from "@/lib/customer-auth/address-payload";
 
 describe("validation schemas", () => {
   it("requires bulk order consent", () => {
@@ -367,6 +372,118 @@ describe("validation schemas", () => {
       assert.equal(result.data.isDefault, true);
       assert.equal(result.data.country, "IN");
     }
+  });
+
+  // F-130: label, line 2 and phone could be replaced but never removed — the
+  // form sent `undefined` for a blank field (dropped from the JSON, so the
+  // PATCH never touched the column) and the schema had no way to say "clear".
+  describe("F-130 clearing optional address and profile fields", () => {
+    const filledForm = {
+      label: "Home",
+      recipientName: "Priya Sharma",
+      line1: "221B Baker Street",
+      line2: "Flat 4B",
+      city: "Hyderabad",
+      state: "Telangana",
+      postalCode: "500032",
+      country: "IN",
+      phone: "9876543210",
+      isDefault: false,
+    };
+
+    it("the form sends an emptied label, line 2 and phone as explicit nulls that survive JSON", () => {
+      const wire = JSON.parse(
+        JSON.stringify(buildAddressPayload({ ...filledForm, label: "", line2: "   ", phone: null })),
+      );
+      // An own key with a null value, not an absent key: absent means "unchanged".
+      assert.equal(Object.hasOwn(wire, "label"), true);
+      assert.equal(wire.label, null);
+      assert.equal(Object.hasOwn(wire, "line2"), true);
+      assert.equal(wire.line2, null);
+      assert.equal(Object.hasOwn(wire, "phone"), true);
+      assert.equal(wire.phone, null);
+      // Everything else is untouched.
+      assert.equal(wire.line1, "221B Baker Street");
+      assert.equal(wire.city, "Hyderabad");
+    });
+
+    it("the form still sends filled optional fields as values", () => {
+      const wire = JSON.parse(JSON.stringify(buildAddressPayload({ ...filledForm, label: " Home ", line2: " Flat 4B " })));
+      assert.equal(wire.label, "Home");
+      assert.equal(wire.line2, "Flat 4B");
+      assert.equal(wire.phone, "9876543210");
+    });
+
+    it("an edit that cleared label, line 2 and phone parses to nulls the route hands to the database", () => {
+      const wire = JSON.parse(
+        JSON.stringify(buildAddressPayload({ ...filledForm, label: "", line2: "", phone: null })),
+      );
+      const result = customerAddressUpdateSchema.safeParse(wire);
+      assert.equal(result.success, true);
+      if (result.success) {
+        assert.equal(result.data.label, null);
+        assert.equal(result.data.line2, null);
+        assert.equal(result.data.phone, null);
+        assert.equal(result.data.line1, "221B Baker Street");
+      }
+    });
+
+    it("customerAddressUpdateSchema treats null and a blank string alike as 'clear'", () => {
+      for (const blank of [null, "", "   "]) {
+        const result = customerAddressUpdateSchema.safeParse({ label: blank, line2: blank, phone: blank });
+        assert.equal(result.success, true, `${JSON.stringify(blank)} should be accepted`);
+        if (result.success) {
+          assert.equal(result.data.label, null);
+          assert.equal(result.data.line2, null);
+          assert.equal(result.data.phone, null);
+        }
+      }
+    });
+
+    it("customerAddressUpdateSchema leaves an omitted label, line 2 and phone out, so PATCH stays partial", () => {
+      const result = customerAddressUpdateSchema.safeParse({ city: "Pune" });
+      assert.equal(result.success, true);
+      if (result.success) {
+        assert.deepEqual(result.data, { city: "Pune" });
+      }
+    });
+
+    it("a non-blank phone still has to be a valid Indian mobile number", () => {
+      assert.equal(customerAddressUpdateSchema.safeParse({ phone: "12345" }).success, false);
+      assert.equal(customerAddressSchema.safeParse({ ...filledForm, phone: "12345" }).success, false);
+      const ok = customerAddressUpdateSchema.safeParse({ phone: "+91 98765 43210" });
+      assert.equal(ok.success, true);
+      if (ok.success) assert.equal(ok.data.phone, "9876543210");
+    });
+
+    it("an over-long line 2 is still rejected", () => {
+      assert.equal(customerAddressUpdateSchema.safeParse({ line2: "x".repeat(201) }).success, false);
+    });
+
+    it("a new address with no optional fields saves them as null", () => {
+      const wire = JSON.parse(
+        JSON.stringify(buildAddressPayload({ ...filledForm, label: "", line2: "", phone: null })),
+      );
+      const result = customerAddressSchema.safeParse(wire);
+      assert.equal(result.success, true);
+      if (result.success) {
+        assert.equal(result.data.line2, null);
+        assert.equal(result.data.phone, null);
+        assert.equal(result.data.label, null);
+      }
+    });
+
+    it("customerProfileUpdateSchema clears the phone on null or blank and leaves it alone when omitted", () => {
+      for (const blank of [null, "", "  "]) {
+        const result = customerProfileUpdateSchema.safeParse({ phone: blank });
+        assert.equal(result.success, true);
+        if (result.success) assert.equal(result.data.phone, null);
+      }
+      const omitted = customerProfileUpdateSchema.safeParse({ name: "Priya Sharma" });
+      assert.equal(omitted.success, true);
+      if (omitted.success) assert.equal("phone" in omitted.data, false);
+      assert.equal(customerProfileUpdateSchema.safeParse({ phone: "12345" }).success, false);
+    });
   });
 
   // F-128: customerAddressSchema.country now matches shippingAddressSchema
@@ -1110,6 +1227,73 @@ describe("discountUpdateSchema (F-038)", () => {
   });
 });
 
+// F-216: the blog API crashed (500) on a bad date, accepted slugs that 404 on
+// the storefront, and rejected every Media Library image (a root-relative
+// /cdn/... path is not a valid z.string().url()).
+describe("blogPostSchema (F-216)", () => {
+  const valid = {
+    slug: "how-to-care-for-hospital-linens",
+    title: "How to care for hospital linens",
+    excerpt: "A short guide to keeping scrubs and linens in shape.",
+    category: "Guide",
+    author: "DAAKYKA Editorial",
+    publishedAt: "2026-09-25",
+    readTime: "5 min read",
+    image: "/cdn/media/banner/2026/09/hero.webp",
+    content: ["First paragraph.", "Second paragraph."],
+    status: "DRAFT" as const,
+  };
+
+  it("accepts a valid post with a Media Library (root-relative) image", () => {
+    assert.equal(blogPostSchema.safeParse(valid).success, true);
+  });
+
+  it("accepts a static root-relative path and an https image from an allowed host", () => {
+    assert.equal(blogPostSchema.safeParse({ ...valid, image: "/images/hospital-apparel-studio.webp" }).success, true);
+    assert.equal(
+      blogPostSchema.safeParse({ ...valid, image: "https://images.pexels.com/photos/1/example.jpeg" }).success,
+      true,
+    );
+  });
+
+  it("rejects an image that is protocol-relative, traverses, or is not on an allowed host", () => {
+    for (const image of [
+      "//evil.example/x.png",
+      "/../etc/passwd",
+      "javascript:alert(1)",
+      "https://not-allowed.example/x.png",
+      "",
+    ]) {
+      assert.equal(blogPostSchema.safeParse({ ...valid, image }).success, false, `expected ${image || "(empty)"} to be rejected`);
+    }
+  });
+
+  it("rejects a slug with spaces, capitals-and-spaces or punctuation (it would publish but 404)", () => {
+    for (const slug of ["Audit Blog 123", "hermes:-blog-draft", "my_post", "-leading", "trailing-", "double--hyphen", "a"]) {
+      assert.equal(blogPostSchema.safeParse({ ...valid, slug }).success, false, `expected "${slug}" to be rejected`);
+    }
+  });
+
+  it("lowercases and trims an otherwise-valid slug instead of rejecting it", () => {
+    const result = blogPostSchema.safeParse({ ...valid, slug: "  Winter-Care-Guide " });
+    assert.equal(result.success, true);
+    if (result.success) assert.equal(result.data.slug, "winter-care-guide");
+  });
+
+  it("rejects a publish date that isn't YYYY-MM-DD (what an Indian owner types by habit)", () => {
+    for (const publishedAt of ["25/09/2026", "09-25-2026", "Sept 25", "2026-13-45", ""]) {
+      const result = blogPostSchema.safeParse({ ...valid, publishedAt });
+      assert.equal(result.success, false, `expected "${publishedAt}" to be rejected`);
+      if (!result.success) assert.ok(result.error.issues.some((issue) => issue.path[0] === "publishedAt"));
+    }
+  });
+
+  it("requires at least one non-empty paragraph", () => {
+    assert.equal(blogPostSchema.safeParse({ ...valid, content: [] }).success, false);
+    assert.equal(blogPostSchema.safeParse({ ...valid, content: [""] }).success, false);
+  });
+});
+
 describe("userInviteSchema", () => {
   const valid = { name: "New Admin", email: "new-admin@example.com", role: "VIEWER" as const };
 
@@ -1123,5 +1307,72 @@ describe("userInviteSchema", () => {
 
   it("rejects an unknown role", () => {
     assert.equal(userInviteSchema.safeParse({ ...valid, role: "GOD_MODE" }).success, false);
+  });
+});
+
+// F-172: userUpdateSchema.name was a bare `z.string().min(2)` — no trim and
+// no upper bound, so a 5,000-character name was accepted (200).
+describe("userUpdateSchema (F-172)", () => {
+  const valid = { name: "Priya Sharma", role: "VIEWER" as const, active: true };
+
+  it("accepts a normal update and trims the name", () => {
+    const result = userUpdateSchema.safeParse({ ...valid, name: "  Priya Sharma  " });
+    assert.equal(result.success, true);
+    if (result.success) assert.equal(result.data.name, "Priya Sharma");
+  });
+
+  it("rejects an oversized name (the same 150-character cap userInviteSchema has)", () => {
+    assert.equal(userUpdateSchema.safeParse({ ...valid, name: "a".repeat(5000) }).success, false);
+    assert.equal(userUpdateSchema.safeParse({ ...valid, name: "a".repeat(150) }).success, true);
+    assert.equal(userUpdateSchema.safeParse({ ...valid, name: "a".repeat(151) }).success, false);
+  });
+
+  it("rejects a name that is only whitespace", () => {
+    assert.equal(userUpdateSchema.safeParse({ ...valid, name: "     " }).success, false);
+  });
+});
+
+// F-219 / F-172: the admin forms show each issue's own message next to its
+// field (via formatApiError), so the bounds carry readable copy instead of
+// zod's "Too small: expected string to have >=2 characters".
+describe("admin form validation messages (F-219, F-172)", () => {
+  function fieldErrorsFor(result: { success: boolean; error?: { issues: unknown[] } }) {
+    assert.equal(result.success, false);
+    return formatApiError({ error: "Validation failed", issues: result.error!.issues }, "fallback").fieldErrors;
+  }
+
+  it("offer: names the field and the limit", () => {
+    const errors = fieldErrorsFor(offerSchema.safeParse({ name: "a", type: "b", description: "c" }));
+    assert.equal(errors.name, "Name must be at least 2 characters");
+    assert.equal(errors.type, "Type must be at least 2 characters");
+    assert.equal(errors.description, "Description must be at least 5 characters");
+  });
+
+  it("template: the 10-character body minimum is explained", () => {
+    const errors = fieldErrorsFor(templateSchema.safeParse({ name: "Welcome", channel: "EMAIL", body: "short" }));
+    assert.equal(errors.body, "Body must be at least 10 characters");
+  });
+
+  it("SEO record: a path without a leading slash says what's wrong", () => {
+    const errors = fieldErrorsFor(
+      seoPageRecordSchema.safeParse({ path: "no-slash", title: "T", metaDescription: "M" }),
+    );
+    assert.equal(errors.path, "Path must start with / and use URL-safe characters");
+  });
+
+  it("SEO record: empty title and description are 'required', not a bare validation failure", () => {
+    const errors = fieldErrorsFor(seoPageRecordSchema.safeParse({ path: "/shop", title: "", metaDescription: "" }));
+    assert.equal(errors.title, "Title is required");
+    assert.equal(errors.metaDescription, "Meta description is required");
+  });
+
+  it("invite: an invalid email is reported against the email field", () => {
+    const errors = fieldErrorsFor(userInviteSchema.safeParse({ name: "New Admin", email: "not-an-email", role: "VIEWER" }));
+    assert.equal(errors.email, "Enter a valid email address");
+  });
+
+  it("segment: a too-short slug is explained", () => {
+    const errors = fieldErrorsFor(segmentSchema.safeParse({ name: "Hospitals", slug: "x" }));
+    assert.equal(errors.slug, "Slug must be at least 2 characters");
   });
 });

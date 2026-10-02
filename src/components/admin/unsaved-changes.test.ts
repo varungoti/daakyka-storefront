@@ -1,6 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { CONFIRM_MESSAGE, installBackGuard, type BackGuardWindow } from "@/components/admin/unsaved-changes";
+import {
+  CONFIRM_MESSAGE,
+  installBackGuard,
+  nextDirtySources,
+  type BackGuardWindow,
+} from "@/components/admin/unsaved-changes";
 
 // F-184: the browser/phone Back button on a dirty admin form used to leave
 // with no warning at all — `beforeunload` never fires for an App Router
@@ -124,5 +129,40 @@ describe("installBackGuard", () => {
     assert.equal(mock.hasListener(), true);
     cleanup();
     assert.equal(mock.hasListener(), false);
+  });
+});
+
+// F-170: Site Controls renders four independent editors and Homepage two.
+// With one shared boolean, the last editor to report "clean" erased another
+// editor's "dirty" — so a page could hold unsaved edits while the guard
+// believed it was clean. The page is dirty while *any* source is.
+describe("nextDirtySources", () => {
+  it("adds a source when it becomes dirty and removes it when it goes clean", () => {
+    const dirty = nextDirtySources(new Set(), "announcement", true);
+    assert.deepEqual([...dirty], ["announcement"]);
+    assert.deepEqual([...nextDirtySources(dirty, "announcement", false)], []);
+  });
+
+  it("one editor going clean doesn't erase another's dirty flag", () => {
+    let sources: ReadonlySet<string> = new Set();
+    sources = nextDirtySources(sources, "announcement", true);
+    sources = nextDirtySources(sources, "contact", true);
+    sources = nextDirtySources(sources, "announcement", false); // announcement saved
+    assert.equal(sources.size > 0, true, "contact still has unsaved edits");
+    assert.deepEqual([...sources], ["contact"]);
+    sources = nextDirtySources(sources, "contact", false);
+    assert.equal(sources.size, 0);
+  });
+
+  it("returns the same set when nothing changes, so React can skip the re-render", () => {
+    const sources = new Set(["contact"]);
+    assert.equal(nextDirtySources(sources, "contact", true), sources);
+    assert.equal(nextDirtySources(sources, "announcement", false), sources);
+  });
+
+  it("never mutates the set it was given", () => {
+    const sources = new Set<string>();
+    nextDirtySources(sources, "contact", true);
+    assert.equal(sources.size, 0);
   });
 });

@@ -58,6 +58,8 @@ export async function POST(request: Request) {
       action: "create",
       entity: "blog_post",
       entityId: post.id,
+      // F-288: this row used to carry no metadata at all.
+      metadata: { title: post.title, slug: post.slug, status: post.status },
     });
 
     revalidateBlogCache();

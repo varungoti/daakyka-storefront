@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { createLoadGuard, debounce, normalizeSearchTerm } from "@/lib/admin/list-query";
+import { productRowLinks } from "@/lib/admin/product-links";
 
 interface ProductListItem {
   id: string;
@@ -228,6 +229,39 @@ export function ProductsTable({
     );
   }
 
+  // F-162: the editor link only exists for a role that can open the editor
+  // (see src/lib/admin/product-links.ts) — a view-only role used to get an
+  // "Edit" link on every row that just bounced to the dashboard.
+  function productName(item: ProductListItem) {
+    const { nameHref } = productRowLinks(item, canManage);
+    return nameHref ? (
+      <Link href={nameHref} className="font-semibold text-ink hover:underline">
+        {item.name}
+      </Link>
+    ) : (
+      <span className="font-semibold text-ink">{item.name}</span>
+    );
+  }
+
+  function productAction(item: ProductListItem) {
+    const { action } = productRowLinks(item, canManage);
+    if (!action) return null;
+    // F-065: below xl the card layout is what a phone sees — give the link a
+    // finger-sized target there; the dense desktop table keeps its text link.
+    const className = "text-xs font-semibold text-brand hover:underline max-xl:inline-flex max-xl:min-h-9 max-xl:items-center max-xl:px-3";
+    return action.external ? (
+      <a href={action.href} target="_blank" rel="noopener" className={className}>
+        {action.label}
+        <span className="sr-only"> {item.name} on the storefront (opens in a new tab)</span>
+      </a>
+    ) : (
+      <Link href={action.href} className={className}>
+        {action.label}
+        <span className="sr-only"> {item.name}</span>
+      </Link>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -239,9 +273,15 @@ export function ProductsTable({
             debouncedSetSearch(value);
           }}
           placeholder="Search by name, slug, or tag…"
+          aria-label="Search products"
           className="w-64 rounded-xl border border-border p-2 text-sm"
         />
-        <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="rounded-xl border border-border p-2 text-sm">
+        <select
+          value={categoryId}
+          onChange={(e) => setCategoryId(e.target.value)}
+          aria-label="Filter by category"
+          className="rounded-xl border border-border p-2 text-sm"
+        >
           <option value="">All categories</option>
           {categoryOptions.map((c) => (
             <option key={c.id} value={c.id}>
@@ -249,18 +289,33 @@ export function ProductsTable({
             </option>
           ))}
         </select>
-        <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-xl border border-border p-2 text-sm">
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          aria-label="Filter by status"
+          className="rounded-xl border border-border p-2 text-sm"
+        >
           <option value="">All statuses</option>
           <option value="DRAFT">Draft</option>
           <option value="ACTIVE">Active</option>
           <option value="ARCHIVED">Archived</option>
         </select>
-        <select value={stockFilter} onChange={(e) => setStockFilter(e.target.value)} className="rounded-xl border border-border p-2 text-sm">
+        <select
+          value={stockFilter}
+          onChange={(e) => setStockFilter(e.target.value)}
+          aria-label="Filter by stock"
+          className="rounded-xl border border-border p-2 text-sm"
+        >
           <option value="all">All stock</option>
           <option value="low">Low stock (&lt;10)</option>
           <option value="out">Out of stock</option>
         </select>
-        <select value={sort} onChange={(e) => setSort(e.target.value)} className="rounded-xl border border-border p-2 text-sm">
+        <select
+          value={sort}
+          onChange={(e) => setSort(e.target.value)}
+          aria-label="Sort products"
+          className="rounded-xl border border-border p-2 text-sm"
+        >
           <option value="updated-desc">Recently updated</option>
           <option value="name-asc">Name A–Z</option>
           <option value="name-desc">Name Z–A</option>
@@ -360,6 +415,7 @@ export function ProductsTable({
               if (!confirm(`Move ${selected.size} product${selected.size === 1 ? "" : "s"} to "${targetName}"?`)) return;
               runBulk("move-category", { categoryId: targetId }, (n) => `${n} product${n === 1 ? "" : "s"} moved to "${targetName}".`);
             }}
+            aria-label="Move selected products to category"
             className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold"
             defaultValue=""
           >
@@ -396,7 +452,12 @@ export function ProductsTable({
             <tr>
               {canManage && (
                 <th className="p-3">
-                  <input type="checkbox" checked={items.length > 0 && selected.size === items.length} onChange={toggleAll} />
+                  <input
+                    type="checkbox"
+                    checked={items.length > 0 && selected.size === items.length}
+                    onChange={toggleAll}
+                    aria-label="Select all products on this page"
+                  />
                 </th>
               )}
               <th className="p-3">Product</th>
@@ -405,7 +466,9 @@ export function ProductsTable({
               <th className="p-3">Stock</th>
               <th className="p-3">Status</th>
               <th className="p-3">Listing</th>
-              <th className="p-3" />
+              <th className="p-3">
+                <span className="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -426,7 +489,12 @@ export function ProductsTable({
                 <tr key={item.id} className="border-t border-border">
                   {canManage && (
                     <td className="p-3">
-                      <input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelected(item.id)} />
+                      <input
+                        type="checkbox"
+                        checked={selected.has(item.id)}
+                        onChange={() => toggleSelected(item.id)}
+                        aria-label={`Select ${item.name}`}
+                      />
                     </td>
                   )}
                   <td className="p-3">
@@ -435,9 +503,7 @@ export function ProductsTable({
                         {item.thumbnailUrl ? <Image src={item.thumbnailUrl} alt={item.name} fill className="object-cover" sizes="48px" /> : null}
                       </div>
                       <div>
-                        <Link href={`/admin/products/${item.id}`} className="font-semibold text-ink hover:underline">
-                          {item.name}
-                        </Link>
+                        {productName(item)}
                         {item.hasAiImage ? <span className="ml-2 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-semibold text-brand">AI image</span> : null}
                       </div>
                     </div>
@@ -465,11 +531,7 @@ export function ProductsTable({
                     </span>
                   </td>
                   <td className="p-3">{listingControl(item)}</td>
-                  <td className="p-3 text-right">
-                    <Link href={`/admin/products/${item.id}`} className="text-xs font-semibold text-brand hover:underline">
-                      Edit
-                    </Link>
-                  </td>
+                  <td className="p-3 text-right">{productAction(item)}</td>
                 </tr>
               ))
             )}
@@ -496,16 +558,14 @@ export function ProductsTable({
                     checked={selected.has(item.id)}
                     onChange={() => toggleSelected(item.id)}
                     aria-label={`Select ${item.name}`}
-                    className="mt-2 shrink-0"
+                    className="mt-2 h-5 w-5 shrink-0"
                   />
                 )}
                 <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-border bg-lavender/40">
                   {item.thumbnailUrl ? <Image src={item.thumbnailUrl} alt={item.name} fill className="object-cover" sizes="56px" /> : null}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <Link href={`/admin/products/${item.id}`} className="font-semibold text-ink hover:underline">
-                    {item.name}
-                  </Link>
+                  {productName(item)}
                   {item.hasAiImage ? <span className="ml-2 rounded-full bg-brand/10 px-2 py-0.5 text-[10px] font-semibold text-brand">AI image</span> : null}
                   <p className="text-xs text-muted">{item.categoryName}</p>
                 </div>
@@ -539,9 +599,7 @@ export function ProductsTable({
               </dl>
               <div className="mt-3 flex items-center justify-between gap-3">
                 {listingControl(item)}
-                <Link href={`/admin/products/${item.id}`} className="text-xs font-semibold text-brand hover:underline">
-                  Edit
-                </Link>
+                {productAction(item)}
               </div>
             </div>
           ))

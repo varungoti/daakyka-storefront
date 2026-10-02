@@ -2,6 +2,9 @@ import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Market" };
 
 export default async function AdminMarketPage() {
   const session = await getSession();
@@ -23,19 +26,25 @@ export default async function AdminMarketPage() {
     <div className="space-y-8">
       <div>
         <h1 className="font-display text-3xl font-bold text-ink">Market Intelligence</h1>
-        <p className="text-muted">
-          Competitor observations and category trends — expand with Hermes weekly scans.
-        </p>
+        <p className="text-muted">Competitor notes and category observations.</p>
       </div>
 
+      {/* F-218: nothing in src writes MarketSnapshot — these rows are sample
+          notes loaded by the seed script, so say so instead of presenting them
+          as live competitor tracking. */}
+      <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <strong>Sample data — not connected.</strong> These notes were added by hand and are not updated
+        automatically. Do not treat them as current competitor prices or trends.
+      </p>
+
       <div className="grid gap-4 md:grid-cols-3">
-        <StatCard label="Snapshots" value={String(snapshots.length)} />
-        <StatCard label="Competitors Tracked" value={String(Object.keys(byCompetitor).length)} />
-        <StatCard label="Latest Capture" value={snapshots[0]?.capturedAt.toLocaleDateString("en-IN") ?? "—"} />
+        <StatCard label="Notes" value={String(snapshots.length)} />
+        <StatCard label="Competitors Listed" value={String(Object.keys(byCompetitor).length)} />
+        <StatCard label="Latest Note" value={snapshots[0]?.capturedAt.toLocaleDateString("en-IN") ?? "—"} />
       </div>
 
       <section className="rounded-3xl border border-border bg-surface p-6">
-        <h2 className="font-display text-xl font-bold text-ink">Recent Observations</h2>
+        <h2 className="font-display text-xl font-bold text-ink">Sample Observations</h2>
         <ul className="mt-4 space-y-4">
           {snapshots.map((snap) => (
             <li key={snap.id} className="rounded-2xl border border-border px-4 py-4">
@@ -50,7 +59,7 @@ export default async function AdminMarketPage() {
             </li>
           ))}
           {snapshots.length === 0 && (
-            <p className="text-sm text-muted">No market snapshots yet. Run seed to load samples.</p>
+            <p className="text-sm text-muted">No market notes have been added yet.</p>
           )}
         </ul>
       </section>

@@ -1,11 +1,24 @@
 import type { Product } from "@/lib/types";
 
+/**
+ * F-218: these are rule-of-thumb suggestions computed from each product's
+ * rating, badge and review count — NOT from sales or traffic. The admin
+ * Intelligence page says so, and the labels below avoid implying otherwise
+ * (a "best seller" here only ever meant "featured or highly rated").
+ */
 export type InsightCategory =
-  | "best_seller"
+  | "top_rated"
   | "high_rating"
-  | "bundle_candidate"
   | "seo_opportunity"
   | "promotion_candidate";
+
+/** Owner-facing labels for the categories above. */
+export const INSIGHT_LABELS: Record<InsightCategory, string> = {
+  top_rated: "Featured / top rated",
+  high_rating: "Strong reviews",
+  seo_opportunity: "Needs reviews",
+  promotion_candidate: "New arrival",
+};
 
 export interface ProductInsight {
   handle: string;
@@ -24,7 +37,7 @@ export function buildProductInsights(products: Product[]): ProductInsight[] {
       insights.push({
         handle: product.handle,
         name: product.name,
-        category: "best_seller",
+        category: "top_rated",
         score: product.rating * 20,
         metric: `${product.rating}★ · ${product.reviewCount} reviews`,
         recommendation: "Feature in homepage carousel and email campaigns.",
@@ -39,17 +52,6 @@ export function buildProductInsights(products: Product[]): ProductInsight[] {
         score: product.rating * 15,
         metric: "Strong social proof",
         recommendation: "Use in testimonial-led WhatsApp nudges.",
-      });
-    }
-
-    if (product.category === "tops" || product.category === "bottoms") {
-      insights.push({
-        handle: product.handle,
-        name: product.name,
-        category: "bundle_candidate",
-        score: 72,
-        metric: "Mix & match eligible",
-        recommendation: "Bundle with complementary top/bottom in offer engine.",
       });
     }
 
@@ -82,8 +84,9 @@ export function buildProductInsights(products: Product[]): ProductInsight[] {
 export function summarizeInsights(insights: ProductInsight[]) {
   return {
     total: insights.length,
-    bestSellers: insights.filter((i) => i.category === "best_seller").length,
-    bundles: insights.filter((i) => i.category === "bundle_candidate").length,
+    topRated: insights.filter((i) => i.category === "top_rated").length,
+    // Products with few reviews. Kept under the old `seoGaps` name because
+    // the weekly report and reputation summary already read it.
     seoGaps: insights.filter((i) => i.category === "seo_opportunity").length,
     promotions: insights.filter((i) => i.category === "promotion_candidate").length,
   };

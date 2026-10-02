@@ -1,5 +1,3 @@
-import type { Product } from "@/lib/types";
-
 /**
  * release-hardening audit F-082: both the header's predictive search
  * dialog and /shop?q= used to do a single whole-string `contains` test
@@ -54,7 +52,24 @@ function tokenize(text: string): string[] {
   return normalize(text).split(" ").filter(Boolean).map(stem);
 }
 
-function searchableFields(product: Product): string[] {
+/**
+ * The fields matchProducts ranks on — a structural subset of `Product`, so
+ * the header dialog can search the slim index it downloads (F-013, see
+ * src/lib/products/public-search-product.ts) as well as full products.
+ */
+export interface SearchableProduct {
+  name: string;
+  colorName: string;
+  categoryName?: string;
+  categorySlug?: string;
+  category?: string;
+  section?: string;
+  tags?: readonly string[];
+  colors: readonly { name: string }[];
+  fabricTech: readonly string[];
+}
+
+function searchableFields(product: SearchableProduct): string[] {
   return [
     product.name,
     product.colorName,
@@ -70,13 +85,13 @@ function searchableFields(product: Product): string[] {
 }
 
 interface Indexed {
-  product: Product;
+  product: SearchableProduct;
   nameWords: string[];
   otherWords: string[];
   compactHaystack: string;
 }
 
-function indexProduct(product: Product): Indexed {
+function indexProduct(product: SearchableProduct): Indexed {
   const nameWords = tokenize(product.name);
   const otherFields = searchableFields(product).slice(1); // name is index 0
   const otherWords = otherFields.flatMap(tokenize);
@@ -93,12 +108,12 @@ function indexProduct(product: Product): Indexed {
  * behaviour (e.g. the dialog's default first-N-products list) rather than
  * this module guessing what that should be.
  */
-export function matchProducts(products: Product[], query: string): Product[] {
+export function matchProducts<T extends SearchableProduct>(products: readonly T[], query: string): T[] {
   const tokens = tokenize(query);
   const compactQuery = normalize(query).replace(/ /g, "");
   if (tokens.length === 0) return [];
 
-  const scored: { product: Product; score: number }[] = [];
+  const scored: { product: T; score: number }[] = [];
 
   for (const product of products) {
     const { nameWords, otherWords, compactHaystack } = indexProduct(product);

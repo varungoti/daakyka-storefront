@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { revalidateTag } from "next/cache";
+import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
 import { db } from "@/lib/db";
 import type { MediaAsset, MediaSource, MediaUsage } from "@/generated/prisma/client";
 import { MEDIA_CACHE_TAG } from "@/lib/media/get-site-image";
 import { processImage } from "@/lib/media/process-image";
+import { cdnCacheTagForKey } from "@/lib/storage/cdn-key";
 import {
   deleteObject,
   isR2Configured,
@@ -157,10 +159,11 @@ export async function saveMediaAsset(
 
   if (input.slot) {
     try {
-      // "max": the recommended profile (see next/cache's revalidateTag
-      // docs) — stale-while-revalidate, matching the settings module's
-      // SETTINGS_CACHE_TAG invalidation in src/lib/settings/index.ts.
-      revalidateTag(MEDIA_CACHE_TAG, "max");
+      // F-214: immediate ({ expire: 0 }), not the stale-while-revalidate "max" —
+      // a site image the owner just uploaded must show on their next reload,
+      // not one reload later. Same profile as the settings module's
+      // SETTINGS_CACHE_TAG invalidation (src/lib/settings/index.ts).
+      revalidateTag(MEDIA_CACHE_TAG, ADMIN_REVALIDATE_PROFILE);
     } catch {
       // No static generation store in this context (unit tests, scripts,
       // the fake-storage integration tests) — nothing to revalidate.
@@ -248,6 +251,24 @@ async function isReferencedByNonRejectedReview(assetId: string): Promise<boolean
 }
 
 /**
+ * F-362: best-effort purge of one object's cached copy at Vercel's CDN, via
+ * the per-object tag /cdn responses carry (see src/app/cdn/[...key]/route.ts).
+ * `{ expire: 0 }`: stale content must never be served for a deleted
+ * object, so the next request is a blocking revalidate (-> 404). Only a
+ * best-effort accelerator — /cdn's short `max-age` is what actually bounds
+ * how long a deleted object keeps being served — so, like every other
+ * revalidateTag call here, a context with no cache store (scripts, unit
+ * tests) just skips it.
+ */
+function purgeCdnCopy(key: string): void {
+  try {
+    revalidateTag(cdnCacheTagForKey(key), { expire: 0 });
+  } catch {
+    // No static generation store in this context — nothing to purge.
+  }
+}
+
+/**
  * Deletes a `MediaAsset` that nothing references yet (R2 object + DB row).
  *
  * This exists for the F-04 single-pass product creation flow (see
@@ -268,9 +289,10 @@ async function isReferencedByNonRejectedReview(assetId: string): Promise<boolean
  * detach flow or the Site Images grid's replace-only-never-delete model:
  *  - already attached to a product (has a `ProductImage` row) — use
  *    `DELETE /api/admin/products/[id]/images/[imageId]` instead, which
- *    intentionally *keeps* the `MediaAsset` row (see `removeProductImage`
- *    above) so a detached-but-still-uploaded photo can be re-attached
- *    elsewhere; this function is only for a photo nothing has ever used.
+ *    detaches the photo and then (F-362, `removeProductImage`) reclaims the
+ *    `MediaAsset` through `reclaimMediaAssetIfUnused` below once no product
+ *    or other surface uses it any more; this function is only for a photo
+ *    nothing has ever used.
  *  - a manifest slot (`slot` is set) or a category's image — both are only
  *    ever replaced (re-upload/regenerate), never deleted, by design.
  *  - a manifest slot is now freed rather than deleted by `saveMediaAsset`
@@ -310,4 +332,35 @@ export async function deleteUnattachedMediaAsset(
   }
 
   await db.mediaAsset.delete({ where: { id: asset.id } });
+  purgeCdnCopy(asset.key);
+}
+
+/**
+ * Best-effort "reclaim this asset if nothing needs it any more" — the
+ * caller for flows that *detach* or *discard* media as a side effect of
+ * something else (a rejected review's photos, a removed product photo, a
+ * deleted product's gallery — F-362) rather than an admin explicitly asking
+ * to delete one. Goes through `deleteUnattachedMediaAsset`, so every guard
+ * there still applies; the three "still needed / already gone" outcomes
+ * resolve to `false` instead of throwing, because none of them should fail
+ * the action that triggered this. Any other error (a DB failure) still
+ * propagates. Resolves `true` only when the asset was actually deleted.
+ */
+export async function reclaimMediaAssetIfUnused(
+  id: string,
+  storage: StorageDeps = defaultStorageDeps,
+): Promise<boolean> {
+  try {
+    await deleteUnattachedMediaAsset(id, storage);
+    return true;
+  } catch (error) {
+    if (
+      error instanceof MediaAssetNotFoundError ||
+      error instanceof MediaAssetInUseError ||
+      error instanceof MediaAssetAttachedError
+    ) {
+      return false;
+    }
+    throw error;
+  }
 }

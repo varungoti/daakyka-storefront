@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authorizeCron } from "@/lib/cron/authorize";
-import { claimCronRun, intervalRunKey } from "@/lib/cron/idempotency";
+import { intervalRunKey, runWithCronClaim } from "@/lib/cron/idempotency";
 import { processDueScheduledCampaigns } from "@/lib/engagement/campaign-dispatcher";
 
 // F-279 fix: runs every 15 minutes per vercel.json ("*/15 * * * *") — a
@@ -18,13 +18,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { claimed } = await claimCronRun("campaigns", intervalRunKey(15));
-  if (!claimed) {
+  // F-277: a run that throws gives its claim back (see runWithCronClaim),
+  // so the next 15-minute tick or a manual re-run isn't told "alreadyRan".
+  const outcome = await runWithCronClaim("campaigns", intervalRunKey(15), () => processDueScheduledCampaigns());
+  if (!outcome.claimed) {
     return NextResponse.json({ ok: true, alreadyRan: true, processed: 0, results: [] });
   }
 
-  const result = await processDueScheduledCampaigns();
-  return NextResponse.json({ ok: true, ...result });
+  return NextResponse.json({ ok: true, ...outcome.result });
 }
 
 export async function GET(request: Request) {

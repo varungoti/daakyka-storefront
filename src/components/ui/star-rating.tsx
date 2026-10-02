@@ -6,6 +6,16 @@ interface StarRatingProps {
   reviewCount?: number;
   size?: "sm" | "md";
   className?: string;
+  /** For cards only ~140px wide (the 2-column phone listing grid): below
+   * `sm` the row of five stars becomes one star followed by the number and
+   * the review count, in smaller type — about 75px instead of about 135px,
+   * which is wider than the whole content area of a phone-width card. From
+   * `sm` up it is the normal row of five. */
+  condenseOnPhone?: boolean;
+  /** Print the numeric rating next to the stars (the default). The PDP's
+   * review summary already shows the average in large type beside the stars,
+   * so it turns this off rather than printing the same number twice (F-114). */
+  showValue?: boolean;
 }
 
 export function StarRating({
@@ -13,12 +23,14 @@ export function StarRating({
   reviewCount,
   size = "sm",
   className,
+  condenseOnPhone = false,
+  showValue = true,
 }: StarRatingProps) {
   const iconSize = size === "sm" ? 14 : 18;
 
   return (
     <div className={cn("flex items-center gap-1.5", className)}>
-      <div className="flex items-center gap-0.5">
+      <div className={cn("flex items-center gap-0.5", condenseOnPhone && "max-sm:hidden")}>
         {Array.from({ length: 5 }).map((_, index) => (
           <Star
             key={index}
@@ -31,9 +43,14 @@ export function StarRating({
           />
         ))}
       </div>
-      <span className="text-sm font-medium text-ink">{rating.toFixed(1)}</span>
+      {condenseOnPhone && <Star size={iconSize} className="fill-amber-400 text-amber-400 sm:hidden" />}
+      {showValue && (
+        <span className={cn("text-sm font-medium text-ink", condenseOnPhone && "max-sm:text-xs")}>
+          {rating.toFixed(1)}
+        </span>
+      )}
       {reviewCount !== undefined && (
-        <span className="text-sm text-muted">({reviewCount})</span>
+        <span className={cn("text-sm text-muted", condenseOnPhone && "max-sm:text-xs")}>({reviewCount})</span>
       )}
     </div>
   );

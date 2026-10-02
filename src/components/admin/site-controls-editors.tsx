@@ -4,6 +4,9 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type { SettingKey } from "@/lib/settings";
 import { FormErrorBanner } from "@/components/admin/form-error-banner";
+import { useUnsavedChangesGuard } from "@/components/admin/unsaved-changes";
+import { isDirty } from "@/lib/admin/is-dirty";
+import { checkShippingInput } from "@/lib/admin/shipping-input";
 import { formatApiError } from "@/lib/validation/format-api-error";
 
 interface SaveSettingResult {
@@ -25,14 +28,21 @@ interface SaveSettingResult {
 }
 
 async function saveSetting(key: SettingKey, value: unknown, updatedAt?: Date | null): Promise<SaveSettingResult> {
-  const response = await fetch(`/api/admin/settings/${key}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    // F-343: send back the `updatedAt` this editor last loaded/saved so a
-    // save that's gone stale in the meantime (someone else saved this same
-    // key first) is rejected with 409 instead of silently winning.
-    body: JSON.stringify({ value, updatedAt: updatedAt ? updatedAt.toISOString() : undefined }),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`/api/admin/settings/${key}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      // F-343: send back the `updatedAt` this editor last loaded/saved so a
+      // save that's gone stale in the meantime (someone else saved this same
+      // key first) is rejected with 409 instead of silently winning.
+      body: JSON.stringify({ value, updatedAt: updatedAt ? updatedAt.toISOString() : undefined }),
+    });
+  } catch {
+    // F-170: a network failure used to reject out of the editor's submit
+    // handler, leaving the Save button stuck on "Saving…".
+    return { ok: false, error: "Couldn't save — check your connection and try again." };
+  }
   const body = await response.json().catch(() => ({}));
   if (response.ok) return { ok: true, updatedAt: body.updatedAt ?? null };
   if (response.status === 409) {
@@ -82,6 +92,10 @@ export function AnnouncementEditor({
 }) {
   const router = useRouter();
   const [messages, setMessages] = useState(initialMessages.join("\n"));
+  // F-170: what's currently saved, to tell an untouched textarea from an
+  // edited one — see useUnsavedChangesGuard below.
+  const [baseline, setBaseline] = useState(messages);
+  useUnsavedChangesGuard(isDirty(messages, baseline));
   const [savedAt, setSavedAt] = useState(updatedAt);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -100,6 +114,10 @@ export function AnnouncementEditor({
     if (result.ok) {
       setSaved(true);
       setSavedAt(result.updatedAt ? new Date(result.updatedAt) : null);
+      // What was actually saved is the trimmed, blank-line-free list.
+      const savedText = value.join("\n");
+      setMessages(savedText);
+      setBaseline(savedText);
       router.refresh();
     } else if (result.stale) {
       // F-343: someone else saved this key first — don't let this save
@@ -109,15 +127,22 @@ export function AnnouncementEditor({
       // the admin just typed is lost.
       setErrorMessage(result.error ?? "Changed by someone else — reload the page and try again.");
     } else {
-      setErrorMessage(result.error ?? "Couldn't save — check each line isn't empty or too long.");
+      setErrorMessage(result.error ?? "Couldn't save — check no line is too long (200 characters max, 10 lines).");
     }
   };
 
   return (
     <form onSubmit={onSubmit} className="rounded-2xl border border-border bg-surface p-4">
-      <p className="text-sm font-semibold text-ink">Announcement bar messages</p>
-      <p className="mt-1 text-xs text-muted">One message per line.</p>
+      <label htmlFor="announcement-messages" className="block text-sm font-semibold text-ink">
+        Announcement bar messages
+      </label>
+      <p id="announcement-messages-hint" className="mt-1 text-xs text-muted">
+        One message per line, up to 10. Leave it empty to hide the announcement messages — the phone, WhatsApp and
+        Bulk Order buttons stay in the top bar.
+      </p>
       <textarea
+        id="announcement-messages"
+        aria-describedby="announcement-messages-hint"
         className="mt-3 w-full rounded-xl border border-border bg-surface-muted p-3 text-sm text-ink"
         rows={4}
         value={messages}
@@ -150,6 +175,8 @@ export function ContactEditor({
 }) {
   const router = useRouter();
   const [values, setValues] = useState(initial);
+  const [baseline, setBaseline] = useState(initial);
+  useUnsavedChangesGuard(isDirty(values, baseline));
   const [savedAt, setSavedAt] = useState<ContactSettingUpdatedAt>(
     updatedAt ?? { phone: null, whatsapp: null, email: null, address: null },
   );
@@ -186,6 +213,7 @@ export function ContactEditor({
     const failed = [phone, whatsapp, email, address].find((r) => !r.ok);
     if (!failed) {
       setSaved(true);
+      setBaseline(values);
       router.refresh();
     } else if (failed.stale) {
       setErrorMessage(failed.error ?? "Changed by someone else — reload the page and try again.");
@@ -216,6 +244,7 @@ export function ContactEditor({
         />
         <Field
           label="Email"
+          hint="Also the address new-order alerts are sent to."
           value={values.email}
           onChange={(v) => {
             setValues((s) => ({ ...s, email: v }));
@@ -269,6 +298,8 @@ export function LegalComplianceEditor({
 }) {
   const router = useRouter();
   const [values, setValues] = useState(initial);
+  const [baseline, setBaseline] = useState(initial);
+  useUnsavedChangesGuard(isDirty(values, baseline));
   const [savedAt, setSavedAt] = useState<LegalSettingUpdatedAt>(
     updatedAt ?? {
       grievanceName: null,
@@ -312,6 +343,7 @@ export function LegalComplianceEditor({
     const failed = Object.values(results).find((r) => !r.ok);
     if (!failed) {
       setSaved(true);
+      setBaseline(values);
       router.refresh();
     } else if (failed.stale) {
       setErrorMessage(failed.error ?? "Changed by someone else — reload the page and try again.");
@@ -408,7 +440,13 @@ export function ShippingEditor({
   updatedAt?: ShippingSettingUpdatedAt;
 }) {
   const router = useRouter();
-  const [values, setValues] = useState(initial);
+  // F-165: keep what the admin typed as text. Coercing on every keystroke
+  // (`Number(v) || 0`) turned a cleared field into a silent "0" — and a saved
+  // 0 makes shipping free on every order. Parsed and checked on Save instead.
+  const initialText = { flatRate: String(initial.flatRate), freeAbove: String(initial.freeAbove) };
+  const [values, setValues] = useState(initialText);
+  const [baseline, setBaseline] = useState(initialText);
+  useUnsavedChangesGuard(isDirty(values, baseline));
   const [savedAt, setSavedAt] = useState<ShippingSettingUpdatedAt>(
     updatedAt ?? { flatRate: null, freeAbove: null },
   );
@@ -418,11 +456,20 @@ export function ShippingEditor({
 
   const onSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    setSaving(true);
     setErrorMessage(null);
+    // Validate both amounts before sending either — they save as two
+    // separate settings, so one must never go through while the other is
+    // rejected.
+    const checked = checkShippingInput(values);
+    if (!checked.ok) {
+      setErrorMessage(checked.error);
+      return;
+    }
+    if (checked.confirmMessage && !window.confirm(checked.confirmMessage)) return;
+    setSaving(true);
     const [flatRate, freeAbove] = await Promise.all([
-      saveSetting("shipping.flatRate", values.flatRate, savedAt.flatRate),
-      saveSetting("shipping.freeAbove", values.freeAbove, savedAt.freeAbove),
+      saveSetting("shipping.flatRate", checked.flatRate, savedAt.flatRate),
+      saveSetting("shipping.freeAbove", checked.freeAbove, savedAt.freeAbove),
     ]);
     const results = { flatRate, freeAbove };
     setSaving(false);
@@ -433,6 +480,7 @@ export function ShippingEditor({
     const failed = [flatRate, freeAbove].find((r) => !r.ok);
     if (!failed) {
       setSaved(true);
+      setBaseline(values);
       router.refresh();
     } else if (failed.stale) {
       setErrorMessage(failed.error ?? "Changed by someone else — reload the page and try again.");
@@ -448,18 +496,22 @@ export function ShippingEditor({
         <Field
           label="Flat rate (₹)"
           type="number"
-          value={String(values.flatRate)}
+          inputMode="decimal"
+          min={0}
+          value={values.flatRate}
           onChange={(v) => {
-            setValues((s) => ({ ...s, flatRate: Number(v) || 0 }));
+            setValues((s) => ({ ...s, flatRate: v }));
             setSaved(false);
           }}
         />
         <Field
           label="Free shipping above (₹)"
           type="number"
-          value={String(values.freeAbove)}
+          inputMode="decimal"
+          min={0}
+          value={values.freeAbove}
           onChange={(v) => {
-            setValues((s) => ({ ...s, freeAbove: Number(v) || 0 }));
+            setValues((s) => ({ ...s, freeAbove: v }));
             setSaved(false);
           }}
         />
@@ -479,21 +531,30 @@ function Field({
   value,
   onChange,
   type = "text",
+  hint,
+  inputMode,
+  min,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
+  hint?: string;
+  inputMode?: "decimal" | "numeric";
+  min?: number;
 }) {
   return (
     <label className="block text-xs font-semibold text-muted">
       {label}
       <input
         type={type}
+        inputMode={inputMode}
+        min={min}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className="mt-1 w-full rounded-xl border border-border bg-surface-muted p-2.5 text-sm text-ink"
       />
+      {hint ? <span className="mt-1 block text-[11px] font-normal text-muted">{hint}</span> : null}
     </label>
   );
 }

@@ -7,14 +7,16 @@ import {
   type BottomStyle,
   type TopStyle,
 } from "@/data/mix-match";
+import { useWishlistProducts } from "@/context/wishlist-products";
 import { useWishlist } from "@/context/wishlist-provider";
+import type { WishlistProduct } from "@/lib/wishlist/live-products";
 import type { Product } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Heart, Shirt } from "lucide-react";
 import Image from "next/image";
 
 interface MixMatchFavoritesPanelProps {
-  onApplyProduct: (product: Product) => void;
+  onApplyProduct: (product: WishlistProduct) => void;
   activeTopHandle?: string;
   activeBottomHandle?: string;
 }
@@ -25,6 +27,10 @@ export function MixMatchFavoritesPanel({
   activeBottomHandle,
 }: MixMatchFavoritesPanelProps) {
   const { items, openWishlist } = useWishlist();
+  // F-113: the wishlist keeps only ids and handles; the studio needs each
+  // favourite's name, photo and category, read live. A favourite the catalogue
+  // can't describe (still loading, or gone) is left out of the list.
+  const { rows } = useWishlistProducts();
 
   if (items.length === 0) {
     return (
@@ -58,7 +64,7 @@ export function MixMatchFavoritesPanel({
       </div>
 
       <div className="mt-4 max-h-[320px] space-y-2 overflow-y-auto pr-1">
-        {items.map((product) => {
+        {rows.flatMap(({ product }) => (product ? [product] : [])).map((product) => {
           const isActive =
             product.handle === activeTopHandle || product.handle === activeBottomHandle;
           return (
@@ -97,7 +103,7 @@ export function MixMatchFavoritesPanel({
 }
 
 export function applyFavoriteToConfig(
-  product: Product,
+  product: Pick<Product, "handle" | "category">,
 ): { topStyle?: TopStyle; bottomStyle?: BottomStyle } {
   const topMatch = topStyleOptions.find((option) => option.productHandle === product.handle);
   const bottomMatch = bottomStyleOptions.find((option) => option.productHandle === product.handle);

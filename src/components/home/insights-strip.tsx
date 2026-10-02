@@ -77,43 +77,47 @@ export async function InsightsStrip({
           </div>
         </article>
 
-        <article className="hover:border-brand hover:shadow-sm transition-colors rounded-[2rem] border border-border bg-surface p-6">
-          <p className="text-xs font-bold uppercase tracking-wide text-brand">From Our Journal</p>
-          <h3 className="mt-2 font-display text-xl font-bold text-ink">Latest From The Blog</h3>
-          <ul className="mt-5 space-y-4">
-            {posts.map((post) => (
-              <li key={post.slug}>
-                <Link
-                  href={`/blog/${post.slug}`}
-                  className="group flex gap-3 rounded-xl p-2 transition hover:bg-lilac/40"
-                >
-                  <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg">
-                    <Image src={post.image} alt="" fill className="object-cover" sizes="56px" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-ink group-hover:text-brand">
-                      {post.title}
-                    </p>
-                    <p className="text-xs text-muted">
-                      {new Date(post.publishedAt).toLocaleDateString("en-IN", {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                      })}
-                    </p>
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
-          <Link
-            href="/blog"
-            className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-brand hover:underline"
-          >
-            View All Articles
-            <ArrowRight size={14} />
-          </Link>
-        </article>
+        {/* F-051: no published posts (the journal is database-only now) means
+            no card, not a "Latest From The Blog" heading over an empty list. */}
+        {posts.length > 0 && (
+          <article className="hover:border-brand hover:shadow-sm transition-colors rounded-[2rem] border border-border bg-surface p-6">
+            <p className="text-xs font-bold uppercase tracking-wide text-brand">From Our Journal</p>
+            <h3 className="mt-2 font-display text-xl font-bold text-ink">Latest From The Blog</h3>
+            <ul className="mt-5 space-y-4">
+              {posts.map((post) => (
+                <li key={post.slug}>
+                  <Link
+                    href={`/blog/${post.slug}`}
+                    className="group flex gap-3 rounded-xl p-2 transition hover:bg-lilac/40"
+                  >
+                    <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg">
+                      <Image src={post.image} alt="" fill className="object-cover" sizes="56px" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-ink group-hover:text-brand">
+                        {post.title}
+                      </p>
+                      <p className="text-xs text-muted">
+                        {new Date(post.publishedAt).toLocaleDateString("en-IN", {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        })}
+                      </p>
+                    </div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+            <Link
+              href="/blog"
+              className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-brand hover:underline"
+            >
+              View All Articles
+              <ArrowRight size={14} />
+            </Link>
+          </article>
+        )}
       </div>
     </section>
   );

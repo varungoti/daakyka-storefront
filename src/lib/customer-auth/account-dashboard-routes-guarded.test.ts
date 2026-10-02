@@ -43,7 +43,17 @@ describe("/account/(dashboard) page routes are guarded consistently (release-har
       /if\s*\(\s*!session\s*\)\s*\{[\s\S]{0,1000}?redirect\(/,
       "the dashboard layout must redirect when there is no session",
     );
-    assert.match(contents, /redirect\(\s*["'`]\/account\/login/, "should redirect to /account/login, not somewhere unguarded");
+    // F-131: through accountLoginPath(), which builds /account/login?returnTo=<encoded path>.
+    assert.match(
+      contents,
+      /redirect\(\s*accountLoginPath\(/,
+      "should redirect to /account/login (via accountLoginPath), not somewhere unguarded",
+    );
+    assert.match(
+      contents,
+      /accountLoginPath\(\s*currentPath \|\| "\/account"\s*\)/,
+      "must send the visitor back to the page the proxy recorded in x-pathname",
+    );
   });
 
   const LEAF_PAGES = [
@@ -54,6 +64,16 @@ describe("/account/(dashboard) page routes are guarded consistently (release-har
     "wishlist/page.tsx",
     "profile/page.tsx",
   ];
+
+  // Where each leaf's own sign-in redirect must send the visitor back to.
+  const RETURN_TO: Record<string, string> = {
+    "orders/page.tsx": "/account/orders",
+    "orders/[number]/page.tsx": "/account/orders/",
+    "addresses/page.tsx": "/account/addresses",
+    "reviews/page.tsx": "/account/reviews",
+    "wishlist/page.tsx": "/account/wishlist",
+    "profile/page.tsx": "/account/profile",
+  };
 
   it("every real account section has its own route file", () => {
     for (const relative of LEAF_PAGES) {
@@ -73,9 +93,17 @@ describe("/account/(dashboard) page routes are guarded consistently (release-har
       );
       assert.match(
         contents,
-        /redirect\(\s*["'`]\/account\/login/,
-        `${relative} should defensively redirect to /account/login if somehow reached with no session`,
+        /redirect\(\s*accountLoginPath\(/,
+        `${relative} should defensively redirect to /account/login (via accountLoginPath) if somehow reached with no session`,
       );
+      // F-131: the defensive redirect carries this page's own path as returnTo (the
+      // order detail page its order number, the list its ?page=) — never the bare
+      // /account the layout used to hard-code.
+      assert.ok(
+        contents.includes(`"${RETURN_TO[relative]}`) || contents.includes(`\`${RETURN_TO[relative]}`),
+        `${relative} must return the visitor to ${RETURN_TO[relative]}`,
+      );
+      assert.ok(!/returnTo=\/account["'`]/.test(contents), `${relative} must not hard-code returnTo=/account`);
     });
   }
 
@@ -122,5 +150,62 @@ describe("/account/(dashboard) page routes are guarded consistently (release-har
       !existsSync(join(accountAppDir, "page.tsx")),
       "src/app/account/page.tsx must not exist outside the (dashboard) group — Next.js would treat that as a conflicting route with (dashboard)/page.tsx",
     );
+  });
+});
+
+/**
+ * F-328: printing an order used to give 2-3 pages of site chrome. The guest page
+ * (src/app/order/[number]/page.tsx) and the signed-in one share the receipt
+ * facts and print treatment; the helpers are unit-tested in
+ * src/lib/orders/receipt.test.ts, and the page markup (no DOM in this harness)
+ * is pinned here the same way the auth guards above are.
+ */
+describe("the signed-in order page prints as a receipt, like the guest page (F-328)", () => {
+  const dashboardDir = join(process.cwd(), "src", "app", "account", "(dashboard)");
+  const signedIn = readFileSync(join(dashboardDir, "orders", "[number]", "page.tsx"), "utf8");
+  const guest = readFileSync(join(process.cwd(), "src", "app", "order", "[number]", "page.tsx"), "utf8");
+
+  for (const [name, source] of [
+    ["signed-in", signedIn],
+    ["guest", guest],
+  ] as const) {
+    it(`the ${name} page offers Print receipt and states the order date and payment status`, () => {
+      assert.match(source, /<OrderPrintButton\s*\/>/);
+      assert.match(source, /formatReceiptDate\(order\.createdAt\)/);
+      assert.match(source, /getReceiptPaymentSummary\(/);
+      assert.match(source, /Placed \{placedDate\} · \{paymentSummary\}/);
+    });
+
+    it(`the ${name} page names the seller (legal name, address, GSTIN when set) and keeps its sections whole across a page break`, () => {
+      assert.match(source, /<h2[^>]*>Sold by<\/h2>/);
+      assert.match(source, /brand\.legalName/);
+      assert.match(source, /getSetting\("legal\.gstin"\)/);
+      assert.match(source, /getSetting\("contact\.address"\)/);
+      assert.ok((source.match(/print:break-inside-avoid/g) ?? []).length >= 4, "items, totals, shipping and seller blocks");
+    });
+
+    it(`the ${name} page leaves the transient status timeline and tracking card off the printed copy`, () => {
+      assert.match(source, /print:hidden[^\n]*>\s*\n\s*<h2[^>]*>Order status<\/h2>/);
+      assert.match(source, /print:hidden[^\n]*>\s*\n\s*<OrderTrackingCard/);
+    });
+  }
+
+  it("the account hero band and tab bar are hidden from print", () => {
+    const layout = readFileSync(join(dashboardDir, "layout.tsx"), "utf8");
+    assert.match(layout, /<div className="print:hidden">\s*<PageHeroBand/);
+    assert.match(layout, /<div className="print:hidden">\s*<AccountNav \/>/);
+  });
+
+  it("the signed-in page's back link and review / buy-again actions are hidden from print", () => {
+    assert.match(signedIn, /href="\/account\/orders"[^>]*print:hidden/);
+    assert.match(signedIn, /print:hidden">\s*\{canReview/);
+  });
+
+  it("the site chrome (utility bar, header, footer, WhatsApp bubble) is print:hidden in the shell", () => {
+    const shell = readFileSync(join(process.cwd(), "src", "components", "layout", "site-shell.tsx"), "utf8");
+    assert.ok((shell.match(/print:hidden/g) ?? []).length >= 4);
+    const button = readFileSync(join(process.cwd(), "src", "components", "account", "order-print-button.tsx"), "utf8");
+    assert.match(button, /window\.print\(\)/);
+    assert.match(button, /print:hidden/);
   });
 });

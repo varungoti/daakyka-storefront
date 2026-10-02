@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { db } from "@/lib/db";
 import {
   getHeroSlidesContent,
+  getHeroSlidesContentForAdmin,
   getTrustStatsContent,
   StaleHomepageSectionError,
   updateHomepageSection,
@@ -282,5 +283,53 @@ describe("PUT /api/admin/homepage/[key]", () => {
       params: Promise.resolve({ key: "not-a-real-section" }),
     });
     assert.ok([401, 403].includes(response.status), `expected 401 or 403, got ${response.status}`);
+  });
+});
+
+// F-370: a HomepageSection row written outside the validated PUT route (a
+// migration, manual SQL, an import script) used to reach the hero renderer
+// and the only admin editor as-is, crashing both. The read path now
+// validates against the same schema the write path uses.
+describe("malformed hero-slides row (F-370)", () => {
+  let original: { content: string; enabled: boolean } | null = null;
+  // The exact malformed fixture from the finding's live repro: valid JSON,
+  // but missing every required slide field (no primaryCta, headline, ...).
+  const malformed = JSON.stringify({ slides: [{ id: "audit-bad", enabled: true }], autoAdvanceMs: 6000 });
+
+  before(async () => {
+    const existing = await db.homepageSection.findUnique({ where: { key: "hero-slides" } });
+    if (existing) original = { content: existing.content, enabled: existing.enabled };
+  });
+
+  after(async () => {
+    if (original) {
+      await db.homepageSection.update({ where: { key: "hero-slides" }, data: original });
+    } else {
+      await db.homepageSection.delete({ where: { key: "hero-slides" } }).catch(() => {});
+    }
+  });
+
+  it("falls back to the safe default for both the editor and the storefront, and never writes the bad row back", async () => {
+    await db.homepageSection.upsert({
+      where: { key: "hero-slides" },
+      create: { key: "hero-slides", title: "Hero Slides", content: malformed, enabled: true },
+      update: { content: malformed, enabled: true },
+    });
+
+    // The admin editor gets an empty, valid slide list — it loads and can
+    // add or replace slides — instead of throwing on slide.primaryCta.label.
+    const forAdmin = await getHeroSlidesContentForAdmin();
+    assert.deepEqual(forAdmin.slides, []);
+
+    // The storefront never receives the broken slide: with no usable slide
+    // it shows the classic single hero (legacy fallback) instead.
+    const forStorefront = await getHeroSlidesContent();
+    assert.equal(forStorefront.slides.length, 1);
+    assert.notEqual(forStorefront.slides[0].id, "audit-bad");
+    assert.ok(forStorefront.slides[0].primaryCta.label.length > 0);
+
+    // Read-only: nothing was "repaired" and persisted behind the owner's back.
+    const stored = await db.homepageSection.findUniqueOrThrow({ where: { key: "hero-slides" } });
+    assert.equal(stored.content, malformed);
   });
 });

@@ -1,8 +1,9 @@
 import type { MetadataRoute } from "next";
+import { fabricTechPages } from "@/data/fabric-tech";
 import { collectionPages, seoLandingPages } from "@/data/seo-landing-pages";
 import { getPublishedBlogPosts } from "@/lib/blog";
 import { getCategoryTreeStrict, getProductsStrict } from "@/lib/products/index";
-import { SECTION_LANDING_PATH_BY_CATEGORY_SLUG } from "@/lib/seo/canonical";
+import { blogPostCanonicalPath, sectionLandingPath } from "@/lib/seo/canonical";
 import { siteUrlBase } from "@/lib/seo/json-ld";
 import { isPageEnabled, isSaleEnabled } from "@/lib/settings";
 
@@ -54,7 +55,12 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     "/kids-wear",
     ...(saleEnabled ? ["/sale"] : []),
     ...(mixMatchEnabled ? ["/mix-and-match"] : []),
-    ...(fabricTechEnabled ? ["/fabric-technology"] : []),
+    // release-hardening F-156: the detail pages used to be missing from the
+    // sitemap even with the hub enabled — they 404 while it's off, so they
+    // follow the same flag as the hub.
+    ...(fabricTechEnabled
+      ? ["/fabric-technology", ...fabricTechPages.map((page) => `/fabric-technology/${page.slug}`)]
+      : []),
     "/bulk-orders",
     "/our-story",
     "/about",
@@ -87,9 +93,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   // page, so submitting the /category/<slug> URL here as well would
   // contradict that canonical.
   const categoryNodes = flattenCategoryNodes(categoryTree).filter(
-    ({ slug }) => !(slug in SECTION_LANDING_PATH_BY_CATEGORY_SLUG),
+    ({ slug }) => sectionLandingPath(slug) === undefined,
   );
-  const posts = await getPublishedBlogPosts();
+  // release-hardening F-155: a post that canonicalizes to a same-slug guide
+  // isn't its own indexable URL — see blogPostCanonicalPath.
+  const posts = (await getPublishedBlogPosts()).filter(
+    (post) => blogPostCanonicalPath(post.slug) === `/blog/${post.slug}`,
+  );
   const products = await getProductsStrict();
 
   return [

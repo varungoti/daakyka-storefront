@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
-import { logAuditEvent } from "@/lib/auth/audit";
-import { db } from "@/lib/db";
+import { JourneyNotFoundError, updateJourneyStatus } from "@/lib/engagement/journeys";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { z } from "zod";
 
@@ -24,18 +23,14 @@ export async function PATCH(
     return NextResponse.json({ error: "Invalid status" }, { status: 400 });
   }
 
-  const journey = await db.customerJourney.update({
-    where: { id },
-    data: { status: parsed.data.status },
-  });
-
-  await logAuditEvent({
-    userId: session!.id,
-    action: "update_status",
-    entity: "customer_journey",
-    entityId: id,
-    metadata: { status: parsed.data.status },
-  });
-
-  return NextResponse.json(journey);
+  try {
+    const journey = await updateJourneyStatus(id, parsed.data.status, session!.id);
+    return NextResponse.json(journey);
+  } catch (err) {
+    // F-219: an unknown/deleted id used to crash with an unhandled 500.
+    if (err instanceof JourneyNotFoundError) {
+      return NextResponse.json({ error: "Journey not found" }, { status: 404 });
+    }
+    throw err;
+  }
 }

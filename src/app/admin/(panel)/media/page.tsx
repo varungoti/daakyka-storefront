@@ -8,6 +8,9 @@ import { getSession } from "@/lib/auth/session";
 import { getAllBlogPostsForAdmin } from "@/lib/blog";
 import { getSiteImages } from "@/lib/media/get-site-image";
 import { getCategoryTree, type CategoryTreeNode } from "@/lib/products";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Media Library" };
 
 function flattenCategories(nodes: CategoryTreeNode[]): CategoryTreeNode[] {
   return nodes.flatMap((node) => [node, ...flattenCategories(node.children)]);
@@ -72,7 +75,9 @@ export default async function AdminMediaPage() {
             component the product gallery's "Browse library" button opens. */}
         <MediaLibraryEntryPoint />
       </div>
-      <SiteImagesGrid rows={rows} />
+      {/* F-292: media:manage lets a role upload, but AI generation needs
+          ai:generate — CONTENT_EDITOR has the first and not the second. */}
+      <SiteImagesGrid rows={rows} canGenerate={hasPermission(session.role, "ai:generate")} />
     </div>
   );
 }

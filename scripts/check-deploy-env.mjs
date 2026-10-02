@@ -3,6 +3,7 @@
  * Usage: node scripts/check-deploy-env.mjs [--production]
  */
 import { createHash } from "node:crypto";
+import { databaseUrlSslModeIssue } from "./lib/deploy-checks.mjs";
 
 const isProduction = process.argv.includes("--production");
 
@@ -49,6 +50,7 @@ console.log(
 );
 
 const errors = [];
+const warnings = [];
 
 for (const key of required) {
   const value = process.env[key];
@@ -77,6 +79,24 @@ for (const key of required) {
     if (decodedLength !== 32) {
       errors.push("CREDENTIAL_ENCRYPTION_KEY must decode to exactly 32 bytes, as base64 or hex");
     }
+  }
+}
+
+// F-371: pg prints a SECURITY WARNING on every cold start for
+// sslmode=prefer/require/verify-ca, and pg v9 will give those weaker libpq
+// semantics. A warning, not an error: src/lib/env.ts only warns at boot for
+// the same reason, and the fix (editing the Vercel env var) is the owner's.
+if (isProduction) {
+  const sslIssue = databaseUrlSslModeIssue(process.env.DATABASE_URL);
+  if (sslIssue === "missing") {
+    warnings.push("DATABASE_URL has no sslmode - the database connection may be unencrypted. Add sslmode=verify-full.");
+  } else if (sslIssue === "legacy-alias") {
+    warnings.push(
+      "DATABASE_URL uses sslmode=prefer/require/verify-ca, which pg v9 will weaken to libpq semantics. " +
+        "Use sslmode=verify-full: on pg 8 it is exactly what require/prefer/verify-ca already do.",
+    );
+  } else if (sslIssue === "unverified") {
+    warnings.push("DATABASE_URL uses an sslmode that does not verify the server certificate. Use sslmode=verify-full.");
   }
 }
 
@@ -110,6 +130,14 @@ if (shopifyConfigured && !process.env.SHOPIFY_WEBHOOK_SECRET) {
 
 if (process.env.BREVO_API_KEY && !process.env.BREVO_FROM_EMAIL) {
   errors.push("BREVO_FROM_EMAIL required when BREVO_API_KEY is configured");
+}
+
+if (warnings.length > 0) {
+  console.warn("Deploy environment warnings (not blocking):\n");
+  for (const warning of warnings) {
+    console.warn(`  - ${warning}`);
+  }
+  console.warn("");
 }
 
 if (errors.length > 0) {

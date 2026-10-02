@@ -1,6 +1,7 @@
 import { revalidateTag } from "next/cache";
 import { z } from "zod";
 import { logAuditEvent } from "@/lib/auth/audit";
+import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
 import { db } from "@/lib/db";
 import { CATEGORIES_CACHE_TAG, PRODUCTS_CACHE_TAG } from "@/lib/products";
 import type { Category, CategorySection, Prisma } from "@/generated/prisma/client";
@@ -114,9 +115,10 @@ export class SizeChartRefNotFoundError extends Error {
   }
 }
 
+// F-032: immediate ({ expire: 0 }) — see src/lib/cache/admin-revalidate.ts.
 function safeRevalidate(tag: string) {
   try {
-    revalidateTag(tag, "max");
+    revalidateTag(tag, ADMIN_REVALIDATE_PROFILE);
   } catch {
     // No static generation store in this context (unit/integration tests,
     // one-off scripts) — nothing to revalidate. Matches the pattern in

@@ -1,5 +1,8 @@
 import { ChangePasswordForm } from "@/components/admin/change-password-form";
 import { requireAdminPage } from "@/lib/auth/require-admin-page";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Account" };
 
 interface PageProps {
   searchParams: Promise<{ required?: string }>;

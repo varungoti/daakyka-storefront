@@ -1,8 +1,13 @@
 import { test, expect } from "@playwright/test";
 
 import { resolveAdminCredentials } from "./helpers/admin-credentials";
+import {
+  residueWritesAllowed,
+  residueWritesSkipReason,
+  restorableWritesAllowed,
+  restorableWritesSkipReason,
+} from "./helpers/target";
 
-const { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } = resolveAdminCredentials();
 // The viewer account is opt-in (prisma/seed.ts only creates it when both
 // VIEWER_SEED_EMAIL and VIEWER_SEED_PASSWORD are set), so there's no
 // default to fall back to — the viewer-only test below skips itself
@@ -11,9 +16,13 @@ const VIEWER_EMAIL = process.env.VIEWER_SEED_EMAIL;
 const VIEWER_PASSWORD = process.env.VIEWER_SEED_PASSWORD;
 
 async function loginAsAdmin(page: import("@playwright/test").Page) {
+  // Resolved per login, not at module scope: a missing ADMIN_SEED_PASSWORD
+  // should fail the admin tests that need it, not abort the whole run — the
+  // storefront specs included — at load time (F-252).
+  const { email, password } = resolveAdminCredentials();
   await page.goto("/admin/login");
-  await page.getByLabel(/email/i).fill(ADMIN_EMAIL);
-  await page.getByLabel(/password/i).fill(ADMIN_PASSWORD);
+  await page.getByLabel(/email/i).fill(email);
+  await page.getByLabel(/password/i).fill(password);
   await page.getByRole("button", { name: /sign in|log in/i }).click();
   await expect(page).toHaveURL(/\/admin\/dashboard/, { timeout: 15000 });
 }
@@ -25,6 +34,7 @@ test.describe("Admin E2E", () => {
   });
 
   test("product listing switch unlists and relists a public product", async ({ page }) => {
+    test.skip(!restorableWritesAllowed, restorableWritesSkipReason);
     await loginAsAdmin(page);
     await page.goto("/admin/products");
     const body = await page.evaluate(async () => {
@@ -78,41 +88,88 @@ test.describe("Admin E2E", () => {
   });
 
   test("homepage CMS saves hero copy", async ({ page }) => {
+    test.skip(!restorableWritesAllowed, restorableWritesSkipReason);
     await loginAsAdmin(page);
     await page.goto("/admin/homepage");
     await expect(page.getByRole("heading", { name: /Homepage Manager/i })).toBeVisible();
 
-    const headline = page.getByLabel("Headline", { exact: true });
+    // /admin/homepage renders the hero-slides carousel editor above the classic
+    // Hero Section, and every enabled slide card (prisma/seed.ts seeds three)
+    // has its own labelled "Headline" input. Looking the field up by its label
+    // text therefore matches 4 inputs and fill() throws a strict-mode violation
+    // - scope to the classic editor's input, whose id HomepageEditor ties to
+    // its label.
+    const headline = page.locator("#hero-headline");
+    await expect(headline).toHaveCount(1);
+    const original = await headline.inputValue();
     const unique = `E2E Hero ${Date.now()}`;
-    await headline.fill(unique);
-    await page.getByRole("button", { name: /save hero/i }).click();
-    await expect(page.getByText("Saved successfully")).toBeVisible({ timeout: 10000 });
+    try {
+      await headline.fill(unique);
+      await page.getByRole("button", { name: /save hero/i }).click();
+      await expect(page.getByText("Saved successfully")).toBeVisible({ timeout: 10000 });
+    } finally {
+      // Put the real headline back: this test used to leave "E2E Hero <time>"
+      // on the live homepage for good (F-077). Wait for the PUT itself, as the
+      // "Saved successfully" note from the first save may still be showing.
+      await headline.fill(original);
+      const restored = page.waitForResponse(
+        (response) => response.url().includes("/api/admin/homepage/hero") && response.request().method() === "PUT",
+      );
+      await page.getByRole("button", { name: /save hero/i }).click();
+      expect((await restored).ok(), "restoring the original hero headline must succeed").toBe(true);
+    }
+  });
+
+  // The draft this test creates is removed in afterEach rather than inline: a
+  // timeout (a slow cold start) would otherwise skip the cleanup and leave the
+  // draft in the blog list for good (F-077).
+  let createdDraftSlug: string | null = null;
+
+  test.afterEach(async ({ page }) => {
+    if (!createdDraftSlug) return;
+    const slug = createdDraftSlug;
+    createdDraftSlug = null;
+    // Matched by its unique slug, so nothing else is touched.
+    const listing = await page.request.get("/api/admin/blog");
+    if (!listing.ok()) return;
+    const posts = (await listing.json()) as { id: string; slug: string }[];
+    const created = posts.find((post) => post.slug === slug);
+    if (created) await page.request.delete(`/api/admin/blog/${created.id}`);
   });
 
   test("blog draft create flow", async ({ page }) => {
+    test.skip(!restorableWritesAllowed, restorableWritesSkipReason);
     await loginAsAdmin(page);
     await page.goto("/admin/blog/new");
     const slug = `e2e-draft-${Date.now()}`;
     await page.getByLabel("Title").fill(`E2E Draft ${slug}`);
     await page.getByLabel("Slug").fill(slug);
     await page.getByLabel("Excerpt").fill("Automated E2E draft post excerpt for QA.");
+    // The field is labelled "Image" (it sits beside an upload picker), so the
+    // old "Image URL" label no longer matched anything and this test timed out.
     await page
-      .getByLabel("Image URL")
+      .locator("#blog-image")
       .fill(
         "https://images.pexels.com/photos/4173251/pexels-photo-4173251.jpeg?auto=compress&cs=tinysrgb&w=800&fit=crop",
       );
     await page.getByLabel("Content Paragraphs").fill("First paragraph of E2E test content.");
+    createdDraftSlug = slug;
     await page.getByRole("button", { name: /save article/i }).click();
     await expect(page).toHaveURL(/\/admin\/blog/, { timeout: 15000 });
     await expect(page.getByText(`E2E Draft ${slug}`)).toBeVisible();
   });
 
   test("Hermes task creates approval queue entry", async ({ page }) => {
+    // Queues a pending approval that nothing removes afterwards.
+    test.skip(!residueWritesAllowed, residueWritesSkipReason);
     await loginAsAdmin(page);
     await page.goto("/admin/hermes");
     await expect(page.getByRole("heading", { name: /Hermes Agent/i })).toBeVisible();
 
-    await page.getByRole("button", { name: /daily seo health scan/i }).click();
+    // Exact name: once a run has left a pending item in the Approval Queue, its
+    // Approve/Reject buttons are named "Approve Hermes: daily seo health scan",
+    // which a substring match on the launcher label would also hit.
+    await page.getByRole("button", { name: "Daily SEO Health Scan", exact: true }).click();
     await expect(page.getByRole("button", { name: /running/i })).toBeHidden({ timeout: 30000 });
     await expect(
       page.locator("text=/Pending Approvals|daily.seo|Approval Queue/i").first(),

@@ -2,6 +2,9 @@ import { redirect } from "next/navigation";
 import { TemplateForm } from "@/components/admin/template-form";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "New Template" };
 
 export default async function NewTemplatePage() {
   const session = await getSession();

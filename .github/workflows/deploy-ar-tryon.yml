@@ -8,22 +8,34 @@ on:
     paths:
       - "services/ar-tryon/**"
 
+# F-308: least privilege. The job only reads the repo; Railway is
+# authenticated by RAILWAY_TOKEN, not by GITHUB_TOKEN.
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
       RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
     steps:
+      # The `secrets` context is not available in a job-level `if`, so the
+      # token is copied into env above and checked per step (F-075).
       - name: Skip when Railway is not configured
         if: ${{ env.RAILWAY_TOKEN == '' }}
         run: echo "Railway token is not configured; AR deployment skipped."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         if: ${{ env.RAILWAY_TOKEN != '' }}
+        with:
+          persist-credentials: false
 
+      # F-308: the CLI that receives RAILWAY_TOKEN is pinned to an exact
+      # version instead of whatever `latest` is on the day this runs. Bump
+      # it deliberately (and review the changelog) rather than implicitly.
       - name: Install Railway CLI
         if: ${{ env.RAILWAY_TOKEN != '' }}
-        run: npm install -g @railway/cli
+        run: npm install -g @railway/cli@5.63.1
 
       - name: Deploy ar-tryon service
         if: ${{ env.RAILWAY_TOKEN != '' }}

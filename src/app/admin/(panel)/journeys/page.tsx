@@ -4,6 +4,9 @@ import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Journeys" };
 
 export default async function AdminJourneysPage() {
   const session = await getSession();
@@ -54,7 +57,7 @@ export default async function AdminJourneysPage() {
                   <p className="mt-2 max-w-2xl text-sm text-muted">{journey.description}</p>
                 )}
               </div>
-              <JourneyStatusSelect journeyId={journey.id} currentStatus={journey.status} />
+              <JourneyStatusSelect journeyId={journey.id} journeyName={journey.name} currentStatus={journey.status} />
             </div>
 
             <ol className="mt-6 space-y-3">
@@ -91,7 +94,7 @@ export default async function AdminJourneysPage() {
         ))}
         {journeys.length === 0 && (
           <p className="rounded-3xl border border-dashed border-border p-8 text-center text-muted">
-            No journeys configured. Run database seed to load defaults.
+            No journeys are set up yet.
           </p>
         )}
       </div>

@@ -1,4 +1,6 @@
 import { fabricTechPages } from "@/data/fabric-tech";
+import { canonicalPath } from "@/lib/seo/canonical";
+import { baseOpenGraph } from "@/lib/seo/json-ld";
 import { isPageEnabled } from "@/lib/settings";
 import { ArrowRight } from "lucide-react";
 import Link from "next/link";
@@ -8,6 +10,8 @@ import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Fabric Technology",
   description: "Explore DAAKYKA fabric science and performance technology.",
+  alternates: { canonical: canonicalPath("/fabric-technology") },
+  openGraph: baseOpenGraph("/fabric-technology"),
 };
 
 export default async function FabricTechnologyPage() {

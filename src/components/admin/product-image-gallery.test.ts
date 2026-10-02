@@ -50,6 +50,26 @@ describe("attachPicksSequentially (F-358)", () => {
     );
   });
 
+  // The component starts the accumulator empty and appends the result to
+  // whatever the list is by the time the batch finishes (so an image the
+  // admin removed mid-upload isn't resurrected by a stale snapshot) — that
+  // only works if an empty start yields exactly the newly attached rows,
+  // in pick order, and a batch where every pick failed yields none.
+  it("with an empty start yields exactly the newly attached rows, in pick order", async () => {
+    const picks: AttachImagePick[] = [
+      { id: "c", alt: "" },
+      { id: "a", alt: "" },
+      { id: "b", alt: "" },
+    ];
+    const result = await attachPicksSequentially(picks, [], async (pick) => row(pick.id));
+    assert.deepEqual(
+      result.current.map((r) => r.id),
+      ["c", "a", "b"],
+    );
+    const none = await attachPicksSequentially([{ id: "x", alt: "" }], [], async () => null);
+    assert.deepEqual(none.current, []);
+  });
+
   it("skips a failed pick (postAttach resolves null) without losing the others", async () => {
     const picks: AttachImagePick[] = [
       { id: "ok-1", alt: "" },

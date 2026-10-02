@@ -1,15 +1,30 @@
 import { NotificationList } from "@/components/admin/notification-list";
+import { AdminPager } from "@/components/admin/pager";
+import { resolveNotificationLink } from "@/lib/admin/notification-links";
 import {
   canViewEmailOutbox,
   canViewJourneyLog,
   canViewNotificationsPage,
   ORDER_NOTIFICATION_TYPES,
 } from "@/lib/admin/notifications-access";
+import { adminListHref, firstParam, getPageWindow, parsePageParam } from "@/lib/admin/pagination";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { formatDateTimeIST } from "@/lib/format/datetime";
 import { getUndeliveredEmailCount, listRecentEmailOutboxForAdmin } from "@/lib/engagement/outbox";
+import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Notifications" };
+
+// F-168: the feed used to be a single `take: 30` with no way to reach
+// anything older (2,000+ rows on a busy store, older unread ones included).
+const NOTIFICATIONS_PAGE_SIZE = 25;
+
+interface PageProps {
+  searchParams: Promise<{ page?: string | string[]; filter?: string | string[] }>;
+}
 
 /**
  * F-268: this page used to gate everything — the generic notification
@@ -23,7 +38,7 @@ import { redirect } from "next/navigation";
  * email. Each section below is now gated on the permission that governs
  * the *kind* of data it shows — see src/lib/admin/notifications-access.ts.
  */
-export default async function AdminNotificationsPage() {
+export default async function AdminNotificationsPage({ searchParams }: PageProps) {
   const session = await getSession();
   if (!session || !canViewNotificationsPage(session.role)) {
     redirect("/admin/dashboard");
@@ -36,9 +51,12 @@ export default async function AdminNotificationsPage() {
   // outbox does, so they're excluded from the generic list the same way.
   const notificationWhere = canOutbox ? {} : { type: { notIn: [...ORDER_NOTIFICATION_TYPES] } };
 
-  const [notifications, totalNotifications, unreadCount, journeyEvents, journeyEventTotal, emailOutbox, undeliveredEmail] =
+  const rawParams = await searchParams;
+  const unreadOnly = firstParam(rawParams.filter) === "unread";
+  const requestedPage = parsePageParam(rawParams.page);
+
+  const [totalNotifications, unreadCount, journeyEvents, journeyEventTotal, emailOutbox, undeliveredEmail] =
     await Promise.all([
-      db.adminNotification.findMany({ where: notificationWhere, orderBy: { createdAt: "desc" }, take: 30 }),
       db.adminNotification.count({ where: notificationWhere }),
       db.adminNotification.count({ where: { ...notificationWhere, read: false } }),
       canJourneys
@@ -59,6 +77,19 @@ export default async function AdminNotificationsPage() {
       canOutbox ? getUndeliveredEmailCount() : Promise.resolve({ total: 0, failed: 0 }),
     ]);
 
+  // F-168: page through the feed (optionally unread-only) instead of
+  // capping it. The window is built from the same counts the stat cards
+  // use, so a stale `?page=` past the end clamps to the last page.
+  const feedWindow = getPageWindow(requestedPage, unreadOnly ? unreadCount : totalNotifications, NOTIFICATIONS_PAGE_SIZE);
+  const notifications = await db.adminNotification.findMany({
+    where: unreadOnly ? { ...notificationWhere, read: false } : notificationWhere,
+    orderBy: { createdAt: "desc" },
+    skip: feedWindow.skip,
+    take: feedWindow.take,
+  });
+  const hrefForPage = (page: number) =>
+    adminListHref("/admin/notifications", { filter: unreadOnly ? "unread" : undefined, page });
+
   return (
     <div className="space-y-8">
       <div>
@@ -73,18 +104,47 @@ export default async function AdminNotificationsPage() {
       </div>
 
       <section className="rounded-3xl border border-border bg-surface p-6">
-        <h2 className="font-display text-xl font-bold text-ink">Admin Notifications</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="font-display text-xl font-bold text-ink">Admin Notifications</h2>
+          <div className="flex gap-2 text-xs font-semibold" role="group" aria-label="Filter notifications">
+            <Link
+              href="/admin/notifications"
+              aria-current={unreadOnly ? undefined : "true"}
+              className={`rounded-full border px-3 py-1.5 ${unreadOnly ? "border-border text-muted hover:bg-lilac/40" : "border-brand bg-brand/10 text-brand"}`}
+            >
+              All
+            </Link>
+            <Link
+              href="/admin/notifications?filter=unread"
+              aria-current={unreadOnly ? "true" : undefined}
+              className={`rounded-full border px-3 py-1.5 ${unreadOnly ? "border-brand bg-brand/10 text-brand" : "border-border text-muted hover:bg-lilac/40"}`}
+            >
+              Unread ({unreadCount})
+            </Link>
+          </div>
+        </div>
         <div className="mt-4">
           <NotificationList
+            unreadTotal={unreadCount}
+            emptyMessage={unreadOnly ? "No unread notifications." : "No notifications yet."}
             notifications={notifications.map((n) => ({
               id: n.id,
               title: n.title,
               body: n.body,
               read: n.read,
               createdAt: n.createdAt.toISOString(),
+              link: resolveNotificationLink(session.role, n.type, n.metadata),
             }))}
           />
         </div>
+        <AdminPager
+          page={feedWindow.page}
+          totalPages={feedWindow.totalPages}
+          total={feedWindow.total}
+          noun={unreadOnly ? "unread" : "notifications"}
+          hrefForPage={hrefForPage}
+          label="Notification pagination"
+        />
       </section>
 
       {canOutbox && (

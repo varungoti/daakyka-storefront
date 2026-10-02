@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authorizeCron } from "@/lib/cron/authorize";
-import { claimCronRun, intervalRunKey } from "@/lib/cron/idempotency";
+import { intervalRunKey, runWithCronClaim } from "@/lib/cron/idempotency";
 import { drainEmailOutbox } from "@/lib/engagement/outbox";
 
 /**
@@ -33,16 +33,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { claimed } = await claimCronRun(
+  // F-277: a drain that throws gives its claim back (see runWithCronClaim).
+  const outcome = await runWithCronClaim(
     "drain-email-outbox",
     intervalRunKey(SCHEDULE_WINDOW_MINUTES),
+    () => drainEmailOutbox(),
   );
-  if (!claimed) {
+  if (!outcome.claimed) {
     return NextResponse.json({ ok: true, alreadyRan: true });
   }
 
-  const result = await drainEmailOutbox();
-  return NextResponse.json({ ok: true, ...result });
+  return NextResponse.json({ ok: true, ...outcome.result });
 }
 
 export async function GET(request: Request) {

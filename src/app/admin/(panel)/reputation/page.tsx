@@ -3,6 +3,9 @@ import { getSession } from "@/lib/auth/session";
 import { getReputationSummary } from "@/lib/reputation/summary";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Reputation" };
 
 export default async function AdminReputationPage() {
   const session = await getSession();

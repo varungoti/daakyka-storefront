@@ -1,7 +1,11 @@
 import { revalidateTag, unstable_cache } from "next/cache";
+import { parseBlogContent } from "@/lib/blog/content";
+import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
+import type { RevalidateProfile } from "@/lib/cache/admin-revalidate";
 import { db } from "@/lib/db";
 import { formatIstDateOnly } from "@/lib/format/datetime";
-import { blogPosts as seedBlogPosts } from "@/data/blog";
+// F-051: type only. src/data/blog.ts is seed *input* — nothing at runtime may
+// read posts from it, or an unpublished/deleted article comes back from the dead.
 import type { BlogPost } from "@/data/blog";
 
 function mapRecord(record: {
@@ -28,7 +32,10 @@ function mapRecord(record: {
     publishedAt: formatIstDateOnly(record.publishedAt),
     readTime: record.readTime,
     image: record.image,
-    content: JSON.parse(record.content) as string[],
+    // F-213: tolerant parse — one malformed row (e.g. the plain text a Hermes
+    // draft used to store) used to throw here, which readPublishedBlogPostsFromDb
+    // turned into "show the seed posts instead of every real post".
+    content: parseBlogContent(record.content),
   };
 }
 
@@ -38,31 +45,28 @@ function mapRecord(record: {
 // future-dated PUBLISHED post out of both the listing and the slug lookup
 // (so it also 404s, and generateStaticParams below never prerenders it)
 // until its own scheduled instant actually arrives.
+//
+// F-051: the database is the only source of truth. These readers used to fall
+// back to the hardcoded seed posts in src/data/blog.ts — when no PUBLISHED row
+// matched (the admin drafted or deleted the post) and again on any DB error —
+// so an unpublished launch article kept serving from /blog/<slug>, and drafting
+// every post made /blog list all the seed ones. A missing/unpublished post is
+// now simply absent (an empty list / null, which the page turns into a 404). A
+// DB error is *not* swallowed into a made-up result: it propagates, so
+// unstable_cache and ISR never store it and keep serving the last good page.
 async function readPublishedBlogPostsFromDb(): Promise<BlogPost[]> {
-  try {
-    const records = await db.blogPostRecord.findMany({
-      where: { status: "PUBLISHED", publishedAt: { lte: new Date() } },
-      orderBy: { publishedAt: "desc" },
-    });
-    if (records.length === 0) return seedBlogPosts;
-    return records.map(mapRecord);
-  } catch {
-    return seedBlogPosts;
-  }
+  const records = await db.blogPostRecord.findMany({
+    where: { status: "PUBLISHED", publishedAt: { lte: new Date() } },
+    orderBy: { publishedAt: "desc" },
+  });
+  return records.map(mapRecord);
 }
 
 async function readBlogPostBySlugFromDb(slug: string): Promise<BlogPost | null> {
-  try {
-    const record = await db.blogPostRecord.findFirst({
-      where: { slug, status: "PUBLISHED", publishedAt: { lte: new Date() } },
-    });
-    if (!record) {
-      return seedBlogPosts.find((post) => post.slug === slug) ?? null;
-    }
-    return mapRecord(record);
-  } catch {
-    return seedBlogPosts.find((post) => post.slug === slug) ?? null;
-  }
+  const record = await db.blogPostRecord.findFirst({
+    where: { slug, status: "PUBLISHED", publishedAt: { lte: new Date() } },
+  });
+  return record ? mapRecord(record) : null;
 }
 
 /**
@@ -134,10 +138,12 @@ export async function getAllBlogPostsForAdmin() {
  * `revalidate` here instead of spying on the real one.
  */
 export function revalidateBlogCache(
-  revalidate: (tag: string, profile: string) => void = revalidateTag,
+  revalidate: (tag: string, profile: RevalidateProfile) => void = revalidateTag,
 ): void {
   try {
-    revalidate(BLOG_CACHE_TAG, "max");
+    // F-214: immediate ({ expire: 0 }), not "max" — see
+    // src/lib/cache/admin-revalidate.ts.
+    revalidate(BLOG_CACHE_TAG, ADMIN_REVALIDATE_PROFILE);
   } catch {
     // No static generation store in this context (unit/integration tests,
     // one-off scripts) — nothing to revalidate.
