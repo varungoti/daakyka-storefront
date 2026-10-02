@@ -4,10 +4,12 @@ import {
   type CredentialFieldState,
 } from "@/components/admin/integration-credential-form";
 import { IntegrationToggle } from "@/components/admin/integration-toggle";
+import { BrevoEnableButton } from "@/components/admin/brevo-enable-button";
 import { BrevoTestSend } from "@/components/admin/brevo-test-send";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
+import { getUndeliveredEmailCount } from "@/lib/engagement/outbox";
 import {
   CREDENTIAL_FIELDS,
   getCredential,
@@ -35,6 +37,7 @@ async function buildFieldStates(provider: CredentialProvider): Promise<Credentia
         key: field.key,
         label: field.label,
         secret: field.secret,
+        hint: field.hint,
         configured: meta.configured,
         updatedAt: meta.updatedAt,
         updatedByName: meta.updatedByName,
@@ -66,6 +69,9 @@ export default async function AdminIntegrationsPage() {
   const brevoStatus = envStatuses.find((item) => item.provider === "BREVO");
   const brevoConfiguredButDisabled =
     brevoStatus?.status === "configured" && !(settingsMap.BREVO?.enabled ?? false);
+  // Turning Brevo on makes the outbox drain send every PENDING row, so the
+  // callout says how many are waiting before the owner flips it.
+  const waitingEmails = brevoConfiguredButDisabled ? (await getUndeliveredEmailCount()).pending : 0;
   const credentialFieldsByProvider: Record<CredentialProvider, CredentialFieldState[]> = {
     RAZORPAY: razorpayFields,
     BREVO: brevoFields,
@@ -140,11 +146,17 @@ export default async function AdminIntegrationsPage() {
               <div className="mt-3 space-y-2 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-xs text-amber-900">
                 <p className="font-semibold">Your key is saved, but email sending is OFF.</p>
                 <p>
-                  Brevo shows as configured, but the provider toggle above is still disabled, so every
-                  email is still queued in stub mode. Turn it on above, or confirm it actually works
-                  first:
+                  Brevo shows as configured, but the provider toggle above is still disabled, so no email
+                  is being sent — order and sign-up emails wait in a queue instead.
+                  {waitingEmails > 0
+                    ? ` ${waitingEmails} queued email${waitingEmails === 1 ? " is" : "s are"} waiting and will go out as soon as you turn it on.`
+                    : ""}{" "}
+                  Send yourself a test first, then turn it on:
                 </p>
-                <BrevoTestSend />
+                <div className="flex flex-wrap items-start gap-3">
+                  <BrevoTestSend />
+                  <BrevoEnableButton waitingEmails={waitingEmails} />
+                </div>
               </div>
             ) : null}
           </div>

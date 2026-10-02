@@ -22,7 +22,12 @@ export function BrevoTestSend() {
       const response = await fetch("/api/admin/integrations/brevo/test", { method: "POST" });
       const body = await response.json().catch(() => ({}));
       if (response.ok && body.ok) {
-        setState({ status: "ok", message: `Sent to ${body.sentTo ?? "your admin email"}.` });
+        setState({
+          status: "ok",
+          message:
+            `Sent to ${body.sentTo ?? "your admin email"}.` +
+            (body.enabled === false ? " Check your inbox — then turn email on to start sending real emails." : ""),
+        });
       } else {
         setState({ status: "error", message: body.error ?? "Couldn't send the test email." });
       }

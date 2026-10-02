@@ -985,8 +985,9 @@ describe("campaigns admin routes (F-217)", () => {
 // deliberate, separate concern from whether a past-due campaign is picked
 // up at all, which is what this test is asserting. Both the enabled flag
 // (setIntegrationEnabled) AND a configured key (isProviderConfigured, via
-// BREVO_API_KEY here rather than the encrypted DB credential store, which
-// needs CREDENTIAL_ENCRYPTION_KEY) are required for isIntegrationEnabled
+// BREVO_API_KEY + BREVO_FROM_EMAIL here rather than the encrypted DB
+// credential store, which needs CREDENTIAL_ENCRYPTION_KEY — F-267: Brevo
+// isn't "configured" without a From Email) are required for isIntegrationEnabled
 // to report true — see src/lib/integrations/enabled.ts.
 describe("processDueScheduledCampaigns picks up a past-due SCHEDULED campaign (F-217)", () => {
   const createdSegmentIds: string[] = [];
@@ -1036,7 +1037,7 @@ describe("processDueScheduledCampaigns picks up a past-due SCHEDULED campaign (F
     });
     createdCampaignIds.push(campaign.id);
 
-    const { processed, results } = await withEnv({ BREVO_API_KEY: "test-key" }, () =>
+    const { processed, results } = await withEnv({ BREVO_API_KEY: "test-key", BREVO_FROM_EMAIL: "orders@example.com" }, () =>
       processDueScheduledCampaigns(),
     );
     assert.ok(processed >= 1, "expected at least the seeded past-due campaign to be processed");
