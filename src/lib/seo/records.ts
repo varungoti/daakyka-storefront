@@ -63,10 +63,10 @@ export class SeoPagePathConflictError extends Error {
 
 /** F-052 fix: creating an override for a path the storefront never reads
  * (see isWiredSeoPath) used to silently succeed — the admin saw "created"
- * with no indication it would never apply. Only blocks *new* records;
- * existing off-wired rows (created before this fix, or intentionally kept
- * "for reference") can still be edited — see updateSeoRecord below, which
- * doesn't call this. */
+ * with no indication it would never apply. Blocks new records and moving
+ * an existing record onto an unwired path; existing off-wired rows (created
+ * before this fix, or intentionally kept "for reference") can still have
+ * their other fields edited as long as the path is left alone. */
 export class SeoPagePathNotWiredError extends Error {
   constructor(path: string) {
     super(`"${path}" isn't read live by the storefront yet — pick one of the listed pages`);
@@ -132,6 +132,13 @@ export async function updateSeoRecord(
   if (!existing) throw new SeoPageRecordNotFoundError(id);
 
   if (input.path !== undefined && input.path !== existing.path) {
+    // F-052: repointing a record at a path the storefront never reads would
+    // look "applied" in the admin while doing nothing, exactly what the
+    // create guard blocks. Moving onto a wired path is fine, and editing the
+    // other fields of a legacy off-wired row (path unchanged) stays allowed.
+    if (!isWiredSeoPath(input.path)) {
+      throw new SeoPagePathNotWiredError(input.path);
+    }
     await assertPathAvailable(input.path, id);
   }
 

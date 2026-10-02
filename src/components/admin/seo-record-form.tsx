@@ -66,8 +66,8 @@ export function SeoRecordForm({ initial }: { initial?: SeoRecordFormInitial }) {
   return (
     <div className="max-w-2xl space-y-6 rounded-2xl border border-border bg-surface p-6">
       {/* F-052 fix: overrides for any path were accepted and "created"
-          with no indication that only / and /shop are actually read live
-          (src/lib/seo/wired-paths.ts) — every other path just sat there
+          with no indication that only the paths in WIRED_SEO_PATHS are actually
+          read live (src/lib/seo/wired-paths.ts) — every other path just sat there
           looking applied. New overrides are now limited to the wired
           paths; an existing (pre-fix, or intentionally off-wired) record
           keeps showing its real path, still uneditable. */}

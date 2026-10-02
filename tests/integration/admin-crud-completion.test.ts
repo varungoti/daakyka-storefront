@@ -582,6 +582,35 @@ describe("SEO records admin CRUD", () => {
     );
   });
 
+  it("updateSeoRecord rejects repointing a record onto a path the storefront never reads", async () => {
+    // F-052: the create guard alone left a side door, since an API caller
+    // could create a wired record and then PATCH its path to anything. A
+    // legacy off-wired row keeps its other fields editable (round trip
+    // above) but cannot be moved onto another unwired path.
+    const unique = randomUUID().slice(0, 8);
+    const record = await db.seoPageRecord.create({
+      data: {
+        path: `/test-seo-repoint-${unique}`,
+        title: "Repoint Test",
+        metaDescription: "A test meta description.",
+        status: "ok",
+        issues: "[]",
+      },
+    });
+    createdIds.push(record.id);
+
+    await assert.rejects(
+      () => updateSeoRecord(record.id, { path: `/test-seo-still-not-wired-${unique}` }, adminId),
+      SeoPagePathNotWiredError,
+    );
+    const unchanged = await getSeoRecordForAdmin(record.id);
+    assert.equal(unchanged.path, `/test-seo-repoint-${unique}`);
+
+    // Passing the same path back is not a move, so it is still accepted.
+    const same = await updateSeoRecord(record.id, { path: record.path, title: "Repoint Test 2" }, adminId);
+    assert.equal(same.title, "Repoint Test 2");
+  });
+
   it("createSeoRecord rejects a wired path already in use", async () => {
     // prisma/seed.ts always seeds a "/" row, so this needs no setup of its
     // own — proves the not-wired check (above) doesn't shadow the

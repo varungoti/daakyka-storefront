@@ -6,6 +6,7 @@ import {
   deleteSeoRecord,
   getSeoRecordForAdmin,
   SeoPagePathConflictError,
+  SeoPagePathNotWiredError,
   SeoPageRecordNotFoundError,
   updateSeoRecord,
 } from "@/lib/seo/records";
@@ -57,6 +58,9 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     }
     if (err instanceof SeoPagePathConflictError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    if (err instanceof SeoPagePathNotWiredError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
     }
     throw err;
   }
