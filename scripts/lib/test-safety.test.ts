@@ -285,6 +285,9 @@ describe("assert-not-production (F-077)", () => {
 describe("probe-deploy (F-076, F-077)", () => {
   const requests: { method: string; path: string }[] = [];
   let studioStatus = 404;
+  // What POST /api/outfit/try-on answers: "on" (200), "off" (the route's own JSON 404 while
+  // pages.mixMatch.enabled is off) or "missing" (an HTML 404 from a build without the route).
+  let tryOn: "on" | "off" | "missing" = "on";
 
   function respond(request: IncomingMessage, response: ServerResponse) {
     const url = request.url ?? "/";
@@ -298,7 +301,11 @@ describe("probe-deploy (F-076, F-077)", () => {
     if (url === "/api/admin/blog") return json(401, { error: "Unauthorized" });
     if (url === "/api/auth/login") return json(401, { error: "Invalid credentials" });
     if (url === "/api/hermes/runtime/health") return json(200, { ok: true, service: "daakyka-hermes" });
-    if (url === "/api/outfit/try-on") return json(200, { ok: true, resultImageUrl: "https://example.com/x.png" });
+    if (url === "/api/outfit/try-on") {
+      if (tryOn === "off") return json(404, { error: "Not found" });
+      if (tryOn === "missing") return void response.writeHead(404, { "content-type": "text/html" }).end("<h1>404</h1>");
+      return json(200, { ok: true, resultImageUrl: "https://example.com/x.png" });
+    }
     if (url === "/mix-and-match/studio") {
       return void response.writeHead(studioStatus).end(studioStatus === 200 ? "<h1>Virtual Try-On Studio</h1>" : "not found");
     }
@@ -350,6 +357,31 @@ describe("probe-deploy (F-076, F-077)", () => {
     const result = await probe(["--write-probes"]);
     assert.equal(result.status, 0, result.stdout);
     assert.ok(requests.some((r) => r.method === "POST" && r.path === "/api/outfit/try-on"));
+  });
+
+  it("--write-probes passes on a default install where Mix & Match is off and the try-on route answers 404 (F-304)", async () => {
+    studioStatus = 404;
+    tryOn = "off";
+    try {
+      const result = await probe(["--write-probes"]);
+      assert.equal(result.status, 0, result.stdout);
+      assert.match(result.stdout, /try-on is switched off/);
+      assert.ok(requests.some((r) => r.method === "POST" && r.path === "/api/outfit/try-on"));
+    } finally {
+      tryOn = "on";
+    }
+  });
+
+  it("--write-probes still fails when the try-on route is missing from the build (HTML 404)", async () => {
+    studioStatus = 404;
+    tryOn = "missing";
+    try {
+      const result = await probe(["--write-probes"]);
+      assert.equal(result.status, 1, result.stdout);
+      assert.match(result.stdout, /route missing from this deployment/);
+    } finally {
+      tryOn = "on";
+    }
   });
 });
 

@@ -80,6 +80,12 @@ TEST_BASE_URL=https://YOUR-PREVIEW-URL.vercel.app npm run probe:deploy -- --stag
 
 Studio: `/mix-and-match/studio` — preview should return `mode: "ar-tryon"` in network tab when AR is wired.
 
+The studio and `POST /api/outfit/try-on` are both off until an admin turns on the **Mix & Match** page
+(setting `pages.mixMatch.enabled`, default off): the page and the endpoint answer 404. The probe treats
+that as "switched off" and skips the try-on check, so a default install still passes; to exercise the
+rendering path on a Preview deployment, enable the page there first, then run
+`npm run probe:deploy -- --staging --write-probes` (it calls the paid rendering service, never run it on production).
+
 ## Timeouts
 
 - Storefront proxy: **100s** (`service-client.ts`) — kept under the

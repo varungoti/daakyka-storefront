@@ -5,7 +5,8 @@
  * POST, a login for an unknown email, is rejected before anything is written).
  * `--write-probes` adds the virtual try-on POST, which can call a paid
  * rendering service; use it only against a Preview/staging deployment
- * (F-076, F-077).
+ * (F-076, F-077). While Mix & Match is switched off (the default) that route
+ * answers 404 and the probe reports it as skipped, not failed (F-304).
  *
  * Usage:
  *   TEST_BASE_URL=https://your-app.vercel.app npm run probe:deploy
@@ -132,6 +133,16 @@ async function main() {
           color: "Navy",
         }),
       });
+      // The route answers a JSON 404 while the optional Mix & Match feature is
+      // switched off (pages.mixMatch.enabled, the default; F-304). That is the
+      // correct state, not a failed deploy. An HTML 404 means the route itself is
+      // missing from this build, which must still fail.
+      if (response.status === 404) {
+        const switchedOff = (response.headers.get("content-type") ?? "").includes("application/json");
+        if (!switchedOff) throw new Error("status 404 (route missing from this deployment)");
+        console.log("      try-on is switched off (pages.mixMatch.enabled) - skipping its response check");
+        return;
+      }
       if (!response.ok) throw new Error(`status ${response.status}`);
       const body = await response.json();
       if (!body.ok || typeof body.resultImageUrl !== "string") {
