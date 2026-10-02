@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { isTrackableNavigationClick, type NavigationClick } from "@/lib/ui/navigation-click";
+import { isNavigationPending, locationKey, settlePending } from "@/lib/ui/navigation-progress";
 
 /**
  * F-091: a tap on a link to another page of the site shows the top progress
@@ -73,5 +74,63 @@ describe("isTrackableNavigationClick (F-091)", () => {
   it("does not throw on an address it cannot parse", () => {
     assert.equal(isTrackableNavigationClick(click({ href: "" })), false);
     assert.equal(isTrackableNavigationClick(click({ currentHref: "not a url" })), false);
+  });
+});
+
+/**
+ * F-091 review: a link that only changes the query string is a navigation
+ * (above), so the bar must also be hidden when only the query changes — it used
+ * to watch the path alone and stayed up, frozen, until its 10 s give-up — and a
+ * finished navigation must be forgotten so Back does not bring the bar back.
+ */
+describe("navigation progress state (F-091)", () => {
+  const params = (query: string) => new URLSearchParams(query);
+
+  it("keys a location by its path and its query", () => {
+    assert.equal(locationKey("/shop", params("")), "/shop");
+    assert.equal(locationKey("/shop", params("page=2")), "/shop?page=2");
+    assert.equal(locationKey("/shop", null), "/shop");
+    assert.equal(locationKey(null, null), "");
+    assert.notEqual(locationKey("/shop", params("page=1")), locationKey("/shop", params("page=2")));
+  });
+
+  it("writes the same location the same way every time, whatever the encoding it came in", () => {
+    assert.equal(locationKey("/shop", params("q=a%20b")), locationKey("/shop", params("q=a+b")));
+  });
+
+  it("shows while the page the shopper tapped away from is still on screen", () => {
+    const from = locationKey("/account/orders", params("page=1"));
+    const pending = { from };
+    assert.equal(isNavigationPending(pending, from), true);
+    assert.equal(settlePending(pending, from), pending, "still the same navigation");
+    assert.equal(isNavigationPending(null, from), false);
+  });
+
+  it("finishes a query-only navigation when the query changes, with the path unchanged", () => {
+    const pending = { from: locationKey("/account/orders", params("page=1")) };
+    const arrived = locationKey("/account/orders", params("page=2"));
+    assert.equal(isNavigationPending(pending, arrived), false);
+    assert.equal(settlePending(pending, arrived), null);
+  });
+
+  it("finishes the move from a filtered shop to the plain shop (same path, query dropped)", () => {
+    const pending = { from: locationKey("/shop", params("category=tops")) };
+    assert.equal(settlePending(pending, locationKey("/shop", params(""))), null);
+  });
+
+  it("finishes a move to another page", () => {
+    const pending = { from: locationKey("/about", params("")) };
+    assert.equal(settlePending(pending, locationKey("/contact", params(""))), null);
+  });
+
+  it("does not bring the bar back when the shopper presses Back to where the tap started", () => {
+    const start = locationKey("/shop", params("page=1"));
+    const next = locationKey("/shop", params("page=2"));
+    let pending: { from: string } | null = { from: start };
+
+    pending = settlePending(pending, next); // the page arrived
+    assert.equal(pending, null);
+    pending = settlePending(pending, start); // ...and Back to the page the tap began on
+    assert.equal(isNavigationPending(pending, start), false);
   });
 });

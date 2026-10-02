@@ -1,7 +1,7 @@
 "use client";
 
 import { useFocusTrap } from "@/hooks/use-focus-trap";
-import { clampTranslate, panBy } from "@/lib/ui/lightbox-gestures";
+import { clampTranslate, panBy, startsOnControl } from "@/lib/ui/lightbox-gestures";
 import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import Image from "next/image";
@@ -82,6 +82,12 @@ export function ImageLightbox({ images, startIndex = 0, onClose }: ImageLightbox
   const lastTapAt = useRef(0);
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    // The previous/next arrows sit inside this container, so their presses
+    // bubble up here. Capturing such a pointer would redirect the click that
+    // follows to the container and the arrow's onClick would never run — leave a
+    // press on a control entirely to the control.
+    if (startsOnControl(event.target as Element)) return;
+
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     // Keep receiving this pointer's moves and its release even when the finger
     // or mouse leaves the viewer, so a drag can never be left half-finished.
@@ -126,6 +132,10 @@ export function ImageLightbox({ images, startIndex = 0, onClose }: ImageLightbox
   };
 
   const onPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    // Releases of a press that began on an arrow (never tracked above) bubble up
+    // here too; they must not end, or count as, a drag of the picture.
+    if (!pointers.current.has(event.pointerId)) return;
+
     const wasSinglePointer = pointers.current.size === 1;
     pointers.current.delete(event.pointerId);
     setPanning(false);

@@ -197,6 +197,39 @@ describe("pdp and navigation sources (F-090, F-091, F-114)", () => {
     assert.match(read("src/app/layout.tsx"), /<NavigationProgress \/>/);
   });
 
+  it("the progress bar finishes on a query-only change and forgets a finished navigation (F-091)", () => {
+    const source = read("src/components/layout/navigation-progress.tsx");
+    // It must see the query string, or a ?page=2 link would leave the bar up
+    // until the give-up timer.
+    assert.match(source, /locationKey\(usePathname\(\), useSearchParams\(\)\)/);
+    // useSearchParams needs a Suspense boundary of its own so no page is made to
+    // client-render; layout.tsx still mounts the single exported component.
+    assert.match(source, /<Suspense fallback=\{null\}>\s*<NavigationProgressBar \/>\s*<\/Suspense>/);
+    // A finished navigation is dropped (Back must not show the bar again) ...
+    assert.match(source, /settlePending\(pending, currentKey\)/);
+    // ... and the location is no longer compared by bare path.
+    assert.doesNotMatch(source, /leaving/);
+    assert.doesNotMatch(source, /window\.location\.pathname/);
+  });
+
+  it("the image viewer leaves presses on its arrows to the arrows (F-114)", () => {
+    const source = read("src/components/ui/image-lightbox.tsx").replace(/\r\n/g, "\n");
+    const down = source.slice(source.indexOf("const onPointerDown"), source.indexOf("const onPointerMove"));
+    assert.ok(down.length > 0, "onPointerDown not found");
+    // The guard comes first: before the pointer is tracked and before it is captured.
+    const guard = down.indexOf("startsOnControl(event.target as Element)");
+    assert.ok(guard >= 0, "onPointerDown must skip presses that start on a control");
+    assert.ok(guard < down.indexOf("pointers.current.set"), "guard before tracking");
+    assert.ok(guard < down.indexOf("setPointerCapture"), "guard before capturing");
+    // Releases of a press that was never tracked are ignored, not counted as a drag.
+    const up = source.slice(source.indexOf("const onPointerUp"), source.indexOf("const current ="));
+    assert.match(up, /if \(!pointers\.current\.has\(event\.pointerId\)\) return;/);
+    // The arrows really are inside the element that captures the pointer.
+    const container = source.slice(source.indexOf("onPointerDown={onPointerDown}"));
+    assert.match(container, /aria-label="Previous image"/);
+    assert.match(container, /aria-label="Next image"/);
+  });
+
   it("names the selected colour, keeps white swatches visible and uses 44px targets (F-114)", () => {
     const source = read("src/components/product/product-detail.tsx");
     assert.match(source, /Color: <span className="text-ink">\{selectedColor\}<\/span>/);

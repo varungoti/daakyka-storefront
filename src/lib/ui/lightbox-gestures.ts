@@ -15,6 +15,26 @@ export interface Point {
   y: number;
 }
 
+/**
+ * Elements inside the viewer that handle a press themselves: the previous and
+ * next arrows (and, defensively, any link or form control added later).
+ */
+export const POINTER_CONTROL_SELECTOR = "button, a, input, select, textarea, [role='button']";
+
+/**
+ * Whether a pointer press began on one of the viewer's own controls.
+ *
+ * The viewer captures the pointer on its container so a drag can never be left
+ * half-finished. A captured pointer is released to the container, and the click
+ * that follows is delivered to the container too: a press on an arrow button
+ * that was captured never reaches the button's onClick, so the arrows would
+ * silently stop working for mouse and touch. A press that begins on a control is
+ * therefore neither tracked nor captured.
+ */
+export function startsOnControl(target: { closest(selector: string): unknown } | null): boolean {
+  return target !== null && target.closest(POINTER_CONTROL_SELECTOR) !== null;
+}
+
 function clamp(value: number, limit: number): number {
   return Math.min(limit, Math.max(-limit, value));
 }

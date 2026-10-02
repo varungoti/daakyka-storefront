@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { clampTranslate, panBy } from "@/lib/ui/lightbox-gestures";
+import { clampTranslate, panBy, startsOnControl } from "@/lib/ui/lightbox-gestures";
 
 /**
  * F-114: the lightbox's double-tap / pinch zoom to 2-3x could not be panned —
@@ -51,5 +51,65 @@ describe("lightbox pan", () => {
 
   it("leaves an in-range translate alone", () => {
     assert.deepEqual(clampTranslate({ x: 10, y: -10 }, 2, W, H), { x: 10, y: -10 });
+  });
+});
+
+/**
+ * F-114 review: the viewer captures the pointer on its container so a drag can
+ * never be left half-finished, but the previous/next arrows are inside that
+ * container. A captured press on an arrow is released to the container, the
+ * click goes to the container, and the arrow's onClick never ran — the arrows
+ * were dead for mouse and touch. A press that begins on a control is left to it.
+ */
+describe("a press on a viewer control is not captured", () => {
+  interface FakeNode {
+    tag: string;
+    role?: string;
+    parent: FakeNode | null;
+    closest(selector: string): unknown;
+  }
+  // Just enough of Element.closest for the selector the viewer uses: a tag name
+  // or [role='button'], matched on the node and then each ancestor.
+  const node = (tag: string, parent: FakeNode | null = null, role?: string): FakeNode => {
+    const self: FakeNode = {
+      tag,
+      role,
+      parent,
+      closest(selector: string) {
+        const parts = selector.split(",").map((part) => part.trim());
+        for (let n: FakeNode | null = self; n; n = n.parent) {
+          if (parts.some((part) => part === n!.tag || (part === "[role='button']" && n!.role === "button"))) return n;
+        }
+        return null;
+      },
+    };
+    return self;
+  };
+
+  const container = node("div");
+  const picture = node("img", node("div", container));
+
+  it("leaves a press on the previous or next arrow to the arrow", () => {
+    const arrow = node("button", container);
+    assert.equal(startsOnControl(arrow), true);
+    // The chevron icon inside the button is what is actually under the finger.
+    assert.equal(startsOnControl(node("svg", arrow)), true);
+    assert.equal(startsOnControl(node("path", node("svg", arrow))), true);
+  });
+
+  it("covers other controls that may be added: links, form fields, role=button", () => {
+    for (const tag of ["a", "input", "select", "textarea"]) {
+      assert.equal(startsOnControl(node(tag, container)), true, tag);
+    }
+    assert.equal(startsOnControl(node("div", container, "button")), true);
+  });
+
+  it("still tracks a press on the picture or the empty area, so swipe, pinch and pan work", () => {
+    assert.equal(startsOnControl(picture), false);
+    assert.equal(startsOnControl(container), false);
+  });
+
+  it("does not throw when there is no target", () => {
+    assert.equal(startsOnControl(null), false);
   });
 });
