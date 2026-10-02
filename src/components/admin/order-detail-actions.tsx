@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useId, useState } from "react";
 import {
   canRecordOrderRequestPayment,
   ORDER_STATUS_TRANSITIONS,
@@ -63,6 +63,9 @@ export function OrderDetailActions({
   updatedAt,
 }: Props) {
   const router = useRouter();
+  // Each visible <label> below is tied to its control with htmlFor/id
+  // (a sibling <label> alone names nothing — axe select-name / label).
+  const fieldId = useId();
   const [status, setStatus] = useState<OrderStatus>(currentStatus);
   const [tracking, setTracking] = useState(trackingNumber ?? "");
   const [courierName, setCourierName] = useState(courier ?? "");
@@ -207,8 +210,11 @@ export function OrderDetailActions({
       <h2 className="font-display text-lg font-bold text-ink">Manage order</h2>
 
       <div>
-        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">Status</label>
+        <label htmlFor={`${fieldId}-status`} className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
+          Status
+        </label>
         <select
+          id={`${fieldId}-status`}
           value={status}
           disabled={!canManage}
           onChange={(e) => setStatus(e.target.value as OrderStatus)}
@@ -321,8 +327,11 @@ export function OrderDetailActions({
       {showTracking && (
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">Tracking number{willShip ? " *" : ""}</label>
+            <label htmlFor={`${fieldId}-tracking`} className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
+              Tracking number{willShip ? " *" : ""}
+            </label>
             <input
+              id={`${fieldId}-tracking`}
               value={tracking}
               disabled={!trackingEditable}
               onChange={(e) => setTracking(e.target.value)}
@@ -331,8 +340,11 @@ export function OrderDetailActions({
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">Courier{willShip ? " *" : ""}</label>
+            <label htmlFor={`${fieldId}-courier`} className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
+              Courier{willShip ? " *" : ""}
+            </label>
             <input
+              id={`${fieldId}-courier`}
               value={courierName}
               disabled={!trackingEditable}
               onChange={(e) => setCourierName(e.target.value)}
@@ -345,8 +357,11 @@ export function OrderDetailActions({
       )}
 
       <div>
-        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">Admin notes</label>
+        <label htmlFor={`${fieldId}-notes`} className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted">
+          Admin notes
+        </label>
         <textarea
+          id={`${fieldId}-notes`}
           value={notes}
           disabled={!canManage}
           onChange={(e) => setNotes(e.target.value)}

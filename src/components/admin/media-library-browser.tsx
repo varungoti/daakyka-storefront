@@ -197,16 +197,27 @@ export function MediaLibraryBrowser({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search alt text, prompt, or filename…"
+            aria-label="Search images"
             className="rounded-lg border border-border p-2 text-sm sm:col-span-2"
           />
-          <select value={usage} onChange={(e) => setUsage(e.target.value)} className="rounded-lg border border-border p-2 text-sm">
+          <select
+            value={usage}
+            onChange={(e) => setUsage(e.target.value)}
+            aria-label="Filter by usage"
+            className="rounded-lg border border-border p-2 text-sm"
+          >
             {USAGE_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
                 {opt.label}
               </option>
             ))}
           </select>
-          <select value={source} onChange={(e) => setSource(e.target.value)} className="rounded-lg border border-border p-2 text-sm">
+          <select
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            aria-label="Filter by source"
+            className="rounded-lg border border-border p-2 text-sm"
+          >
             {SOURCE_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
                 {opt.label}
@@ -216,6 +227,7 @@ export function MediaLibraryBrowser({
           <select
             value={dateWindow}
             onChange={(e) => setDateWindow(e.target.value)}
+            aria-label="Filter by date added"
             className="rounded-lg border border-border p-2 text-sm sm:col-start-4"
           >
             {DATE_OPTIONS.map((opt) => (

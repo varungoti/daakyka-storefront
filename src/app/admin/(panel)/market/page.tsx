@@ -53,7 +53,7 @@ export default async function AdminMarketPage() {
             </li>
           ))}
           {snapshots.length === 0 && (
-            <p className="text-sm text-muted">No market snapshots yet. Run seed to load samples.</p>
+            <p className="text-sm text-muted">No market observations have been recorded yet.</p>
           )}
         </ul>
       </section>

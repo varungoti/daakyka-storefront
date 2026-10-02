@@ -501,6 +501,7 @@ export function ProductImageGallery({
           onChange={(e) => setPromptOverride(e.target.value)}
           rows={2}
           placeholder="Optional prompt override — leave blank to auto-fill from name, category, gender and fabric"
+          aria-label="Image generation prompt override"
           className="w-full rounded-lg border border-border bg-surface p-2 text-xs text-ink"
         />
         <div className="flex items-center gap-2">
@@ -605,7 +606,12 @@ export function ProductImageGallery({
                   <GripVertical size={14} />
                 </span>
               </div>
-              <select value={img.color ?? ""} onChange={(e) => setColor(img.id, e.target.value)} className="w-full rounded border border-border p-1 text-xs">
+              <select
+                value={img.color ?? ""}
+                onChange={(e) => setColor(img.id, e.target.value)}
+                aria-label={`Colour tag for image ${index + 1}`}
+                className="w-full rounded border border-border p-1 text-xs"
+              >
                 <option value="">No colour tag</option>
                 {productColors.map((color) => (
                   <option key={color} value={color}>
@@ -629,6 +635,7 @@ export function ProductImageGallery({
                 onChange={(e) => setAlt(img.id, e.target.value)}
                 onBlur={(e) => saveAlt(img.id, e.target.value)}
                 placeholder="Alt text"
+                aria-label={`Alt text for image ${index + 1}`}
                 maxLength={MAX_ALT_LENGTH}
                 className="w-full rounded border border-border p-1 text-xs"
               />

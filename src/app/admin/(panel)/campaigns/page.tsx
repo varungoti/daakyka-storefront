@@ -67,7 +67,7 @@ export default async function CampaignsPage() {
                 <td className="px-4 py-4 text-muted">{campaign.segment?.name ?? "—"}</td>
                 <td className="px-4 py-4 text-muted">{campaign.template?.name ?? "—"}</td>
                 <td className="px-4 py-4">
-                  <CampaignStatusSelect campaignId={campaign.id} currentStatus={campaign.status} />
+                  <CampaignStatusSelect campaignId={campaign.id} campaignName={campaign.name} currentStatus={campaign.status} />
                 </td>
                 <td className="px-4 py-4">
                   <div className="flex gap-2">

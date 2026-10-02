@@ -99,8 +99,9 @@ test.describe("Dogfood — interactive flows", () => {
       products: { handle: string }[];
     };
     await page.goto(`/products/${products[0].handle}`);
-    await page.getByRole("button", { name: "Add to wishlist" }).first().click();
-    await page.getByRole("button", { name: "Wishlist", exact: true }).click();
+    await page.getByRole("button", { name: /^Add .+ to wishlist$/ }).first().click();
+    // The header button's name carries the count once something is in it ("Wishlist, 1 item").
+    await page.getByRole("button", { name: /^Wishlist(,|$)/ }).click();
     await expect(page.getByRole("dialog", { name: /wishlist/i })).toBeVisible();
     await page.screenshot({ path: "dogfood-output/screenshots/wishlist-drawer.png" });
   });
@@ -139,7 +140,7 @@ test.describe("Dogfood — interactive flows", () => {
     };
     const top = products.find((p) => p.category === "tops") ?? products[0];
     await page.goto(`/products/${top.handle}`);
-    await page.getByRole("button", { name: "Add to wishlist" }).first().click();
+    await page.getByRole("button", { name: /^Add .+ to wishlist$/ }).first().click();
 
     await page.goto("/mix-and-match/studio");
     await expect(page.getByText("Your Favorites")).toBeVisible();

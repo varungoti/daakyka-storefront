@@ -271,9 +271,15 @@ export function ProductsTable({
             debouncedSetSearch(value);
           }}
           placeholder="Search by name, slug, or tag…"
+          aria-label="Search products"
           className="w-64 rounded-xl border border-border p-2 text-sm"
         />
-        <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="rounded-xl border border-border p-2 text-sm">
+        <select
+          value={categoryId}
+          onChange={(e) => setCategoryId(e.target.value)}
+          aria-label="Filter by category"
+          className="rounded-xl border border-border p-2 text-sm"
+        >
           <option value="">All categories</option>
           {categoryOptions.map((c) => (
             <option key={c.id} value={c.id}>
@@ -281,18 +287,33 @@ export function ProductsTable({
             </option>
           ))}
         </select>
-        <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-xl border border-border p-2 text-sm">
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          aria-label="Filter by status"
+          className="rounded-xl border border-border p-2 text-sm"
+        >
           <option value="">All statuses</option>
           <option value="DRAFT">Draft</option>
           <option value="ACTIVE">Active</option>
           <option value="ARCHIVED">Archived</option>
         </select>
-        <select value={stockFilter} onChange={(e) => setStockFilter(e.target.value)} className="rounded-xl border border-border p-2 text-sm">
+        <select
+          value={stockFilter}
+          onChange={(e) => setStockFilter(e.target.value)}
+          aria-label="Filter by stock"
+          className="rounded-xl border border-border p-2 text-sm"
+        >
           <option value="all">All stock</option>
           <option value="low">Low stock (&lt;10)</option>
           <option value="out">Out of stock</option>
         </select>
-        <select value={sort} onChange={(e) => setSort(e.target.value)} className="rounded-xl border border-border p-2 text-sm">
+        <select
+          value={sort}
+          onChange={(e) => setSort(e.target.value)}
+          aria-label="Sort products"
+          className="rounded-xl border border-border p-2 text-sm"
+        >
           <option value="updated-desc">Recently updated</option>
           <option value="name-asc">Name A–Z</option>
           <option value="name-desc">Name Z–A</option>
@@ -392,6 +413,7 @@ export function ProductsTable({
               if (!confirm(`Move ${selected.size} product${selected.size === 1 ? "" : "s"} to "${targetName}"?`)) return;
               runBulk("move-category", { categoryId: targetId }, (n) => `${n} product${n === 1 ? "" : "s"} moved to "${targetName}".`);
             }}
+            aria-label="Move selected products to category"
             className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold"
             defaultValue=""
           >
@@ -428,7 +450,12 @@ export function ProductsTable({
             <tr>
               {canManage && (
                 <th className="p-3">
-                  <input type="checkbox" checked={items.length > 0 && selected.size === items.length} onChange={toggleAll} />
+                  <input
+                    type="checkbox"
+                    checked={items.length > 0 && selected.size === items.length}
+                    onChange={toggleAll}
+                    aria-label="Select all products on this page"
+                  />
                 </th>
               )}
               <th className="p-3">Product</th>
@@ -437,7 +464,9 @@ export function ProductsTable({
               <th className="p-3">Stock</th>
               <th className="p-3">Status</th>
               <th className="p-3">Listing</th>
-              <th className="p-3" />
+              <th className="p-3">
+                <span className="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -458,7 +487,12 @@ export function ProductsTable({
                 <tr key={item.id} className="border-t border-border">
                   {canManage && (
                     <td className="p-3">
-                      <input type="checkbox" checked={selected.has(item.id)} onChange={() => toggleSelected(item.id)} />
+                      <input
+                        type="checkbox"
+                        checked={selected.has(item.id)}
+                        onChange={() => toggleSelected(item.id)}
+                        aria-label={`Select ${item.name}`}
+                      />
                     </td>
                   )}
                   <td className="p-3">

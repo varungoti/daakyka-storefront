@@ -49,17 +49,19 @@ export function SeoLandingLayout({
       <JsonLdScript data={faqJsonLd} />
       <JsonLdScript data={breadcrumbs} />
 
-      <nav className="border-b border-border bg-surface py-3 text-sm text-muted">
+      <nav aria-label="Breadcrumb" className="border-b border-border bg-surface py-3 text-sm text-muted">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-1 px-4 lg:px-8">
           <Link href="/" className="hover:text-brand">
             Home
           </Link>
-          <ChevronRight size={14} />
+          <ChevronRight size={14} aria-hidden="true" />
           <Link href="/guides" className="hover:text-brand">
             Guides
           </Link>
-          <ChevronRight size={14} />
-          <span className="text-ink">{page.title}</span>
+          <ChevronRight size={14} aria-hidden="true" />
+          <span aria-current="page" className="text-ink">
+            {page.title}
+          </span>
         </div>
       </nav>
 

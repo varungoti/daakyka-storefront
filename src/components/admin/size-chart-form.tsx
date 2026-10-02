@@ -189,13 +189,14 @@ export function SizeChartForm({ initial }: { initial?: SizeChartFormInitial }) {
                         onChange={(e) =>
                           setColumns((cols) => cols.map((c, i) => (i === colIndex ? e.target.value : c)))
                         }
+                        aria-label={`Column ${colIndex + 1} heading`}
                         className="w-full rounded-lg border border-border bg-surface p-1.5 text-xs font-semibold text-ink"
                       />
                       <button
                         type="button"
                         onClick={() => removeColumn(colIndex)}
                         disabled={columns.length <= 1}
-                        aria-label="Remove column"
+                        aria-label={`Remove column ${col.trim() || colIndex + 1}`}
                         className="shrink-0 rounded p-1 text-muted hover:bg-red-50 hover:text-red-600 disabled:opacity-30"
                       >
                         <Trash2 size={13} />
@@ -203,7 +204,9 @@ export function SizeChartForm({ initial }: { initial?: SizeChartFormInitial }) {
                     </div>
                   </th>
                 ))}
-                <th className="w-8 border-b border-border" />
+                <th className="w-8 border-b border-border">
+                  <span className="sr-only">Remove row</span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -213,6 +216,7 @@ export function SizeChartForm({ initial }: { initial?: SizeChartFormInitial }) {
                     <td key={colIndex} className="border-b border-border p-2">
                       <input
                         value={row[colIndex] ?? ""}
+                        aria-label={`${columns[colIndex].trim() || `Column ${colIndex + 1}`} for ${row[0]?.trim() || `row ${rowIndex + 1}`}`}
                         onChange={(e) =>
                           setRows((rs) =>
                             rs.map((r, i) =>
@@ -229,7 +233,7 @@ export function SizeChartForm({ initial }: { initial?: SizeChartFormInitial }) {
                       type="button"
                       onClick={() => removeRow(rowIndex)}
                       disabled={rows.length <= 1}
-                      aria-label="Remove row"
+                      aria-label={`Remove row ${row[0]?.trim() || rowIndex + 1}`}
                       className="rounded p-1 text-muted hover:bg-red-50 hover:text-red-600 disabled:opacity-30"
                     >
                       <Trash2 size={14} />

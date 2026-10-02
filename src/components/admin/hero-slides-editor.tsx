@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type DragEventHandler } from "react";
+import { useId, useState, type DragEventHandler } from "react";
 import Image from "next/image";
 import { GripVertical } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -85,6 +85,7 @@ function SlideImagePicker({
             className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-muted hover:bg-lilac/40"
           >
             Choose from library
+            <span className="sr-only"> for {label.toLowerCase()}</span>
           </button>
           {value ? (
             <button
@@ -93,6 +94,7 @@ function SlideImagePicker({
               className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-muted hover:bg-red-50 hover:text-red-600"
             >
               Remove
+              <span className="sr-only"> {label.toLowerCase()}</span>
             </button>
           ) : null}
         </div>
@@ -141,6 +143,11 @@ function SlideCard({
 }) {
   const [openPicker, setOpenPicker] = useState<ImageSlot | null>(null);
   const err = (...path: string[]) => fieldErrors[fieldPath(index, ...path)];
+  // One id prefix per slide card (slides repeat, so a static id would be
+  // duplicated) — each visible <label> below is tied to its control with
+  // htmlFor/id; a sibling <label> alone names nothing.
+  const baseId = useId();
+  const fid = (name: string) => `${baseId}-${name}`;
 
   return (
     <div
@@ -192,10 +199,20 @@ function SlideCard({
           >
             ↓
           </button>
-          <button type="button" onClick={onDuplicate} className="rounded-full border border-border px-3 py-1 font-semibold text-ink hover:bg-lilac/40">
+          <button
+            type="button"
+            onClick={onDuplicate}
+            aria-label={`Duplicate slide ${index + 1}`}
+            className="rounded-full border border-border px-3 py-1 font-semibold text-ink hover:bg-lilac/40"
+          >
             Duplicate
           </button>
-          <button type="button" onClick={onRemove} className="rounded-full border border-border px-3 py-1 font-semibold text-red-600 hover:bg-red-50">
+          <button
+            type="button"
+            onClick={onRemove}
+            aria-label={`Remove slide ${index + 1}`}
+            className="rounded-full border border-border px-3 py-1 font-semibold text-red-600 hover:bg-red-50"
+          >
             Remove
           </button>
         </div>
@@ -203,8 +220,11 @@ function SlideCard({
 
       <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <label className="mb-1.5 block text-xs font-semibold text-ink">Eyebrow</label>
+          <label htmlFor={fid("eyebrow")} className="mb-1.5 block text-xs font-semibold text-ink">
+            Eyebrow
+          </label>
           <input
+            id={fid("eyebrow")}
             value={slide.eyebrow}
             onChange={(e) => onChange({ eyebrow: e.target.value })}
             aria-invalid={Boolean(err("eyebrow"))}
@@ -213,8 +233,11 @@ function SlideCard({
           {err("eyebrow") ? <p className="mt-1 text-[11px] font-medium text-red-600">{err("eyebrow")}</p> : null}
         </div>
         <div>
-          <label className="mb-1.5 block text-xs font-semibold text-ink">Headline</label>
+          <label htmlFor={fid("headline")} className="mb-1.5 block text-xs font-semibold text-ink">
+            Headline
+          </label>
           <input
+            id={fid("headline")}
             value={slide.headline}
             onChange={(e) => onChange({ headline: e.target.value })}
             aria-invalid={Boolean(err("headline"))}
@@ -223,8 +246,11 @@ function SlideCard({
           {err("headline") ? <p className="mt-1 text-[11px] font-medium text-red-600">{err("headline")}</p> : null}
         </div>
         <div>
-          <label className="mb-1.5 block text-xs font-semibold text-ink">Subheadline</label>
+          <label htmlFor={fid("subheadline")} className="mb-1.5 block text-xs font-semibold text-ink">
+            Subheadline
+          </label>
           <input
+            id={fid("subheadline")}
             value={slide.subheadline}
             onChange={(e) => onChange({ subheadline: e.target.value })}
             aria-invalid={Boolean(err("subheadline"))}
@@ -233,8 +259,11 @@ function SlideCard({
           {err("subheadline") ? <p className="mt-1 text-[11px] font-medium text-red-600">{err("subheadline")}</p> : null}
         </div>
         <div className="md:row-span-2">
-          <label className="mb-1.5 block text-xs font-semibold text-ink">Description</label>
+          <label htmlFor={fid("description")} className="mb-1.5 block text-xs font-semibold text-ink">
+            Description
+          </label>
           <textarea
+            id={fid("description")}
             value={slide.description}
             onChange={(e) => onChange({ description: e.target.value })}
             rows={4}
@@ -249,8 +278,11 @@ function SlideCard({
         <fieldset className="space-y-2 rounded-xl border border-border p-3">
           <legend className="px-1 text-xs font-bold text-ink">Primary CTA</legend>
           <div>
-            <label className="mb-1 block text-[11px] font-semibold text-muted">Label</label>
+            <label htmlFor={fid("primaryCta-label")} className="mb-1 block text-[11px] font-semibold text-muted">
+              Label
+            </label>
             <input
+              id={fid("primaryCta-label")}
               value={slide.primaryCta?.label ?? ""}
               onChange={(e) => onChange({ primaryCta: { ...(slide.primaryCta ?? {}), label: e.target.value } })}
               aria-invalid={Boolean(err("primaryCta", "label"))}
@@ -259,8 +291,11 @@ function SlideCard({
             {err("primaryCta", "label") ? <p className="mt-1 text-[11px] font-medium text-red-600">{err("primaryCta", "label")}</p> : null}
           </div>
           <div>
-            <label className="mb-1 block text-[11px] font-semibold text-muted">Link</label>
+            <label htmlFor={fid("primaryCta-href")} className="mb-1 block text-[11px] font-semibold text-muted">
+              Link
+            </label>
             <input
+              id={fid("primaryCta-href")}
               value={slide.primaryCta?.href ?? ""}
               onChange={(e) => onChange({ primaryCta: { ...(slide.primaryCta ?? {}), href: e.target.value } })}
               placeholder="/shop or https://example.com"
@@ -273,8 +308,11 @@ function SlideCard({
         <fieldset className="space-y-2 rounded-xl border border-border p-3">
           <legend className="px-1 text-xs font-bold text-ink">Secondary CTA</legend>
           <div>
-            <label className="mb-1 block text-[11px] font-semibold text-muted">Label</label>
+            <label htmlFor={fid("secondaryCta-label")} className="mb-1 block text-[11px] font-semibold text-muted">
+              Label
+            </label>
             <input
+              id={fid("secondaryCta-label")}
               value={slide.secondaryCta?.label ?? ""}
               onChange={(e) => onChange({ secondaryCta: { ...(slide.secondaryCta ?? {}), label: e.target.value } })}
               aria-invalid={Boolean(err("secondaryCta", "label"))}
@@ -283,8 +321,11 @@ function SlideCard({
             {err("secondaryCta", "label") ? <p className="mt-1 text-[11px] font-medium text-red-600">{err("secondaryCta", "label")}</p> : null}
           </div>
           <div>
-            <label className="mb-1 block text-[11px] font-semibold text-muted">Link</label>
+            <label htmlFor={fid("secondaryCta-href")} className="mb-1 block text-[11px] font-semibold text-muted">
+              Link
+            </label>
             <input
+              id={fid("secondaryCta-href")}
               value={slide.secondaryCta?.href ?? ""}
               onChange={(e) => onChange({ secondaryCta: { ...(slide.secondaryCta ?? {}), href: e.target.value } })}
               placeholder="/for-hospitals or https://example.com"
@@ -427,9 +468,9 @@ export function HeroSlidesEditor({
         <h2 className="font-display text-xl font-bold text-ink">Hero Carousel Slides</h2>
         <p className="text-sm text-muted">
           Add, edit, reorder, and enable/disable slides for the homepage hero. Each slide reuses the same
-          elements as the classic Hero Section above (eyebrow, headline, subheadline, description, two CTAs,
+          elements as the classic Hero Section below (eyebrow, headline, subheadline, description, two CTAs,
           and up to two images). Once at least one slide here is enabled, these slides replace the Hero
-          Section above on the storefront — the Hero Section&apos;s Rating Label still appears as a trust
+          Section below on the storefront — the Hero Section&apos;s Rating Label still appears as a trust
           badge beneath every slide. Leave every slide disabled (or the list empty) to keep showing the
           classic single Hero Section.
         </p>
@@ -461,7 +502,7 @@ export function HeroSlidesEditor({
 
       {content.slides.length === 0 ? (
         <p className="rounded-xl border border-dashed border-border p-6 text-center text-sm text-muted">
-          No slides yet — the storefront is showing the classic single Hero Section above.
+          No slides yet — the storefront is showing the classic single Hero Section below.
         </p>
       ) : (
         <div className="space-y-4">

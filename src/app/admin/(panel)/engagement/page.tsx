@@ -79,7 +79,7 @@ export default async function EngagementPage() {
                   {campaign.template?.name ?? "No template"}
                 </p>
               </div>
-              <CampaignStatusSelect campaignId={campaign.id} currentStatus={campaign.status} />
+              <CampaignStatusSelect campaignId={campaign.id} campaignName={campaign.name} currentStatus={campaign.status} />
             </li>
           ))}
           {campaigns.length === 0 && <p className="text-sm text-muted">No campaigns yet.</p>}

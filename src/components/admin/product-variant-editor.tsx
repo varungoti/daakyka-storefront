@@ -139,6 +139,7 @@ export function ProductVariantEditor({
                       key={size}
                       type="button"
                       onClick={() => toggleSize(size)}
+                      aria-pressed={selectedSizes.includes(size)}
                       className={cn(
                         "rounded-full border px-2.5 py-1 text-xs font-medium",
                         selectedSizes.includes(size) ? "border-brand bg-brand/10 text-brand" : "border-border text-muted hover:bg-lilac/40",
@@ -155,6 +156,7 @@ export function ProductVariantEditor({
                 value={customSizeInput}
                 onChange={(e) => setCustomSizeInput(e.target.value)}
                 placeholder="Custom size"
+                aria-label="Custom size"
                 className="w-32 rounded-lg border border-border p-1.5 text-xs"
               />
               <button type="button" onClick={addCustomSize} className="rounded-full border border-border px-2.5 py-1 text-xs font-semibold text-muted hover:bg-lilac/40">
@@ -173,6 +175,7 @@ export function ProductVariantEditor({
                 key={color.name}
                 type="button"
                 onClick={() => toggleColor(color)}
+                aria-pressed={selectedColors.some((c) => c.name === color.name)}
                 title={color.name}
                 className={cn(
                   "flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs font-medium",
@@ -189,9 +192,16 @@ export function ProductVariantEditor({
               value={customColorName}
               onChange={(e) => setCustomColorName(e.target.value)}
               placeholder="Custom colour name"
+              aria-label="Custom colour name"
               className="w-36 rounded-lg border border-border p-1.5 text-xs"
             />
-            <input type="color" value={customColorHex} onChange={(e) => setCustomColorHex(e.target.value)} className="h-7 w-9 rounded border border-border" />
+            <input
+              type="color"
+              value={customColorHex}
+              onChange={(e) => setCustomColorHex(e.target.value)}
+              aria-label="Custom colour shade"
+              className="h-7 w-9 rounded border border-border"
+            />
             <button type="button" onClick={addCustomColor} className="rounded-full border border-border px-2.5 py-1 text-xs font-semibold text-muted hover:bg-lilac/40">
               + Add
             </button>
@@ -219,6 +229,7 @@ export function ProductVariantEditor({
               value={applyStock}
               onChange={(e) => setApplyStock(e.target.value === "" ? "" : Number(e.target.value))}
               placeholder="Stock"
+              aria-label="Stock to apply to every variant"
               className="w-24 rounded-lg border border-border p-1.5 text-xs"
             />
             <button type="button" onClick={applyStockToAll} className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-muted hover:bg-lilac/40">
@@ -236,7 +247,9 @@ export function ProductVariantEditor({
                   <th className="p-2">Stock</th>
                   <th className="p-2">Price override</th>
                   <th className="p-2">Active</th>
-                  <th className="p-2" />
+                  <th className="p-2">
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -267,6 +280,7 @@ export function ProductVariantEditor({
                         />
                         <button type="button" onClick={() => regenerateSku(index)} className="text-[10px] text-brand underline">
                           regen
+                          <span className="sr-only"> SKU for {row.size} / {row.color}</span>
                         </button>
                       </div>
                     </td>
@@ -276,6 +290,7 @@ export function ProductVariantEditor({
                         min={0}
                         value={row.stock}
                         onChange={(e) => updateRow(index, { stock: Number(e.target.value) })}
+                        aria-label={`Stock for ${row.size} / ${row.color}`}
                         className="w-20 rounded border border-border p-1"
                       />
                     </td>
@@ -287,15 +302,22 @@ export function ProductVariantEditor({
                         value={row.price ?? ""}
                         onChange={(e) => updateRow(index, { price: e.target.value === "" ? null : Number(e.target.value) })}
                         placeholder="—"
+                        aria-label={`Price override for ${row.size} / ${row.color}`}
                         className="w-24 rounded border border-border p-1"
                       />
                     </td>
                     <td className="p-2">
-                      <input type="checkbox" checked={row.active} onChange={(e) => updateRow(index, { active: e.target.checked })} />
+                      <input
+                        type="checkbox"
+                        checked={row.active}
+                        onChange={(e) => updateRow(index, { active: e.target.checked })}
+                        aria-label={`Active: ${row.size} / ${row.color}`}
+                      />
                     </td>
                     <td className="p-2">
                       <button type="button" onClick={() => removeRow(index)} className="text-[11px] text-red-600 hover:underline">
                         Remove
+                        <span className="sr-only"> {row.size} / {row.color} variant</span>
                       </button>
                     </td>
                   </tr>

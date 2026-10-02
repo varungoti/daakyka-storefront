@@ -86,6 +86,16 @@ export function MobileStickyAddToCart({
     return () => setStickyAddToCartVisible(false);
   }, [visible]);
 
+  // F-247: while the bar covers the bottom of the viewport, globals.css adds
+  // matching scroll-padding-bottom so a focused control near the bottom edge
+  // is scrolled clear of it (WCAG 2.2 SC 2.4.11).
+  useEffect(() => {
+    if (!visible) return;
+    const root = document.documentElement;
+    root.setAttribute("data-sticky-cta", "");
+    return () => root.removeAttribute("data-sticky-cta");
+  }, [visible]);
+
   return (
     <div
       aria-hidden={!visible}

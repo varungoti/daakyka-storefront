@@ -5,6 +5,7 @@ import { useCurrency } from "@/context/currency-provider";
 import { Badge } from "@/components/ui/badge";
 import { StarRating } from "@/components/ui/star-rating";
 import { WishlistButton } from "@/components/wishlist/wishlist-button";
+import { quickAddLabel } from "@/lib/a11y/labels";
 import { computePercentOff } from "@/lib/pricing/percent-off";
 import { isSizeAvailableForColor, isVariantInStock, resolveVariant } from "@/lib/products/resolve-variant";
 import type { Product } from "@/lib/types";
@@ -349,7 +350,7 @@ function QuickAddPanel({ product, selectedColor }: { product: Product; selectedC
         "md:group-focus-within:pointer-events-auto md:group-focus-within:max-h-24 md:group-focus-within:pt-3 md:group-focus-within:opacity-100",
       )}
     >
-      <div className="flex flex-wrap gap-1">
+      <div role="group" aria-label={`Size for ${product.name}`} className="flex flex-wrap gap-1">
         {product.sizes.slice(0, 6).map((s) => {
           const inStock = isSizeAvailableForColor(product.variants, s, defaultColor);
           return (
@@ -375,6 +376,9 @@ function QuickAddPanel({ product, selectedColor }: { product: Product; selectedC
         type="button"
         onClick={handleAdd}
         disabled={isLoading || soldOutSelection}
+        // F-248: the visible text is just "Quick Add" — say which product and
+        // size, since every card renders one.
+        aria-label={quickAddLabel(product.name, size, justAdded ? "added" : soldOutSelection ? "soldOut" : "idle")}
         className="ml-auto inline-flex items-center gap-1.5 rounded-md bg-ink px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-ink/90 disabled:cursor-not-allowed disabled:opacity-50"
       >
         <ShoppingBag size={14} />

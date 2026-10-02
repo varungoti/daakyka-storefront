@@ -130,6 +130,7 @@ export default async function AdminNewsletterSubscribersPage({ searchParams }: P
           name="q"
           defaultValue={query}
           placeholder="Search by email"
+          aria-label="Search subscribers by email"
           className="rounded-xl border border-border px-4 py-2 text-sm outline-none focus:border-brand"
         />
         <div className="flex flex-wrap gap-2 text-sm">

@@ -225,11 +225,13 @@ export function OrdersTable() {
             debouncedSetSearch(value);
           }}
           placeholder="Search order #, name, email or phone…"
+          aria-label="Search orders"
           className="w-64 rounded-xl border border-border p-2 text-sm"
         />
         <select
           value={status}
           onChange={(e) => updateFilter(setStatus, e.target.value)}
+          aria-label="Filter by status"
           className="rounded-xl border border-border p-2 text-sm"
         >
           <option value="">All statuses</option>
@@ -242,6 +244,7 @@ export function OrdersTable() {
         <select
           value={paymentMethod}
           onChange={(e) => updateFilter(setPaymentMethod, e.target.value)}
+          aria-label="Filter by payment method"
           className="rounded-xl border border-border p-2 text-sm"
         >
           <option value="">All payment methods</option>
@@ -269,7 +272,12 @@ export function OrdersTable() {
             className="rounded-xl border border-border p-2 text-sm"
           />
         </label>
-        <select value={sort} onChange={(e) => setSort(e.target.value)} className="rounded-xl border border-border p-2 text-sm">
+        <select
+          value={sort}
+          onChange={(e) => setSort(e.target.value)}
+          aria-label="Sort orders"
+          className="rounded-xl border border-border p-2 text-sm"
+        >
           <option value="createdAt-desc">Newest first</option>
           <option value="createdAt-asc">Oldest first</option>
           <option value="total-desc">Total high–low</option>
@@ -301,7 +309,9 @@ export function OrdersTable() {
               <th className="p-3">Total</th>
               <th className="p-3">Status</th>
               <th className="p-3">Payment</th>
-              <th className="p-3" />
+              <th className="p-3">
+                <span className="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -341,6 +351,7 @@ export function OrdersTable() {
                   <td className="p-3 text-right">
                     <Link href={`/admin/orders/${order.id}`} className="text-xs font-semibold text-brand hover:underline">
                       View
+                      <span className="sr-only"> order {order.number}</span>
                     </Link>
                   </td>
                 </tr>
@@ -393,6 +404,7 @@ export function OrdersTable() {
               <div className="mt-3 text-right">
                 <Link href={`/admin/orders/${order.id}`} className="text-xs font-semibold text-brand hover:underline">
                   View
+                  <span className="sr-only"> order {order.number}</span>
                 </Link>
               </div>
             </div>

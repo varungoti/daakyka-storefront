@@ -8,6 +8,7 @@ import { CartDrawer } from "@/components/cart/cart-drawer";
 import { CartAbandonTracker } from "@/components/cart/cart-abandon-tracker";
 import { WishlistDrawer } from "@/components/wishlist/wishlist-drawer";
 import type { NavigationTree } from "@/lib/navigation/get-navigation";
+import { MotionConfig } from "framer-motion";
 import { usePathname } from "next/navigation";
 
 // release-hardening perf pass — tried next/dynamic(ssr:false) here for
@@ -57,7 +58,15 @@ export function SiteShell({
   }
 
   return (
-    <>
+    // F-245: the cart, wishlist, filter and search drawers/dialogs are
+    // framer-motion springs, which the CSS `prefers-reduced-motion` rule in
+    // globals.css can't reach. `reducedMotion="user"` makes every motion
+    // component below (this wraps the page `children` too, so the shop's
+    // filter drawer is covered) skip transform animations — the drawers
+    // appear without sliding — whenever the visitor's OS asks for less
+    // motion. No new JS: those drawers already pull framer-motion into this
+    // chunk, and MotionConfig is just its context provider.
+    <MotionConfig reducedMotion="user">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-xl focus:bg-brand focus:px-4 focus:py-3 focus:text-sm focus:font-semibold focus:text-white"
@@ -108,6 +117,6 @@ export function SiteShell({
       <div className="print:hidden">
         <WishlistDrawer />
       </div>
-    </>
+    </MotionConfig>
   );
 }

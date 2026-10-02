@@ -43,10 +43,9 @@ export default async function AdminMarketingHubPage() {
       <div>
         <h1 className="font-display text-3xl font-bold text-ink">Marketing</h1>
         <p className="text-muted">
-          Engagement, campaigns, journeys, offers, discounts, testimonials, market and product intelligence,
-          reputation, and the Hermes agent — grouped here (release-hardening F-10) so the sidebar lists one
-          &ldquo;Marketing&rdquo; item instead of ten. Nothing moved: every section below is still its own full page
-          at its usual URL.
+          Everything for reaching and keeping customers in one place: subscribers and segments, campaigns, automated
+          journeys, offers, discount codes, testimonials, market and product insights, reputation, and the Hermes
+          assistant. Pick a section below, then open it to manage it.
         </p>
       </div>
       <MarketingHubTabs visibleKeys={visibleKeys} />

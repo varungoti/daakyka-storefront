@@ -5,6 +5,7 @@ import { useWishlist } from "@/context/wishlist-provider";
 import { SearchDialog } from "@/components/search/search-dialog";
 import { CurrencyToggle } from "@/components/layout/currency-toggle";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
+import { countedLabel } from "@/lib/a11y/labels";
 import type { NavItem, NavigationTree } from "@/lib/navigation/get-navigation";
 import { cn } from "@/lib/utils";
 import {
@@ -158,6 +159,10 @@ function IconButton({
     "relative rounded-full p-2.5 text-ink transition hover:bg-lilac/60 hover:text-brand",
     className,
   );
+  // F-248: `aria-label` replaces the button's content as its name, so the
+  // count badge inside it was never announced — fold it into the label
+  // ("Cart, 2 items").
+  const accessibleName = countedLabel(label, badge);
   const content = (
     <>
       {children}
@@ -171,14 +176,14 @@ function IconButton({
 
   if (href) {
     return (
-      <Link href={href} aria-label={label} className={classes}>
+      <Link href={href} aria-label={accessibleName} className={classes}>
         {content}
       </Link>
     );
   }
 
   return (
-    <button type="button" aria-label={label} onClick={onClick} className={classes}>
+    <button type="button" aria-label={accessibleName} onClick={onClick} className={classes}>
       {content}
     </button>
   );

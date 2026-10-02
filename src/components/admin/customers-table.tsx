@@ -98,9 +98,15 @@ export function CustomersTable() {
             debouncedSetSearch(value);
           }}
           placeholder="Search by name, email, or phone…"
+          aria-label="Search customers"
           className="w-72 rounded-xl border border-border p-2 text-sm"
         />
-        <select value={active} onChange={(e) => setActive(e.target.value)} className="rounded-xl border border-border p-2 text-sm">
+        <select
+          value={active}
+          onChange={(e) => setActive(e.target.value)}
+          aria-label="Filter customers"
+          className="rounded-xl border border-border p-2 text-sm"
+        >
           <option value="">All customers</option>
           <option value="true">Active only</option>
           <option value="false">Inactive only</option>
@@ -123,7 +129,9 @@ export function CustomersTable() {
               <th className="p-3">Total spent</th>
               <th className="p-3">Joined</th>
               <th className="p-3">Status</th>
-              <th className="p-3" />
+              <th className="p-3">
+                <span className="sr-only">Actions</span>
+              </th>
             </tr>
           </thead>
           <tbody>

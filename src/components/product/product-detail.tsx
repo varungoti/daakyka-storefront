@@ -732,7 +732,7 @@ function ReviewsSection({
   const returnTo = `/products/${product.handle}#reviews`;
 
   return (
-    <section id="reviews" className="mt-16 scroll-mt-24 border-t border-border pt-12">
+    <section id="reviews" className="mt-16 border-t border-border pt-12">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h2 className="font-display text-2xl font-bold text-ink">Reviews</h2>
         {reviewEligibility.status === "guest" && (

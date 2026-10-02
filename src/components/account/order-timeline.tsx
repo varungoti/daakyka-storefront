@@ -14,7 +14,14 @@ export function OrderTimelineView({ timeline }: { timeline: OrderTimeline }) {
     <div className="space-y-6">
       <ol>
         {timeline.steps.map((step, index) => (
-          <li key={step.id} className="relative flex gap-4 pb-8 last:pb-0">
+          <li
+            key={step.id}
+            // F-248: the step's state was shown only through colour and icon
+            // shape. aria-current marks where the order is now; the sr-only
+            // text after the label covers the other two states.
+            aria-current={step.state === "current" ? "step" : undefined}
+            className="relative flex gap-4 pb-8 last:pb-0"
+          >
             {index < timeline.steps.length - 1 && (
               <span
                 aria-hidden
@@ -41,6 +48,9 @@ export function OrderTimelineView({ timeline }: { timeline: OrderTimeline }) {
             <div className="pt-0.5">
               <p className={cn("text-sm font-semibold", step.state === "upcoming" ? "text-muted" : "text-ink")}>
                 {step.label}
+                {step.state !== "upcoming" && (
+                  <span className="sr-only"> ({step.state === "complete" ? "completed" : "current step"})</span>
+                )}
               </p>
               {/* F-300 fix: the date this step was actually reached, in IST —
                   see OrderTimelineStep.at. */}

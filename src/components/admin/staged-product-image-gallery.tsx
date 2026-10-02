@@ -286,6 +286,7 @@ export function StagedProductImageGallery({
           onChange={(e) => setPromptOverride(e.target.value)}
           rows={2}
           placeholder="Optional prompt override — leave blank to auto-fill from name, category, gender and fabric"
+          aria-label="Image generation prompt override"
           className="w-full rounded-lg border border-border bg-surface p-2 text-xs text-ink"
         />
         <div className="flex items-center gap-2">
@@ -379,6 +380,7 @@ export function StagedProductImageGallery({
               <select
                 value={img.color ?? ""}
                 onChange={(e) => commit(updateStagedImage(latestImages.current, img.mediaAssetId, { color: e.target.value || null }))}
+                aria-label={`Colour tag for image ${index + 1}`}
                 className="w-full rounded border border-border p-1 text-xs"
               >
                 <option value="">No colour tag</option>
@@ -392,6 +394,7 @@ export function StagedProductImageGallery({
                 value={img.alt ?? ""}
                 onChange={(e) => commit(updateStagedImage(latestImages.current, img.mediaAssetId, { alt: e.target.value }))}
                 placeholder="Alt text"
+                aria-label={`Alt text for image ${index + 1}`}
                 maxLength={MAX_ALT_LENGTH}
                 className="w-full rounded border border-border p-1 text-xs"
               />

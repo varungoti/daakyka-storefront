@@ -15,9 +15,13 @@ const statusOptions: ContactEnquiryAdminStatus[] = ["NEW", "CONTACTED", "CLOSED"
  */
 export function ContactEnquiryStatusSelect({
   enquiryId,
+  enquiryName,
   currentStatus,
 }: {
   enquiryId: string;
+  /** Who sent the enquiry — names the select for assistive tech ("Status for
+   * Asha Rao"), since the list renders one per enquiry. */
+  enquiryName: string;
   currentStatus: string;
 }) {
   const router = useRouter();
@@ -64,6 +68,7 @@ export function ContactEnquiryStatusSelect({
         value={value}
         disabled={pending}
         onChange={(e) => updateStatus(e.target.value as ContactEnquiryAdminStatus)}
+        aria-label={`Status for ${enquiryName}`}
         className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold uppercase outline-none focus:border-brand disabled:opacity-60"
       >
         {options.map((status) => (

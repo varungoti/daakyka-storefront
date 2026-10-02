@@ -431,12 +431,16 @@ export function ShopPageContent({
           </>
         ) : null}
         <div className="relative mx-auto max-w-[1320px] px-4 lg:px-8">
-          <nav className="mb-3 text-sm text-muted md:mb-6">
+          <nav aria-label="Breadcrumb" className="mb-3 text-sm text-muted md:mb-6">
             <Link href="/" className="hover:text-brand">
               Home
             </Link>
-            <span className="mx-2">›</span>
-            <span className="font-semibold text-ink">{breadcrumbLabel}</span>
+            <span aria-hidden="true" className="mx-2">
+              ›
+            </span>
+            <span aria-current="page" className="font-semibold text-ink">
+              {breadcrumbLabel}
+            </span>
           </nav>
           <div className="max-w-2xl">
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-brand">{pageEyebrow}</p>

@@ -224,14 +224,20 @@ export default async function ProductPage({ params }: ProductPageProps) {
       <JsonLdScript data={breadcrumbJsonLd(breadcrumbItems)} />
 
       <section className="border-b border-border bg-alt-surface py-6">
-        <div className="mx-auto max-w-[1320px] px-4 text-sm text-muted lg:px-8">
+        <nav aria-label="Breadcrumb" className="mx-auto max-w-[1320px] px-4 text-sm text-muted lg:px-8">
           {breadcrumbItems.map((crumb, index) => {
             const isLast = index === breadcrumbItems.length - 1;
             return (
               <span key={crumb.name}>
-                {index > 0 && <span className="mx-2">›</span>}
+                {index > 0 && (
+                  <span aria-hidden="true" className="mx-2">
+                    ›
+                  </span>
+                )}
                 {isLast ? (
-                  <span className="font-semibold text-ink">{crumb.name}</span>
+                  <span aria-current="page" className="font-semibold text-ink">
+                    {crumb.name}
+                  </span>
                 ) : (
                   <Link
                     href={index === 0 ? "/" : crumb.url.replace(base, "")}
@@ -243,7 +249,7 @@ export default async function ProductPage({ params }: ProductPageProps) {
               </span>
             );
           })}
-        </div>
+        </nav>
       </section>
 
       <section className="py-12">

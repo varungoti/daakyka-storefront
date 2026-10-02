@@ -155,7 +155,7 @@ export function SegmentForm({ initial }: { initial?: SegmentFormInitial }) {
 
       <Field
         label="Criteria (JSON)"
-        hint='Read by src/lib/engagement/segment-resolver.ts — supported keys: source, consent, leadType, pages. Example: { "source": "newsletter" }'
+        hint='Who belongs to this segment — supported keys: source, consent, leadType, pages. Example: { "source": "newsletter" }'
         error={fieldErrors.criteria}
       >
         <textarea

@@ -8,9 +8,13 @@ const statusOptions = ["DRAFT", "ACTIVE", "PAUSED"] as const;
 
 export function JourneyStatusSelect({
   journeyId,
+  journeyName,
   currentStatus,
 }: {
   journeyId: string;
+  /** Names the select for assistive tech ("Status for Welcome series"), since
+   * the page renders one per journey. */
+  journeyName: string;
   currentStatus: string;
 }) {
   const router = useRouter();
@@ -45,7 +49,7 @@ export function JourneyStatusSelect({
       <select
         value={currentStatus}
         onChange={(event) => handleChange(event.target.value)}
-        aria-label="Journey status"
+        aria-label={`Status for ${journeyName}`}
         className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-semibold outline-none focus:border-brand"
       >
         {statusOptions.map((status) => (

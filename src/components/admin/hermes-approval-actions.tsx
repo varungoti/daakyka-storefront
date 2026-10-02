@@ -2,14 +2,19 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { humanizeHermesLabel } from "@/lib/hermes/labels";
 
 export function HermesApprovalActions({
   approvalId,
   currentStatus,
+  itemTitle,
   canApprove = true,
 }: {
   approvalId: string;
   currentStatus: string;
+  /** The queue item this acts on — names the Approve/Reject buttons for
+   * assistive tech, since the queue renders a pair of them per item. */
+  itemTitle?: string;
   /** F-293: false when this role lacks the permission of the record that
    * approving would create (e.g. a campaign draft without campaign access). */
   canApprove?: boolean;
@@ -21,7 +26,7 @@ export function HermesApprovalActions({
   if (currentStatus !== "PENDING") {
     return (
       <span className="rounded-full bg-lavender/60 px-3 py-1 text-xs font-semibold text-muted">
-        {currentStatus}
+        {humanizeHermesLabel(currentStatus)}
       </span>
     );
   }
@@ -58,6 +63,7 @@ export function HermesApprovalActions({
             type="button"
             disabled={loading}
             onClick={() => update("APPROVED")}
+            aria-label={itemTitle ? `Approve ${itemTitle}` : undefined}
             className="rounded-full bg-trust px-3 py-1 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-50"
           >
             Approve
@@ -71,6 +77,7 @@ export function HermesApprovalActions({
           type="button"
           disabled={loading}
           onClick={() => update("REJECTED")}
+          aria-label={itemTitle ? `Reject ${itemTitle}` : undefined}
           className="rounded-full border border-border px-3 py-1 text-xs font-semibold text-muted hover:border-red-300 hover:text-red-600 disabled:opacity-50"
         >
           Reject

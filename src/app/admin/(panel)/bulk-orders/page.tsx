@@ -85,7 +85,7 @@ export default async function AdminBulkOrdersPage() {
                   <BulkOrderRequirements lead={lead} />
                 </td>
                 <td className="px-4 py-4">
-                  <BulkLeadStatusSelect leadId={lead.id} currentStatus={lead.status} />
+                  <BulkLeadStatusSelect leadId={lead.id} leadName={lead.organization} currentStatus={lead.status} />
                 </td>
                 <td className="px-4 py-4 text-muted">
                   {lead.createdAt.toLocaleDateString("en-IN")}
@@ -154,7 +154,7 @@ export default async function AdminBulkOrdersPage() {
               </dl>
               {lead.notes && <p className="mt-2 whitespace-pre-line break-words text-xs text-muted">{lead.notes}</p>}
               <div className="mt-3 flex items-center justify-between gap-2 border-t border-border pt-3">
-                <BulkLeadStatusSelect leadId={lead.id} currentStatus={lead.status} />
+                <BulkLeadStatusSelect leadId={lead.id} leadName={lead.organization} currentStatus={lead.status} />
                 <span className="shrink-0 text-xs text-muted">{lead.createdAt.toLocaleDateString("en-IN")}</span>
               </div>
             </div>

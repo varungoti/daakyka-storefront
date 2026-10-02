@@ -116,7 +116,7 @@ export default async function AdminContactEnquiriesPage({ searchParams }: PagePr
             <p className="mt-3 whitespace-pre-wrap break-words text-sm text-muted">{enquiry.message}</p>
             <div className="mt-3 flex items-center justify-between gap-3">
               <p className="text-xs text-muted">{formatDateIST(enquiry.createdAt)}</p>
-              <ContactEnquiryStatusSelect enquiryId={enquiry.id} currentStatus={enquiry.status} />
+              <ContactEnquiryStatusSelect enquiryId={enquiry.id} enquiryName={enquiry.name} currentStatus={enquiry.status} />
             </div>
           </div>
         ))}
@@ -160,7 +160,7 @@ export default async function AdminContactEnquiriesPage({ searchParams }: PagePr
                 </td>
                 <td className="max-w-xs whitespace-pre-wrap break-words px-4 py-4 text-muted">{enquiry.message}</td>
                 <td className="px-4 py-4">
-                  <ContactEnquiryStatusSelect enquiryId={enquiry.id} currentStatus={enquiry.status} />
+                  <ContactEnquiryStatusSelect enquiryId={enquiry.id} enquiryName={enquiry.name} currentStatus={enquiry.status} />
                 </td>
                 <td className="px-4 py-4 text-muted">{formatDateIST(enquiry.createdAt)}</td>
               </tr>

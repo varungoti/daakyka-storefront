@@ -220,6 +220,7 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
             checked={user.active}
             disabled={isSelf || busy}
             onChange={(e) => changeActive(e.target.checked)}
+            aria-label={`Active: ${user.name}`}
           />
           Active
         </label>
@@ -243,6 +244,7 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
             type="button"
             onClick={resetPassword}
             disabled={busy}
+            aria-label={`Reset password for ${user.name}`}
             className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-ink hover:bg-lilac/40 disabled:cursor-not-allowed disabled:opacity-50"
           >
             Reset password
@@ -252,6 +254,7 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
               type="button"
               onClick={deleteUser}
               disabled={busy}
+              aria-label={`Delete ${user.name}`}
               className="rounded-full border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Delete

@@ -636,6 +636,7 @@ export function ProductForm({
         <select
           value={categoryId}
           onChange={(e) => setCategoryId(e.target.value)}
+          aria-label="Product category"
           aria-invalid={Boolean(fieldErrors.categoryId)}
           aria-describedby={fieldErrors.categoryId ? "product-category-error" : undefined}
           className={inputClass}
