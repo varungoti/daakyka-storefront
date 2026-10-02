@@ -21,9 +21,11 @@ import {
   parseShopSearchQuery,
   parseShopVisibleCount,
   pruneFiltersToFacets,
+  SHOP_PAGE_SIZE,
   withShopVisibleCount,
   type ShopFilters,
 } from "@/lib/shop/filters";
+import { createUrlEchoGuard, sameShopFilters } from "@/lib/shop/url-sync";
 import type { CategoryTreeNode } from "@/lib/products";
 import type { Product } from "@/lib/types";
 import type { Testimonial } from "@/lib/types";
@@ -31,7 +33,7 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 function flattenSlugs(node: CategoryTreeNode): string[] {
   return [node.slug, ...node.children.flatMap(flattenSlugs)];
@@ -157,6 +159,26 @@ const TestimonialsSection = dynamic(
 // result: MobileFilterDrawer is unconditionally rendered (controlled via
 // `open`), so it measured no unused-JS improvement and a worse median LCP.
 
+/**
+ * F-018: reads the URL's query string through `useSearchParams()` and hands
+ * it up — the only thing on /shop and /category/[slug] that depends on the
+ * request URL. Rendered inside its own Suspense boundary: on a prerendered
+ * route `useSearchParams()` makes the Client Component tree up to the nearest
+ * boundary render on the client only
+ * (node_modules/next/dist/docs/01-app/03-api-reference/04-functions/use-search-params.md,
+ * "Prerendering"), so this keeps that to a component that renders nothing,
+ * and the product grid stays in the static HTML. A layout effect, so a
+ * client-side navigation that mounts the page applies its filters before the
+ * first paint.
+ */
+function ShopUrlSync({ onSearch }: { onSearch: (search: string) => void }) {
+  const search = useSearchParams().toString();
+  useLayoutEffect(() => {
+    onSearch(search);
+  }, [search, onSearch]);
+  return null;
+}
+
 interface ShopPageHeading {
   eyebrow?: string;
   title: string;
@@ -169,7 +191,6 @@ interface ShopPageContentProps {
   testimonials: Testimonial[];
   categories?: CategoryTreeNode[];
   initialCategory?: string;
-  initialQuery?: string;
   fabricTechEnabled?: boolean;
   mixMatchEnabled?: boolean;
   /** Overrides the default all-apparel hero copy — used by /category/[slug]
@@ -205,7 +226,6 @@ export function ShopPageContent({
   testimonials,
   categories = [],
   initialCategory,
-  initialQuery,
   fabricTechEnabled = false,
   mixMatchEnabled = false,
   heading,
@@ -215,26 +235,65 @@ export function ShopPageContent({
   returnWindowDays = 30,
 }: ShopPageContentProps) {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const { formatPrice } = useCurrency();
 
   // Phase F5 fix: every facet (colour/size/fabric/price/on-sale/in-stock),
-  // not just category/q/sort, is parsed straight from the URL on mount —
-  // see src/lib/shop/filters.ts for the defensive parsing rules. This
-  // makes a filtered /shop or /category/[slug] link reload-stable: the
-  // grid you land on after a hard refresh is exactly the one you shared.
+  // not just category/q/sort, comes from the URL — see
+  // src/lib/shop/filters.ts for the defensive parsing rules. This makes a
+  // filtered /shop or /category/[slug] link reload-stable: the grid you
+  // land on after a hard refresh is exactly the one you shared.
+  //
+  // F-018: the route is prerendered, so the server (and the first client
+  // render, which has to match it) shows the unfiltered grid, and the URL's
+  // facets are applied right after hydration by ShopUrlSync below.
   const [filters, setFiltersState] = useState<ShopFilters>(() =>
-    parseShopFiltersFromSearchParams(searchParams, { category: initialCategory }),
+    parseShopFiltersFromSearchParams(null, { category: initialCategory }),
   );
-  const [query, setQueryState] = useState<string>(
-    () => parseShopSearchQuery(searchParams) || initialQuery || "",
-  );
+  const [query, setQueryState] = useState<string>("");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   // F-021: how many cards "Load more" had revealed when this page was
-  // entered (`?show=`) — read once, on mount, because ProductGrid owns the
-  // live count from there on. This is what makes Back from a product page
-  // (which remounts this component) land on the same expanded list.
-  const [initialVisibleCount] = useState(() => parseShopVisibleCount(searchParams));
+  // entered (`?show=`) — read from the URL once, on the first sync, because
+  // ProductGrid owns the live count from there on (it is re-keyed on this
+  // value, so a restored count mounts a fresh grid at that size). This is
+  // what makes Back from a product page (which remounts this component) land
+  // on the same expanded list.
+  const [initialVisibleCount, setInitialVisibleCount] = useState(SHOP_PAGE_SIZE);
+  const urlApplied = useRef(false);
+  const [echoGuard] = useState(createUrlEchoGuard);
+
+  /** Applies a URL query string to the page's state. Keeps the current
+   * state objects when the URL carries nothing new, so an echo of the page's
+   * own write (or an unrelated param) doesn't make the grid re-filter and
+   * collapse its "Load more" position. */
+  const applyUrlSearch = useCallback(
+    (search: string) => {
+      const urlParams = new URLSearchParams(search);
+      const nextFilters = parseShopFiltersFromSearchParams(urlParams, { category: initialCategory });
+      const nextQuery = parseShopSearchQuery(urlParams);
+      setFiltersState((current) => (sameShopFilters(current, nextFilters) ? current : nextFilters));
+      // Trimmed compare: the URL never carries the trailing space of a
+      // half-typed "scrub ", and that must not be typed over.
+      setQueryState((current) => (current.trim() === nextQuery ? current : nextQuery));
+      if (!urlApplied.current) {
+        urlApplied.current = true;
+        setInitialVisibleCount(parseShopVisibleCount(urlParams));
+      }
+    },
+    [initialCategory],
+  );
+
+  // The router's view of the URL (ShopUrlSync): the first load, and client
+  // navigations to this route with another query string (the search
+  // dialog's "Search all products", a menu or landing-page link such as
+  // /shop?category=...). Ignores the echoes of this page's own writes — see
+  // src/lib/shop/url-sync.ts.
+  const handleRouterSearch = useCallback(
+    (search: string) => {
+      if (echoGuard.isEcho(search)) return;
+      applyUrlSearch(search);
+    },
+    [applyUrlSearch, echoGuard],
+  );
 
   // Re-derives filters/query on browser back/forward, which change the
   // URL directly (via popstate) without going through this component's
@@ -247,17 +306,16 @@ export function ShopPageContent({
   // synchronize... Subscribe for updates from some external system,
   // calling setState in a callback function when external state
   // changes"). Reads `window.location.search` directly rather than the
-  // closed-over `searchParams` value so it doesn't depend on the
-  // relative timing of Next's own popstate handling vs. this listener.
+  // router's copy of the URL so it doesn't depend on the relative timing of
+  // Next's own popstate handling vs. this listener.
   useEffect(() => {
     const handlePopState = () => {
-      const urlParams = new URLSearchParams(window.location.search);
-      setFiltersState(parseShopFiltersFromSearchParams(urlParams, { category: initialCategory }));
-      setQueryState(parseShopSearchQuery(urlParams) || initialQuery || "");
+      echoGuard.reset();
+      applyUrlSearch(window.location.search);
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [initialCategory, initialQuery]);
+  }, [applyUrlSearch, echoGuard]);
 
   /**
    * Single choke point for every filter/query change: updates React state
@@ -267,21 +325,15 @@ export function ShopPageContent({
    * query as two separate writes) would otherwise hit.
    *
    * This shallow-routes via the native History API instead of
-   * next/navigation's router.push/replace. /shop and /category/[slug]'s
-   * Server Components already read the `searchParams` prop for the
-   * pre-existing category/q/sort params, which — per
-   * node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/page.md
-   * ("searchParams is a Request-time API ... Using it will opt the page
-   * into dynamic rendering") — already makes both routes fully dynamic,
-   * *before* this fix. A real router.push/replace would therefore
-   * round-trip to the server on every single swatch/checkbox click.
+   * next/navigation's router.push/replace. The grid filters in memory, so a
+   * swatch/checkbox click has nothing to ask the server for (F-018: the
+   * route is prerendered and never sees these params at all).
    * history.pushState/replaceState update the address bar and history
    * stack — and, per Next's own "Shallow routing on the client" guide
    * (node_modules/next/dist/docs/01-app/02-guides/single-page-applications.md),
-   * stay in sync with usePathname/useSearchParams — without that
-   * round-trip, so filtering stays exactly as instant as it was before
-   * this fix, just URL-synced (shareable/reload-stable/back-forward-able)
-   * now too.
+   * stay in sync with usePathname/useSearchParams — so filtering stays
+   * instant, and is URL-synced (shareable/reload-stable/back-forward-able)
+   * too.
    *
    * push vs replace: a facet toggle (category, colour swatch, size,
    * fabric, on-sale, in-stock, sort) is one deliberate click, so it
@@ -309,6 +361,7 @@ export function ShopPageContent({
     const params = applyShopFiltersToSearchParams(window.location.search, nextFilters, nextQuery);
     const qs = params.toString();
     const href = qs ? `${pathname}?${qs}` : pathname;
+    echoGuard.noteOwnWrite(qs);
     if (options?.transient) {
       window.history.replaceState(null, "", href);
     } else {
@@ -321,6 +374,7 @@ export function ShopPageContent({
   const handleVisibleCountChange = (count: number) => {
     if (!syncUrl) return;
     const qs = withShopVisibleCount(window.location.search, count).toString();
+    echoGuard.noteOwnWrite(qs);
     window.history.replaceState(null, "", qs ? `${pathname}?${qs}` : pathname);
   };
 
@@ -441,6 +495,11 @@ export function ShopPageContent({
 
   return (
     <>
+      {syncUrl && (
+        <Suspense fallback={null}>
+          <ShopUrlSync onSearch={handleRouterSearch} />
+        </Suspense>
+      )}
       {/* F-242: `py-6` (was `py-10`) on mobile — this band, the tall hero
           and a 1-column grid together pushed the first product off-screen
           by hundreds of px. */}
@@ -502,6 +561,7 @@ export function ShopPageContent({
             />
           </div>
           <ProductGrid
+            key={initialVisibleCount}
             products={filteredProducts}
             totalCount={filteredProducts.length}
             sort={filters.sort}
@@ -513,6 +573,7 @@ export function ShopPageContent({
             activeFilters={activeFilterChips}
             initialVisibleCount={initialVisibleCount}
             onVisibleCountChange={handleVisibleCountChange}
+            eagerFirst
           />
         </div>
       </section>

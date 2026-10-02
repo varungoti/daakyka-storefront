@@ -1,5 +1,6 @@
 import { ShopPageContent } from "@/components/shop/shop-page-content";
 import { getCategoryTree, getProducts } from "@/lib/products";
+import { toShopCardProduct } from "@/lib/products/card-product";
 import { canonicalPath } from "@/lib/seo/canonical";
 import { baseOpenGraph } from "@/lib/seo/json-ld";
 import { getSeoOverrideForPath } from "@/lib/seo/records";
@@ -24,12 +25,13 @@ export async function generateMetadata(): Promise<Metadata> {
   };
 }
 
-interface ShopPageProps {
-  searchParams: Promise<{ category?: string; q?: string }>;
-}
-
-export default async function ShopPage({ searchParams }: ShopPageProps) {
-  const params = await searchParams;
+// F-018: no `searchParams` prop here — reading it opts the route into
+// per-request rendering (node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/page.md),
+// which made /shop a no-store function run on every view. ShopPageContent reads
+// ?category=/?q=/facets itself from the URL after hydration (it already did, for
+// everything but those two), so this prerenders — every read below is a tagged
+// unstable_cache, and an admin catalog save or a stock change revalidates it.
+export default async function ShopPage() {
   const [products, categories, testimonials, fabricTechEnabled, mixMatchEnabled, returnWindowDays] =
     await Promise.all([
       getProducts(),
@@ -44,10 +46,9 @@ export default async function ShopPage({ searchParams }: ShopPageProps) {
 
   return (
     <ShopPageContent
-      products={products}
+      products={products.map(toShopCardProduct)}
       categories={categories}
       testimonials={testimonials}
-      initialQuery={params.q}
       fabricTechEnabled={fabricTechEnabled}
       mixMatchEnabled={mixMatchEnabled}
       returnWindowDays={returnWindowDays}

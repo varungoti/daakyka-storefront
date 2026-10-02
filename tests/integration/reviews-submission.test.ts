@@ -20,6 +20,7 @@ import {
   ReviewNotFoundError,
 } from "@/lib/reviews/moderate-review";
 import { getApprovedReviews, getReviewSummary } from "@/lib/reviews";
+import { getReviewEligibility } from "@/lib/reviews/review-eligibility";
 import { GET as getAdminReviews } from "@/app/api/admin/reviews/route";
 import { PATCH as patchAdminReview } from "@/app/api/admin/reviews/[id]/route";
 import { POST as postAdminReviewsBulk } from "@/app/api/admin/reviews/bulk/route";
@@ -738,6 +739,88 @@ describe("review submission + moderation (Phase D2)", () => {
       );
       assert.ok(response.status === 401 || response.status === 403);
     });
+  });
+
+  // F-256: the product page no longer reads the session cookie itself — the
+  // review section asks GET /api/products/[handle]/review-eligibility, which
+  // runs this for the signed-in visitor.
+  it("getReviewEligibility reports every state a visitor can be in (F-256)", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const [verified, unverified] = await Promise.all([
+      db.customer.create({
+        data: {
+          email: `d2-elig-ok-${unique}@example.com`,
+          name: "Eligible Customer",
+          passwordHash: "x",
+          emailVerifiedAt: new Date(),
+        },
+      }),
+      db.customer.create({
+        data: { email: `d2-elig-unverified-${unique}@example.com`, name: "Unverified Customer", passwordHash: "x" },
+      }),
+    ]);
+    const verifiedSession = { id: verified.id, email: verified.email, emailVerifiedAt: verified.emailVerifiedAt };
+
+    try {
+      assert.deepEqual(await getReviewEligibility(null, productId), { status: "guest" });
+      assert.deepEqual(
+        await getReviewEligibility(
+          { id: unverified.id, email: unverified.email, emailVerifiedAt: unverified.emailVerifiedAt },
+          productId,
+        ),
+        { status: "unverified", email: unverified.email },
+      );
+      assert.deepEqual(await getReviewEligibility(verifiedSession, productId), { status: "eligible" });
+
+      const review = await db.review.create({
+        data: {
+          productId,
+          customerId: verified.id,
+          rating: 5,
+          title: "Eligibility probe",
+          body: "A review row whose status the eligibility lookup reads.",
+          status: "PENDING",
+        },
+      });
+      // A still-live review (pending or approved) blocks a second one...
+      assert.deepEqual(await getReviewEligibility(verifiedSession, productId), { status: "already-reviewed" });
+      await db.review.update({ where: { id: review.id }, data: { status: "APPROVED" } });
+      assert.deepEqual(await getReviewEligibility(verifiedSession, productId), { status: "already-reviewed" });
+      // ...a rejected one can be rewritten (F-296).
+      await db.review.update({ where: { id: review.id }, data: { status: "REJECTED" } });
+      assert.deepEqual(await getReviewEligibility(verifiedSession, productId), { status: "rejected" });
+    } finally {
+      await db.review.deleteMany({ where: { customerId: { in: [verified.id, unverified.id] } } }).catch(() => {});
+      await db.customer.deleteMany({ where: { id: { in: [verified.id, unverified.id] } } }).catch(() => {});
+    }
+  });
+
+  // F-256: the product page is cached now, so a failed read must surface as an
+  // error (leaving the last good page in place) instead of being cached as
+  // "no reviews". Every other caller keeps the fail-soft default.
+  it("review reads fail soft by default but throw in strict mode (F-256)", async () => {
+    const realFindMany = db.review.findMany;
+    const realCount = db.review.count;
+    const failing = (async () => {
+      throw new Error("simulated database outage");
+    }) as unknown as typeof db.review.findMany;
+    db.review.findMany = failing;
+    db.review.count = failing as unknown as typeof db.review.count;
+    try {
+      const soft = await getReviewSummary(productId);
+      assert.equal(soft.count, 0, "default: an empty summary, never a throw");
+      const softPage = await getApprovedReviews(productId, {});
+      assert.deepEqual(softPage.reviews, []);
+
+      await assert.rejects(() => getReviewSummary(productId, { strict: true }), /simulated database outage/);
+      await assert.rejects(
+        () => getApprovedReviews(productId, { page: 1 }, { strict: true }),
+        /simulated database outage/,
+      );
+    } finally {
+      db.review.findMany = realFindMany;
+      db.review.count = realCount;
+    }
   });
 
   it("POST /api/reviews rejects an unauthenticated request with 401", async () => {

@@ -1,12 +1,11 @@
 import { ProductCard } from "@/components/ui/product-card";
-import { ProductDetail, type ReviewEligibility } from "@/components/product/product-detail";
+import { ProductDetail } from "@/components/product/product-detail";
 import { ProductViewTracker } from "@/components/product/product-view-tracker";
 import { JsonLdScript } from "@/components/seo/json-ld-script";
 import { brand } from "@/data/brand";
 import { getSizeChartForProduct } from "@/lib/catalog/size-charts";
-import { getCustomerSession } from "@/lib/customer-auth/session";
-import { db } from "@/lib/db";
 import { getCategoryBySlug, getProductByHandle, getProducts } from "@/lib/products";
+import { toShopCardProduct } from "@/lib/products/card-product";
 import { getApprovedReviews, getReviewSummary } from "@/lib/reviews";
 import { canonicalPath } from "@/lib/seo/canonical";
 import {
@@ -30,34 +29,18 @@ const SECTION_LANDING: Record<string, { label: string; href: string }> = {
   KIDS: { label: "Kids Wear", href: "/kids-wear" },
 };
 
-/**
- * Phase D2: the real "can this visitor write a review for this product"
- * state — replaces the Phase C5 placeholder that only ever checked for the
- * customer cookie's *presence* (D1 didn't exist yet, so it was always
- * "guest"). Computed here, server-side, from the real customer session
- * (never trusted from the client) plus a single extra lookup against the
- * @@unique([productId, customerId]) constraint that also backs
- * createReview()'s own duplicate check — cheap, and means the button never
- * has to render a form only to 409 on submit for a customer who already
- * reviewed this exact product.
- */
-async function getReviewEligibility(productId: string): Promise<ReviewEligibility> {
-  const session = await getCustomerSession();
-  if (!session) return { status: "guest" };
-  if (!session.emailVerifiedAt) return { status: "unverified", email: session.email };
-
-  const existing = await db.review.findUnique({
-    where: { productId_customerId: { productId, customerId: session.id } },
-    select: { id: true, status: true },
-  });
-  // F-296: a REJECTED review no longer permanently blocks this customer
-  // from writing a new one for this product — only a still-live
-  // (PENDING/APPROVED) review counts as "already reviewed". See
-  // createReview's matching resubmit-on-REJECTED path.
-  if (existing?.status === "REJECTED") return { status: "rejected" };
-  if (existing) return { status: "already-reviewed" };
-
-  return { status: "eligible" };
+// F-256: an empty list prerenders no product at build time but lets every
+// product page be rendered on its first visit and then served from the cache.
+// A dynamic segment without generateStaticParams is rendered on every request
+// instead (node_modules/next/dist/docs/01-app/03-api-reference/04-functions/generate-static-params.md),
+// no matter how static the page is. Nothing on this page reads the request:
+// the one thing that did, the signed-in visitor's review eligibility, is
+// fetched by the review section from the browser (see
+// src/lib/reviews/review-eligibility.ts). An admin catalog save, a stock change or a
+// review moderation revalidates the "products"/"product-<handle>" tags the
+// reads below carry (see revalidateProductStockTags in src/lib/products).
+export function generateStaticParams() {
+  return [];
 }
 
 const META_DESCRIPTION_MAX_LENGTH = 160;
@@ -135,7 +118,6 @@ export default async function ProductPage({ params }: ProductPageProps) {
 
   const [
     allProducts,
-    reviewEligibility,
     sizeChart,
     reviewSummary,
     initialReviews,
@@ -148,10 +130,9 @@ export default async function ProductPage({ params }: ProductPageProps) {
     resolvedCategory,
   ] = await Promise.all([
     getProducts(),
-    getReviewEligibility(product.id),
     getSizeChartForProduct(product.id),
-    getReviewSummary(product.id),
-    getApprovedReviews(product.id, { page: 1 }),
+    getReviewSummary(product.id, { strict: true }),
+    getApprovedReviews(product.id, { page: 1 }, { strict: true }),
     getSetting("shipping.flatRate"),
     getSetting("shipping.freeAbove"),
     getSetting("returns.windowDays"),
@@ -205,9 +186,11 @@ export default async function ProductPage({ params }: ProductPageProps) {
           images: product.images?.map((img) => img.url),
           // F-298: the rating/reviewCount that were on `product` come from
           // the cached getProductByHandle (tagged "products", revalidated
-          // with a "max" profile on approve/reject) — reviewSummary is an
-          // uncached, per-request read, so it can never disagree with what
-          // the Reviews section below actually renders.
+          // with a "max" profile on approve/reject) — reviewSummary is read
+          // straight from the reviews table each time this page renders
+          // (the page itself is cached, F-256), not through that product
+          // cache, and the Reviews section below renders from the same
+          // value, so the two can never disagree.
           rating: reviewSummary.average,
           reviewCount: reviewSummary.count,
           // F-311: Legal Metrology declarations in structured data too.
@@ -257,7 +240,6 @@ export default async function ProductPage({ params }: ProductPageProps) {
           <ProductViewTracker handle={product.handle} name={product.name} />
           <ProductDetail
             product={product}
-            reviewEligibility={reviewEligibility}
             sizeChart={sizeChart}
             reviewSummary={reviewSummary}
             initialReviews={initialReviews}
@@ -275,7 +257,7 @@ export default async function ProductPage({ params }: ProductPageProps) {
             </h2>
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
               {related.map((item) => (
-                <ProductCard key={item.id} product={item} />
+                <ProductCard key={item.id} product={toShopCardProduct(item)} />
               ))}
             </div>
           </div>

@@ -9,12 +9,14 @@ import { TrustBar } from "@/components/layout/trust-bar";
 import { getHeroContent, getHeroSlidesContent, getTrustStatsContent } from "@/lib/homepage";
 import { getSiteImages } from "@/lib/media/get-site-image";
 import { getCategoryTree, getProducts } from "@/lib/products";
+import { toShopCardProduct } from "@/lib/products/card-product";
 import { canonicalPath } from "@/lib/seo/canonical";
 import { baseOpenGraph } from "@/lib/seo/json-ld";
 import { getSeoOverrideForPath } from "@/lib/seo/records";
 import { getSetting, isSaleEnabled } from "@/lib/settings";
 import { getTestimonials } from "@/lib/testimonials";
 import { GraduationCap, HeartPulse } from "lucide-react";
+import type { Product } from "@/lib/types";
 import type { Metadata } from "next";
 
 /** Phase E2 manifest slots this page reads via getSiteImage/getSiteImages —
@@ -134,6 +136,11 @@ export default async function HomePage() {
 
   const newArrivals = newArrivalsRaw.filter((product) => product.isNew).slice(0, 8);
 
+  // F-257: these grids only ever render product cards, so they get the slim
+  // card shape (no descriptions, SEO fields or variant detail) instead of the
+  // full catalogue objects in the page payload.
+  const cardProducts = (products: Product[]) => products.map(toShopCardProduct);
+
   return (
     <>
       <HeroCarousel
@@ -148,12 +155,12 @@ export default async function HomePage() {
       {/* release-hardening audit F-020: `bestSellers` is the admin
           "Featured" flag, not real sales data — see product-card.tsx's
           matching badge-copy fix. */}
-      <FeaturedProductsGrid eyebrow="Curated For You" title="Featured" products={bestSellers} />
+      <FeaturedProductsGrid eyebrow="Curated For You" title="Featured" products={cardProducts(bestSellers)} />
       {newArrivals.length > 0 && (
         <FeaturedProductsGrid
           eyebrow="Just In"
           title="New Arrivals"
-          products={newArrivals}
+          products={cardProducts(newArrivals)}
           className="bg-background py-12 md:py-16"
         />
       )}
@@ -162,7 +169,7 @@ export default async function HomePage() {
         eyebrow="For Hospitals"
         title="Scrubs, Gowns & Hospital Linens"
         description="Hygienic, durable apparel and linens built for demanding healthcare environments."
-        products={hospitalProducts}
+        products={cardProducts(hospitalProducts)}
         browseHref="/for-hospitals"
         browseLabel="Browse Hospital Range"
       />
@@ -171,7 +178,7 @@ export default async function HomePage() {
         eyebrow="School Uniforms"
         title="Uniforms Built for the Classroom and Beyond"
         description="Shirts, tunics, trousers, blazers, and sportswear reflecting institutional pride."
-        products={schoolProducts}
+        products={cardProducts(schoolProducts)}
         browseHref="/school-uniforms"
         browseLabel="Browse School Range"
         variant="alt"

@@ -23,6 +23,7 @@ import { ProductsTable } from "@/components/admin/products-table";
 import { SizeChartForm } from "@/components/admin/size-chart-form";
 import { UserRoleEditor } from "@/components/admin/user-role-editor";
 import { SeoLandingLayout } from "@/components/seo/seo-landing-layout";
+import { LazyMotionProvider, useMotionInitial } from "@/components/layout/lazy-motion-provider";
 import { WishlistButton } from "@/components/wishlist/wishlist-button";
 import { WishlistProvider } from "@/context/wishlist-provider";
 import { seoLandingPages } from "@/data/seo-landing-pages";
@@ -299,6 +300,49 @@ describe("motion, focus rings and sticky-header offsets (F-245, F-246, F-247)", 
     ]) {
       assert.match(readFileSync(file, "utf8"), /from "framer-motion"/, file);
     }
+  });
+
+  it("the drawers animate with the lazy `m` elements inside LazyMotion, so the full motion engine stays out of the main bundle (F-258)", () => {
+    const provider = readFileSync("src/components/layout/lazy-motion-provider.tsx", "utf8");
+    assert.match(provider, /<LazyMotion features=\{loadMotionFeatures\} strict>/);
+    assert.match(provider, /import\("@\/lib\/motion-features"\)/);
+    assert.match(readFileSync("src/lib/motion-features.ts", "utf8"), /export \{ domAnimation as default \} from "framer-motion"/);
+
+    const shell = readFileSync("src/components/layout/site-shell.tsx", "utf8");
+    const inside = shell.slice(shell.indexOf("<LazyMotionProvider>"), shell.indexOf("</LazyMotionProvider>"));
+    assert.ok(shell.indexOf("<MotionConfig") < shell.indexOf("<LazyMotionProvider>"), "MotionConfig stays the outer provider");
+    for (const part of ["<Header", "{children}", "<CartDrawer", "<WishlistDrawer"]) {
+      assert.ok(inside.includes(part), `${part} must render inside LazyMotion`);
+    }
+
+    for (const file of [
+      "src/components/cart/cart-drawer.tsx",
+      "src/components/wishlist/wishlist-drawer.tsx",
+      "src/components/shop/mobile-filter-drawer.tsx",
+      "src/components/search/search-dialog.tsx",
+    ]) {
+      const source = readFileSync(file, "utf8");
+      assert.match(source, /import \{ AnimatePresence, m \} from "framer-motion"/, file);
+      assert.doesNotMatch(source, /<motion\./, `${file} must use m.*, not the full motion component`);
+      assert.match(source, /<m\.(aside|div)\b/, file);
+      // The starting state comes from useMotionInitial, never a literal: see the next test.
+      assert.match(source, /useMotionInitial\(/, file);
+      assert.doesNotMatch(source, /initial=\{\{/, `${file} must not hard-code an initial state`);
+    }
+  });
+
+  it("an overlay is rendered in its open state until the animation features have loaded (F-258)", () => {
+    // Without the features an `m` element is inert: an initial of opacity 0 /
+    // x 100% would leave a cart drawer off-screen for good if the chunk is
+    // late or never arrives, so `initial` is `false` until it has.
+    function Probe() {
+      return createElement("span", null, JSON.stringify(useMotionInitial({ x: "100%" })));
+    }
+    assert.equal(renderToStaticMarkup(createElement(Probe)), "<span>false</span>");
+    assert.equal(
+      renderToStaticMarkup(createElement(LazyMotionProvider, null, createElement(Probe))),
+      "<span>false</span>",
+    );
   });
 
   it("globals.css gives the focus ring a white override on the violet utility bar and other dark surfaces", () => {

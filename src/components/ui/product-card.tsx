@@ -13,7 +13,8 @@ import { cn } from "@/lib/utils";
 import { ShoppingBag } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useRef, useState } from "react";
 
 interface ProductCardProps {
   product: Product;
@@ -41,6 +42,17 @@ interface ProductCardProps {
    * leave this off and keep the full-size card. From `sm` up it changes
    * nothing. */
   compact?: boolean;
+  /** F-260: prefetch the product page when the shopper shows intent
+   * (pointer over the card, a touch on it, keyboard focus into it) instead
+   * of as soon as its link scrolls into the viewport, which is what a
+   * `<Link>` does by default. A listing is dozens of cards: scrolling /shop
+   * on a phone fired about 35-60 product-page prefetches (each a server
+   * round trip, and a PDP's prefetch is not small) for pages the shopper
+   * mostly never opens. `prefetch={false}` on a Link also switches off its
+   * own hover prefetch, so this does it by hand with `router.prefetch`.
+   * Set by ProductGrid; the short rows (the PDP's "You may also like",
+   * collection pages) keep the default. */
+  prefetchOnIntent?: boolean;
 }
 
 /**
@@ -60,8 +72,27 @@ interface ProductCardProps {
  *    ones.
  * No button-inside-anchor or anchor-inside-button remains.
  */
-export function ProductCard({ product, className, loadEagerly = false, compact = false }: ProductCardProps) {
+export function ProductCard({
+  product,
+  className,
+  loadEagerly = false,
+  compact = false,
+  prefetchOnIntent = false,
+}: ProductCardProps) {
   const { formatPrice } = useCurrency();
+  const router = useRouter();
+  const productHref = `/products/${product.handle}`;
+  const prefetched = useRef(false);
+  const prefetchProduct = prefetchOnIntent
+    ? () => {
+        if (prefetched.current) return;
+        prefetched.current = true;
+        router.prefetch(productHref);
+      }
+    : undefined;
+  // `prefetch={false}` only when intent drives it; otherwise leave the Link's
+  // default (viewport) prefetching alone.
+  const linkPrefetch = prefetchOnIntent ? false : undefined;
   // release-hardening audit F-016: `product.image` and `product.colorName`
   // are now the same colour (see mapDbProductToUi's `defaultColor`) —
   // seeding this from `product.images[0]` instead of `product.image` was
@@ -83,6 +114,9 @@ export function ProductCard({ product, className, loadEagerly = false, compact =
 
   return (
     <article
+      onPointerEnter={prefetchProduct}
+      onTouchStart={prefetchProduct}
+      onFocus={prefetchProduct}
       className={cn(
         "product-card-surface group hover:border-brand hover:shadow-sm relative overflow-hidden rounded-3xl border border-border transition-colors",
         // F-239: the name/price link spans the card edge to edge, so the global
@@ -105,7 +139,8 @@ export function ProductCard({ product, className, loadEagerly = false, compact =
             name/price `<Link>` below already carries the accessible name
             for "go to this product". */}
         <Link
-          href={`/products/${product.handle}`}
+          href={productHref}
+          prefetch={linkPrefetch}
           aria-hidden="true"
           tabIndex={-1}
           className="block"
@@ -208,7 +243,8 @@ export function ProductCard({ product, className, loadEagerly = false, compact =
       )}
 
       <Link
-        href={`/products/${product.handle}`}
+        href={productHref}
+        prefetch={linkPrefetch}
         data-card-link=""
         className={cn(
           // Focus indicator: the card ring above in normal mode. Forced-colors

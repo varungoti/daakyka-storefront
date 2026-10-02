@@ -743,7 +743,12 @@ export async function getProductByHandle(handle: string): Promise<Product | null
     }
   } catch (error) {
     warnFallbackOnce(`DB query failed (${error instanceof Error ? error.message : String(error)})`);
-    return shouldUseSeedFallback() ? (seedProducts.find((p) => p.handle === handle) ?? null) : null;
+    if (shouldUseSeedFallback()) return seedProducts.find((p) => p.handle === handle) ?? null;
+    // F-256: a database outage is not "no such product". The product page is
+    // cached now, and a null here would be cached as a 404 for a product that
+    // exists — rethrowing leaves the last good page in place (or isn't cached
+    // at all), same as getProducts() above.
+    throw error;
   }
 
   if (result) {
@@ -753,8 +758,16 @@ export async function getProductByHandle(handle: string): Promise<Product | null
 
   // Not found among ACTIVE DB products — check whether the DB has any
   // ACTIVE products at all before deciding this is a real 404 vs. the
-  // transitional state where the whole catalog still needs seeding.
-  const totalActive = await countActiveProducts();
+  // transitional state where the whole catalog still needs seeding. A failed
+  // count must not read as "zero products" outside the seed-fallback case
+  // (F-256: it would turn a real product into a cached 404).
+  let totalActive: number;
+  try {
+    totalActive = await db.product.count({ where: { status: "ACTIVE" } });
+  } catch (error) {
+    if (!shouldUseSeedFallback()) throw error;
+    totalActive = 0;
+  }
   if (totalActive === 0) {
     warnFallbackOnce("the database has zero ACTIVE products");
     return shouldUseSeedFallback() ? (seedProducts.find((p) => p.handle === handle) ?? null) : null;

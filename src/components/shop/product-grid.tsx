@@ -42,6 +42,14 @@ interface ProductGridProps {
   /** Called with the new total each time "Load more" reveals another page,
    * so the caller can keep it in the URL (see `initialVisibleCount`). */
   onVisibleCountChange?: (count: number) => void;
+  /** F-261: preload the first card's image and mark it high priority. Only
+   * for a listing whose first card really is the page's LCP image — /shop and
+   * /category/[slug], where the grid is the first thing under a short heading
+   * band. Everywhere else the grid sits below a hero or other sections (the
+   * home page's Featured grid is several screens down), and a high-priority
+   * image there competes with the real LCP image for early bandwidth.
+   * Defaults to false. */
+  eagerFirst?: boolean;
 }
 
 export function ProductGrid({
@@ -57,6 +65,7 @@ export function ProductGrid({
   activeFilters,
   initialVisibleCount,
   onVisibleCountChange,
+  eagerFirst = false,
 }: ProductGridProps) {
   const [internalSort, setInternalSort] = useState<SortOption>("featured");
   const sort = controlledSort ?? internalSort;
@@ -228,9 +237,10 @@ export function ProductGrid({
         <>
           <div className="grid grid-cols-2 gap-3 sm:gap-6 xl:grid-cols-4">
             {visibleProducts.map((product, index) => (
-              // Only the very first card — this used to be the only card
-              // above the fold at all (a single mobile column), and stays
-              // true of the mobile Lighthouse profile this app is gated on
+              // Only the very first card, and only when the caller says it is
+              // the LCP candidate (`eagerFirst`): that was the only card above
+              // the fold at all (a single mobile column), and stays true of
+              // the mobile Lighthouse profile this app is gated on
               // (lighthouserc.js, 412px wide): index 0 is still the LCP
               // candidate there even now that F-021/F-242 made this a
               // 2-column grid on phones (index 1 sits beside it, not below
@@ -246,7 +256,17 @@ export function ProductGrid({
               // loadEagerly doc and docs/PERFORMANCE.md. Not re-measured
               // for index 1 as part of this fix (needs the same Lighthouse
               // profiling, not a guess) — left as-is deliberately.
-              <ProductCard key={product.id} product={product} loadEagerly={index === 0} compact />
+              //
+              // F-260: `prefetchOnIntent` — a listing is dozens of links; see
+              // ProductCard's doc comment for why they are not all prefetched
+              // as they scroll into view.
+              <ProductCard
+                key={product.id}
+                product={product}
+                loadEagerly={eagerFirst && index === 0}
+                prefetchOnIntent
+                compact
+              />
             ))}
           </div>
 

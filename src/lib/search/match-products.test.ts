@@ -1,6 +1,13 @@
-import { describe, it } from "node:test";
+import { beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { matchProducts } from "@/lib/search/match-products";
+import {
+  loadSearchIndex,
+  peekSearchIndex,
+  preloadSearchIndex,
+  resetSearchIndexForTests,
+} from "@/lib/search/search-index";
+import type { SearchProduct } from "@/lib/products/public-search-product";
 import type { Product } from "@/lib/types";
 
 /** Minimal fixture builder — only the fields matchProducts reads. */
@@ -212,5 +219,106 @@ describe("matchProducts: the F-102 queries", () => {
       ],
     });
     assert.deepEqual(matchProducts([twoColours, scrubTop], "wine").map((p) => p.handle), ["two-colours"]);
+  });
+});
+
+/**
+ * F-013: the header dialog used to `fetch("/api/products")` every time it
+ * opened — and show "Searching..." for the whole round trip — although the
+ * previous open's products were still in memory.
+ */
+describe("search index loader (F-013)", () => {
+  const slim: SearchProduct = {
+    id: "p1",
+    handle: "scrub-top",
+    name: "V-Neck Scrub Top",
+    colorName: "Navy",
+    price: 999,
+    image: "/img.jpg",
+    category: "scrub-tops",
+    fabricTech: [],
+    colors: [{ name: "Navy" }],
+  };
+
+  function fakeFetch(plan: Array<"ok" | "http-error" | "network-error">) {
+    const calls: string[] = [];
+    const impl = async (url: string) => {
+      calls.push(url);
+      const next = plan[Math.min(calls.length - 1, plan.length - 1)];
+      if (next === "network-error") throw new Error("offline");
+      if (next === "http-error") return { ok: false, json: async () => ({}) };
+      return { ok: true, json: async () => ({ products: [slim] }) };
+    };
+    return { calls, impl };
+  }
+
+  beforeEach(() => resetSearchIndexForTests());
+
+  it("downloads the index once, however many times it is opened", async () => {
+    const { calls, impl } = fakeFetch(["ok"]);
+    assert.equal(peekSearchIndex(), null);
+    const first = await loadSearchIndex(impl);
+    const second = await loadSearchIndex(impl);
+    const third = await loadSearchIndex(impl);
+    assert.equal(calls.length, 1);
+    assert.deepEqual(first, [slim]);
+    assert.equal(second, first);
+    assert.equal(third, first);
+    assert.equal(peekSearchIndex(), first, "peek lets the dialog render results on its first frame");
+  });
+
+  it("shares one request between callers that ask while it is still in flight", async () => {
+    const { calls, impl } = fakeFetch(["ok"]);
+    const [a, b, c] = await Promise.all([loadSearchIndex(impl), loadSearchIndex(impl), loadSearchIndex(impl)]);
+    assert.equal(calls.length, 1);
+    assert.equal(a, b);
+    assert.equal(b, c);
+  });
+
+  it("asks the unauthenticated catalogue index, not an admin or per-product route", async () => {
+    const { calls, impl } = fakeFetch(["ok"]);
+    await loadSearchIndex(impl);
+    assert.deepEqual(calls, ["/api/products"]);
+  });
+
+  it("forgets a failed request, so the next open retries instead of keeping nothing for the session", async () => {
+    const { calls, impl } = fakeFetch(["network-error", "http-error", "ok"]);
+    await assert.rejects(() => loadSearchIndex(impl), /offline/);
+    assert.equal(peekSearchIndex(), null);
+    await assert.rejects(() => loadSearchIndex(impl), /Search index request failed/);
+    assert.equal(peekSearchIndex(), null);
+    assert.deepEqual(await loadSearchIndex(impl), [slim]);
+    assert.equal(calls.length, 3);
+  });
+
+  it("treats a response with no products as an empty index (and keeps it)", async () => {
+    const calls: string[] = [];
+    const impl = async (url: string) => {
+      calls.push(url);
+      return { ok: true, json: async () => ({}) };
+    };
+    assert.deepEqual(await loadSearchIndex(impl), []);
+    assert.deepEqual(await loadSearchIndex(impl), []);
+    assert.equal(calls.length, 1);
+  });
+
+  it("preloading never throws, even when the download fails", async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw new Error("offline");
+    }) as typeof fetch;
+    try {
+      assert.doesNotThrow(() => preloadSearchIndex());
+      // Let the rejected request settle (and its handlers run) before moving on.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(peekSearchIndex(), null);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it("the slim index is searchable with the same matcher the dialog uses", () => {
+    const hits = matchProducts([slim], "scrubs");
+    assert.deepEqual(hits.map((hit) => hit.handle), ["scrub-top"]);
   });
 });

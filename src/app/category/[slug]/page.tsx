@@ -2,6 +2,7 @@ import { ShopPageContent } from "@/components/shop/shop-page-content";
 import { getSiteImage } from "@/lib/media/get-site-image";
 import { resolveCategoryHeadingImage } from "@/lib/media/category-heading-image";
 import { getCategoryBySlug, getProducts } from "@/lib/products";
+import { toShopCardProduct } from "@/lib/products/card-product";
 import { getCategorySeoOverride, resolveCategoryMetadata } from "@/lib/seo/category-seo";
 import { canonicalPath, sectionLandingPath } from "@/lib/seo/canonical";
 import { baseOpenGraph } from "@/lib/seo/json-ld";
@@ -11,7 +12,15 @@ import { notFound } from "next/navigation";
 
 interface CategoryPageProps {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ category?: string; q?: string; sort?: string }>;
+}
+
+// F-018: an empty list prerenders nothing at build time but lets every
+// category be rendered on its first visit and then served from the cache
+// (revalidated by the "products"/"categories" tags) — a dynamic segment
+// without generateStaticParams is rendered on every request instead
+// (node_modules/next/dist/docs/01-app/03-api-reference/04-functions/generate-static-params.md).
+export function generateStaticParams() {
+  return [];
 }
 
 /**
@@ -64,12 +73,13 @@ export async function generateMetadata({ params }: CategoryPageProps): Promise<M
   };
 }
 
-export default async function CategoryPage({ params, searchParams }: CategoryPageProps) {
+// F-018: no `searchParams` prop (it makes the route render on every request);
+// ShopPageContent reads ?category=/?q=/facets from the URL after hydration.
+export default async function CategoryPage({ params }: CategoryPageProps) {
   const { slug } = await params;
   const category = await getCategoryBySlug(slug);
   if (!category) notFound();
 
-  const search = await searchParams;
   const [products, testimonials, slotImage] = await Promise.all([
     getProducts({ categorySlug: slug }),
     getTestimonials(),
@@ -83,10 +93,9 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
 
   return (
     <ShopPageContent
-      products={products}
+      products={products.map(toShopCardProduct)}
       categories={category.children}
       testimonials={testimonials}
-      initialQuery={search.q}
       showExtras={false}
       heading={{
         eyebrow: category.section,

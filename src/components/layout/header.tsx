@@ -6,6 +6,7 @@ import { SearchDialog } from "@/components/search/search-dialog";
 import { CurrencyToggle } from "@/components/layout/currency-toggle";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { countedLabel } from "@/lib/a11y/labels";
+import { preloadSearchIndex } from "@/lib/search/search-index";
 import type { NavItem, NavigationTree } from "@/lib/navigation/get-navigation";
 import { cn } from "@/lib/utils";
 import {
@@ -69,7 +70,9 @@ export function Header({ navigation }: { navigation: NavigationTree }) {
       >
         <div className="mx-auto grid max-w-[1320px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-3 py-4 sm:gap-4 sm:px-4 lg:px-8">
           <div className="flex items-center gap-1">
-            <IconButton label="Search" onClick={() => setSearchOpen(true)}>
+            {/* F-013: start downloading the search index on hover/focus so it is
+                already there when the dialog opens. */}
+            <IconButton label="Search" onClick={() => setSearchOpen(true)} onIntent={preloadSearchIndex}>
               <Search size={18} />
             </IconButton>
           </div>
@@ -145,6 +148,7 @@ function IconButton({
   label,
   badge,
   onClick,
+  onIntent,
   className,
   href,
 }: {
@@ -152,6 +156,9 @@ function IconButton({
   label: string;
   badge?: number;
   onClick?: () => void;
+  /** Fired when a pointer reaches or focus lands on the button, ahead of the
+   * click. */
+  onIntent?: () => void;
   className?: string;
   href?: string;
 }) {
@@ -183,7 +190,14 @@ function IconButton({
   }
 
   return (
-    <button type="button" aria-label={accessibleName} onClick={onClick} className={classes}>
+    <button
+      type="button"
+      aria-label={accessibleName}
+      onClick={onClick}
+      onPointerEnter={onIntent}
+      onFocus={onIntent}
+      className={classes}
+    >
       {content}
     </button>
   );

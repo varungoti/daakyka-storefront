@@ -1,30 +1,59 @@
 import type { Product } from "@/lib/types";
 
 /**
- * F-031: what GET /api/products (unauthenticated) hands to anyone who asks.
- * It used to return the entire catalog verbatim — every product's full HTML
- * description, every image, and every variant's `stock` (60+ products,
+ * What the header's predictive search dialog needs to rank and render one
+ * result — see matchProducts (src/lib/search/match-products.ts) for the
+ * fields it ranks on, and src/components/search/search-dialog.tsx for what a
+ * result row shows. A `colors` entry carries the name only: the dialog never
+ * draws a swatch.
+ */
+export type SearchProduct = Pick<
+  Product,
+  | "id"
+  | "handle"
+  | "name"
+  | "colorName"
+  | "price"
+  | "image"
+  | "category"
+  | "categorySlug"
+  | "categoryName"
+  | "section"
+  | "tags"
+  | "fabricTech"
+> & { colors: { name: string }[] };
+
+/**
+ * F-031/F-013: what GET /api/products (unauthenticated) hands to anyone who
+ * asks. It used to return the entire catalog verbatim — every product's full
+ * HTML description, every image and every variant's `stock` (60+ products,
  * ~200 KB) — letting a competitor's scraper track sell-through across the
- * whole store and re-host the product content.
+ * whole store and re-host the product content. F-031 stripped those; the
+ * dialog downloads this index on first use, so it is now cut to just the
+ * search/result fields (ratings, sizes, badges, timestamps and the rest of
+ * the Product are not needed to find a product and link to it).
  *
- * The only consumer is the header's predictive search dialog
- * (src/components/search/search-dialog.tsx) via matchProducts
- * (src/lib/search/match-products.ts), which ranks and renders a result from
- * name/colorName/category(Slug|Name)/section/tags/colors/fabricTech/image/
- * price/handle — never variants, stock, or description HTML. Strip those here
- * rather than changing what getProducts() returns everywhere else (the PDP,
- * shop listing and sitemap all still get the full object; the PDP separately
- * caps `stock`, see publicStockCeiling).
+ * Strip them here rather than changing what getProducts() returns everywhere
+ * else (the PDP, shop listing and sitemap all still get the full object; the
+ * PDP separately caps `stock`, see publicStockCeiling).
  *
  * Lives outside the route file because a Next route module may only export
  * its HTTP handlers.
  */
-export function toPublicSearchProduct(product: Product): Product {
+export function toPublicSearchProduct(product: Product): SearchProduct {
   return {
-    ...product,
-    description: undefined,
-    descriptionHtml: undefined,
-    images: undefined,
-    variants: undefined,
+    id: product.id,
+    handle: product.handle,
+    name: product.name,
+    colorName: product.colorName,
+    price: product.price,
+    image: product.image,
+    category: product.category,
+    categorySlug: product.categorySlug,
+    categoryName: product.categoryName,
+    section: product.section,
+    tags: product.tags,
+    fabricTech: product.fabricTech,
+    colors: product.colors.map((color) => ({ name: color.name })),
   };
 }

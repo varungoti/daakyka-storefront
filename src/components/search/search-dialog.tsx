@@ -1,15 +1,17 @@
 "use client";
 
+import { useMotionInitial } from "@/components/layout/lazy-motion-provider";
 import { useCurrency } from "@/context/currency-provider";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { matchProducts } from "@/lib/search/match-products";
-import type { Product } from "@/lib/types";
+import { loadSearchIndex, peekSearchIndex } from "@/lib/search/search-index";
+import type { SearchProduct } from "@/lib/products/public-search-product";
 import { cn } from "@/lib/utils";
 import { Search, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, m } from "framer-motion";
 import { useEffect, useMemo, useState } from "react";
 
 interface SearchDialogProps {
@@ -32,8 +34,13 @@ const BROWSE_SHORTCUTS = [
 export function SearchDialog({ open, onClose }: SearchDialogProps) {
   const router = useRouter();
   const [query, setQuery] = useState("");
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(false);
+  // F-013: the index is downloaded once per page session (see
+  // src/lib/search/search-index.ts), not on every open. `null` until the first
+  // open (or a hover/focus preload) has finished loading it.
+  const [fetchedProducts, setFetchedProducts] = useState<SearchProduct[] | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const products = fetchedProducts ?? peekSearchIndex();
+  const loading = products === null && !loadFailed;
   // F-083: index of the result highlighted with the arrow keys, -1 for none.
   // Real DOM focus never leaves the input (combobox pattern) — the
   // highlighted option is exposed through aria-activedescendant instead.
@@ -41,24 +48,32 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
   const { formatPrice } = useCurrency();
   const close = () => {
     setActiveIndex(-1);
+    // A failed download is retried the next time the dialog opens.
+    setLoadFailed(false);
     onClose();
   };
   const panelRef = useFocusTrap<HTMLDivElement>(open, close, { lockScroll: true });
+  const overlayInitial = useMotionInitial({ opacity: 0 });
+  const panelInitial = useMotionInitial({ opacity: 0, y: -12, scale: 0.98 });
 
   useEffect(() => {
-    if (!open) return;
-    // Fetch-on-open: setLoading(true) must run synchronously so the
-    // "Searching..." state shows immediately, not after the request
-    // resolves. This is the documented data-fetching effect pattern
-    // (react.dev/reference/react/useEffect#fetching-data-with-effects).
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLoading(true);
-    fetch("/api/products")
-      .then((res) => res.json())
-      .then((data) => setProducts(data.products ?? []))
-      .catch(() => setProducts([]))
-      .finally(() => setLoading(false));
-  }, [open]);
+    if (!open || products !== null || loadFailed) return;
+    // Fetching on open is the documented data-fetching effect pattern
+    // (react.dev/reference/react/useEffect#fetching-data-with-effects); the
+    // state is only set from the promise callbacks, and `loading` above is
+    // derived, so "Searching..." shows on the very first frame of the open.
+    let cancelled = false;
+    loadSearchIndex()
+      .then((index) => {
+        if (!cancelled) setFetchedProducts(index);
+      })
+      .catch(() => {
+        if (!cancelled) setLoadFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, products, loadFailed]);
 
   // release-hardening audit F-082: was a single whole-string `contains`
   // test — "scrubs", "scrub tops" and "lab coats" all returned nothing —
@@ -66,8 +81,9 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
   // match. matchProducts (shared with /shop?q=, see shop-page-content.tsx)
   // tokenizes, stems plurals and ranks name hits first.
   const results = useMemo(() => {
-    if (!query.trim()) return products.slice(0, 6);
-    return matchProducts(products, query).slice(0, 8);
+    const index = products ?? [];
+    if (!query.trim()) return index.slice(0, 6);
+    return matchProducts(index, query).slice(0, 8);
   }, [products, query]);
 
   const showResults = !loading && results.length > 0;
@@ -109,23 +125,23 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
     <AnimatePresence>
       {open && (
         <>
-          <motion.button
+          <m.button
             type="button"
             aria-label="Close search overlay"
             className="fixed inset-0 z-[60] bg-overlay-scrim backdrop-blur-sm"
-            initial={{ opacity: 0 }}
+            initial={overlayInitial}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={close}
           />
-          <motion.div
+          <m.div
             ref={panelRef}
             tabIndex={-1}
             role="dialog"
             aria-modal="true"
             aria-label="Search products"
             className="fixed inset-x-4 top-24 z-[70] mx-auto max-w-2xl rounded-[2rem] border border-border bg-surface-elevated shadow-2xl outline-none backdrop-blur-xl md:inset-x-auto"
-            initial={{ opacity: 0, y: -12, scale: 0.98 }}
+            initial={panelInitial}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -12, scale: 0.98 }}
           >
@@ -268,7 +284,7 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
                   </Link>
                 ))}
             </div>
-          </motion.div>
+          </m.div>
         </>
       )}
     </AnimatePresence>

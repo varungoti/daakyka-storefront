@@ -23,13 +23,14 @@ import { computePercentOff } from "@/lib/pricing/percent-off";
 import { findExactVariant, isSizeAvailableForColor, isVariantInStock, resolveVariant, variantExists } from "@/lib/products/resolve-variant";
 import { NotifyWhenAvailable } from "@/components/product/notify-when-available";
 import type { DisplayReview, GetApprovedReviewsResult, ReviewSort, ReviewSummary } from "@/lib/reviews";
+import type { ReviewEligibility } from "@/lib/reviews/review-eligibility";
 import type { Product } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ChevronDown, Minus, Plus } from "lucide-react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import Link from "next/link";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 // release-hardening perf pass: the full-screen viewer is only ever
 // mounted once a shopper clicks a thumbnail or a review photo
@@ -42,22 +43,8 @@ const ImageLightbox = dynamic(() => import("@/components/ui/image-lightbox").the
   ssr: false,
 });
 
-export type ReviewEligibility =
-  | { status: "guest" }
-  | { status: "unverified"; email: string }
-  | { status: "already-reviewed" }
-  // F-296: a REJECTED review no longer permanently blocks this customer
-  // from this product — distinct from "already-reviewed" (a
-  // PENDING/APPROVED review, which does still block a second submission)
-  // so the PDP can offer a fresh Write a Review form instead of a dead
-  // end. See getReviewEligibility in app/products/[handle]/page.tsx and
-  // createReview's resubmit-on-REJECTED path.
-  | { status: "rejected" }
-  | { status: "eligible" };
-
 interface ProductDetailProps {
   product: Product;
-  reviewEligibility: ReviewEligibility;
   sizeChart: SizeChartForDisplay | null;
   reviewSummary: ReviewSummary;
   initialReviews: GetApprovedReviewsResult;
@@ -97,14 +84,14 @@ function pickInitialSelection(product: Product): { color: string; size: string }
 
 /**
  * Phase C5 rewrite, extended in Phase D2 with real review submission
- * (rating/title/body/photos, gated on `reviewEligibility` computed
- * server-side in the page). Variant resolution goes through
+ * (rating/title/body/photos, gated on the visitor's review eligibility, which
+ * the review section fetches from the server — see ReviewsSection).
+ * Variant resolution goes through
  * src/lib/products/resolve-variant.ts instead of the inline size/colour
  * matching the old component had.
  */
 export function ProductDetail({
   product,
-  reviewEligibility,
   sizeChart,
   reviewSummary,
   initialReviews,
@@ -504,7 +491,6 @@ export function ProductDetail({
         product={product}
         summary={reviewSummary}
         initialReviews={initialReviews}
-        reviewEligibility={reviewEligibility}
       />
 
       {lightboxIndex !== null && (
@@ -688,13 +674,58 @@ function ReviewsSection({
   product,
   summary,
   initialReviews,
-  reviewEligibility,
 }: {
   product: Product;
   summary: ReviewSummary;
   initialReviews: GetApprovedReviewsResult;
-  reviewEligibility: ReviewEligibility;
 }) {
+  // F-256: whether this visitor may write a review depends on their session
+  // cookie, which the (prerendered, shared) product page can't read — it is
+  // fetched here instead, from an uncached per-visitor endpoint. `null`
+  // until it answers (and if it never does): no call-to-action is shown
+  // rather than a wrong one, and the server re-checks on submit regardless.
+  // Only asked once the section is about to scroll into view — most shoppers
+  // never get this far down the page, and each answer is a function run.
+  const sectionRef = useRef<HTMLElement>(null);
+  const [reviewEligibility, setReviewEligibility] = useState<ReviewEligibility | null>(null);
+  useEffect(() => {
+    const section = sectionRef.current;
+    if (!section) return;
+    const controller = new AbortController();
+    const loadEligibility = () => {
+      fetch(`/api/products/${product.handle}/review-eligibility`, {
+        cache: "no-store",
+        signal: controller.signal,
+      })
+        .then((response) => (response.ok ? (response.json() as Promise<ReviewEligibility>) : null))
+        .then((eligibility) => {
+          if (eligibility && !controller.signal.aborted) setReviewEligibility(eligibility);
+        })
+        .catch(() => {
+          // Network error or an abort on unmount: leave the call-to-action out.
+        });
+    };
+
+    if (typeof IntersectionObserver === "undefined") {
+      loadEligibility();
+      return () => controller.abort();
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        observer.disconnect();
+        loadEligibility();
+      },
+      { rootMargin: "600px 0px" },
+    );
+    observer.observe(section);
+    return () => {
+      observer.disconnect();
+      controller.abort();
+    };
+  }, [product.handle]);
+  const eligibilityStatus = reviewEligibility?.status;
+
   const [sort, setSort] = useState<ReviewSort>("newest");
   const [result, setResult] = useState(initialReviews);
   const [loading, setLoading] = useState(false);
@@ -732,10 +763,12 @@ function ReviewsSection({
   const returnTo = `/products/${product.handle}#reviews`;
 
   return (
-    <section id="reviews" className="mt-16 border-t border-border pt-12">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+    <section ref={sectionRef} id="reviews" className="mt-16 border-t border-border pt-12">
+      {/* min-h: the call-to-action arrives after the eligibility fetch (see
+          above) — the row keeps the height it will have, so it doesn't jump. */}
+      <div className="flex min-h-[2.375rem] flex-wrap items-center justify-between gap-4">
         <h2 className="font-display text-2xl font-bold text-ink">Reviews</h2>
-        {reviewEligibility.status === "guest" && (
+        {eligibilityStatus === "guest" && (
           <Link
             href={`/account/login?returnTo=${encodeURIComponent(returnTo)}`}
             className="rounded-md border border-ink px-4 py-2 text-sm font-semibold text-ink transition hover:bg-ink hover:text-white"
@@ -746,7 +779,7 @@ function ReviewsSection({
         {/* F-296: a REJECTED review can be rewritten, same as a fresh
             "eligible" one — see the note above the form below for what's
             different about that case. */}
-        {(reviewEligibility.status === "eligible" || reviewEligibility.status === "rejected") &&
+        {(eligibilityStatus === "eligible" || eligibilityStatus === "rejected") &&
           !showForm &&
           !submitted && (
             <button
@@ -759,7 +792,7 @@ function ReviewsSection({
           )}
       </div>
 
-      {reviewEligibility.status === "unverified" && (
+      {reviewEligibility?.status === "unverified" && (
         <div className="mt-3 rounded-lg bg-alt-surface px-4 py-3 text-sm text-muted">
           <p>
             Please verify your email address before writing a review. Check your inbox for the
@@ -769,13 +802,13 @@ function ReviewsSection({
         </div>
       )}
 
-      {reviewEligibility.status === "already-reviewed" && !submitted && (
+      {eligibilityStatus === "already-reviewed" && !submitted && (
         <p className="mt-3 rounded-lg bg-alt-surface px-4 py-3 text-sm text-muted">
           You&apos;ve already reviewed this product.
         </p>
       )}
 
-      {reviewEligibility.status === "rejected" && !showForm && !submitted && (
+      {eligibilityStatus === "rejected" && !showForm && !submitted && (
         <p className="mt-3 rounded-lg bg-alt-surface px-4 py-3 text-sm text-muted">
           Your earlier review of this product didn&apos;t meet our review guidelines. You can write a
           new one.
@@ -788,7 +821,7 @@ function ReviewsSection({
         </p>
       )}
 
-      {(reviewEligibility.status === "eligible" || reviewEligibility.status === "rejected") &&
+      {(eligibilityStatus === "eligible" || eligibilityStatus === "rejected") &&
         showForm &&
         !submitted && (
           <ReviewForm

@@ -1,5 +1,6 @@
 "use client";
 
+import { useMotionInitial } from "@/components/layout/lazy-motion-provider";
 import { useWishlist } from "@/context/wishlist-provider";
 import { useCurrency } from "@/context/currency-provider";
 import { buttonClassNames } from "@/components/ui/button";
@@ -7,34 +8,36 @@ import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { Heart, ShoppingBag, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, m } from "framer-motion";
 
 export function WishlistDrawer() {
   const { items, isOpen, closeWishlist, removeFromWishlist } = useWishlist();
   const { formatPrice } = useCurrency();
   const panelRef = useFocusTrap<HTMLDivElement>(isOpen, closeWishlist, { lockScroll: true });
+  const overlayInitial = useMotionInitial({ opacity: 0 });
+  const panelInitial = useMotionInitial({ x: "100%" });
 
   return (
     <AnimatePresence>
       {isOpen && (
         <>
-          <motion.button
+          <m.button
             type="button"
             aria-label="Close wishlist overlay"
             className="fixed inset-0 z-[60] bg-overlay-scrim backdrop-blur-sm"
-            initial={{ opacity: 0 }}
+            initial={overlayInitial}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={closeWishlist}
           />
-          <motion.aside
+          <m.aside
             ref={panelRef}
             tabIndex={-1}
             role="dialog"
             aria-modal="true"
             aria-label="Wishlist"
             className="fixed inset-y-0 right-0 z-[70] flex w-full max-w-md flex-col bg-surface-elevated shadow-2xl outline-none backdrop-blur-xl"
-            initial={{ x: "100%" }}
+            initial={panelInitial}
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ type: "spring", damping: 28, stiffness: 260 }}
@@ -125,7 +128,7 @@ export function WishlistDrawer() {
                 </ul>
               )}
             </div>
-          </motion.aside>
+          </m.aside>
         </>
       )}
     </AnimatePresence>

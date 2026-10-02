@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildActiveFilterChips, isCategoryActiveFacet } from "@/components/shop/shop-page-content";
 import { defaultShopFilters, type ShopFilters } from "@/lib/shop/filters";
+import { createUrlEchoGuard, OWN_WRITE_ECHO_WINDOW_MS, sameShopFilters } from "@/lib/shop/url-sync";
 
 /**
  * release-hardening audit F-100: the mobile filter drawer (and, on desktop,
@@ -192,5 +193,149 @@ describe("shop facet wiring", () => {
 
   it("forwards the facets from the drawer to the panel", () => {
     assert.match(drawer, /facets=\{facets\}/);
+  });
+});
+
+/**
+ * F-018: /shop and /category/[slug] are prerendered, so the page can no longer
+ * read ?category=/?q=/facets on the server; ShopPageContent applies the URL
+ * after hydration and writes its own changes back with history.pushState. The
+ * guard below is what keeps the router's lagging report of those writes from
+ * typing over what a shopper has typed since.
+ */
+describe("createUrlEchoGuard (F-018)", () => {
+  function clock(start = 1_000) {
+    let now = start;
+    return { now: () => now, advance: (ms: number) => (now += ms) };
+  }
+
+  it("applies a URL it did not write (a first load, a search-dialog or menu link)", () => {
+    const guard = createUrlEchoGuard(clock().now);
+    assert.equal(guard.isEcho("q=scrubs"), false);
+  });
+
+  it("ignores the echo of its own write, and then goes back to applying URLs", () => {
+    const guard = createUrlEchoGuard(clock().now);
+    guard.noteOwnWrite("q=scrub");
+    assert.equal(guard.isEcho("q=scrub"), true);
+    assert.equal(guard.isEcho("q=lab+coat"), false, "the echo has arrived; the next change is a navigation");
+  });
+
+  it("ignores an earlier write's late echo while a newer write is pending", () => {
+    // Typing "scr": the router reports "sc" after the box already says "scr".
+    const guard = createUrlEchoGuard(clock().now);
+    guard.noteOwnWrite("q=sc");
+    guard.noteOwnWrite("q=scr");
+    assert.equal(guard.isEcho("q=sc"), true);
+    assert.equal(guard.isEcho("q=scr"), true, "the latest write's own echo");
+    assert.equal(guard.isEcho("q=other"), false);
+  });
+
+  it("matches the echo whatever way the query string is spelled", () => {
+    const guard = createUrlEchoGuard(clock().now);
+    guard.noteOwnWrite("q=lab%20coat&sizes=M");
+    assert.equal(guard.isEcho("q=lab+coat&sizes=M"), true);
+    assert.equal(guard.isEcho("q=lab+coat&sizes=M"), false);
+  });
+
+  it("stops ignoring after the window, so a navigation is never swallowed for long", () => {
+    const time = clock();
+    const guard = createUrlEchoGuard(time.now);
+    guard.noteOwnWrite("q=scrub");
+    time.advance(OWN_WRITE_ECHO_WINDOW_MS + 1);
+    assert.equal(guard.isEcho("q=lab+coat"), false);
+    // ...and a write that produced no change at all (no echo ever came) left nothing behind.
+    assert.equal(guard.isEcho("q=scrub"), false);
+  });
+
+  it("reset() forgets a pending write (back/forward is applied directly)", () => {
+    const guard = createUrlEchoGuard(clock().now);
+    guard.noteOwnWrite("q=scrub");
+    guard.reset();
+    assert.equal(guard.isEcho("q=other"), false);
+  });
+});
+
+describe("sameShopFilters (F-018)", () => {
+  it("is true for filters that would write the same URL", () => {
+    assert.equal(sameShopFilters({ ...defaultShopFilters }, { ...defaultShopFilters }), true);
+    assert.equal(
+      sameShopFilters(
+        { ...defaultShopFilters, sizes: ["M", "L"], sort: "price-asc" },
+        { ...defaultShopFilters, sizes: ["M", "L"], sort: "price-asc" },
+      ),
+      true,
+    );
+  });
+
+  it("is false once any facet, the category or the sort differs", () => {
+    assert.equal(sameShopFilters(defaultShopFilters, { ...defaultShopFilters, category: "scrub-sets" }), false);
+    assert.equal(sameShopFilters(defaultShopFilters, { ...defaultShopFilters, colors: ["Navy"] }), false);
+    assert.equal(sameShopFilters(defaultShopFilters, { ...defaultShopFilters, sizes: ["M"] }), false);
+    assert.equal(sameShopFilters(defaultShopFilters, { ...defaultShopFilters, priceMax: 1500 }), false);
+    assert.equal(sameShopFilters(defaultShopFilters, { ...defaultShopFilters, onSale: true }), false);
+    assert.equal(sameShopFilters(defaultShopFilters, { ...defaultShopFilters, inStock: true }), false);
+    assert.equal(sameShopFilters(defaultShopFilters, { ...defaultShopFilters, sort: "newest" }), false);
+  });
+
+  it("treats the optional flags' absence the same as false", () => {
+    const withoutFlags: ShopFilters = {
+      colors: [],
+      sizes: [],
+      fabrics: [],
+      priceMax: defaultShopFilters.priceMax,
+      sort: defaultShopFilters.sort,
+    };
+    assert.equal(sameShopFilters(withoutFlags, defaultShopFilters), true);
+  });
+});
+
+describe("prerendered shop routes (F-018/F-257/F-261)", () => {
+  const shopPage = readFileSync("src/app/shop/page.tsx", "utf8");
+  const categoryPage = readFileSync("src/app/category/[slug]/page.tsx", "utf8");
+  const content = readFileSync("src/components/shop/shop-page-content.tsx", "utf8");
+  const grid = readFileSync("src/components/shop/product-grid.tsx", "utf8");
+
+  it("neither route reads searchParams (which would render it on every request)", () => {
+    for (const [name, source] of [
+      ["/shop", shopPage],
+      ["/category/[slug]", categoryPage],
+    ] as const) {
+      assert.doesNotMatch(source, /searchParams\s*[:}=,)]/, `${name} must not take a searchParams prop`);
+      assert.doesNotMatch(source, /await searchParams/, name);
+    }
+  });
+
+  it("the category route renders on first visit and caches (an empty generateStaticParams)", () => {
+    assert.match(categoryPage, /export function generateStaticParams\(\) \{\s*return \[\];\s*\}/);
+  });
+
+  it("both routes hand the client slim card products, not the full catalogue objects", () => {
+    for (const source of [shopPage, categoryPage]) {
+      assert.match(source, /products=\{products\.map\(toShopCardProduct\)\}/);
+    }
+  });
+
+  it("ShopPageContent reads the URL only inside its own Suspense boundary", () => {
+    // useSearchParams() makes the tree up to the nearest boundary client-only
+    // on a prerendered route: it must stay in the tiny sync component, not in
+    // the component that renders the grid.
+    const callSites = content.match(/=\s*useSearchParams\(\)/g) ?? [];
+    assert.equal(callSites.length, 1);
+    assert.match(content, /function ShopUrlSync\(\{ onSearch \}[^)]*\)[\s\S]*?useSearchParams\(\)/);
+    assert.match(content, /<Suspense fallback=\{null\}>\s*<ShopUrlSync onSearch=\{handleRouterSearch\} \/>\s*<\/Suspense>/);
+  });
+
+  it("only the listing pages ask ProductGrid to preload their first card (F-261)", () => {
+    assert.match(grid, /eagerFirst = false/);
+    assert.match(grid, /loadEagerly=\{eagerFirst && index === 0\}/);
+    assert.match(content, /<ProductGrid[\s\S]*?eagerFirst\s*\/>/);
+    for (const file of [
+      "src/components/home/featured-products-grid.tsx",
+      "src/app/sale/page.tsx",
+      "src/components/category/section-landing-page.tsx",
+    ]) {
+      assert.doesNotMatch(readFileSync(file, "utf8"), /eagerFirst/, `${file} sits below a hero: no high-priority first image`);
+    }
   });
 });
