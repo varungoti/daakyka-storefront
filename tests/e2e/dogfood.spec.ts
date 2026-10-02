@@ -247,7 +247,9 @@ test.describe("Dogfood — Hermes & AR APIs", () => {
     await expect(page.getByRole("heading", { name: /Hermes Agent/i })).toBeVisible();
     await expect(page.getByText(/Vercel inline|HTTP runtime|Not configured/i).first()).toBeVisible();
 
-    await page.getByRole("button", { name: /daily seo health scan/i }).click();
+    // Exact name: a pending queue item's Approve/Reject buttons are named
+    // "Approve Hermes: daily seo health scan", which a substring match would also hit.
+    await page.getByRole("button", { name: "Daily SEO Health Scan", exact: true }).click();
     await expect(page.getByRole("button", { name: /running/i })).toBeHidden({ timeout: 45_000 });
 
     await expect(

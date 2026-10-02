@@ -82,7 +82,14 @@ test.describe("Admin E2E", () => {
     await page.goto("/admin/homepage");
     await expect(page.getByRole("heading", { name: /Homepage Manager/i })).toBeVisible();
 
-    const headline = page.getByLabel("Headline", { exact: true });
+    // /admin/homepage renders the hero-slides carousel editor above the classic
+    // Hero Section, and every enabled slide card (prisma/seed.ts seeds three)
+    // has its own labelled "Headline" input. Looking the field up by its label
+    // text therefore matches 4 inputs and fill() throws a strict-mode violation
+    // - scope to the classic editor's input, whose id HomepageEditor ties to
+    // its label.
+    const headline = page.locator("#hero-headline");
+    await expect(headline).toHaveCount(1);
     const unique = `E2E Hero ${Date.now()}`;
     await headline.fill(unique);
     await page.getByRole("button", { name: /save hero/i }).click();
@@ -112,7 +119,10 @@ test.describe("Admin E2E", () => {
     await page.goto("/admin/hermes");
     await expect(page.getByRole("heading", { name: /Hermes Agent/i })).toBeVisible();
 
-    await page.getByRole("button", { name: /daily seo health scan/i }).click();
+    // Exact name: once a run has left a pending item in the Approval Queue, its
+    // Approve/Reject buttons are named "Approve Hermes: daily seo health scan",
+    // which a substring match on the launcher label would also hit.
+    await page.getByRole("button", { name: "Daily SEO Health Scan", exact: true }).click();
     await expect(page.getByRole("button", { name: /running/i })).toBeHidden({ timeout: 30000 });
     await expect(
       page.locator("text=/Pending Approvals|daily.seo|Approval Queue/i").first(),

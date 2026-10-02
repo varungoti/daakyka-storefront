@@ -12,7 +12,9 @@ import { ContactEnquiryStatusSelect } from "@/components/admin/contact-enquiry-s
 import { CustomersTable } from "@/components/admin/customers-table";
 import { UnsavedChangesProvider } from "@/components/admin/unsaved-changes";
 import { HermesApprovalActions } from "@/components/admin/hermes-approval-actions";
+import { HermesTaskLauncher } from "@/components/admin/hermes-task-launcher";
 import { HeroSlidesEditor } from "@/components/admin/hero-slides-editor";
+import { HomepageEditor } from "@/components/admin/homepage-editor";
 import { JourneyStatusSelect } from "@/components/admin/journey-status-select";
 import { OrderDetailActions } from "@/components/admin/order-detail-actions";
 import { OrdersTable } from "@/components/admin/orders-table";
@@ -468,6 +470,40 @@ describe("admin controls have accessible names (F-066, F-220)", () => {
     assert.match(html, /aria-label="Reject Diwali blog draft"/);
   });
 
+  it("a pending item named after a task type does not make the launcher button ambiguous for the e2e specs", () => {
+    // /api/admin/hermes/tasks titles the queue item "Hermes: daily seo health scan",
+    // so the Approve/Reject names contain the launcher's label. A substring
+    // locator on that label would match 5 buttons (strict-mode violation); the
+    // specs must ask for the launcher by its exact name.
+    const html = renderAdmin(
+      h(
+        "main",
+        {},
+        createElement(HermesTaskLauncher),
+        createElement(HermesApprovalActions, {
+          approvalId: "a1",
+          currentStatus: "PENDING",
+          itemTitle: "Hermes: daily seo health scan",
+        }),
+        createElement(HermesApprovalActions, {
+          approvalId: "a2",
+          currentStatus: "PENDING",
+          itemTitle: "Scheduled: daily seo health scan",
+        }),
+      ),
+    );
+    const names = [...html.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)].map(
+      (m) => /aria-label="([^"]*)"/.exec(m[1])?.[1] ?? m[2].replace(/<[^>]+>/g, "").trim(),
+    );
+    assert.equal(names.filter((n) => /daily seo health scan/i.test(n)).length, 5);
+    assert.equal(names.filter((n) => n === "Daily SEO Health Scan").length, 1);
+    for (const file of ["tests/e2e/admin.spec.ts", "tests/e2e/dogfood.spec.ts"]) {
+      const spec = readFileSync(file, "utf8");
+      assert.ok(!/name:\s*\/daily seo health scan\/i/.test(spec), `${file} must not substring-match the launcher button`);
+      assert.ok(spec.includes('name: "Daily SEO Health Scan", exact: true'), `${file} must use the launcher's exact name`);
+    }
+  });
+
   it("a settled Hermes approval shows words, not the raw enum", () => {
     const html = renderAdmin(createElement(HermesApprovalActions, { approvalId: "a1", currentStatus: "APPROVED" }));
     assert.match(html, />Approved</);
@@ -551,6 +587,49 @@ describe("admin controls have accessible names (F-066, F-220)", () => {
     const ids = [...html.matchAll(/<(?:input|textarea)\b[^>]*\bid="([^"]+)"/g)].map((m) => m[1]);
     assert.ok(ids.length >= 14, `expected both slides' fields to carry ids, saw ${ids.length}`);
     assert.equal(new Set(ids).size, ids.length, "slide field ids must be unique");
+  });
+
+  it("/admin/homepage has one 'Headline' per slide plus the classic hero's, so the e2e spec must target the classic one by id", () => {
+    const slide = (id: string) => ({
+      id,
+      enabled: true,
+      eyebrow: "",
+      headline: "Hello",
+      subheadline: "",
+      description: "",
+      primaryCta: { label: "Shop", href: "/shop" },
+      secondaryCta: null,
+      image: null,
+      secondaryImage: null,
+    });
+    const html = renderAdmin(
+      h(
+        "div",
+        {},
+        createElement(HeroSlidesEditor, { initialContent: { slides: [slide("a"), slide("b"), slide("c")] } as never }),
+        createElement(HomepageEditor, {
+          heroContent: {
+            eyebrow: "",
+            headline: "Hi",
+            subheadline: "",
+            description: "",
+            primaryCta: "Shop",
+            secondaryCta: "More",
+            rating: "4.9",
+            ratingLabel: "rated",
+          },
+        }),
+      ),
+    );
+    assert.deepEqual(unnamedControls(html), []);
+    // Three seeded slides + the classic Hero Section: four labels named exactly "Headline".
+    assert.equal(count(html, /<label\b[^>]*>\s*Headline\s*<\/label>/g), 4);
+    // ...but the classic editor's control has a unique, stable id the e2e spec can address.
+    assert.equal(count(html, /<input\b[^>]*\bid="hero-headline"/g), 1);
+    assert.equal(count(html, /\bid="hero-headline"/g), 1);
+    const spec = readFileSync("tests/e2e/admin.spec.ts", "utf8");
+    assert.ok(spec.includes('page.locator("#hero-headline")'), "homepage CMS e2e must scope to the classic hero headline");
+    assert.ok(!/getByLabel\(\s*"Headline"/.test(spec), 'an unscoped getByLabel("Headline") is a strict-mode violation once slides exist');
   });
 
   it("the media library's search box and three filter selects are named", () => {
