@@ -819,6 +819,62 @@ describe("products admin service (Phase B1)", () => {
     );
   });
 
+  // F-262: the total and the requested page are fetched together, and a
+  // page past the end is re-queried clamped to the last page.
+  it("listProductsForAdmin clamps a page past the end to the last page, with its rows", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const first = await createProduct({ name: `Clamp ${unique} A`, categoryId, price: 100 }, adminId);
+    const second = await createProduct({ name: `Clamp ${unique} B`, categoryId, price: 100 }, adminId);
+    const third = await createProduct({ name: `Clamp ${unique} C`, categoryId, price: 100 }, adminId);
+    createdProductIds.push(first.id, second.id, third.id);
+
+    const beyond = await listProductsForAdmin({ search: `Clamp ${unique}`, sort: "name-asc", pageSize: 2, page: 99 });
+    assert.equal(beyond.page, 2);
+    assert.equal(beyond.totalPages, 2);
+    assert.deepEqual(
+      beyond.items.map((p) => p.id),
+      [third.id],
+    );
+
+    const none = await listProductsForAdmin({ search: `Clamp ${unique} no-such-product`, page: 5 });
+    assert.equal(none.total, 0);
+    assert.equal(none.page, 1);
+    assert.deepEqual(none.items, []);
+  });
+
+  // F-262: hasAiImage now comes from a filtered relation count in the same
+  // query as the rows — it must still flag *any* AI-sourced image, not just
+  // the first (thumbnail) one.
+  it("listProductsForAdmin flags hasAiImage when any image of the product is AI-sourced", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const withAi = await createProduct({ name: `Ai Badge ${unique} With`, categoryId, price: 100 }, adminId);
+    const withoutAi = await createProduct({ name: `Ai Badge ${unique} Without`, categoryId, price: 100 }, adminId);
+    createdProductIds.push(withAi.id, withoutAi.id);
+    const mediaKey = (label: string) => `test/ai-badge-${label}-${unique}.webp`;
+    const makeMedia = (label: string, source: "UPLOAD" | "AI") =>
+      db.mediaAsset.create({
+        data: { key: mediaKey(label), url: `/cdn/${mediaKey(label)}`, usage: "PRODUCT", source },
+      });
+    const upload = await makeMedia("upload", "UPLOAD");
+    const ai = await makeMedia("ai", "AI");
+    const plain = await makeMedia("plain", "UPLOAD");
+    try {
+      // The AI image is the second one, so the thumbnail (sortOrder 0) is an upload.
+      await db.productImage.create({ data: { productId: withAi.id, mediaId: upload.id, sortOrder: 0 } });
+      await db.productImage.create({ data: { productId: withAi.id, mediaId: ai.id, sortOrder: 1 } });
+      await db.productImage.create({ data: { productId: withoutAi.id, mediaId: plain.id, sortOrder: 0 } });
+
+      const result = await listProductsForAdmin({ search: `Ai Badge ${unique}`, sort: "name-asc" });
+      const byId = new Map(result.items.map((item) => [item.id, item]));
+      assert.equal(byId.get(withAi.id)?.hasAiImage, true);
+      assert.equal(byId.get(withAi.id)?.thumbnailUrl, `/cdn/${mediaKey("upload")}`);
+      assert.equal(byId.get(withoutAi.id)?.hasAiImage, false);
+    } finally {
+      await db.productImage.deleteMany({ where: { productId: { in: [withAi.id, withoutAi.id] } } });
+      await db.mediaAsset.deleteMany({ where: { id: { in: [upload.id, ai.id, plain.id] } } });
+    }
+  });
+
   // F-192
   it("listProductsForAdmin's search also matches a variant SKU, case-insensitively", async () => {
     const unique = randomUUID().slice(0, 8);

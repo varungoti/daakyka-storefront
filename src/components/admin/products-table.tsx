@@ -246,7 +246,9 @@ export function ProductsTable({
   function productAction(item: ProductListItem) {
     const { action } = productRowLinks(item, canManage);
     if (!action) return null;
-    const className = "text-xs font-semibold text-brand hover:underline";
+    // F-065: below xl the card layout is what a phone sees — give the link a
+    // finger-sized target there; the dense desktop table keeps its text link.
+    const className = "text-xs font-semibold text-brand hover:underline max-xl:inline-flex max-xl:min-h-9 max-xl:items-center max-xl:px-3";
     return action.external ? (
       <a href={action.href} target="_blank" rel="noopener" className={className}>
         {action.label}
@@ -556,7 +558,7 @@ export function ProductsTable({
                     checked={selected.has(item.id)}
                     onChange={() => toggleSelected(item.id)}
                     aria-label={`Select ${item.name}`}
-                    className="mt-2 shrink-0"
+                    className="mt-2 h-5 w-5 shrink-0"
                   />
                 )}
                 <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-border bg-lavender/40">

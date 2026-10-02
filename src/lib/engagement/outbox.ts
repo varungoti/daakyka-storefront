@@ -473,15 +473,35 @@ export interface UndeliveredEmailCount {
   total: number;
 }
 
+/** F-209: the emails an order's customer is waiting on — the confirmation
+ * and the shipped / cancelled / refunded updates. Excludes the store's own
+ * admin copy (ORDER_CONFIRMATION_ADMIN) and account emails (verify, reset),
+ * so the orders-page banner counts only what is really about orders. */
+export const CUSTOMER_ORDER_EMAIL_KINDS: readonly EmailKind[] = [
+  EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER,
+  EMAIL_KIND.ORDER_SHIPPED_CUSTOMER,
+  EMAIL_KIND.ORDER_CANCELLED_CUSTOMER,
+  EMAIL_KIND.ORDER_REFUNDED_CUSTOMER,
+];
+
+export interface UndeliveredEmailCountOptions {
+  /** Count only these kinds. Omitted = every kind (the dashboard and
+   * /admin/notifications show the whole queue). */
+  kinds?: readonly string[];
+}
+
 /** Backs the admin-visible indicator (dashboard banner, orders list
  * banner, /admin/notifications). Mirrors getUnreadNotificationCount()'s
  * defensive shape (src/lib/notifications.ts) — a DB hiccup here must never
  * break the admin shell that calls it on every page load. */
-export async function getUndeliveredEmailCount(): Promise<UndeliveredEmailCount> {
+export async function getUndeliveredEmailCount(
+  options: UndeliveredEmailCountOptions = {},
+): Promise<UndeliveredEmailCount> {
   try {
+    const kindFilter = options.kinds ? { kind: { in: [...options.kinds] } } : {};
     const [pending, failed] = await Promise.all([
-      db.emailOutbox.count({ where: { status: "PENDING" } }),
-      db.emailOutbox.count({ where: { status: "FAILED" } }),
+      db.emailOutbox.count({ where: { status: "PENDING", ...kindFilter } }),
+      db.emailOutbox.count({ where: { status: "FAILED", ...kindFilter } }),
     ]);
     return { pending, failed, total: pending + failed };
   } catch {

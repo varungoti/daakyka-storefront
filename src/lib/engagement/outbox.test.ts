@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import {
   computeBackoffMs,
+  CUSTOMER_ORDER_EMAIL_KINDS,
   drainEmailOutbox,
   EMAIL_KIND,
   getUndeliveredEmailCount,
@@ -531,6 +532,46 @@ describe("email outbox (F7)", () => {
       assert.equal(afterCounts.pending, before.pending + 1);
       assert.equal(afterCounts.failed, before.failed + 1);
       assert.equal(afterCounts.total, before.total + 2);
+    });
+
+    // F-209: the orders-page banner must not count verification / reset
+    // emails or the store's own admin copy as "order-related".
+    it("kinds filter counts only the requested kinds", async () => {
+      const kinds = [EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER] as const;
+      const before = await getUndeliveredEmailCount({ kinds });
+
+      const mk = async (kind: string, status: "PENDING" | "FAILED") => {
+        const row = await db.emailOutbox.create({
+          data: {
+            to: `outbox-test-kind-${randomUUID().slice(0, 8)}@example.com`,
+            subject: "Kind filter test",
+            html: "<p>test</p>",
+            kind,
+            status,
+          },
+        });
+        createdIds.push(row.id);
+      };
+      await mk(EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER, "PENDING");
+      await mk(EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER, "FAILED");
+      await mk(EMAIL_KIND.CUSTOMER_VERIFY_EMAIL, "PENDING");
+      await mk(EMAIL_KIND.CUSTOMER_RESET_PASSWORD, "FAILED");
+      await mk(EMAIL_KIND.ORDER_CONFIRMATION_ADMIN, "PENDING");
+
+      const after = await getUndeliveredEmailCount({ kinds });
+      assert.equal(after.pending, before.pending + 1);
+      assert.equal(after.failed, before.failed + 1);
+      assert.equal(after.total, before.total + 2);
+
+      assert.deepEqual(
+        [...CUSTOMER_ORDER_EMAIL_KINDS].sort(),
+        [
+          EMAIL_KIND.ORDER_CANCELLED_CUSTOMER,
+          EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER,
+          EMAIL_KIND.ORDER_REFUNDED_CUSTOMER,
+          EMAIL_KIND.ORDER_SHIPPED_CUSTOMER,
+        ].sort(),
+      );
     });
   });
 });

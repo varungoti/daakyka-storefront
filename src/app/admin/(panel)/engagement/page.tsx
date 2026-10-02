@@ -63,7 +63,7 @@ export default async function EngagementPage() {
         <QuickLink href="/admin/templates" title="Message Templates" desc="Email and WhatsApp template library" />
         <QuickLink href="/admin/campaigns" title="Campaign Planner" desc="Draft and approve outreach campaigns" />
         <QuickLink href="/admin/journeys" title="Customer Journeys" desc="Welcome, bulk, and post-purchase flows" />
-        <QuickLink href="/admin/intelligence" title="Product Intelligence" desc="Best sellers, bundles, SEO gaps" />
+        <QuickLink href="/admin/intelligence" title="Product Intelligence" desc="Top-rated products, review gaps, most viewed" />
         <QuickLink href="/admin/hermes" title="Hermes Agent" desc="AI recommendations with approval queue" />
       </div>
 

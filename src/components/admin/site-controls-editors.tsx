@@ -6,6 +6,7 @@ import type { SettingKey } from "@/lib/settings";
 import { FormErrorBanner } from "@/components/admin/form-error-banner";
 import { useUnsavedChangesGuard } from "@/components/admin/unsaved-changes";
 import { isDirty } from "@/lib/admin/is-dirty";
+import { checkShippingInput } from "@/lib/admin/shipping-input";
 import { formatApiError } from "@/lib/validation/format-api-error";
 
 interface SaveSettingResult {
@@ -439,8 +440,12 @@ export function ShippingEditor({
   updatedAt?: ShippingSettingUpdatedAt;
 }) {
   const router = useRouter();
-  const [values, setValues] = useState(initial);
-  const [baseline, setBaseline] = useState(initial);
+  // F-165: keep what the admin typed as text. Coercing on every keystroke
+  // (`Number(v) || 0`) turned a cleared field into a silent "0" — and a saved
+  // 0 makes shipping free on every order. Parsed and checked on Save instead.
+  const initialText = { flatRate: String(initial.flatRate), freeAbove: String(initial.freeAbove) };
+  const [values, setValues] = useState(initialText);
+  const [baseline, setBaseline] = useState(initialText);
   useUnsavedChangesGuard(isDirty(values, baseline));
   const [savedAt, setSavedAt] = useState<ShippingSettingUpdatedAt>(
     updatedAt ?? { flatRate: null, freeAbove: null },
@@ -451,11 +456,20 @@ export function ShippingEditor({
 
   const onSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    setSaving(true);
     setErrorMessage(null);
+    // Validate both amounts before sending either — they save as two
+    // separate settings, so one must never go through while the other is
+    // rejected.
+    const checked = checkShippingInput(values);
+    if (!checked.ok) {
+      setErrorMessage(checked.error);
+      return;
+    }
+    if (checked.confirmMessage && !window.confirm(checked.confirmMessage)) return;
+    setSaving(true);
     const [flatRate, freeAbove] = await Promise.all([
-      saveSetting("shipping.flatRate", values.flatRate, savedAt.flatRate),
-      saveSetting("shipping.freeAbove", values.freeAbove, savedAt.freeAbove),
+      saveSetting("shipping.flatRate", checked.flatRate, savedAt.flatRate),
+      saveSetting("shipping.freeAbove", checked.freeAbove, savedAt.freeAbove),
     ]);
     const results = { flatRate, freeAbove };
     setSaving(false);
@@ -482,18 +496,22 @@ export function ShippingEditor({
         <Field
           label="Flat rate (₹)"
           type="number"
-          value={String(values.flatRate)}
+          inputMode="decimal"
+          min={0}
+          value={values.flatRate}
           onChange={(v) => {
-            setValues((s) => ({ ...s, flatRate: Number(v) || 0 }));
+            setValues((s) => ({ ...s, flatRate: v }));
             setSaved(false);
           }}
         />
         <Field
           label="Free shipping above (₹)"
           type="number"
-          value={String(values.freeAbove)}
+          inputMode="decimal"
+          min={0}
+          value={values.freeAbove}
           onChange={(v) => {
-            setValues((s) => ({ ...s, freeAbove: Number(v) || 0 }));
+            setValues((s) => ({ ...s, freeAbove: v }));
             setSaved(false);
           }}
         />
@@ -514,18 +532,24 @@ function Field({
   onChange,
   type = "text",
   hint,
+  inputMode,
+  min,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
   hint?: string;
+  inputMode?: "decimal" | "numeric";
+  min?: number;
 }) {
   return (
     <label className="block text-xs font-semibold text-muted">
       {label}
       <input
         type={type}
+        inputMode={inputMode}
+        min={min}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className="mt-1 w-full rounded-xl border border-border bg-surface-muted p-2.5 text-sm text-ink"

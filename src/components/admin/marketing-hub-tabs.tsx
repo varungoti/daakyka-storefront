@@ -73,14 +73,14 @@ const ALL_SECTIONS: MarketingHubSection[] = [
   {
     key: "market",
     label: "Market",
-    description: "Competitor observations and category trends — expand with Hermes weekly scans.",
+    description: "Competitor notes — sample data, not live market tracking.",
     href: "/admin/market",
     icon: Globe,
   },
   {
     key: "intelligence",
     label: "Intelligence",
-    description: "Catalog insights from the product database — expand with analytics when connected.",
+    description: "Rule-of-thumb product suggestions from ratings and reviews — not sales data.",
     href: "/admin/intelligence",
     icon: LineChart,
   },

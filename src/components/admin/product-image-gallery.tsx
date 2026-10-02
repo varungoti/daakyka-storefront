@@ -392,6 +392,10 @@ export function ProductImageGallery({
    * DELETE failed — the image looked removed until the next reload brought
    * it back. */
   async function remove(id: string) {
+    // F-065: one mis-tap on a phone used to drop a product photo with no
+    // way back (its alt text, colour tag and position go with it). The file
+    // itself stays in the Media library.
+    if (!window.confirm("Remove this image from the product? The file stays in your Media library.")) return;
     const ok = await sendImageRequest(id, { method: "DELETE" });
     if (!ok) {
       setNotice("Couldn't remove that image — try again.");
@@ -639,16 +643,16 @@ export function ProductImageGallery({
                 maxLength={MAX_ALT_LENGTH}
                 className="w-full rounded border border-border p-1 text-xs"
               />
-              <div className="flex items-center justify-between text-[11px]">
+              <div className="flex items-center justify-between text-xs">
                 <div className="flex gap-1">
-                  <button type="button" disabled={index === 0 || reordering} onClick={() => move(img.id, "up")} aria-label="Move image up" className="rounded border border-border px-1.5 py-0.5 disabled:opacity-30">
+                  <button type="button" disabled={index === 0 || reordering} onClick={() => move(img.id, "up")} aria-label="Move image up" className="min-h-8 min-w-8 rounded border border-border px-2 py-1 disabled:opacity-30">
                     ↑
                   </button>
-                  <button type="button" disabled={index === images.length - 1 || reordering} onClick={() => move(img.id, "down")} aria-label="Move image down" className="rounded border border-border px-1.5 py-0.5 disabled:opacity-30">
+                  <button type="button" disabled={index === images.length - 1 || reordering} onClick={() => move(img.id, "down")} aria-label="Move image down" className="min-h-8 min-w-8 rounded border border-border px-2 py-1 disabled:opacity-30">
                     ↓
                   </button>
                 </div>
-                <button type="button" onClick={() => remove(img.id)} className="text-red-600 hover:underline">
+                <button type="button" onClick={() => remove(img.id)} className="min-h-8 rounded border border-red-200 px-3 py-1 font-semibold text-red-600 hover:bg-red-50">
                   Remove
                 </button>
               </div>

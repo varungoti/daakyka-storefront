@@ -55,6 +55,11 @@ export function ProductVariantEditor({
   variants: VariantRow[];
   onChange: (variants: VariantRow[]) => void;
 }) {
+  // F-065: once a product has variants the size/colour builder is rarely
+  // needed (and its ~50 chips make the page 4,000+px tall on a phone), so it
+  // collapses behind a toggle. With no variants it is always open.
+  const [builderOpen, setBuilderOpen] = useState(false);
+  const builderVisible = variants.length === 0 || builderOpen;
   const [selectedSizes, setSelectedSizes] = useState<string[]>([]);
   const [selectedColors, setSelectedColors] = useState<{ name: string; hex?: string }[]>([]);
   const [customSizeInput, setCustomSizeInput] = useState("");
@@ -126,97 +131,110 @@ export function ProductVariantEditor({
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <p className="mb-2 text-xs font-semibold text-muted">Sizes</p>
-          <div className="space-y-2">
-            {sizePresetKeys.map((key: SizePresetKey) => (
-              <div key={key}>
-                <p className="mb-1 text-[11px] font-semibold text-muted">{SIZE_PRESET_LABELS[key]}</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {SIZE_PRESETS[key].map((size) => (
-                    <button
-                      key={size}
-                      type="button"
-                      onClick={() => toggleSize(size)}
-                      aria-pressed={selectedSizes.includes(size)}
-                      className={cn(
-                        "rounded-full border px-2.5 py-1 text-xs font-medium",
-                        selectedSizes.includes(size) ? "border-brand bg-brand/10 text-brand" : "border-border text-muted hover:bg-lilac/40",
-                      )}
-                    >
-                      {size}
-                    </button>
-                  ))}
+      {variants.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setBuilderOpen((open) => !open)}
+          aria-expanded={builderOpen}
+          className="inline-flex min-h-9 items-center rounded-full border border-border px-4 py-1.5 text-xs font-semibold text-muted hover:bg-lilac/40"
+        >
+          {builderOpen ? "Hide size and colour options" : "+ Add more sizes or colours"}
+        </button>
+      )}
+
+      <div className={cn("space-y-5", !builderVisible && "hidden")}>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <p className="mb-2 text-xs font-semibold text-muted">Sizes</p>
+            <div className="space-y-2">
+              {sizePresetKeys.map((key: SizePresetKey) => (
+                <div key={key}>
+                  <p className="mb-1 text-[11px] font-semibold text-muted">{SIZE_PRESET_LABELS[key]}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {SIZE_PRESETS[key].map((size) => (
+                      <button
+                        key={size}
+                        type="button"
+                        onClick={() => toggleSize(size)}
+                        aria-pressed={selectedSizes.includes(size)}
+                        className={cn(
+                          "rounded-full border px-2.5 py-1 text-xs font-medium max-md:py-2",
+                          selectedSizes.includes(size) ? "border-brand bg-brand/10 text-brand" : "border-border text-muted hover:bg-lilac/40",
+                        )}
+                      >
+                        {size}
+                      </button>
+                    ))}
+                  </div>
                 </div>
+              ))}
+              <div className="flex items-center gap-2">
+                <input
+                  value={customSizeInput}
+                  onChange={(e) => setCustomSizeInput(e.target.value)}
+                  placeholder="Custom size"
+                  aria-label="Custom size"
+                  className="w-32 rounded-lg border border-border p-1.5 text-xs"
+                />
+                <button type="button" onClick={addCustomSize} className="rounded-full border border-border px-2.5 py-1 text-xs font-semibold text-muted hover:bg-lilac/40">
+                  + Add
+                </button>
               </div>
-            ))}
-            <div className="flex items-center gap-2">
+              {selectedSizes.length > 0 && <p className="text-[11px] text-muted">Selected: {selectedSizes.join(", ")}</p>}
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs font-semibold text-muted">Colours</p>
+            <div className="flex flex-wrap gap-2">
+              {COLOR_PRESETS.map((color) => (
+                <button
+                  key={color.name}
+                  type="button"
+                  onClick={() => toggleColor(color)}
+                  aria-pressed={selectedColors.some((c) => c.name === color.name)}
+                  title={color.name}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs font-medium max-md:py-2",
+                    selectedColors.some((c) => c.name === color.name) ? "border-brand bg-brand/10 text-brand" : "border-border text-muted hover:bg-lilac/40",
+                  )}
+                >
+                  <span className="h-3.5 w-3.5 rounded-full border border-border" style={{ backgroundColor: color.hex }} />
+                  {color.name}
+                </button>
+              ))}
+            </div>
+            <div className="mt-2 flex items-center gap-2">
               <input
-                value={customSizeInput}
-                onChange={(e) => setCustomSizeInput(e.target.value)}
-                placeholder="Custom size"
-                aria-label="Custom size"
-                className="w-32 rounded-lg border border-border p-1.5 text-xs"
+                value={customColorName}
+                onChange={(e) => setCustomColorName(e.target.value)}
+                placeholder="Custom colour name"
+                aria-label="Custom colour name"
+                className="w-36 rounded-lg border border-border p-1.5 text-xs"
               />
-              <button type="button" onClick={addCustomSize} className="rounded-full border border-border px-2.5 py-1 text-xs font-semibold text-muted hover:bg-lilac/40">
+              <input
+                type="color"
+                value={customColorHex}
+                onChange={(e) => setCustomColorHex(e.target.value)}
+                aria-label="Custom colour shade"
+                className="h-7 w-9 rounded border border-border"
+              />
+              <button type="button" onClick={addCustomColor} className="rounded-full border border-border px-2.5 py-1 text-xs font-semibold text-muted hover:bg-lilac/40">
                 + Add
               </button>
             </div>
-            {selectedSizes.length > 0 && <p className="text-[11px] text-muted">Selected: {selectedSizes.join(", ")}</p>}
           </div>
         </div>
 
-        <div>
-          <p className="mb-2 text-xs font-semibold text-muted">Colours</p>
-          <div className="flex flex-wrap gap-2">
-            {COLOR_PRESETS.map((color) => (
-              <button
-                key={color.name}
-                type="button"
-                onClick={() => toggleColor(color)}
-                aria-pressed={selectedColors.some((c) => c.name === color.name)}
-                title={color.name}
-                className={cn(
-                  "flex items-center gap-1.5 rounded-full border px-2 py-1 text-xs font-medium",
-                  selectedColors.some((c) => c.name === color.name) ? "border-brand bg-brand/10 text-brand" : "border-border text-muted hover:bg-lilac/40",
-                )}
-              >
-                <span className="h-3.5 w-3.5 rounded-full border border-border" style={{ backgroundColor: color.hex }} />
-                {color.name}
-              </button>
-            ))}
-          </div>
-          <div className="mt-2 flex items-center gap-2">
-            <input
-              value={customColorName}
-              onChange={(e) => setCustomColorName(e.target.value)}
-              placeholder="Custom colour name"
-              aria-label="Custom colour name"
-              className="w-36 rounded-lg border border-border p-1.5 text-xs"
-            />
-            <input
-              type="color"
-              value={customColorHex}
-              onChange={(e) => setCustomColorHex(e.target.value)}
-              aria-label="Custom colour shade"
-              className="h-7 w-9 rounded border border-border"
-            />
-            <button type="button" onClick={addCustomColor} className="rounded-full border border-border px-2.5 py-1 text-xs font-semibold text-muted hover:bg-lilac/40">
-              + Add
-            </button>
-          </div>
-        </div>
+        <button
+          type="button"
+          onClick={generate}
+          disabled={selectedSizes.length === 0 || selectedColors.length === 0}
+          className="rounded-full bg-brand px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Generate variants ({selectedSizes.length * selectedColors.length || 0})
+        </button>
       </div>
-
-      <button
-        type="button"
-        onClick={generate}
-        disabled={selectedSizes.length === 0 || selectedColors.length === 0}
-        className="rounded-full bg-brand px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        Generate variants ({selectedSizes.length * selectedColors.length || 0})
-      </button>
 
       {gridError ? <p className="text-xs text-red-600">{gridError}</p> : null}
 
@@ -278,7 +296,7 @@ export function ProductVariantEditor({
                           aria-label={`SKU for ${row.size} / ${row.color}`}
                           className="w-32 rounded border border-border p-1 font-mono text-[11px] uppercase"
                         />
-                        <button type="button" onClick={() => regenerateSku(index)} className="text-[10px] text-brand underline">
+                        <button type="button" onClick={() => regenerateSku(index)} className="inline-flex min-h-8 items-center px-2 text-xs text-brand underline">
                           regen
                           <span className="sr-only"> SKU for {row.size} / {row.color}</span>
                         </button>
@@ -315,7 +333,7 @@ export function ProductVariantEditor({
                       />
                     </td>
                     <td className="p-2">
-                      <button type="button" onClick={() => removeRow(index)} className="text-[11px] text-red-600 hover:underline">
+                      <button type="button" onClick={() => removeRow(index)} className="inline-flex min-h-8 items-center px-2 text-xs text-red-600 hover:underline">
                         Remove
                         <span className="sr-only"> {row.size} / {row.color} variant</span>
                       </button>

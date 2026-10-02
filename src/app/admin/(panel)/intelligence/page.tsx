@@ -1,7 +1,7 @@
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
-import { buildProductInsights, summarizeInsights } from "@/lib/intelligence/product-insights";
+import { buildProductInsights, INSIGHT_LABELS, summarizeInsights } from "@/lib/intelligence/product-insights";
 import { getProductSource, getProducts } from "@/lib/products";
 import Link from "next/link";
 import { redirect } from "next/navigation";
@@ -44,16 +44,22 @@ export default async function AdminIntelligencePage() {
       <div>
         <h1 className="font-display text-3xl font-bold text-ink">Product Intelligence</h1>
         <p className="text-muted">
-          Catalog insights from {source === "db" ? "the database catalog" : "the seed catalog"} —
-          expand with analytics when connected.
+          Suggestions based on your {source === "db" ? "product catalogue" : "sample catalogue"}.
         </p>
       </div>
 
+      {/* F-218: be upfront that nothing in the table below comes from sales data. */}
+      <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        These are rule-of-thumb suggestions from each product&apos;s rating, badge and review count. They are not
+        based on sales, so treat them as ideas rather than results. &ldquo;Most viewed&rdquo; further down is real
+        product-page traffic.
+      </p>
+
       <div className="grid gap-4 md:grid-cols-4">
         <StatCard label="Total Insights" value={String(summary.total)} />
-        <StatCard label="Best Sellers" value={String(summary.bestSellers)} />
-        <StatCard label="Bundle Candidates" value={String(summary.bundles)} />
-        <StatCard label="SEO Opportunities" value={String(summary.seoGaps)} />
+        <StatCard label="Featured / Top Rated" value={String(summary.topRated)} />
+        <StatCard label="Needs Reviews" value={String(summary.seoGaps)} />
+        <StatCard label="New Arrivals" value={String(summary.promotions)} />
       </div>
 
       <section className="overflow-x-auto rounded-3xl border border-border bg-surface">
@@ -80,7 +86,7 @@ export default async function AdminIntelligencePage() {
                 </td>
                 <td className="px-4 py-3">
                   <span className="rounded-full bg-lavender/50 px-2 py-1 text-xs font-medium">
-                    {insight.category.replace(/_/g, " ")}
+                    {INSIGHT_LABELS[insight.category]}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-muted">{insight.metric}</td>

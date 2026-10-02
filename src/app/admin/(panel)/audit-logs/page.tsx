@@ -71,6 +71,37 @@ export default async function AdminAuditLogsPage({ searchParams }: PageProps) {
     entityOptions.push({ value: filters.entity, label: auditEntityLabel(filters.entity) });
   }
 
+  // F-166: the same per-row view model feeds both layouts below — a table
+  // from lg up, stacked cards on phones (the table's 5 columns put "who" and
+  // "when" off-screen at 375px).
+  const rows = logs.map((log) => {
+    // F-289 fix: prefer the live User relation's name (so a
+    // renamed account still shows its current name), but fall
+    // back to the email snapshotted at write time — the row the
+    // action was actually attributed to might have since been
+    // deleted (userId is onDelete: SetNull).
+    const actorLabel = log.user?.name ?? log.actorEmail ?? "System";
+    return {
+      id: log.id,
+      // F-060: server-rendered in the process timezone previously — UTC on
+      // Vercel, 5.5h behind IST — now pinned to IST explicitly.
+      when: formatDateTimeIST(log.createdAt),
+      action: auditActionLabel(log.action),
+      actorLabel,
+      actorRole: log.actorRole,
+      entityLabel: auditEntityLabel(log.entity),
+      entityHref: auditEntityHref(session.role, log.entity, log.entityId),
+      entityId: log.entityId,
+      entityShortId: log.entityId ? shortenAuditId(log.entityId) : null,
+      // The record's changed values are only shown to a role that
+      // could open the record itself — audit:view alone (VIEWER,
+      // SEO_MANAGER) gets the who/what/when, not the contents.
+      metadata: formatAuditMetadataForRole(session.role, log.entity, log.metadata),
+      ipAddress: log.ipAddress,
+      userAgent: log.userAgent,
+    };
+  });
+
   const inputClass = "mt-1 w-full rounded-xl border border-border bg-surface p-2 text-sm text-ink outline-none focus:border-brand";
 
   return (
@@ -153,7 +184,7 @@ export default async function AdminAuditLogsPage({ searchParams }: PageProps) {
         </div>
       </form>
 
-      <div className="overflow-x-auto rounded-3xl border border-border bg-surface">
+      <div className="hidden overflow-x-auto rounded-3xl border border-border bg-surface lg:block">
         <table className="min-w-full text-left text-sm">
           <thead className="border-b border-border bg-lavender/30 text-xs uppercase tracking-wide text-muted">
             <tr>
@@ -165,67 +196,89 @@ export default async function AdminAuditLogsPage({ searchParams }: PageProps) {
             </tr>
           </thead>
           <tbody>
-            {logs.map((log) => {
-              // F-289 fix: prefer the live User relation's name (so a
-              // renamed account still shows its current name), but fall
-              // back to the email snapshotted at write time — the row the
-              // action was actually attributed to might have since been
-              // deleted (userId is onDelete: SetNull).
-              const actorLabel = log.user?.name ?? log.actorEmail ?? "System";
-              const entityHref = auditEntityHref(session.role, log.entity, log.entityId);
-              // The record's changed values are only shown to a role that
-              // could open the record itself — audit:view alone (VIEWER,
-              // SEO_MANAGER) gets the who/what/when, not the contents.
-              const metadata = formatAuditMetadataForRole(session.role, log.entity, log.metadata);
-              return (
-                <tr key={log.id} className="border-b border-border/70 align-top">
-                  {/* F-060: server-rendered in the process timezone
-                      previously — UTC on Vercel, 5.5h behind IST — now
-                      pinned to IST explicitly. */}
-                  <td className="whitespace-nowrap px-4 py-3 text-muted">{formatDateTimeIST(log.createdAt)}</td>
-                  <td className="px-4 py-3">
-                    <p className="font-semibold text-ink">{auditActionLabel(log.action)}</p>
-                    {metadata ? (
-                      <details className="mt-1">
-                        <summary className="cursor-pointer text-xs font-semibold text-brand">Details</summary>
-                        <pre className="mt-1 max-w-xs overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-lavender/30 p-2 text-[11px] text-ink sm:max-w-md">
-                          {metadata}
-                        </pre>
-                      </details>
-                    ) : null}
-                  </td>
-                  <td className="px-4 py-3 text-muted">
-                    {entityHref ? (
-                      <Link href={entityHref} className="font-semibold text-brand hover:underline">
-                        {auditEntityLabel(log.entity)}
-                      </Link>
-                    ) : (
-                      <span className="font-semibold text-ink">{auditEntityLabel(log.entity)}</span>
-                    )}
-                    {log.entityId ? (
-                      <span className="block break-all text-xs" title={log.entityId}>
-                        {shortenAuditId(log.entityId)}
-                      </span>
-                    ) : null}
-                  </td>
-                  <td className="px-4 py-3">
-                    {actorLabel}
-                    {log.actorRole ? <span className="text-muted"> · {log.actorRole}</span> : null}
-                  </td>
-                  <td className="px-4 py-3 text-muted" title={log.userAgent ?? undefined}>
-                    {log.ipAddress ?? "—"}
-                  </td>
-                </tr>
-              );
-            })}
+            {rows.map((row) => (
+              <tr key={row.id} className="border-b border-border/70 align-top">
+                <td className="whitespace-nowrap px-4 py-3 text-muted">{row.when}</td>
+                <td className="px-4 py-3">
+                  <p className="font-semibold text-ink">{row.action}</p>
+                  {row.metadata ? (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-xs font-semibold text-brand">Details</summary>
+                      <pre className="mt-1 max-w-xs overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-lavender/30 p-2 text-[11px] text-ink sm:max-w-md">
+                        {row.metadata}
+                      </pre>
+                    </details>
+                  ) : null}
+                </td>
+                <td className="px-4 py-3 text-muted">
+                  {row.entityHref ? (
+                    <Link href={row.entityHref} className="font-semibold text-brand hover:underline">
+                      {row.entityLabel}
+                    </Link>
+                  ) : (
+                    <span className="font-semibold text-ink">{row.entityLabel}</span>
+                  )}
+                  {row.entityId ? (
+                    <span className="block break-all text-xs" title={row.entityId}>
+                      {row.entityShortId}
+                    </span>
+                  ) : null}
+                </td>
+                <td className="px-4 py-3">
+                  {row.actorLabel}
+                  {row.actorRole ? <span className="text-muted"> · {row.actorRole}</span> : null}
+                </td>
+                <td className="px-4 py-3 text-muted" title={row.userAgent ?? undefined}>
+                  {row.ipAddress ?? "—"}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
-        {logs.length === 0 ? (
-          <p className="p-8 text-center text-muted">
-            {hasFilters ? "No audit entries match these filters." : "No audit entries yet."}
-          </p>
-        ) : null}
       </div>
+
+      {/* F-166: phone layout — what happened and who/when on the first two
+          lines, with the record and details underneath; nothing needs a
+          sideways swipe. */}
+      <ul className="space-y-3 lg:hidden" aria-label="Audit log entries">
+        {rows.map((row) => (
+          <li key={row.id} className="rounded-2xl border border-border bg-surface p-4 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              <p className="font-semibold text-ink">{row.action}</p>
+              <p className="shrink-0 text-xs text-muted">{row.when}</p>
+            </div>
+            <p className="mt-1 text-ink">
+              {row.actorLabel}
+              {row.actorRole ? <span className="text-muted"> · {row.actorRole}</span> : null}
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              {row.entityHref ? (
+                <Link href={row.entityHref} className="font-semibold text-brand hover:underline">
+                  {row.entityLabel}
+                </Link>
+              ) : (
+                <span className="font-semibold text-ink">{row.entityLabel}</span>
+              )}
+              {row.entityId ? <span className="ml-2 break-all">{row.entityShortId}</span> : null}
+              {row.ipAddress ? <span className="ml-2">· {row.ipAddress}</span> : null}
+            </p>
+            {row.metadata ? (
+              <details className="mt-2">
+                <summary className="cursor-pointer text-xs font-semibold text-brand">Details</summary>
+                <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-lavender/30 p-2 text-[11px] text-ink">
+                  {row.metadata}
+                </pre>
+              </details>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+
+      {rows.length === 0 ? (
+        <p className="rounded-3xl border border-border bg-surface p-8 text-center text-muted">
+          {hasFilters ? "No audit entries match these filters." : "No audit entries yet."}
+        </p>
+      ) : null}
 
       <AdminPager
         page={pageWindow.page}

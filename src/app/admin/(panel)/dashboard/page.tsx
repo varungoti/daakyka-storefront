@@ -31,8 +31,7 @@ export default async function AdminDashboardPage() {
   const canSeeUndeliveredEmailBanner = visibility.leads || visibility.orders;
 
   const [
-    leadCount,
-    newLeads,
+    leadCounts,
     blogCount,
     subscriberCounts,
     pendingCampaigns,
@@ -49,8 +48,8 @@ export default async function AdminDashboardPage() {
     // the JSX) when the role can't see the widget it feeds, so a
     // CONTENT_EDITOR or VIEWER dashboard load no longer does the DB work
     // for data it will never render.
-    visibility.leads ? db.bulkOrderLead.count() : Promise.resolve(0),
-    visibility.leads ? db.bulkOrderLead.count({ where: { status: "NEW" } }) : Promise.resolve(0),
+    // F-262: total + new in one grouped query instead of two counts.
+    visibility.leads ? getBulkLeadCounts() : Promise.resolve({ total: 0, new: 0 }),
     visibility.blog ? db.blogPostRecord.count({ where: { status: "PUBLISHED" } }) : Promise.resolve(0),
     // F-153: real, confirmed-subscriber counts instead of a bare
     // unfiltered count() that included unconfirmed/unsubscribed rows.
@@ -102,7 +101,7 @@ export default async function AdminDashboardPage() {
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         {visibility.leads && (
-          <StatCard label="Bulk Enquiries" value={String(leadCount)} hint={`${newLeads} new`} />
+          <StatCard label="Bulk Enquiries" value={String(leadCounts.total)} hint={`${leadCounts.new} new`} />
         )}
         {visibility.subscribers && (
           <Link href="/admin/engagement/subscribers">
@@ -217,6 +216,14 @@ export default async function AdminDashboardPage() {
       )}
     </div>
   );
+}
+
+async function getBulkLeadCounts(): Promise<{ total: number; new: number }> {
+  const groups = await db.bulkOrderLead.groupBy({ by: ["status"], _count: { _all: true } });
+  return {
+    total: groups.reduce((sum, group) => sum + group._count._all, 0),
+    new: groups.find((group) => group.status === "NEW")?._count._all ?? 0,
+  };
 }
 
 function StatCard({

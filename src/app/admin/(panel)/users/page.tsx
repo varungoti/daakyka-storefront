@@ -29,9 +29,15 @@ export default async function UsersPage() {
         <UserInviteForm />
       </section>
 
-      <div className="overflow-x-auto rounded-3xl border border-border bg-surface-elevated">
-        <table className="min-w-full text-left text-sm">
-          <thead className="border-b border-border bg-lavender/30 text-xs uppercase tracking-wide text-muted">
+      {/* F-166: from lg up this is the usual table. Below lg each row
+          (UserRoleEditor's <tr>) is laid out as a stacked card with display
+          overrides, so the role, Active toggle and the Reset password /
+          Delete buttons are all on screen without a sideways swipe — and
+          each row stays a single component instance, so a one-time temporary
+          password shown after a reset can't be lost to a resize. */}
+      <div className="lg:overflow-x-auto lg:rounded-3xl lg:border lg:border-border lg:bg-surface-elevated">
+        <table className="block min-w-full text-left text-sm lg:table">
+          <thead className="hidden border-b border-border bg-lavender/30 text-xs uppercase tracking-wide text-muted lg:table-header-group">
             <tr>
               <th className="px-4 py-3">User</th>
               <th className="px-4 py-3">Role</th>
@@ -39,7 +45,7 @@ export default async function UsersPage() {
               <th className="px-4 py-3">Actions</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="block space-y-3 lg:table-row-group lg:space-y-0">
             {users.map((user) => (
               <UserRoleEditor
                 key={user.id}

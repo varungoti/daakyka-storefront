@@ -1312,27 +1312,36 @@ export async function listProductsForAdmin(options: ListProductsForAdminOptions 
     stockFilter: options.stockFilter,
   });
 
-  const countRows = await db.$queryRaw<{ count: number }[]>(Prisma.sql`
-    SELECT COUNT(*)::int AS count
-    ${PRODUCT_LIST_FROM_SQL}
-    ${whereSql}
-  `);
-  const total = countRows[0]?.count ?? 0;
-
   const pageSize = Math.min(Math.max(options.pageSize ?? 24, 1), 100);
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const page = Math.min(Math.max(options.page ?? 1, 1), totalPages);
-  const skip = (page - 1) * pageSize;
-
   const sort = options.sort ?? "updated-desc";
-  const pageRows = await db.$queryRaw<{ id: string }[]>(Prisma.sql`
-    SELECT p.id
-    ${PRODUCT_LIST_FROM_SQL}
-    ${whereSql}
-    ORDER BY ${buildProductOrderBySql(sort)}
-    LIMIT ${pageSize} OFFSET ${skip}
-  `);
-  const ids = pageRows.map((r) => r.id);
+  const fetchPageIds = async (pageNumber: number) =>
+    (
+      await db.$queryRaw<{ id: string }[]>(Prisma.sql`
+        SELECT p.id
+        ${PRODUCT_LIST_FROM_SQL}
+        ${whereSql}
+        ORDER BY ${buildProductOrderBySql(sort)}
+        LIMIT ${pageSize} OFFSET ${(pageNumber - 1) * pageSize}
+      `)
+    ).map((r) => r.id);
+
+  // F-262: the total and the requested page's ids don't depend on each other
+  // unless the requested page turns out to be past the end — so ask for both
+  // at once and only re-query (clamped) in that rare case, instead of always
+  // paying two sequential round trips.
+  const requestedPage = Math.max(options.page ?? 1, 1);
+  const [countRows, requestedIds] = await Promise.all([
+    db.$queryRaw<{ count: number }[]>(Prisma.sql`
+      SELECT COUNT(*)::int AS count
+      ${PRODUCT_LIST_FROM_SQL}
+      ${whereSql}
+    `),
+    fetchPageIds(requestedPage),
+  ]);
+  const total = countRows[0]?.count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(requestedPage, totalPages);
+  const ids = page === requestedPage ? requestedIds : await fetchPageIds(page);
   if (ids.length === 0) {
     return { items: [], total, page, pageSize, totalPages };
   }
@@ -1343,19 +1352,12 @@ export async function listProductsForAdmin(options: ListProductsForAdminOptions 
       category: { select: { id: true, name: true, slug: true } },
       variants: { select: { stock: true } },
       images: { orderBy: { sortOrder: "asc" }, take: 1, include: { media: { select: { url: true, source: true } } } },
-      _count: { select: { images: true } },
+      // F-262: the AI badge needs to know if *any* image (not just the
+      // thumbnail) is AI-sourced. A filtered relation count answers that in
+      // this same query — it used to be a second, sequential round trip.
+      _count: { select: { images: { where: { media: { source: "AI" } } } } },
     },
   });
-
-  // AI badge needs to know if *any* image (not just the thumbnail) is AI-sourced.
-  const aiImageProductIds = new Set(
-    (
-      await db.productImage.findMany({
-        where: { productId: { in: ids }, media: { source: "AI" } },
-        select: { productId: true },
-      })
-    ).map((r) => r.productId),
-  );
 
   // Rehydrated via a plain `id IN (...)` findMany, which doesn't preserve
   // the raw query's own ORDER BY — re-applied here against just this one
@@ -1375,7 +1377,7 @@ export async function listProductsForAdmin(options: ListProductsForAdminOptions 
       compareAtPrice: row.compareAtPrice ? Number(row.compareAtPrice) : null,
       totalStock: row.variants.reduce((sum, v) => sum + v.stock, 0),
       status: row.status,
-      hasAiImage: aiImageProductIds.has(row.id),
+      hasAiImage: row._count.images > 0,
       thumbnailUrl: row.images[0]?.media.url ?? null,
       updatedAt: row.updatedAt,
     }));

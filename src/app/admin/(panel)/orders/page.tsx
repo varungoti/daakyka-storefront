@@ -2,7 +2,7 @@ import Link from "next/link";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
-import { getUndeliveredEmailCount } from "@/lib/engagement/outbox";
+import { CUSTOMER_ORDER_EMAIL_KINDS, getUndeliveredEmailCount } from "@/lib/engagement/outbox";
 import { redirect } from "next/navigation";
 import { OrdersTable } from "@/components/admin/orders-table";
 import type { Metadata } from "next";
@@ -35,7 +35,10 @@ export default async function AdminOrdersPage() {
     // F7 fix: order confirmations are the highest-stakes transactional
     // email this store sends — surface undelivered ones right where the
     // store owner is already looking. See src/lib/engagement/outbox.ts.
-    getUndeliveredEmailCount(),
+    // F-209: count only the customer-facing order emails (confirmation and
+    // status updates) — not password resets, verification links or the
+    // store's own copy, which would inflate the number several times over.
+    getUndeliveredEmailCount({ kinds: CUSTOMER_ORDER_EMAIL_KINDS }),
   ]);
   const canManage = hasPermission(session.role, "orders:manage");
 
@@ -62,7 +65,7 @@ export default async function AdminOrdersPage() {
           className="block rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 hover:bg-amber-100"
         >
           <strong>{undeliveredEmail.total}</strong> order-related email{undeliveredEmail.total === 1 ? "" : "s"} not
-          yet delivered — some customers may not have received their confirmation. View details →
+          yet delivered — some customers may not have received their order confirmation or update. View details →
         </Link>
       )}
 

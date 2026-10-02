@@ -139,8 +139,8 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
   };
 
   return (
-    <tr className="border-b border-border/70 align-top">
-      <td className="px-4 py-4">
+    <tr className="block rounded-2xl border border-border bg-surface-elevated p-4 align-top lg:table-row lg:rounded-none lg:border-0 lg:border-b lg:border-border/70 lg:bg-transparent lg:p-0">
+      <td className="block px-0 py-1 lg:table-cell lg:px-4 lg:py-4">
         {editingName ? (
           <form
             className="flex flex-wrap items-center gap-2"
@@ -180,7 +180,7 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
               type="button"
               onClick={startEditingName}
               aria-label={`Edit name for ${user.name}`}
-              className="text-xs font-semibold text-brand hover:underline"
+              className="text-xs font-semibold text-brand hover:underline max-lg:inline-flex max-lg:min-h-9 max-lg:items-center max-lg:px-2"
             >
               Edit
             </button>
@@ -198,13 +198,16 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
           </div>
         )}
       </td>
-      <td className="px-4 py-4">
+      <td className="block px-0 py-1 lg:table-cell lg:px-4 lg:py-4">
+        <span aria-hidden="true" className="mb-1 block text-xs font-semibold text-muted lg:hidden">
+          Role
+        </span>
         <select
           value={user.role}
           onChange={(e) => changeRole(e.target.value as AdminRole)}
           disabled={isSelf || busy}
           aria-label={`Role for ${user.name}`}
-          className="rounded-lg border border-border px-3 py-1.5 text-sm outline-none focus:border-brand"
+          className="w-full rounded-lg border border-border px-3 py-2 text-sm outline-none focus:border-brand lg:w-auto lg:py-1.5"
         >
           {adminRoles.map((role) => (
             <option key={role} value={role}>
@@ -213,10 +216,11 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
           ))}
         </select>
       </td>
-      <td className="px-4 py-4">
-        <label className="inline-flex items-center gap-2 text-sm">
+      <td className="block px-0 py-1 lg:table-cell lg:px-4 lg:py-4">
+        <label className="inline-flex items-center gap-2 text-sm max-lg:min-h-9">
           <input
             type="checkbox"
+            className="h-4 w-4 max-lg:h-5 max-lg:w-5"
             checked={user.active}
             disabled={isSelf || busy}
             onChange={(e) => changeActive(e.target.checked)}
@@ -238,14 +242,14 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
           </p>
         )}
       </td>
-      <td className="px-4 py-4">
+      <td className="block px-0 pb-0 pt-2 lg:table-cell lg:px-4 lg:py-4">
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
             onClick={resetPassword}
             disabled={busy}
             aria-label={`Reset password for ${user.name}`}
-            className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-ink hover:bg-lilac/40 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold text-ink hover:bg-lilac/40 disabled:cursor-not-allowed disabled:opacity-50 max-lg:min-h-10 max-lg:px-4"
           >
             Reset password
           </button>
@@ -255,7 +259,7 @@ export function UserRoleEditor({ user, currentUserId }: { user: UserRow; current
               onClick={deleteUser}
               disabled={busy}
               aria-label={`Delete ${user.name}`}
-              className="rounded-full border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+              className="rounded-full border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 max-lg:min-h-10 max-lg:px-4"
             >
               Delete
             </button>

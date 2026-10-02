@@ -21,7 +21,7 @@ export default async function AdminCustomersPage() {
             (Phase D1)", which both leaked an internal phase label and
             described the page inaccurately once guest buyers (below) were
             added — most orders at this store are guest checkouts. */}
-        <p className="text-muted">Registered storefront accounts and their order activity.</p>
+        <p className="text-muted">Registered customer accounts and their order activity.</p>
       </div>
       <CustomersTable />
 

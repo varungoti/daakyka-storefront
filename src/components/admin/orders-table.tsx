@@ -402,7 +402,7 @@ export function OrdersTable() {
                 </div>
               </dl>
               <div className="mt-3 text-right">
-                <Link href={`/admin/orders/${order.id}`} className="text-xs font-semibold text-brand hover:underline">
+                <Link href={`/admin/orders/${order.id}`} className="inline-flex min-h-9 items-center px-3 text-xs font-semibold text-brand hover:underline">
                   View
                   <span className="sr-only"> order {order.number}</span>
                 </Link>

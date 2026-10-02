@@ -4,6 +4,7 @@ import { shouldUseSecureSessionCookie } from "@/lib/auth/session-cookie";
 import { db } from "@/lib/db";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
+import { cache } from "react";
 
 const SESSION_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
 
@@ -154,7 +155,11 @@ export async function verifySessionToken(token: string): Promise<SessionUser | n
   return result.status === "ok" ? result.user : null;
 }
 
-export async function getSessionResult(): Promise<SessionResult> {
+// F-262: wrapped in React `cache()` so the panel layout and the page it
+// renders (both call this, in the same request) share one user lookup
+// instead of each paying a database round trip. Scoped to a single request;
+// outside a render (route handlers, tests) it simply calls through.
+export const getSessionResult = cache(async function getSessionResult(): Promise<SessionResult> {
   let token: string | undefined;
   try {
     const cookieStore = await cookies();
@@ -172,7 +177,7 @@ export async function getSessionResult(): Promise<SessionResult> {
   if (!token) return { status: "unauthenticated" };
 
   return verifySessionTokenResult(token);
-}
+});
 
 /** Thin `SessionUser | null` wrapper over {@link getSessionResult} — see
  * its docs. Use `getSessionResult()` directly wherever a DB outage should

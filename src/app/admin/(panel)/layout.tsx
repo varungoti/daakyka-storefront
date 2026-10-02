@@ -59,26 +59,30 @@ export default async function AdminPanelLayout({
   }
   const session = result.user;
 
-  // Cheap enough to fetch on every admin page load — a single count()
-  // query — and getUnreadNotificationCount() already swallows DB errors
-  // (returns 0) so a hiccup here never breaks the whole admin shell.
-  const unreadNotifications = await getUnreadNotificationCount();
-  // F-297: same shape, only fetched for a role that can act on it —
-  // getPendingReviewCount() also swallows DB errors, same as above.
-  const pendingReviews = hasPermission(session.role, "reviews:moderate")
-    ? await getPendingReviewCount()
-    : 0;
-  // F-057: not carried on the JWT (see src/lib/auth/session.ts's
-  // SessionUser) — an admin-issued temp password (invite or reset) sets
-  // this in the DB, and AdminShell redirects to /admin/account until it's
-  // cleared. Best-effort: if this lookup fails for some reason, fail open
-  // (don't force the redirect) rather than lock an admin out of the panel
-  // over an unrelated query hiccup — getSessionResult() above is already
-  // the real "is this a working session" check.
-  const mustChangePassword = await db.user
-    .findUnique({ where: { id: session.id }, select: { mustChangePassword: true } })
-    .then((user) => user?.mustChangePassword ?? false)
-    .catch(() => false);
+  // F-262: these three shell lookups are independent of each other (they
+  // only need the session above), so they run together — three sequential
+  // round trips to the pooled production DB used to add ~0.5s to every
+  // admin navigation.
+  const [unreadNotifications, pendingReviews, mustChangePassword] = await Promise.all([
+    // Cheap enough to fetch on every admin page load — a single count()
+    // query — and getUnreadNotificationCount() already swallows DB errors
+    // (returns 0) so a hiccup here never breaks the whole admin shell.
+    getUnreadNotificationCount(),
+    // F-297: same shape, only fetched for a role that can act on it —
+    // getPendingReviewCount() also swallows DB errors, same as above.
+    hasPermission(session.role, "reviews:moderate") ? getPendingReviewCount() : Promise.resolve(0),
+    // F-057: not carried on the JWT (see src/lib/auth/session.ts's
+    // SessionUser) — an admin-issued temp password (invite or reset) sets
+    // this in the DB, and AdminShell redirects to /admin/account until it's
+    // cleared. Best-effort: if this lookup fails for some reason, fail open
+    // (don't force the redirect) rather than lock an admin out of the panel
+    // over an unrelated query hiccup — getSessionResult() above is already
+    // the real "is this a working session" check.
+    db.user
+      .findUnique({ where: { id: session.id }, select: { mustChangePassword: true } })
+      .then((user) => user?.mustChangePassword ?? false)
+      .catch(() => false),
+  ]);
 
   return (
     // F-13: shared dirty-form state so a <GuardedLink> in the sidebar
