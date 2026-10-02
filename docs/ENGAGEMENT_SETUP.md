@@ -20,7 +20,18 @@ WATI_API_URL=https://live-server.wati.io
    [GO_LIVE_RUNBOOK.md](./GO_LIVE_RUNBOOK.md)'s Domain & DNS phase for the exact records this needs
    alongside the Vercel cutover, and why order matters (F-351)
 3. Generate API key → `BREVO_API_KEY`
-4. Set `BREVO_FROM_EMAIL` to a verified sender
+4. Set `BREVO_FROM_EMAIL` to a verified sender (or a sender on the verified domain)
+
+Brevo counts as configured only when **both** the API key and a From Email are set, whether they
+come from `/admin/integrations` or the env vars above. There is no default sender: with only a key,
+the Integrations page shows Brevo as missing and no email is sent.
+
+**Testing and turning it on (F-267).** Under the Brevo credentials on `/admin/integrations`, **Send
+test email to me** appears whenever Brevo is configured, with email switched on or off, and works
+before email is turned on. It sends one real message to your own address, so it confirms delivery
+end to end; **Test connection** only checks the API key. The first time both values are saved, email
+is switched on automatically. If it has been switched off, an amber notice shows **Turn on email**
+and how many emails are queued: turning it on sends any queued emails.
 
 ## WATI (WhatsApp)
 
