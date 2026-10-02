@@ -21,3 +21,11 @@ updates:
     # Prisma/Next app that upgrades deliberately); security-advisory PRs have
     # their own separate limit and are unaffected.
     open-pull-requests-limit: 0
+
+  # F-305: the AR try-on image pins its python base by digest; this proposes the
+  # bump (security rebuilds of the same tag) instead of leaving it frozen.
+  - package-ecosystem: docker
+    directory: "/services/ar-tryon"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1

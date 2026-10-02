@@ -257,6 +257,12 @@ test.describe("Dogfood — Hermes & AR APIs", () => {
     const response = await request.post("/api/outfit/try-on", {
       data: { gender: "female", topImageUrl, color: "Navy" },
     });
+    // F-304: the endpoint is gated on the same flag as the studio page, so it 404s while
+    // Mix & Match is switched off (the default).
+    if (!OPTIONAL_PAGES_ENABLED) {
+      expect(response.status()).toBe(404);
+      return;
+    }
     expect(response.ok()).toBeTruthy();
     const body = (await response.json()) as {
       ok: boolean;

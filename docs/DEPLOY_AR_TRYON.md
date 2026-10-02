@@ -33,9 +33,8 @@ or C below), or be unset. If it still holds an old quick-tunnel URL from an earl
    ```
 3. Copy the public URL (e.g. `https://ar-tryon-production.up.railway.app`)
 4. Set an API key on the Railway service too (`railway variables set AR_TRYON_API_KEY=...`)
-   — once this service has a public URL, anyone who finds it can burn
-   your compute without one; `docker compose up -d ar-tryon` locally
-   stays unauthenticated since it's never set there.
+   — the service answers 401 to every request without one (it only runs unauthenticated when
+   `AR_TRYON_ALLOW_UNAUTH=1`, which is for local Docker only and must never be set on Railway).
 5. In **Vercel → storefront → Environment Variables**:
    ```env
    AR_TRYON_SERVICE_URL=https://YOUR-RAILWAY-URL
@@ -60,9 +59,14 @@ Add `RAILWAY_TOKEN` to GitHub repo secrets. Pushes to `services/ar-tryon/**` tri
 ## Option D — Local Docker (dev)
 
 ```bash
-docker compose up -d ar-tryon
+# The port is bound to 127.0.0.1 only. Either run without a key (local opt-out)...
+AR_TRYON_ALLOW_UNAUTH=1 docker compose up -d ar-tryon
+# ...or with one (then send the same value as AR_TRYON_API_KEY to the storefront):
+#   AR_TRYON_API_KEY=<random value> docker compose up -d ar-tryon
 # AR_TRYON_SERVICE_URL=http://localhost:8080
 ```
+
+Without either, the service answers 401 to `/predict`.
 
 Health: `GET /health`  
 Predict: `POST /predict`
@@ -70,7 +74,8 @@ Predict: `POST /predict`
 ## Verify staging
 
 ```bash
-TEST_BASE_URL=https://storefront-nu-woad.vercel.app npm run probe:deploy -- --staging
+# a Preview deployment only: --staging requires robots.txt to disallow crawling, which production must not
+TEST_BASE_URL=https://YOUR-PREVIEW-URL.vercel.app npm run probe:deploy -- --staging
 ```
 
 Studio: `/mix-and-match/studio` — preview should return `mode: "ar-tryon"` in network tab when AR is wired.
@@ -89,3 +94,19 @@ The service only fetches `top_garment_url`/`bottom_garment_url`/`avatar_url`
 from hosts in `ALLOWED_IMAGE_HOSTS` (`app/compositor.py`), kept in sync with
 `storefront/src/lib/security/image-hosts.ts`. Add a host to both places if a
 new product image CDN is introduced.
+
+## Security notes (F-305)
+
+- Auth is mandatory: with no `AR_TRYON_API_KEY` the service answers 401 to every request unless
+  `AR_TRYON_ALLOW_UNAUTH=1` is set, which is for local Docker behind `127.0.0.1` only. Keys are
+  compared in constant time and clients only ever see a generic error.
+- The base image in `services/ar-tryon/Dockerfile` is pinned by digest, so a rebuild cannot silently
+  change it. Dependabot (docker ecosystem, weekly) proposes the bump; verify any bump with
+  `node scripts/local-ar-ci.mjs` (builds the production image, runs the tests, smokes `/health`).
+- Known, accepted limitation: `mediapipe` stays at 0.10.14, which caps `protobuf` below 5
+  (CVE-2026-0994). Every mediapipe release that lifts the cap also removes the `mp.solutions.pose`
+  API that `app/compositor.py` is built on, so fixing it means porting torso detection to the newer
+  MediaPipe Tasks API (a separate pose-landmark model file and a different call shape) and
+  re-checking garment placement by eye. Until then the exposure is a CPU/memory denial of service
+  from a crafted protobuf, which this service never parses from user input; user images are only
+  decoded by OpenCV/Pillow after a byte cap and a pixel-dimension check.

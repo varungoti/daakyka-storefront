@@ -5,6 +5,7 @@ import type { OutfitTryOnRequest, OutfitTryOnResponse } from "@/lib/outfit/types
 import { rateLimitOrResponse } from "@/lib/security/rate-limit";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { isTrustedImageUrl } from "@/lib/security/image-hosts";
+import { isPageEnabled } from "@/lib/settings";
 import { z } from "zod";
 
 // Beyond just being a well-formed URL, topImageUrl/bottomImageUrl must
@@ -26,6 +27,13 @@ const schema = z.object({
 });
 
 export async function POST(request: Request) {
+  // F-304: this proxies to a paid rendering service, and its only UI is the Mix & Match
+  // studio. While that page is switched off (pages.mixMatch.enabled, off by default and 404s)
+  // the endpoint must be unreachable too, not just unlinked.
+  if (!(await isPageEnabled("mixMatch"))) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const limited = await rateLimitOrResponse(request, "outfit-try-on", 20, 60_000);
   if (limited) return limited;
 
