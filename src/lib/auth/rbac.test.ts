@@ -59,6 +59,7 @@ describe("RBAC", () => {
         "orders:manage",
         "customers:view",
         "customers:manage",
+        "privacy:manage",
         "shopify:sync",
       ] as Permission[]).some((permission) => hasPermission(role, permission));
       assert.equal(allowed, true, `${role} should have at least one permission`);
@@ -79,6 +80,7 @@ describe("RBAC", () => {
           "products:publish",
           "shopify:sync",
           "integrations:manage",
+          "privacy:manage",
         ],
         denied: [],
       },
@@ -90,18 +92,20 @@ describe("RBAC", () => {
           "orders:manage",
           "shopify:sync",
           "integrations:manage",
+          // F-315: the owner answers access / erasure requests.
+          "privacy:manage",
         ],
         denied: ["users:manage"],
       },
       {
         role: "CATALOG_MANAGER",
         allowed: ["products:view", "products:manage", "categories:manage", "media:manage", "ai:generate"],
-        denied: ["products:publish", "orders:manage", "users:manage", "settings:manage"],
+        denied: ["products:publish", "orders:manage", "users:manage", "settings:manage", "privacy:manage"],
       },
       {
         role: "ORDER_MANAGER",
         allowed: ["orders:view", "orders:manage", "customers:view", "bulk-orders:manage"],
-        denied: ["products:manage", "customers:manage", "users:manage", "settings:manage"],
+        denied: ["products:manage", "customers:manage", "users:manage", "settings:manage", "privacy:manage"],
       },
       {
         role: "MARKETING_ADMIN",

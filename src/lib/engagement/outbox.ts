@@ -40,6 +40,11 @@ export const EMAIL_KIND = {
   ORDER_REFUNDED_CUSTOMER: "order_refunded_customer",
   CUSTOMER_VERIFY_EMAIL: "customer_verify_email",
   CUSTOMER_RESET_PASSWORD: "customer_reset_password",
+  // F-315: the confirmation link sent to a NEW address when a shopper changes
+  // their account email (src/lib/customer-auth/email-change.ts), and the
+  // courtesy notice sent to the OLD address once the change has happened.
+  CUSTOMER_EMAIL_CHANGE: "customer_email_change",
+  CUSTOMER_EMAIL_CHANGED_NOTICE: "customer_email_changed_notice",
   // Shopify-parity gap: back-in-stock "Notify me" restock email — see
   // src/lib/back-in-stock/index.ts's sweepBackInStock.
   BACK_IN_STOCK: "back_in_stock",
@@ -64,6 +69,7 @@ export type EmailKind = (typeof EMAIL_KIND)[keyof typeof EMAIL_KIND];
 const SUPERSEDING_KINDS: ReadonlySet<string> = new Set([
   EMAIL_KIND.CUSTOMER_VERIFY_EMAIL,
   EMAIL_KIND.CUSTOMER_RESET_PASSWORD,
+  EMAIL_KIND.CUSTOMER_EMAIL_CHANGE,
   // F-264 fix: a resubscribe while still unconfirmed rotates confirmToken
   // (see subscribeToNewsletter in newsletter.ts) — same "only the newest
   // link works" rule as verify/reset, otherwise an earlier still-PENDING
@@ -84,6 +90,7 @@ const SUPERSEDING_KINDS: ReadonlySet<string> = new Set([
 const CREDENTIAL_KINDS: ReadonlySet<string> = new Set([
   EMAIL_KIND.CUSTOMER_VERIFY_EMAIL,
   EMAIL_KIND.CUSTOMER_RESET_PASSWORD,
+  EMAIL_KIND.CUSTOMER_EMAIL_CHANGE,
   EMAIL_KIND.NEWSLETTER_CONFIRM,
   EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER,
 ]);
@@ -91,6 +98,10 @@ const CREDENTIAL_KINDS: ReadonlySet<string> = new Set([
 export function isCredentialKind(kind: EmailKind | string): boolean {
   return CREDENTIAL_KINDS.has(kind);
 }
+
+/** The same set as an array, for queries (the retention job's sweep of rows
+ * queued before sealing existed — src/lib/privacy/retention.ts). */
+export const CREDENTIAL_EMAIL_KINDS: readonly string[] = [...CREDENTIAL_KINDS];
 
 /** The `data` fragment that blanks a credential-bearing row's body — empty
  * for every other kind. */
@@ -106,6 +117,7 @@ function redactionFor(kind: EmailKind | string): { html?: string; text?: null } 
 function ttlMsForKind(kind: EmailKind | string): number | null {
   if (kind === EMAIL_KIND.CUSTOMER_RESET_PASSWORD) return RESET_TOKEN_TTL_MS;
   if (kind === EMAIL_KIND.CUSTOMER_VERIFY_EMAIL) return VERIFY_TOKEN_TTL_MS;
+  if (kind === EMAIL_KIND.CUSTOMER_EMAIL_CHANGE) return VERIFY_TOKEN_TTL_MS;
   return null;
 }
 

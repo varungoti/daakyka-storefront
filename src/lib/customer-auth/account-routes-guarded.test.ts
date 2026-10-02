@@ -26,9 +26,22 @@ describe("account API routes are guarded where they should be", () => {
     "forgot-password/route.ts",
     "reset-password/route.ts",
     "resend-verification/route.ts",
+    // F-315: the emailed link that applies an account email change — public
+    // on purpose, the HMAC-signed token in it is the credential.
+    "email/confirm/route.ts",
   ]);
 
-  const PROTECTED_ROUTES = ["profile/route.ts", "addresses/route.ts", "addresses/[id]/route.ts", "reviews/route.ts"];
+  const PROTECTED_ROUTES = [
+    "profile/route.ts",
+    "addresses/route.ts",
+    "addresses/[id]/route.ts",
+    "reviews/route.ts",
+    // F-315: data-principal rights — each acts only on the session's own account.
+    "export/route.ts",
+    "delete/route.ts",
+    "email/route.ts",
+    "marketing/route.ts",
+  ];
 
   it("finds the expected public routes and they don't call getCustomerSession", () => {
     for (const relative of PUBLIC_ROUTES) {

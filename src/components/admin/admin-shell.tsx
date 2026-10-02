@@ -20,6 +20,7 @@ import {
   Star,
   ScrollText,
   Search,
+  ShieldCheck,
   Sliders,
   Tag,
   Users,
@@ -93,6 +94,7 @@ const navGroups: NavGroup[] = [
       { href: "/admin/bulk-orders", label: "Bulk Enquiries", icon: ClipboardList, permission: "bulk-orders:manage" },
       { href: "/admin/contact-enquiries", label: "Contact Enquiries", icon: Mail, permission: "bulk-orders:manage" },
       { href: "/admin/reviews", label: "Reviews", icon: Star, permission: "reviews:moderate" },
+      { href: "/admin/privacy", label: "Privacy Requests", icon: ShieldCheck, permission: "privacy:manage" },
     ],
   },
   {

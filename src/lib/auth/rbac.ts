@@ -39,6 +39,10 @@ export type Permission =
   | "orders:manage"
   | "customers:view"
   | "customers:manage"
+  // F-315: export or erase one person's personal data (the data-principal
+  // rights the privacy policy promises). Held by the owner roles only —
+  // erasure is irreversible and an export contains a person's full record.
+  | "privacy:manage"
   | "shopify:sync";
 
 const superAdminPermissions: Permission[] = [
@@ -71,6 +75,7 @@ const superAdminPermissions: Permission[] = [
   "orders:manage",
   "customers:view",
   "customers:manage",
+  "privacy:manage",
   "shopify:sync",
 ];
 

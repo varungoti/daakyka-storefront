@@ -107,3 +107,45 @@ export async function sendPasswordResetEmail(email: string, link: string): Promi
     link,
   });
 }
+
+/** F-315: asks the shopper to confirm a new account email. Goes to the NEW
+ * address, so only someone who can read it can complete the change. */
+export async function sendEmailChangeEmail(newEmail: string, link: string): Promise<void> {
+  await sendOrLogAuthEmail({
+    to: newEmail,
+    subject: "Confirm your new DAAKYKA Apparels email address",
+    heading: "Confirm your new email address",
+    intro: "We received a request to use this address for your DAAKYKA Apparels account.",
+    introHtml: paragraph("We received a request to use this address for your DAAKYKA Apparels account."),
+    buttonLabel: "Confirm email address",
+    note: "This link expires in 24 hours. If you didn't ask for this, you can ignore this email and nothing will change.",
+    noteHtml: paragraph(
+      "This link expires in 24 hours. If you didn&rsquo;t ask for this, you can ignore this email and nothing will change.",
+    ),
+    kind: EMAIL_KIND.CUSTOMER_EMAIL_CHANGE,
+    devLabel: "email change link",
+    link,
+  });
+}
+
+/** F-315: tells the OLD address that the account email was changed, so an
+ * account takeover that swaps the address can't go unnoticed. Best-effort
+ * like every other sender here. */
+export async function sendEmailChangedNotice(oldEmail: string, newEmail: string): Promise<void> {
+  try {
+    const subject = "Your DAAKYKA Apparels email address was changed";
+    const footer = await loadEmailFooter();
+    const intro = `The email address on your DAAKYKA Apparels account was changed to ${newEmail}. Sign-in links will now go to that address.`;
+    const note = "If this wasn't you, contact us straight away and we'll secure your account.";
+    const { html, text } = renderEmailLayout({
+      subject,
+      heading: "Your email address was changed",
+      bodyHtml: paragraph(escapeHtml(intro)) + paragraph(escapeHtml(note)),
+      bodyText: `${intro}\n\n${note}`,
+      footer,
+    });
+    await sendTransactionalEmail({ to: oldEmail, subject, html, text }, EMAIL_KIND.CUSTOMER_EMAIL_CHANGED_NOTICE);
+  } catch (error) {
+    console.warn("[customer-auth] email-changed notice failed", error instanceof Error ? error.message : "unknown error");
+  }
+}

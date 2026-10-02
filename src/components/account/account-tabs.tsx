@@ -506,7 +506,7 @@ export function WishlistTab() {
 // Profile
 // ---------------------------------------------------------------------------
 
-export function ProfileTab({ customer }: { customer: CustomerInfo }) {
+export function ProfileTab({ customer, children }: { customer: CustomerInfo; children?: React.ReactNode }) {
   const router = useRouter();
   const [status, setStatus] = useState<"idle" | "loading" | "error" | "saved">("idle");
   const [error, setError] = useState("");
@@ -721,6 +721,11 @@ export function ProfileTab({ customer }: { customer: CustomerInfo }) {
           {passwordStatus === "loading" ? "Updating..." : "Update Password"}
         </Button>
       </form>
+
+      {/* F-315: data and privacy controls (change email, marketing consent,
+          export, delete) — rendered by the profile page, which loads the
+          consent state server-side. */}
+      {children}
 
       <LogoutButton />
     </div>
