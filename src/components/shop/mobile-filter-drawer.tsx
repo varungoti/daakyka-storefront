@@ -6,7 +6,7 @@ import {
   type ShopFilterChangeMeta,
 } from "@/components/shop/shop-filters-panel";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
-import type { ShopFilters } from "@/lib/shop/filters";
+import type { ShopFacets, ShopFilters } from "@/lib/shop/filters";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -23,6 +23,11 @@ interface MobileFilterDrawerProps {
    * actually has — passed through to ShopFiltersPanel so the mobile drawer
    * hides the same dead Fabric Technology options the desktop panel does. */
   availableFabricIds?: ReadonlySet<string>;
+  /** release-hardening F-015/F-094/F-095: the colours, sizes and price range
+   * the loaded products really have (`deriveShopFacets`) — passed through to
+   * ShopFiltersPanel, which draws its Color, Size and Price Range blocks from
+   * this and nothing else. */
+  facets?: ShopFacets;
   /** F-100: live count of products the currently-selected facets match —
    * shown in the footer's primary button so a shopper can see the effect
    * of a pick without closing the drawer first. */
@@ -42,6 +47,7 @@ export function MobileFilterDrawer({
   categoryCounts,
   totalCount,
   availableFabricIds,
+  facets,
   resultCount,
   activeCount,
   onClearAll,
@@ -95,6 +101,7 @@ export function MobileFilterDrawer({
                 categoryCounts={categoryCounts}
                 totalCount={totalCount}
                 availableFabricIds={availableFabricIds}
+                facets={facets}
               />
             </div>
 

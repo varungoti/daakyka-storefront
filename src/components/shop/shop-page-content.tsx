@@ -15,10 +15,12 @@ import {
   applyShopFiltersToSearchParams,
   countByCategory,
   defaultShopFilters,
+  deriveShopFacets,
   filterProducts,
   parseShopFiltersFromSearchParams,
   parseShopSearchQuery,
   parseShopVisibleCount,
+  pruneFiltersToFacets,
   withShopVisibleCount,
   type ShopFilters,
 } from "@/lib/shop/filters";
@@ -114,7 +116,7 @@ export function buildActiveFilterChips(params: {
   if (filters.priceMax !== defaultShopFilters.priceMax) {
     chips.push({
       key: "price",
-      label: `Under ${formatPrice(filters.priceMax)}`,
+      label: `Up to ${formatPrice(filters.priceMax)}`,
       onRemove: () => setFilters({ ...filters, priceMax: defaultShopFilters.priceMax }),
     });
   }
@@ -372,6 +374,32 @@ export function ShopPageContent({
     [products],
   );
 
+  // release-hardening F-015/F-094/F-095: the Color, Size and Price Range
+  // options are what the products really have, not a fixed seed-era list.
+  // Colours and sizes follow the selected category (Kids Wear lists age
+  // bands, not S-3XL); the price range spans every product so it stays put.
+  // Derived from the same `products` prop on the server and the client, so
+  // hydration agrees.
+  const facets = useMemo(
+    () => deriveShopFacets(products, { category: filters.category, categoryDescendants }),
+    [products, filters.category, categoryDescendants],
+  );
+
+  // Switching category drops selected colours/sizes the new category has no
+  // product in — otherwise a "Size M" picked under All Products would carry
+  // into Kids Wear and hide everything there (F-095). Only the panel and
+  // drawer change the category, so only they go through this.
+  const handleFacetPanelChange = (next: ShopFilters, meta?: { transient?: boolean }) =>
+    setFilters(
+      next.category === filters.category
+        ? next
+        : pruneFiltersToFacets(
+            next,
+            deriveShopFacets(products, { category: next.category, categoryDescendants }),
+          ),
+      meta,
+    );
+
   const filteredProducts = useMemo(() => {
     const result = filterProducts(products, filters, categoryDescendants);
     if (!query.trim()) return result;
@@ -465,11 +493,12 @@ export function ShopPageContent({
           <div className="hidden lg:block">
             <ShopFiltersPanel
               filters={filters}
-              onChange={setFilters}
+              onChange={handleFacetPanelChange}
               categories={filterCategories}
               categoryCounts={categoryCounts}
               totalCount={products.length}
               availableFabricIds={availableFabricIds}
+              facets={facets}
             />
           </div>
           <ProductGrid
@@ -492,11 +521,12 @@ export function ShopPageContent({
         open={mobileFiltersOpen}
         onClose={() => setMobileFiltersOpen(false)}
         filters={filters}
-        onChange={setFilters}
+        onChange={handleFacetPanelChange}
         categories={filterCategories}
         categoryCounts={categoryCounts}
         totalCount={products.length}
         availableFabricIds={availableFabricIds}
+        facets={facets}
         resultCount={filteredProducts.length}
         activeCount={activeFilterChips.length}
         onClearAll={clearAllFilters}

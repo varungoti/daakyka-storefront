@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { buildActiveFilterChips, isCategoryActiveFacet } from "@/components/shop/shop-page-content";
 import { defaultShopFilters, type ShopFilters } from "@/lib/shop/filters";
 
@@ -90,7 +91,7 @@ describe("buildActiveFilterChips", () => {
         "Size M",
         "Size L",
         "4-Way Stretch",
-        "Under ₹3000",
+        "Up to ₹3000",
         "On sale",
         "In stock",
         '"hoodie"',
@@ -165,5 +166,31 @@ describe("buildActiveFilterChips", () => {
     const queryChip = chips.find((chip) => chip.key === "query");
     queryChip!.onRemove();
     assert.equal(clearedQuery, "");
+  });
+});
+
+/**
+ * release-hardening F-015/F-094/F-095: ShopFiltersPanel draws its Color, Size
+ * and Price Range blocks only from the `facets` prop (deriveShopFacets), and
+ * hides them when it is absent. Both the desktop panel and the mobile drawer
+ * must therefore receive it, or /shop silently shows no colour, size or price
+ * filter at all. The repo has no jsdom, so pin the wiring at the source level.
+ */
+describe("shop facet wiring", () => {
+  const page = readFileSync("src/components/shop/shop-page-content.tsx", "utf8");
+  const drawer = readFileSync("src/components/shop/mobile-filter-drawer.tsx", "utf8");
+
+  it("derives the facets from the loaded products and passes them to the panel and the drawer", () => {
+    assert.match(page, /deriveShopFacets\(products, \{ category: filters\.category/);
+    assert.equal(page.match(/facets=\{facets\}/g)?.length, 2);
+  });
+
+  it("prunes selected colours and sizes when the panel or drawer changes the category", () => {
+    assert.equal(page.match(/onChange=\{handleFacetPanelChange\}/g)?.length, 2);
+    assert.match(page, /pruneFiltersToFacets\(/);
+  });
+
+  it("forwards the facets from the drawer to the panel", () => {
+    assert.match(drawer, /facets=\{facets\}/);
   });
 });
