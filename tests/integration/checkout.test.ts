@@ -9,6 +9,8 @@ import {
   InvalidVariantError,
   OutOfStockError,
 } from "@/lib/orders/create-order";
+import { escapeHtml } from "@/lib/email/html";
+import { openOutboxBody } from "@/lib/engagement/outbox-seal";
 import { updateOrderAdmin } from "@/lib/orders/admin-orders";
 import { setRazorpayClientForTesting } from "@/lib/payments/razorpay";
 import { checkRateLimit, resetRateLimits } from "@/lib/security/rate-limit";
@@ -887,10 +889,44 @@ describe("POST /api/webhooks/razorpay (Phase D3)", () => {
       orderBy: { createdAt: "desc" },
     });
     assert.ok(customerEmail, "expected a customer confirmation email to be queued");
+    // F-043: the order-access link is a live credential, so the queued body
+    // is sealed at rest (src/lib/engagement/outbox-seal.ts) — open it the
+    // way the drain cron does, and prove the table itself holds no link.
+    assert.ok(!customerEmail!.html.includes("?sig="), "the stored body must not contain a readable order link");
+    const body = openOutboxBody(customerEmail!.html, customerEmail!.text);
+    assert.ok(body, "the sealed body should be readable by the running app");
     assert.ok(
-      customerEmail!.html.includes(`/order/${order.number}?sig=`),
-      `expected a signed order link in the email, got: ${customerEmail!.html}`,
+      body!.html.includes(`/order/${order.number}?sig=`),
+      `expected a signed order link in the email, got: ${body!.html}`,
     );
+    assert.ok(body!.text?.includes(`/order/${order.number}?sig=`), "the plain-text part must carry the link too");
+
+    // F-041: the email is a real order summary — items, address, ₹ totals,
+    // a store footer — not one unbranded sentence with "INR 1198.00".
+    const items = await db.orderItem.findMany({ where: { orderId: order.id } });
+    assert.ok(items.length > 0);
+    for (const item of items) {
+      assert.ok(body!.html.includes(escapeHtml(item.productName)), "the item table lists each product");
+      assert.ok(body!.text!.includes(item.productName), "...and so does the plain-text part");
+    }
+    assert.ok(body!.html.includes("₹"), "amounts use the rupee symbol");
+    assert.ok(!/\bINR \d/.test(body!.html) && !/\bINR \d/.test(body!.text!), "never 'INR 1198.00'");
+    assert.ok(body!.html.includes("Kavuri Hills") || body!.html.includes("Hyderabad"), "the store address is in the footer");
+    assert.ok(body!.html.includes("Babaji Enterprises"), "the seller is named in the footer");
+    assert.ok(body!.html.includes("1 Test Street"), "the shipping address is shown");
+    assert.ok(body!.text!.includes("Total:"), "the plain-text part has the totals");
+
+    // ...and the store's own "new order" alert links straight to the order
+    // in the admin and carries the same summary. Not a credential kind, so
+    // the body is stored readable.
+    const adminEmail = await db.emailOutbox.findFirst({
+      where: { kind: "order_confirmation_admin", subject: { contains: order.number } },
+      orderBy: { createdAt: "desc" },
+    });
+    assert.ok(adminEmail, "expected the admin alert to be queued");
+    assert.ok(adminEmail!.html.includes(`/admin/orders/${order.id}`), "the admin email links to the order in the admin");
+    assert.ok(adminEmail!.text?.includes(`/admin/orders/${order.id}`));
+    assert.ok(adminEmail!.html.includes("1 Test Street"));
   });
 });
 
@@ -1500,6 +1536,47 @@ describe("POST /api/cron/cancel-stale-orders (Phase D3)", () => {
       where: { entity: "order", entityId: freshOrder.id, action: "update" },
     });
     assert.equal(freshRows.length, 0, "an untouched order must not be logged");
+  });
+
+  // F-129: the cron used to *overwrite* adminNotes, silently dropping a note
+  // staff added while the order was waiting (the webhook and /verify
+  // already append).
+  it("appends the auto-cancel note to existing adminNotes instead of overwriting them (F-129)", async () => {
+    const { variant } = await createActiveProductWithVariant({ stock: 5 });
+    const order = await createOrderFromCart({
+      items: [{ variantId: variant.id, quantity: 1 }],
+      email: "stale-notes@example.com",
+      shippingAddress: {
+        name: "Buyer",
+        line1: "1 Test Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        pincode: "500032",
+        country: "IN",
+      },
+      paymentMethod: "RAZORPAY",
+    });
+    createdOrderIds.push(order.id);
+    await db.order.update({
+      where: { id: order.id },
+      data: { createdAt: new Date(Date.now() - 40 * 60 * 1000), adminNotes: "Customer says they will pay by bank transfer" },
+    });
+
+    await withEnv({ CRON_SECRET: "cron-test-secret" }, async () => {
+      const response = await cronPost(
+        new Request("http://localhost/api/cron/cancel-stale-orders", {
+          headers: { authorization: "Bearer cron-test-secret" },
+        }),
+      );
+      assert.equal(response.status, 200);
+    });
+
+    const reloaded = await db.order.findUnique({ where: { id: order.id } });
+    assert.equal(reloaded?.status, "CANCELLED");
+    assert.equal(
+      reloaded?.adminNotes,
+      "Customer says they will pay by bank transfer\nAuto-cancelled: Razorpay payment not completed within 30 minutes",
+    );
   });
 
   // F-225 fix: a stale PENDING_PAYMENT order whose payment Razorpay

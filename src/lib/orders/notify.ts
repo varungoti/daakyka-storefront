@@ -1,10 +1,15 @@
-import { brand } from "@/data/brand";
 import { db } from "@/lib/db";
 import type { PaymentMethod } from "@/generated/prisma/client";
+import { emailSiteUrl, formatEmailMoney, loadEmailFooter } from "@/lib/email/layout";
 import { EMAIL_KIND, sendTransactionalEmail, type EmailKind } from "@/lib/engagement/outbox";
 import { triggerJourneys } from "@/lib/engagement/journey-triggers";
 import { signOrderLink } from "@/lib/orders/access-token";
-import { getCourierTrackingUrl } from "@/lib/orders/courier-tracking";
+import {
+  loadOrderEmailData,
+  renderAdminOrderEmail,
+  renderCustomerOrderEmail,
+  renderOrderStatusEmail,
+} from "@/lib/orders/order-email";
 import { getSetting } from "@/lib/settings";
 
 /**
@@ -27,6 +32,10 @@ import { getSetting } from "@/lib/settings";
  * logged and swallowed, never thrown, so it can't fail or block the
  * checkout/verify/webhook response that already did the important work
  * (creating or paying the order).
+ *
+ * F-041: the bodies themselves are built by src/lib/orders/order-email.ts
+ * (branded layout, item table, address, ₹ totals, store footer, explicit
+ * text part with every URL) — this file only decides *what* to send.
  */
 
 export interface NotifyNewOrderInput {
@@ -85,26 +94,15 @@ export interface NotifyNewOrderInput {
   firstName?: string;
 }
 
-function formatAmount(total: number, currency: string): string {
-  return `${currency} ${total.toFixed(2)}`;
-}
-
-/** Matches the small per-file `siteUrl()` helper already duplicated in
- * src/lib/customer-auth/mailer.ts and src/lib/engagement/unsubscribe.ts
- * rather than centralizing it — same convention, different file. */
-function siteUrl(): string {
-  return (process.env.NEXT_PUBLIC_SITE_URL ?? "https://daakyka.com").replace(/\/$/, "");
-}
-
 function buildOrderConfirmationUrl(orderNumber: string, auth: { token: string } | { sig: string }): string {
   const query = "token" in auth ? `token=${encodeURIComponent(auth.token)}` : `sig=${encodeURIComponent(auth.sig)}`;
-  return `${siteUrl()}/order/${encodeURIComponent(orderNumber)}?${query}`;
+  return `${emailSiteUrl()}/order/${encodeURIComponent(orderNumber)}?${query}`;
 }
 
 export async function notifyNewOrder(input: NotifyNewOrderInput): Promise<void> {
   const { orderId, orderNumber, email, total, currency, fallback, orderToken, stockConflict, phone, firstName } =
     input;
-  const amount = formatAmount(total, currency);
+  const amount = formatEmailMoney(total, currency);
   // F-284 fix: always resolves to a working link now — a real capability
   // token when the caller has one, otherwise the stateless signed
   // fallback (see signOrderLink's doc comment). getAuthorizedOrder
@@ -113,33 +111,27 @@ export async function notifyNewOrder(input: NotifyNewOrderInput): Promise<void> 
     orderNumber,
     orderToken ? { token: orderToken } : { sig: signOrderLink(orderId, orderNumber) },
   );
-  const orderLinkHtml = `<p><a href="${orderLink}">View your order</a></p>`;
-  // F-125: no page/email in the money path stated whether prices include
-  // tax, or named the seller/GSTIN. GSTIN is left out entirely (not a
-  // placeholder) until the owner has actually registered and entered one.
-  const gstin = await getSetting("legal.gstin");
-  const taxFooterHtml = `<p style="color:#6b6475;font-size:12px;">Prices are inclusive of all taxes. Sold by ${brand.legalName}${gstin ? ` &middot; GSTIN ${gstin}` : ""}.</p>`;
+  // F-041: both loaders swallow their own failures (null / settings
+  // defaults), so a problem reading the order or the footer settings only
+  // ever costs the item table — the email still goes out.
+  const [footer, orderData] = await Promise.all([loadEmailFooter(), loadOrderEmailData(orderId)]);
 
   try {
+    // F-125/F-283: tax-inclusive note, seller/GSTIN footer and the
+    // stock-conflict wording ("never promise it ships") live in
+    // renderCustomerOrderEmail.
+    const customerEmail = renderCustomerOrderEmail({
+      orderNumber,
+      total,
+      currency,
+      fallback,
+      stockConflict: Boolean(stockConflict),
+      orderLink,
+      order: orderData,
+      footer,
+    });
     const result = await sendTransactionalEmail(
-      {
-        to: email,
-        subject: stockConflict
-          ? `Payment received — order ${orderNumber} (stock issue)`
-          : fallback
-            ? `We received your order ${orderNumber}`
-            : `Payment received — order ${orderNumber}`,
-        html:
-          (stockConflict
-            ? // F-283 fix: never claim "we'll let you know as soon as it
-              // ships" when a line actually lost the stock race — that's a
-              // real risk of promising something we can't fulfil.
-              `<p>Your payment for order <strong>${orderNumber}</strong> (${amount}) was received, but one or more items in this order sold out just before your payment completed. Our team will contact you shortly about a refund for the affected item(s) or a replacement.</p>${orderLinkHtml}`
-            : fallback
-              ? `<p>Thanks for your order <strong>${orderNumber}</strong> (${amount}). Our team will contact you shortly to confirm payment and delivery.</p>${orderLinkHtml}`
-              : `<p>Your payment for order <strong>${orderNumber}</strong> (${amount}) was received. We'll let you know as soon as it ships.</p>${orderLinkHtml}`) +
-          taxFooterHtml,
-      },
+      { to: email, subject: customerEmail.subject, html: customerEmail.html, text: customerEmail.text },
       EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER,
     );
     if (!result.ok) {
@@ -157,16 +149,18 @@ export async function notifyNewOrder(input: NotifyNewOrderInput): Promise<void> 
   try {
     const adminEmail = await getSetting("contact.email");
     if (adminEmail) {
+      const adminMessage = renderAdminOrderEmail({
+        orderId,
+        orderNumber,
+        customerEmail: email,
+        total,
+        currency,
+        fallback,
+        order: orderData,
+        footer,
+      });
       const result = await sendTransactionalEmail(
-        {
-          to: adminEmail,
-          subject: `New order ${orderNumber}${fallback ? " (order request — payment pending)" : " (paid)"}`,
-          html: `<p>Order <strong>${orderNumber}</strong> from ${email} — ${amount}. ${
-            fallback
-              ? "Payment has not been collected online; contact the customer to confirm."
-              : "Payment received via Razorpay."
-          }</p>`,
-        },
+        { to: adminEmail, subject: adminMessage.subject, html: adminMessage.html, text: adminMessage.text },
         EMAIL_KIND.ORDER_CONFIRMATION_ADMIN,
       );
       if (!result.ok) {
@@ -247,56 +241,34 @@ export interface NotifyOrderStatusChangeInput {
   hasCapturedPayment?: boolean;
 }
 
-/** Matches the small `escapeHtmlValue` helper duplicated in
- * src/lib/engagement/template.ts — trackingNumber/courier here are
- * admin-typed free text, not app-controlled strings, so they must never
- * reach the email HTML unescaped. */
-function escapeHtml(value: string): string {
-  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
 export async function notifyOrderStatusChange(input: NotifyOrderStatusChangeInput): Promise<void> {
   const { orderNumber, email, toStatus, trackingNumber, courier, paymentMethod, hasCapturedPayment = true } = input;
 
-  let kind: EmailKind;
-  let subject: string;
-  let html: string;
-
-  if (toStatus === "SHIPPED") {
-    kind = EMAIL_KIND.ORDER_SHIPPED_CUSTOMER;
-    subject = `Your order ${orderNumber} has shipped`;
-    const safeTrackingNumber = trackingNumber ? escapeHtml(trackingNumber) : null;
-    const safeCourier = courier ? escapeHtml(courier) : null;
-    const trackingUrl = getCourierTrackingUrl(courier, trackingNumber);
-    const courierSuffix = safeCourier ? ` via ${safeCourier}` : "";
-    const trackingLine = safeTrackingNumber
-      ? `<p>Tracking number${courierSuffix}: ${
-          trackingUrl
-            ? `<a href="${trackingUrl}">${safeTrackingNumber}</a>`
-            : `<strong>${safeTrackingNumber}</strong>`
-        }</p>`
-      : "";
-    html = `<p>Good news — your order <strong>${orderNumber}</strong> has shipped.</p>${trackingLine}`;
-  } else if (toStatus === "CANCELLED") {
-    kind = EMAIL_KIND.ORDER_CANCELLED_CUSTOMER;
-    subject = `Your order ${orderNumber} was cancelled`;
-    // Same "don't claim what isn't verifiable" rule as getOrderTimeline's
-    // CANCELLED case (src/lib/orders/timeline.ts) — only a RAZORPAY order
-    // that never captured a payment is known for certain to have taken no
-    // money; every other cancelled order (including ORDER_REQUEST, which
-    // is never charged online either way) gets the same neutral hedge.
-    const neverPaid = paymentMethod === "RAZORPAY" && !hasCapturedPayment;
-    html = neverPaid
-      ? `<p>Your order <strong>${orderNumber}</strong> has been cancelled. Payment was not completed, so no charge was made — you can place a new order any time.</p>`
-      : `<p>Your order <strong>${orderNumber}</strong> has been cancelled. If you were charged, any eligible refund will be issued to your original payment method.</p>`;
-  } else {
-    kind = EMAIL_KIND.ORDER_REFUNDED_CUSTOMER;
-    subject = `Your order ${orderNumber} was refunded`;
-    html = `<p>Your order <strong>${orderNumber}</strong> has been refunded. Please allow a few business days for the amount to reflect in your original payment method.</p>`;
-  }
+  const kind: EmailKind =
+    toStatus === "SHIPPED"
+      ? EMAIL_KIND.ORDER_SHIPPED_CUSTOMER
+      : toStatus === "CANCELLED"
+        ? EMAIL_KIND.ORDER_CANCELLED_CUSTOMER
+        : EMAIL_KIND.ORDER_REFUNDED_CUSTOMER;
 
   try {
-    const result = await sendTransactionalEmail({ to: email, subject, html }, kind);
+    // F-041: branded layout, store footer and an explicit text part (with
+    // the tracking URL) — see renderOrderStatusEmail. trackingNumber and
+    // courier are admin free text; the renderer HTML-escapes them.
+    const footer = await loadEmailFooter();
+    const message = renderOrderStatusEmail({
+      orderNumber,
+      toStatus,
+      trackingNumber,
+      courier,
+      paymentMethod,
+      hasCapturedPayment,
+      footer,
+    });
+    const result = await sendTransactionalEmail(
+      { to: email, subject: message.subject, html: message.html, text: message.text },
+      kind,
+    );
     if (!result.ok) {
       console.log(
         `[orders/notify] status-change email not sent for ${orderNumber} (${toStatus}) (provider=${result.provider}, outboxId=${result.outboxId}): ${result.error ?? "unknown reason"}`,

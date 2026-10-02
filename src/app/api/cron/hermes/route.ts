@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authorizeCron } from "@/lib/cron/authorize";
-import { claimCronRun, dailyRunKey } from "@/lib/cron/idempotency";
+import { dailyRunKey, runWithCronClaim } from "@/lib/cron/idempotency";
 import { db } from "@/lib/db";
 import { dispatchHermesTask } from "@/lib/hermes/client";
 
@@ -15,17 +15,7 @@ export function isWeeklyScanDue(now: Date = new Date()): boolean {
   return now.getUTCDay() === 1;
 }
 
-export async function POST(request: Request) {
-  if (!authorizeCron(request)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  // Runs once/day per vercel.json ("0 6 * * *").
-  const { claimed } = await claimCronRun("hermes", dailyRunKey());
-  if (!claimed) {
-    return NextResponse.json({ ok: true, alreadyRan: true, results: [] });
-  }
-
+async function runScheduledHermesTasks() {
   const results = [];
   for (const type of scheduledTasks) {
     // F-276: this route runs daily, but weekly_competitor_scan is meant to
@@ -67,7 +57,23 @@ export async function POST(request: Request) {
     results.push({ type, ok: result.ok, stub: result.stub === true });
   }
 
-  return NextResponse.json({ ok: true, results });
+  return results;
+}
+
+export async function POST(request: Request) {
+  if (!authorizeCron(request)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Runs once/day per vercel.json ("0 6 * * *"). F-277: runWithCronClaim
+  // gives the claim back if a scan throws, so a manual re-run the same day
+  // isn't told "alreadyRan".
+  const outcome = await runWithCronClaim("hermes", dailyRunKey(), runScheduledHermesTasks);
+  if (!outcome.claimed) {
+    return NextResponse.json({ ok: true, alreadyRan: true, results: [] });
+  }
+
+  return NextResponse.json({ ok: true, results: outcome.result });
 }
 
 export async function GET(request: Request) {

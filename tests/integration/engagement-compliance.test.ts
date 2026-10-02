@@ -7,8 +7,9 @@ import { POST as postNewsletterSubscribe } from "@/app/api/newsletter/subscribe/
 import { unsubscribeByToken, isValidUnsubscribeToken } from "@/lib/engagement/unsubscribe";
 import { resolveSegmentRecipients } from "@/lib/engagement/segment-resolver";
 import { claimCampaignForSending, dispatchCampaign } from "@/lib/engagement/campaign-dispatcher";
-import { claimCronRun } from "@/lib/cron/idempotency";
+import { claimCronRun, runWithCronClaim } from "@/lib/cron/idempotency";
 import { GET as getCampaignPreview } from "@/app/api/admin/campaigns/[id]/preview/route";
+import { withEnv } from "../helpers/env";
 
 const testEmails: string[] = [];
 
@@ -70,6 +71,38 @@ describe("engagement compliance", () => {
 
       const enrollment = await db.journeyEnrollment.findFirst({ where: { email } });
       assert.equal(enrollment, null);
+    });
+
+    // F-043: a confirm link is a live credential — with Brevo off or
+    // erroring it used to be printed, with the address, to production logs.
+    it("logs no confirm link or address in production, and queues the email with a sealed body (F-043)", async () => {
+      const email = testEmail("scrub-prod");
+      const lines: string[] = [];
+      const originals = { log: console.log, warn: console.warn, error: console.error, info: console.info };
+      const capture = (...args: unknown[]) => {
+        lines.push(args.map(String).join(" "));
+      };
+      console.log = capture;
+      console.warn = capture;
+      console.error = capture;
+      console.info = capture;
+      try {
+        await withEnv({ NODE_ENV: "production" }, () => subscribeToNewsletter({ email, source: "test" }));
+      } finally {
+        Object.assign(console, originals);
+      }
+
+      const subscriber = await db.newsletterSubscriber.findUnique({ where: { email } });
+      assert.ok(subscriber?.confirmToken);
+      const output = lines.join("\n");
+      assert.ok(!output.includes(subscriber!.confirmToken!), "the confirm token must not reach the logs");
+      assert.ok(!output.includes("newsletter/confirm"), "nor the confirm URL");
+      assert.ok(!output.includes(email), "nor the subscriber's address");
+
+      const outbox = await db.emailOutbox.findFirst({ where: { to: email, kind: "newsletter_confirm" } });
+      assert.ok(outbox, "the confirmation email is still queued for delivery");
+      assert.ok(!outbox!.html.includes(subscriber!.confirmToken!), "the stored body holds no readable token");
+      await db.emailOutbox.deleteMany({ where: { to: email } });
     });
 
     it("confirm sets confirmedAt and now enrolls in the welcome journey", async () => {
@@ -510,6 +543,72 @@ describe("engagement compliance", () => {
         where: { job: "test-idempotent-job", runKey },
       });
       assert.equal(rows.length, 1);
+    });
+
+    // F-277: the claim is written before the job body runs, so a crashed run
+    // used to leave it behind and every same-window retry answered
+    // "alreadyRan" — the week's report / the day's journeys were skipped.
+    it("runWithCronClaim keeps the claim after a successful run, so a duplicate trigger is still a no-op", async () => {
+      const runKey = `test-run-ok-${Date.now()}`;
+      let runs = 0;
+
+      const first = await runWithCronClaim("test-idempotent-job", runKey, async () => {
+        runs += 1;
+        return "done";
+      });
+      const second = await runWithCronClaim("test-idempotent-job", runKey, async () => {
+        runs += 1;
+        return "done again";
+      });
+
+      assert.deepEqual(first, { claimed: true, result: "done" });
+      assert.deepEqual(second, { claimed: false });
+      assert.equal(runs, 1);
+      assert.equal(await db.cronRun.count({ where: { job: "test-idempotent-job", runKey } }), 1);
+    });
+
+    it("runWithCronClaim releases the claim and rethrows when the job fails, so the next invocation re-runs it (F-277)", async () => {
+      const runKey = `test-run-crash-${Date.now()}`;
+
+      await assert.rejects(
+        () =>
+          runWithCronClaim("test-idempotent-job", runKey, async () => {
+            throw new Error("permission denied for table OrderEvent");
+          }),
+        /permission denied/,
+      );
+      assert.equal(
+        await db.cronRun.count({ where: { job: "test-idempotent-job", runKey } }),
+        0,
+        "a failed run must not leave its claim behind",
+      );
+
+      // The retry in the same window is allowed to do the work...
+      let retried = false;
+      const retry = await runWithCronClaim("test-idempotent-job", runKey, async () => {
+        retried = true;
+        return 42;
+      });
+      assert.deepEqual(retry, { claimed: true, result: 42 });
+      assert.equal(retried, true);
+
+      // ...and once it succeeds the window is claimed again.
+      const duplicate = await runWithCronClaim("test-idempotent-job", runKey, async () => 0);
+      assert.deepEqual(duplicate, { claimed: false });
+    });
+
+    it("releasing a claim for one window never touches another job's or window's claim", async () => {
+      const keepKey = `test-run-keep-${Date.now()}`;
+      const failKey = `test-run-fail-${Date.now()}`;
+      await claimCronRun("test-idempotent-job", keepKey);
+
+      await assert.rejects(() =>
+        runWithCronClaim("test-idempotent-job", failKey, async () => {
+          throw new Error("boom");
+        }),
+      );
+
+      assert.equal(await db.cronRun.count({ where: { job: "test-idempotent-job", runKey: keepKey } }), 1);
     });
   });
 });

@@ -569,6 +569,92 @@ describe("customer accounts (Phase D1)", () => {
       assert.equal(tokenCount, 1);
     });
 
+    // F-043: the raw reset token must not outlive the request. It used to be
+    // stored as readable HTML in EmailOutbox forever AND (with Brevo off or
+    // erroring) printed, with the customer's address, to the runtime logs
+    // under a misleading "[dev]" label — in production too.
+    it("never leaves the raw reset token in EmailOutbox.html, and logs no link or address in production (F-043)", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const email = `scrub-${unique}@example.com`;
+      const customer = await db.customer.create({
+        data: { email, name: "Scrub Test", passwordHash: await hashPassword("password123") },
+      });
+      createdCustomerIds.push(customer.id);
+
+      const lines: string[] = [];
+      const originals = { log: console.log, warn: console.warn, error: console.error, info: console.info };
+      const capture = (...args: unknown[]) => {
+        lines.push(args.map(String).join(" "));
+      };
+
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
+      console.log = capture;
+      console.warn = capture;
+      console.error = capture;
+      console.info = capture;
+      try {
+        await withEnv({ NODE_ENV: "production" }, async () => {
+          const response = await postForgotPassword(
+            jsonRequest("http://localhost/api/account/forgot-password", "POST", { email }),
+          );
+          assert.equal(response.status, 200);
+        });
+      } finally {
+        Object.assign(console, originals);
+      }
+
+      // Only the token's hash is stored, so look where an attacker with
+      // table access would: the queued row itself.
+      const outbox = await db.emailOutbox.findFirst({
+        where: { to: email, kind: "customer_reset_password" },
+        orderBy: { createdAt: "desc" },
+      });
+      assert.ok(outbox, "the reset email must still be queued for delivery");
+      assert.equal(outbox!.status, "PENDING");
+      assert.ok(!outbox!.html.includes("token="), "no reset link in the stored HTML");
+      assert.ok(!outbox!.html.includes("reset-password"), "no part of the link in the stored HTML");
+      assert.equal(outbox!.text, null, "no plain-text copy of the link either");
+      await db.emailOutbox.deleteMany({ where: { to: email } });
+
+      const output = lines.join("\n");
+      assert.ok(!output.includes("token="), "production logs must not contain a reset link");
+      assert.ok(!output.includes("reset-password"), "nor any part of one");
+      assert.ok(!output.includes(email), "nor the customer's address");
+      assert.ok(!output.includes("[dev]"), "the dev-only line must not appear in production");
+    });
+
+    it("still prints the pick-it-up-manually link outside production, but the queued body holds no readable token (F-043)", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const email = `scrub-dev-${unique}@example.com`;
+      const customer = await db.customer.create({
+        data: { email, name: "Scrub Dev Test", passwordHash: await hashPassword("password123") },
+      });
+      createdCustomerIds.push(customer.id);
+
+      const lines: string[] = [];
+      const originalLog = console.log;
+      console.log = (...args: unknown[]) => {
+        lines.push(args.map(String).join(" "));
+      };
+      await resetRateLimits(ACCOUNT_RATE_LIMIT_PREFIXES);
+      try {
+        await postForgotPassword(jsonRequest("http://localhost/api/account/forgot-password", "POST", { email }));
+      } finally {
+        console.log = originalLog;
+      }
+
+      const devLine = lines.find((line) => line.includes("[dev] password reset link"));
+      assert.ok(devLine, "outside production the link is still logged for local development");
+      const token = /token=([A-Za-z0-9_-]+)/.exec(devLine!)?.[1];
+      assert.ok(token, "the logged link carries the raw token");
+
+      const outbox = await db.emailOutbox.findFirst({ where: { to: email, kind: "customer_reset_password" } });
+      assert.ok(outbox);
+      assert.ok(!outbox!.html.includes(token!), "the stored row must not contain the raw token");
+      assert.ok(!JSON.stringify(outbox).includes(token!));
+      await db.emailOutbox.deleteMany({ where: { to: email } });
+    });
+
     // F-139: forgot-password used to be throttled only per IP (5/min), so
     // one IP — or several acting together — could flood a single victim's
     // inbox with reset emails. Mirrors resend-verification's own per-

@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { sendEmail, type SendEmailInput, type SendEmailResult } from "@/lib/engagement/providers/email";
 import { RESET_TOKEN_TTL_MS, VERIFY_TOKEN_TTL_MS } from "@/lib/customer-auth/tokens";
+import { openOutboxBody, REDACTED_BODY, sealOutboxBody } from "@/lib/engagement/outbox-seal";
 
 /**
  * F7 fix (docs/audit-2026-09-19/correctness.md): a durable outbox for
@@ -69,6 +70,33 @@ const SUPERSEDING_KINDS: ReadonlySet<string> = new Set([
   // confirmation could later go out carrying a dead token.
   EMAIL_KIND.NEWSLETTER_CONFIRM,
 ]);
+
+/**
+ * F-043: kinds whose body embeds a live credential — a raw reset / verify /
+ * newsletter-confirm token, or the (non-expiring) order access link. The
+ * customer-side tokens are hash-only in their own tables on purpose; the
+ * outbox must not undo that. For these kinds the body is sealed
+ * (outbox-seal.ts) while the row is PENDING and replaced by REDACTED_BODY
+ * the moment it reaches any terminal state, so no readable credential is
+ * ever kept at rest. Every other kind's body is kept as before (the data-
+ * retention job, src/lib/privacy/retention.ts, ages those out).
+ */
+const CREDENTIAL_KINDS: ReadonlySet<string> = new Set([
+  EMAIL_KIND.CUSTOMER_VERIFY_EMAIL,
+  EMAIL_KIND.CUSTOMER_RESET_PASSWORD,
+  EMAIL_KIND.NEWSLETTER_CONFIRM,
+  EMAIL_KIND.ORDER_CONFIRMATION_CUSTOMER,
+]);
+
+export function isCredentialKind(kind: EmailKind | string): boolean {
+  return CREDENTIAL_KINDS.has(kind);
+}
+
+/** The `data` fragment that blanks a credential-bearing row's body — empty
+ * for every other kind. */
+function redactionFor(kind: EmailKind | string): { html?: string; text?: null } {
+  return CREDENTIAL_KINDS.has(kind) ? { html: REDACTED_BODY, text: null } : {};
+}
 
 /** F-044 fix: how long a still-PENDING row of this kind stays eligible to
  * send. `null` = no expiry (order confirmations, back-in-stock) — those
@@ -150,7 +178,9 @@ export async function sendTransactionalEmail(
     await db.emailOutbox
       .updateMany({
         where: { to: input.to, kind, status: "PENDING" },
-        data: { status: "EXPIRED" },
+        // F-043: a superseded reset/verify email is never sent, so its
+        // (still-live) link has no reason to stay in the table.
+        data: { status: "EXPIRED", ...redactionFor(kind) },
       })
       .catch((error) => {
         // Best-effort — never block the actual send/queue below over this.
@@ -173,6 +203,8 @@ export async function sendTransactionalEmail(
       const row = await db.emailOutbox.create({
         data: {
           ...baseData,
+          // F-043: delivered — a credential-bearing body has no further use.
+          ...redactionFor(kind),
           status: "SENT",
           sentAt: new Date(),
           providerMessageId: result.messageId ?? null,
@@ -193,6 +225,13 @@ export async function sendTransactionalEmail(
     const row = await db.emailOutbox.create({
       data: {
         ...baseData,
+        // F-043: waiting to be retried — a credential-bearing body is kept
+        // sealed, never as readable HTML. Throws (and so persists nothing,
+        // see the catch below) if AUTH_SECRET is missing: fail closed
+        // rather than store a live link in the clear.
+        ...(CREDENTIAL_KINDS.has(kind)
+          ? { html: sealOutboxBody({ html: input.html, text: input.text ?? null }), text: null }
+          : {}),
         status: "PENDING",
         expiresAt: ttlMs !== null ? new Date(Date.now() + ttlMs) : null,
         attemptCount: isRealAttempt ? 1 : 0,
@@ -284,7 +323,8 @@ export async function drainEmailOutbox(
   // are untouched — same as before this column existed.
   const expiredResult = await db.emailOutbox.updateMany({
     where: { status: "PENDING", expiresAt: { lte: now }, ...idFilter },
-    data: { status: "EXPIRED", lockedAt: null },
+    // F-043: an expired reset/verify link will never be sent — drop its body.
+    data: { status: "EXPIRED", lockedAt: null, html: REDACTED_BODY, text: null },
   });
 
   const candidates = await db.emailOutbox.findMany({
@@ -308,13 +348,33 @@ export async function drainEmailOutbox(
 
     attempted += 1;
 
+    // F-043: a credential-bearing row's body is sealed at rest. One that
+    // can't be opened (AUTH_SECRET changed since it was queued) can never be
+    // sent — fail it (its link is at most a day old anyway) instead of
+    // retrying forever.
+    const body = openOutboxBody(row.html, row.text);
+    if (!body) {
+      await db.emailOutbox.update({
+        where: { id: row.id },
+        data: {
+          status: "FAILED",
+          attemptCount: row.attemptCount + 1,
+          lastError: "Stored body could not be decrypted (AUTH_SECRET changed since it was queued)",
+          lockedAt: null,
+          ...redactionFor(row.kind),
+        },
+      });
+      failedTerminal += 1;
+      continue;
+    }
+
     let result: SendEmailResult;
     try {
       result = await sendFn({
         to: row.to,
         subject: row.subject,
-        html: row.html,
-        text: row.text ?? undefined,
+        html: body.html,
+        text: body.text ?? undefined,
         headers: parseHeaders(row.headers),
       });
     } catch (error) {
@@ -334,6 +394,8 @@ export async function drainEmailOutbox(
           providerMessageId: result.messageId ?? null,
           lastError: null,
           lockedAt: null,
+          // F-043: delivered — see redactionFor.
+          ...redactionFor(row.kind),
         },
       });
       sent += 1;
@@ -358,6 +420,7 @@ export async function drainEmailOutbox(
           attemptCount,
           lastError: result.error ?? "Send failed",
           lockedAt: null,
+          ...redactionFor(row.kind),
         },
       });
       failedTerminal += 1;

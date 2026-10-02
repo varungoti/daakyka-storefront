@@ -1,3 +1,4 @@
+import { htmlToText } from "@/lib/email/html";
 import { getCredential } from "@/lib/integrations/credential-store";
 import { isIntegrationEnabled } from "@/lib/integrations/enabled";
 import { getSetting } from "@/lib/settings";
@@ -66,7 +67,9 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
         ...(replyToEmail ? { replyTo: { email: replyToEmail } } : {}),
         subject: input.subject,
         htmlContent: input.html,
-        textContent: input.text ?? input.html.replace(/<[^>]+>/g, ""),
+        // F-041: the old `html.replace(/<[^>]+>/g, "")` fallback dropped every
+        // link and ran sentences together; htmlToText keeps `label (url)`.
+        textContent: input.text ?? htmlToText(input.html),
         ...(input.headers ? { headers: input.headers } : {}),
       }),
       // F-269 fix: an unbounded fetch here used to let a slow/hung Brevo

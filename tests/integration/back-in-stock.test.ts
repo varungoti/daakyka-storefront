@@ -48,26 +48,47 @@ after(async () => {
   }
 });
 
-async function createProductWithVariant(stock: number) {
+async function createProductWithVariant(
+  stock: number,
+  overrides: {
+    productName?: string;
+    productStatus?: "DRAFT" | "ACTIVE" | "ARCHIVED";
+    variantActive?: boolean;
+    color?: string;
+    categoryActive?: boolean;
+  } = {},
+) {
   const unique = randomUUID().slice(0, 8);
   const category = await db.category.create({
-    data: { name: `BIS Test Category ${unique}`, slug: `bis-test-category-${unique}`, section: "GENERAL" },
+    data: {
+      name: `BIS Test Category ${unique}`,
+      slug: `bis-test-category-${unique}`,
+      section: "GENERAL",
+      active: overrides.categoryActive ?? true,
+    },
   });
   createdCategoryIds.push(category.id);
 
   const product = await db.product.create({
     data: {
-      name: `BIS Test Product ${unique}`,
+      name: overrides.productName ?? `BIS Test Product ${unique}`,
       slug: `bis-test-product-${unique}`,
       categoryId: category.id,
-      status: "ACTIVE",
+      status: overrides.productStatus ?? "ACTIVE",
       price: 500,
     },
   });
   createdProductIds.push(product.id);
 
   const variant = await db.productVariant.create({
-    data: { productId: product.id, sku: `DK-BIS-${unique}`, size: "M", color: "Navy", stock, active: true },
+    data: {
+      productId: product.id,
+      sku: `DK-BIS-${unique}`,
+      size: "M",
+      color: overrides.color ?? "Navy",
+      stock,
+      active: overrides.variantActive ?? true,
+    },
   });
 
   return { product, variant };
@@ -97,6 +118,35 @@ describe("subscribeToBackInStock", () => {
       () => subscribeToBackInStock(variant.id, "buyer@example.com"),
       BackInStockVariantInStockError,
     );
+  });
+
+  // F-029: the PDP treats an inactive variant as unavailable (isVariantInStock
+  // needs active && stock > 0) and shows the notify form for it. The API
+  // used to answer that form with 400 "This item is currently in stock".
+  it("accepts a signup for an INACTIVE variant that still has stock — the page offers the form for it (F-029)", async () => {
+    const { variant } = await createProductWithVariant(5, { variantActive: false });
+    const email = `inactive-${randomUUID()}@example.com`;
+
+    await subscribeToBackInStock(variant.id, email);
+    await trackSubscriptionsFor(variant.id, email);
+
+    const row = await db.backInStockSubscription.findFirst({ where: { variantId: variant.id, email } });
+    assert.ok(row, "an unavailable (inactive) variant must be subscribable");
+  });
+
+  it("rejects a signup for a variant of a DRAFT or ARCHIVED product, or in a deactivated category — there is no page to link to (F-029)", async () => {
+    for (const overrides of [
+      { productStatus: "DRAFT" as const },
+      { productStatus: "ARCHIVED" as const },
+      { categoryActive: false },
+    ]) {
+      const { variant } = await createProductWithVariant(0, overrides);
+      await assert.rejects(
+        () => subscribeToBackInStock(variant.id, `unreachable-${randomUUID()}@example.com`),
+        BackInStockVariantNotFoundError,
+        `expected a not-found for ${JSON.stringify(overrides)}`,
+      );
+    }
   });
 
   it("creates a pending subscription for an out-of-stock variant, normalizing the email", async () => {
@@ -177,6 +227,75 @@ describe("sweepBackInStock", () => {
     createdOutboxIds.push(outboxRow!.id);
     assert.equal(outboxRow!.status, "PENDING", "no provider is configured, so the send queues rather than vanishing");
     assert.equal(outboxRow!.attemptCount, 0, "a stub (unconfigured-provider) result must not consume the real retry budget");
+  });
+
+  it("does not email for a restocked variant that is still INACTIVE, and leaves the subscription pending (F-029)", async () => {
+    const { variant } = await createProductWithVariant(0, { variantActive: false });
+    const email = `sweep-inactive-${randomUUID()}@example.com`;
+    await subscribeToBackInStock(variant.id, email);
+    await trackSubscriptionsFor(variant.id, email);
+    await db.productVariant.update({ where: { id: variant.id }, data: { stock: 10 } });
+
+    await sweepBackInStock();
+
+    const row = await db.backInStockSubscription.findFirst({ where: { variantId: variant.id, email } });
+    assert.equal(row!.notifiedAt, null, "an inactive variant is still unavailable on the page — keep waiting");
+    assert.equal(await db.emailOutbox.count({ where: { to: email, kind: "back_in_stock" } }), 0);
+
+    // Once the variant is switched back on, the very next sweep notifies.
+    await db.productVariant.update({ where: { id: variant.id }, data: { active: true } });
+    await sweepBackInStock();
+    const after = await db.backInStockSubscription.findFirst({ where: { variantId: variant.id, email } });
+    assert.ok(after!.notifiedAt);
+    const outboxRow = await db.emailOutbox.findFirst({ where: { to: email, kind: "back_in_stock" } });
+    if (outboxRow) createdOutboxIds.push(outboxRow.id);
+    assert.ok(outboxRow, "expected the email once the variant became purchasable");
+  });
+
+  it("does not email while the product is DRAFT or ARCHIVED (the link would 404), then does once it is ACTIVE (F-029)", async () => {
+    const { product, variant } = await createProductWithVariant(0);
+    const email = `sweep-draft-${randomUUID()}@example.com`;
+    await subscribeToBackInStock(variant.id, email);
+    await trackSubscriptionsFor(variant.id, email);
+
+    // Admin pulls the product off the storefront, then restocks it.
+    await db.product.update({ where: { id: product.id }, data: { status: "DRAFT" } });
+    await db.productVariant.update({ where: { id: variant.id }, data: { stock: 10 } });
+
+    await sweepBackInStock();
+    const stillPending = await db.backInStockSubscription.findFirst({ where: { variantId: variant.id, email } });
+    assert.equal(stillPending!.notifiedAt, null);
+    assert.equal(await db.emailOutbox.count({ where: { to: email, kind: "back_in_stock" } }), 0);
+
+    await db.product.update({ where: { id: product.id }, data: { status: "ACTIVE" } });
+    await sweepBackInStock();
+    const notified = await db.backInStockSubscription.findFirst({ where: { variantId: variant.id, email } });
+    assert.ok(notified!.notifiedAt);
+    const outboxRow = await db.emailOutbox.findFirst({ where: { to: email, kind: "back_in_stock" } });
+    if (outboxRow) createdOutboxIds.push(outboxRow.id);
+  });
+
+  it("escapes the product name in the email HTML and never renders an empty '( / )' option label (F-029)", async () => {
+    const { variant } = await createProductWithVariant(0, {
+      productName: 'Scrub <script>alert(1)</script> & "Co"',
+      color: "",
+    });
+    const email = `sweep-escape-${randomUUID()}@example.com`;
+    await subscribeToBackInStock(variant.id, email);
+    await trackSubscriptionsFor(variant.id, email);
+    await db.productVariant.update({ where: { id: variant.id }, data: { stock: 4 } });
+
+    await sweepBackInStock();
+
+    const outboxRow = await db.emailOutbox.findFirst({ where: { to: email, kind: "back_in_stock" } });
+    assert.ok(outboxRow);
+    createdOutboxIds.push(outboxRow!.id);
+    assert.ok(!outboxRow!.html.includes("<script>"), "admin-typed product names must be HTML-escaped");
+    assert.ok(outboxRow!.html.includes("&lt;script&gt;"));
+    assert.ok(outboxRow!.html.includes("&amp;"));
+    assert.ok(outboxRow!.html.includes("(M)"), "a variant with no colour shows just its size, not '(M / )'");
+    assert.ok(!outboxRow!.html.includes("(M / )"));
+    assert.ok(outboxRow!.text?.includes("/products/bis-test-product-"), "the plain-text part keeps the link");
   });
 
   it("is one-shot: a second sweep after the first notification does not send again", async () => {
