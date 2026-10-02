@@ -3,13 +3,13 @@
 import { useState } from "react";
 
 /**
- * F-267 (remaining UI gap flagged by admin-engagement-campaigns-ux, which
- * built POST /api/admin/integrations/brevo/test but couldn't wire it up
- * itself — that route lives outside this package's owned files): surfaces
- * an actual end-to-end test send next to the Brevo credentials, for the
- * case the auto-enable-on-save logic doesn't cover — a key configured via
- * env var, or only one of the two Brevo fields saved so far — where the
- * provider can show "configured" while still not actually sending mail.
+ * F-267: an actual end-to-end test send next to the Brevo credentials
+ * (POST /api/admin/integrations/brevo/test). Shown whenever Brevo is
+ * configured, whether the email toggle is on or off (see BrevoSetupActions):
+ * "Test connection" only pings Brevo's account endpoint and sends nothing,
+ * so this is the only check that a real message reaches an inbox from the
+ * saved From Email. It works while the toggle is still off, so the owner can
+ * prove delivery before releasing any queued email.
  */
 export function BrevoTestSend() {
   const [state, setState] = useState<{ status: "idle" | "sending" | "ok" | "error"; message?: string }>({
@@ -26,7 +26,9 @@ export function BrevoTestSend() {
           status: "ok",
           message:
             `Sent to ${body.sentTo ?? "your admin email"}.` +
-            (body.enabled === false ? " Check your inbox — then turn email on to start sending real emails." : ""),
+            (body.enabled === false
+              ? " Check your inbox — then turn email on to start sending real emails."
+              : " Check your inbox (and spam folder)."),
         });
       } else {
         setState({ status: "error", message: body.error ?? "Couldn't send the test email." });
@@ -42,12 +44,20 @@ export function BrevoTestSend() {
         type="button"
         disabled={state.status === "sending"}
         onClick={sendTest}
-        className="rounded-full border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 transition hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50"
+        className="rounded-full border border-border bg-surface-elevated px-3 py-1.5 text-xs font-semibold text-ink transition hover:bg-lilac/40 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {state.status === "sending" ? "Sending…" : "Send test email to me"}
       </button>
-      {state.status === "ok" ? <p className="text-xs text-trust">{state.message}</p> : null}
-      {state.status === "error" ? <p className="text-xs text-red-600">{state.message}</p> : null}
+      {state.status === "ok" ? (
+        <p role="status" className="text-xs text-trust">
+          {state.message}
+        </p>
+      ) : null}
+      {state.status === "error" ? (
+        <p role="alert" className="text-xs text-red-600">
+          {state.message}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -1,5 +1,10 @@
 import { after, before, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import { BrevoSetupActions } from "@/components/admin/brevo-setup-actions";
 import { sendEmail, sendTestEmail } from "@/lib/engagement/providers/email";
 import { isIntegrationEnabled, maybeAutoEnableBrevo, setIntegrationEnabled } from "@/lib/integrations/enabled";
 import { getIntegrationStatuses } from "@/lib/integrations/status";
@@ -172,5 +177,60 @@ describe("sendEmail vs the admin test send (F-267)", () => {
       assert.equal(real.ok, true);
       assert.equal(brevoCalls.length, 1);
     });
+  });
+});
+
+// The Brevo block under the credentials form (F-267). The main setup path
+// auto-enables Brevo the moment both fields are saved, so the "email is OFF"
+// callout never shows for an owner who follows it — the "Send test email to
+// me" button must not live only inside that callout, or the end-to-end check
+// disappears for exactly the owner who did everything right.
+describe("Brevo setup actions render the right controls for each state (F-267)", () => {
+  // A router that does nothing: BrevoEnableButton calls useRouter() at render time. Typed as an
+  // unknown value because the context's AppRouterInstance shape changes between Next releases.
+  const router: unknown = { back() {}, forward() {}, refresh() {}, push() {}, replace() {}, prefetch() {} };
+  const render = (props: { configured: boolean; enabled: boolean; waitingEmails?: number }) =>
+    renderToStaticMarkup(
+      createElement(
+        AppRouterContext.Provider,
+        { value: router as never },
+        createElement(BrevoSetupActions, { waitingEmails: 0, ...props }),
+      ),
+    );
+  const hasTestButton = (html: string) => html.includes("Send test email to me");
+
+  it("offers the test send when Brevo is configured and already switched ON (the auto-enable path)", () => {
+    const html = render({ configured: true, enabled: true });
+    assert.ok(hasTestButton(html), "the test button is reachable after auto-enable");
+    assert.ok(!html.includes("Turn on email"), "nothing to turn on when email is already on");
+    assert.ok(!html.includes("email sending is OFF"), "no OFF warning when email is on");
+  });
+
+  it("offers the test send plus the OFF callout and 'Turn on email' when configured but OFF", () => {
+    const html = render({ configured: true, enabled: false, waitingEmails: 3 });
+    assert.ok(hasTestButton(html));
+    assert.ok(html.includes("Turn on email"));
+    assert.ok(html.includes("email sending is OFF"));
+    assert.match(html, /3 queued emails are waiting/);
+  });
+
+  it("says '1 queued email is waiting' in the singular", () => {
+    assert.match(render({ configured: true, enabled: false, waitingEmails: 1 }), /1 queued email is waiting/);
+  });
+
+  it("shows nothing until Brevo has both an API key and a From Email", () => {
+    assert.equal(render({ configured: false, enabled: false }), "");
+    // A stale enabled flag with no credentials must not surface a button that can only fail.
+    assert.equal(render({ configured: false, enabled: true }), "");
+  });
+
+  it("the Integrations page renders it for every Brevo state, not only inside the 'disabled' branch", () => {
+    const page = readFileSync("src/app/admin/(panel)/integrations/page.tsx", "utf8");
+    assert.match(page, /<BrevoSetupActions[^>]*configured=\{brevoConfigured\}[^>]*enabled=\{brevoEnabled\}/);
+    assert.ok(
+      !/brevoConfiguredButDisabled\s*\?\s*\(?\s*<BrevoSetupActions/.test(page),
+      "BrevoSetupActions must not be gated on the toggle being off",
+    );
+    assert.ok(!page.includes("<BrevoTestSend"), "the page must not render the test button directly; BrevoSetupActions owns it");
   });
 });
