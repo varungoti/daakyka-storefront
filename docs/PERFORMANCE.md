@@ -303,9 +303,33 @@ stale-while-revalidate`:
   writes from typing over what a shopper typed meanwhile (a stale echo would
   otherwise drop the space in "scrub top"). A side effect: a search from the header
   dialog while already on `/shop` now actually applies (it was ignored before,
-  the page only read the URL on mount). A filtered deep link
-  (`/shop?category=…`) shows the unfiltered grid for the moment between the HTML
-  and hydration.
+  the page only read the URL on mount).
+- **A hard load of a filtered link (`/shop?category=…`, `?q=…`, a reloaded or
+  restored tab, the sitelinks search box's `/shop?q=…`) does not paint the
+  unfiltered grid.** The HTML is the prerendered unfiltered list and the URL's
+  filters only apply once the page has hydrated; on a phone profile (4x CPU,
+  1.6 Mbps, 150 ms) that left 24 wrong cards on screen for about two seconds,
+  then a jump to the 3 right ones. An inline script, the first child of the results
+  container (`src/lib/shop/url-pending.ts`, `src/components/shop/shop-url-pending.tsx`),
+  marks that container `data-shop-url-pending` while parsing when the query string
+  has any param the grid applies (`category q colors sizes fabrics price sale stock
+  sort show`; `utm_*` and the like do not count). CSS hides the container and shows a
+  skeleton in its place while the mark is set, and `ShopUrlSync`'s layout effect
+  removes the mark in the same commit that applies the filters, so the first paint
+  of the grid is the filtered one. The static HTML is untouched (crawlers and the
+  CDN still get the full list). Measured with the same profile: the unfiltered grid
+  is never visible (before: visible from ~1.4 s to ~3.5 s); the filtered result
+  appears when it did before. The mark is on the container, not on `<html>`,
+  because React 19 clears every attribute of `<html>`/`<body>` when it hydrates
+  them. If the page never hydrates (its JS failed to load) a 6 s timer in the same
+  script lifts the mark, so a filtered link can show the server-rendered
+  products late but never a blank page. The cost: on a filtered hard load the
+  first product image appears when the page hydrates rather than with the HTML
+  (a plain `/shop` and every client-side navigation — menu, search dialog — are
+  unaffected, and the latter apply their filters before the first paint anyway).
+  `tests/e2e/shop-performance.spec.ts` samples every frame of a filtered deep
+  link with hydration held back and fails if any frame shows the unfiltered grid
+  (it fails on the previous build).
 - `/category/[slug]` and `/products/[handle]` export an empty
   `generateStaticParams()`. Without it a dynamic segment is rendered on every
   request however static its page is; with it each slug is rendered on first

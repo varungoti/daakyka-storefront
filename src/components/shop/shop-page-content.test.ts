@@ -1,8 +1,24 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import vm from "node:vm";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { buildActiveFilterChips, isCategoryActiveFacet } from "@/components/shop/shop-page-content";
-import { defaultShopFilters, type ShopFilters } from "@/lib/shop/filters";
+import { ShopUrlPendingMask, ShopUrlPendingScript } from "@/components/shop/shop-url-pending";
+import {
+  applyShopFiltersToSearchParams,
+  defaultShopFilters,
+  withShopVisibleCount,
+  type ShopFilters,
+} from "@/lib/shop/filters";
+import {
+  SHOP_URL_PENDING_ATTR,
+  SHOP_URL_PENDING_FAILSAFE_MS,
+  SHOP_URL_PENDING_PARAMS,
+  SHOP_URL_PENDING_SCRIPT,
+  shopSearchNeedsUrlSync,
+} from "@/lib/shop/url-pending";
 import { createUrlEchoGuard, OWN_WRITE_ECHO_WINDOW_MS, sameShopFilters } from "@/lib/shop/url-sync";
 
 /**
@@ -337,5 +353,179 @@ describe("prerendered shop routes (F-018/F-257/F-261)", () => {
     ]) {
       assert.doesNotMatch(readFileSync(file, "utf8"), /eagerFirst/, `${file} sits below a hero: no high-priority first image`);
     }
+  });
+});
+
+/**
+ * F-018 follow-up: a hard load of a filtered listing URL must not paint the
+ * unfiltered grid the prerender holds while the page hydrates (measured on a
+ * throttled phone: ~2 s of 24 wrong cards, then a jump). The inline script is
+ * run here exactly as the browser does — in a sandbox with a fake location and
+ * container — so what is asserted is the shipped string, not a re-implementation.
+ */
+describe("filtered deep links never paint the unfiltered grid (F-018)", () => {
+  interface Container {
+    setAttribute(name: string, value: string): void;
+    removeAttribute(name: string): void;
+  }
+
+  function runScript(
+    search: string,
+    overrides: { currentScript?: unknown; URLSearchParams?: unknown } = {},
+  ) {
+    const attributes = new Map<string, string>();
+    const timers: { run: () => void; ms: number }[] = [];
+    const container: Container = {
+      setAttribute: (name, value) => void attributes.set(name, value),
+      removeAttribute: (name) => void attributes.delete(name),
+    };
+    const sandbox = {
+      location: { search },
+      document: {
+        currentScript:
+          "currentScript" in overrides ? overrides.currentScript : { parentElement: container },
+      },
+      URLSearchParams: "URLSearchParams" in overrides ? overrides.URLSearchParams : URLSearchParams,
+      setTimeout: (run: () => void, ms: number) => {
+        timers.push({ run, ms });
+        return timers.length;
+      },
+    };
+    vm.runInNewContext(SHOP_URL_PENDING_SCRIPT, sandbox);
+    return { attributes, timers };
+  }
+
+  it("marks the container for every param that changes what the grid shows", () => {
+    for (const search of [
+      "?category=scrub-tops",
+      "?q=lab+coat",
+      "?colors=navy",
+      "?sizes=M,L",
+      "?fabrics=antimicrobial",
+      "?price=999",
+      "?sale=1",
+      "?stock=1",
+      "?sort=price-asc",
+      "?show=48",
+      "?utm_source=ads&category=scrub-tops",
+    ]) {
+      const { attributes } = runScript(search);
+      assert.equal(attributes.get(SHOP_URL_PENDING_ATTR), "", search);
+      assert.equal(shopSearchNeedsUrlSync(search), true, search);
+    }
+  });
+
+  it("leaves the grid alone when the URL has nothing for it to apply", () => {
+    for (const search of ["", "?", "?utm_source=ads&gclid=abc", "?q=", "?category=&sort=", "?unrelated=1"]) {
+      const { attributes, timers } = runScript(search);
+      assert.equal(attributes.size, 0, `${JSON.stringify(search)} must not hide the grid`);
+      assert.equal(timers.length, 0, search);
+      assert.equal(shopSearchNeedsUrlSync(search), false, search);
+    }
+  });
+
+  it("the script and shopSearchNeedsUrlSync agree on every kind of query string", () => {
+    for (const search of [
+      "",
+      "?category=a",
+      "?q=",
+      "?q=%20",
+      "?show=0",
+      "?sort=featured",
+      "?a=1&b=2",
+      "?utm_campaign=sale&sale=1",
+    ]) {
+      assert.equal(runScript(search).attributes.has(SHOP_URL_PENDING_ATTR), shopSearchNeedsUrlSync(search), search);
+    }
+  });
+
+  it("lifts the mark by itself after the failsafe delay, so a page that never hydrates still shows its products", () => {
+    const { attributes, timers } = runScript("?category=scrub-tops");
+    assert.equal(timers.length, 1);
+    assert.equal(timers[0].ms, SHOP_URL_PENDING_FAILSAFE_MS);
+    assert.ok(attributes.has(SHOP_URL_PENDING_ATTR));
+    timers[0].run();
+    assert.equal(attributes.has(SHOP_URL_PENDING_ATTR), false);
+    // Long enough for a slow phone to hydrate (~2.6 s measured), short enough
+    // that a dead script bundle doesn't leave a blank listing for long.
+    assert.ok(SHOP_URL_PENDING_FAILSAFE_MS >= 4000 && SHOP_URL_PENDING_FAILSAFE_MS <= 10000);
+  });
+
+  it("can never throw into the page", () => {
+    assert.doesNotThrow(() => runScript("?category=a", { currentScript: null }));
+    assert.doesNotThrow(() =>
+      runScript("?category=a", {
+        URLSearchParams: function Broken() {
+          throw new Error("no URLSearchParams");
+        },
+      }),
+    );
+    assert.equal(runScript("?category=a", { currentScript: null }).attributes.size, 0);
+  });
+
+  it("covers exactly the params the page writes to the URL (in step with filters.ts)", () => {
+    const everyFacet: ShopFilters = {
+      category: "scrub-tops",
+      colors: ["navy"],
+      sizes: ["M"],
+      fabrics: ["antimicrobial"],
+      priceMax: 999,
+      onSale: true,
+      inStock: true,
+      sort: "price-asc",
+    };
+    const written = new Set(applyShopFiltersToSearchParams("", everyFacet, "lab coat").keys());
+    for (const key of withShopVisibleCount("", 48).keys()) written.add(key);
+    assert.deepEqual([...written].sort(), [...SHOP_URL_PENDING_PARAMS].sort());
+  });
+
+  it("renders the script into the static HTML, and the mask as an inert, aria-hidden stand-in", () => {
+    const script = renderToStaticMarkup(createElement(ShopUrlPendingScript));
+    assert.ok(script.startsWith("<script>") && script.endsWith("</script>"), script);
+    assert.ok(script.includes("document.currentScript.parentElement"));
+    assert.doesNotMatch(script, /src=/);
+
+    const mask = renderToStaticMarkup(createElement(ShopUrlPendingMask));
+    assert.match(mask, /aria-hidden="true"/);
+    const variant = SHOP_URL_PENDING_ATTR.replace(/^data-/, "");
+    // Shown (and visible, over the container's visibility:hidden) only while marked.
+    assert.match(mask, /class="[^"]*\bhidden\b[^"]*"/);
+    assert.ok(mask.includes(`group-data-[${variant}]/results:grid`), mask);
+    assert.ok(mask.includes(`group-data-[${variant}]/results:visible`), mask);
+  });
+
+  it("ShopPageContent wires the container, the script, the mask and the release together", () => {
+    const content = readFileSync("src/components/shop/shop-page-content.tsx", "utf8").replace(/\r\n/g, "\n");
+    const variant = SHOP_URL_PENDING_ATTR.replace(/^data-/, "");
+
+    // The script is the container's first child: it must run before any card
+    // below it is parsed, and it marks `document.currentScript.parentElement`.
+    assert.match(
+      content,
+      /<div\n\s+ref=\{resultsRef\}\n\s+suppressHydrationWarning\n\s+className="group\/results [^"]*"\n\s+>\n\s+\{syncUrl && <ShopUrlPendingScript \/>\}/,
+    );
+    assert.ok(content.includes(`data-[${variant}]:invisible`), "the marked container is hidden");
+    assert.match(content, /\{syncUrl && <ShopUrlPendingMask \/>\}/);
+
+    // Released by the layout-effect callback ShopUrlSync runs after the URL's
+    // filters are applied — including when that report is an echo.
+    assert.match(
+      content,
+      /const handleRouterSearch = useCallback\(\s*\(search: string\) => \{\s*if \(!echoGuard\.isEcho\(search\)\) applyUrlSearch\(search\);[\s\S]*?resultsRef\.current\?\.removeAttribute\(SHOP_URL_PENDING_ATTR\);/,
+    );
+    assert.match(content, /useLayoutEffect\(\(\) => \{\s*onSearch\(search\);/);
+  });
+
+  it("the script is rendered by the server and while hydrating, never created by a client-side navigation", () => {
+    // React creates an inert script (and development builds log an error for it)
+    // when a client-side navigation renders one; a server-rendered one is only
+    // hydrated. A client navigation applies its filters before the first paint and
+    // so has no use for the script.
+    const source = readFileSync("src/components/shop/shop-url-pending.tsx", "utf8").replace(/\r\n/g, "\n");
+    assert.match(source, /^"use client";/);
+    assert.match(
+      source,
+      /const clientRender = useSyncExternalStore\(subscribeToNothing, \(\) => true, \(\) => false\);\n\s*if \(clientRender\) return null;\n\s*return <script dangerouslySetInnerHTML/,
+    );
   });
 });

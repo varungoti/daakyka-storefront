@@ -170,6 +170,96 @@ test.describe("/shop applies the URL after it is prerendered (F-018)", () => {
   });
 });
 
+/** Counts the product cards that are actually visible (not `visibility:hidden`,
+ * not under a `display:none` ancestor), on every animation frame from the very
+ * first one, and records each change: `window.__shopFrames` is the list of
+ * distinct states the shopper's screen went through. Installed before the page's
+ * own scripts, so nothing can be painted without being sampled. */
+async function recordVisibleProductCards(page: Page) {
+  await page.addInitScript(() => {
+    const frames: { cards: number; pending: boolean }[] = [];
+    (window as unknown as { __shopFrames: typeof frames }).__shopFrames = frames;
+    const cards = () =>
+      [...document.querySelectorAll("article")].filter(
+        (card) => card.querySelector("a[data-card-link]") && card.checkVisibility({ visibilityProperty: true }),
+      ).length;
+    const tick = () => {
+      const state = { cards: cards(), pending: Boolean(document.querySelector("[data-shop-url-pending]")) };
+      const last = frames[frames.length - 1];
+      if (!last || last.cards !== state.cards || last.pending !== state.pending) frames.push(state);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+const shopFrames = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __shopFrames: { cards: number; pending: boolean }[] }).__shopFrames);
+
+/** Holds back the app's JavaScript chunks, so the page is hydrated well after
+ * its HTML is on screen — the window in which a prerendered listing used to show
+ * the wrong grid. Inline scripts (the streaming swap, the pending marker) are not
+ * delayed, which is exactly the situation on a slow phone. */
+async function delayHydration(page: Page, ms: number) {
+  await page.route(/\/_next\/static\/chunks\/.*\.js(\?.*)?$/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+    await route.continue();
+  });
+}
+
+test.describe("a filtered /shop link never paints the unfiltered grid (F-018)", () => {
+  test.use({ viewport: { width: 412, height: 823 }, isMobile: true, hasTouch: true });
+
+  test("?q= is applied before the grid is first shown, and nothing stays hidden afterwards", async ({
+    page,
+    request,
+  }) => {
+    const { products } = (await (await request.get("/api/products")).json()) as { products: { name: string }[] };
+    test.skip(products.length < 2, "needs a catalogue with more than one product");
+
+    await recordVisibleProductCards(page);
+    await gotoAndSettle(page, "/shop");
+    const unfiltered = (await shopFrames(page)).at(-1)!.cards;
+    expect(unfiltered).toBeGreaterThan(0);
+
+    const query = encodeURIComponent(products[0].name);
+    await delayHydration(page, 2000);
+    await page.goto(`/shop?q=${query}`, { waitUntil: "commit" });
+    // Hydration arrives ~2 s after the HTML. The search box only holds the
+    // query once the page has applied the URL, so this is "hydrated and
+    // filtered" — and until then there should be nothing to see but the
+    // skeleton, then exactly the filtered results.
+    await expect(page.getByRole("searchbox", { name: "Search within results" })).toHaveValue(products[0].name, {
+      timeout: 15_000,
+    });
+    await expect(page.locator("[data-shop-url-pending]")).toHaveCount(0);
+
+    const frames = await shopFrames(page);
+    const filtered = frames.at(-1)!.cards;
+    test.skip(filtered === unfiltered, "the search matches the whole catalogue, so there is nothing to tell apart");
+
+    expect(
+      frames.filter((frame) => frame.cards > 0 && frame.cards !== filtered),
+      "frames that showed the unfiltered grid before the filters were applied",
+    ).toEqual([]);
+    expect(
+      frames.some((frame) => frame.pending),
+      "the grid was marked pending while the page waited to be hydrated",
+    ).toBe(true);
+    expect(filtered).toBeLessThan(unfiltered);
+  });
+
+  test("a link with only tracking params shows the grid at once, not after hydration", async ({ page }) => {
+    await recordVisibleProductCards(page);
+    await delayHydration(page, 4000);
+    await page.goto("/shop?utm_source=newsletter&gclid=abc", { waitUntil: "commit" });
+
+    // Visible long before the (4 s late) scripts: it must not wait for them.
+    await expect.poll(async () => (await shopFrames(page)).at(-1)?.cards ?? 0, { timeout: 3500 }).toBeGreaterThan(0);
+    expect((await shopFrames(page)).some((frame) => frame.pending)).toBe(false);
+  });
+});
+
 test.describe("the product page asks who is signed in only from the browser (F-256)", () => {
   test("a guest gets the Write a Review link once the reviews are near, from one request", async ({ page, request }) => {
     const { products } = (await (await request.get("/api/products")).json()) as { products: { handle: string }[] };

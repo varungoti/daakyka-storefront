@@ -7,6 +7,7 @@ import {
   ShopFeatureCards,
   ShopMixMatchPromo,
 } from "@/components/shop/shop-feature-cards";
+import { ShopUrlPendingMask, ShopUrlPendingScript } from "@/components/shop/shop-url-pending";
 import { TrustBar } from "@/components/layout/trust-bar";
 import { useCurrency } from "@/context/currency-provider";
 import { fabricFilters } from "@/data/navigation";
@@ -25,6 +26,7 @@ import {
   withShopVisibleCount,
   type ShopFilters,
 } from "@/lib/shop/filters";
+import { SHOP_URL_PENDING_ATTR } from "@/lib/shop/url-pending";
 import { createUrlEchoGuard, sameShopFilters } from "@/lib/shop/url-sync";
 import type { CategoryTreeNode } from "@/lib/products";
 import type { Product } from "@/lib/types";
@@ -169,7 +171,9 @@ const TestimonialsSection = dynamic(
  * "Prerendering"), so this keeps that to a component that renders nothing,
  * and the product grid stays in the static HTML. A layout effect, so a
  * client-side navigation that mounts the page applies its filters before the
- * first paint.
+ * first paint — and so does a hard load of a filtered URL, whose unfiltered
+ * server-rendered grid is kept from being painted until this has run (see
+ * src/lib/shop/url-pending.ts).
  */
 function ShopUrlSync({ onSearch }: { onSearch: (search: string) => void }) {
   const search = useSearchParams().toString();
@@ -260,6 +264,9 @@ export function ShopPageContent({
   const [initialVisibleCount, setInitialVisibleCount] = useState(SHOP_PAGE_SIZE);
   const urlApplied = useRef(false);
   const [echoGuard] = useState(createUrlEchoGuard);
+  // The results container the inline script marks while a hard load of a
+  // filtered URL waits to be hydrated (see ShopUrlPendingScript below).
+  const resultsRef = useRef<HTMLDivElement>(null);
 
   /** Applies a URL query string to the page's state. Keeps the current
    * state objects when the URL carries nothing new, so an echo of the page's
@@ -289,8 +296,14 @@ export function ShopPageContent({
   // src/lib/shop/url-sync.ts.
   const handleRouterSearch = useCallback(
     (search: string) => {
-      if (echoGuard.isEcho(search)) return;
-      applyUrlSearch(search);
+      if (!echoGuard.isEcho(search)) applyUrlSearch(search);
+      // The URL's filters are in state now. This runs in ShopUrlSync's layout
+      // effect, so the re-render those setState calls scheduled is flushed
+      // before the browser paints: lifting the mark here reveals the FILTERED
+      // grid, never the unfiltered one the server rendered. (A no-op on a
+      // client-side navigation and on every later URL change — the mark is only
+      // ever set by the inline script, at parse time of a hard load.)
+      resultsRef.current?.removeAttribute(SHOP_URL_PENDING_ATTR);
     },
     [applyUrlSearch, echoGuard],
   );
@@ -548,7 +561,19 @@ export function ShopPageContent({
             column can shrink below the toolbar's min-content instead of
             growing to it — that's what pushed /shop and /category 7px past
             a 360px viewport. */}
-        <div className="mx-auto grid max-w-[1320px] grid-cols-1 gap-10 px-4 lg:grid-cols-[280px_minmax(0,1fr)] lg:px-8">
+        {/* F-018: `data-shop-url-pending` is set on this container, while the
+            HTML is parsed, by ShopUrlPendingScript when the URL has shop params
+            (a hard load of a filtered link): it is `invisible` — with a
+            skeleton in its place — until handleRouterSearch has applied them, so
+            the unfiltered grid the prerender holds is never painted. React does
+            not know about the attribute, hence suppressHydrationWarning (dev
+            would otherwise warn about it as an extra server attribute). */}
+        <div
+          ref={resultsRef}
+          suppressHydrationWarning
+          className="group/results relative mx-auto grid max-w-[1320px] grid-cols-1 gap-10 px-4 data-[shop-url-pending]:invisible lg:grid-cols-[280px_minmax(0,1fr)] lg:px-8"
+        >
+          {syncUrl && <ShopUrlPendingScript />}
           <div className="hidden lg:block">
             <ShopFiltersPanel
               filters={filters}
@@ -575,6 +600,7 @@ export function ShopPageContent({
             onVisibleCountChange={handleVisibleCountChange}
             eagerFirst
           />
+          {syncUrl && <ShopUrlPendingMask />}
         </div>
       </section>
 
