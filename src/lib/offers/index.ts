@@ -1,9 +1,10 @@
-import { revalidateTag, unstable_cache } from "next/cache";
+import { revalidateTag } from "next/cache";
 import { db } from "@/lib/db";
 import { logAuditEvent } from "@/lib/auth/audit";
 import { diffFields } from "@/lib/auth/audit-diff";
 import { ADMIN_REVALIDATE_PROFILE } from "@/lib/cache/admin-revalidate";
 import type { RevalidateProfile } from "@/lib/cache/admin-revalidate";
+import { boundedCache } from "@/lib/cache/bounded-cache";
 import { isDiscountCodeActive } from "@/lib/discounts";
 import { getSetting } from "@/lib/settings";
 import { formatBasePrice } from "@/lib/currency/convert";
@@ -85,11 +86,13 @@ async function readActiveOffersFromDb(): Promise<StoreOffer[]> {
 // src/lib/settings/index.ts's getSetting().
 export const OFFERS_CACHE_TAG = "offers";
 
-const cachedGetActiveOffers = unstable_cache(
-  readActiveOffersFromDb,
-  ["active-offers"],
-  { tags: [OFFERS_CACHE_TAG] },
-);
+// F-070 (review follow-up): bounded, not tag-only. prisma/seed.ts retires the
+// seeded HERO10 / bundle offers (UNHONOURED_OFFERS_SEED_MARKER_KEY) from
+// inside the Vercel build, where revalidateTag cannot be called, so an
+// unbounded entry cached before that deploy would keep advertising the dead
+// code on the home page until an admin saved an offer. See
+// src/lib/cache/bounded-cache.ts.
+const cachedGetActiveOffers = boundedCache(readActiveOffersFromDb, ["active-offers"], [OFFERS_CACHE_TAG]);
 
 export async function getActiveOffers(): Promise<StoreOffer[]> {
   try {

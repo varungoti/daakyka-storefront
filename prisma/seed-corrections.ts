@@ -33,6 +33,16 @@ import type { Prisma, PrismaClient } from "../src/generated/prisma/client";
  * guarded write, and the marker is only written after all of them, so a
  * crash part-way simply re-runs the remainder on the next deploy — and
  * transaction-pooled connections never see an interactive transaction.
+ *
+ * Caches: this runs in the Vercel build, where there is no request or
+ * static-generation store, so it CANNOT call revalidateTag. A correction
+ * therefore reaches the storefront only through a read that is bounded by a
+ * TTL (and a versioned key) rather than by its tag alone: the category and
+ * product reads in src/lib/products/index.ts, and the size chart and offer
+ * reads through boundedCache in src/lib/cache/bounded-cache.ts. A new
+ * correction that changes data behind a tag-only unstable_cache would stay
+ * invisible until an admin saved the same record in /admin — give that read
+ * a `revalidate` first.
  */
 
 /** Same "seed." namespace and rationale as the markers in prisma/seed.ts. */
