@@ -44,6 +44,7 @@ export default async function AccountProfilePage({
       <PrivacyControls
         email={customer.email}
         marketing={marketing}
+        emailVerified={Boolean(customer.emailVerifiedAt)}
         emailChangeNotice={emailChange === "invalid" ? "invalid" : undefined}
       />
     </ProfileTab>

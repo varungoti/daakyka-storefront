@@ -19,6 +19,23 @@ export interface PersonalDataSubject {
   phone?: string | null;
 }
 
+/**
+ * How much the caller has *proved* about who the subject is.
+ *
+ *  - "admin": the owner looked the person up and takes responsibility for
+ *    the match, so every identifier on the account (email, profile phone,
+ *    saved-address phones) is used to find their rows.
+ *  - "self-service": a shopper signed in and asked about "me". What the
+ *    session proves is the account itself — nothing more. The email on it
+ *    only counts once it has been verified (anyone can register an account
+ *    with somebody else's address, and registration signs you straight in),
+ *    and the phone numbers on it are free text nobody has verified, so they
+ *    are never used to find rows. Without this a throwaway account could
+ *    export or erase a stranger's orders and enquiries just by typing the
+ *    stranger's email or phone into its own profile.
+ */
+export type SubjectTrust = "admin" | "self-service";
+
 export interface ResolvedSubject {
   /** The Customer row, when the subject has an account. */
   customerId: string | null;
@@ -26,6 +43,11 @@ export interface ResolvedSubject {
   emails: string[];
   /** Every spelling of each phone number the data is likely to hold. */
   phones: string[];
+  trust: SubjectTrust;
+  /** Self-service only: whether the account's email was verified, i.e. whether
+   * `emails` holds it. When false only rows linked to the account itself
+   * (by customer id) are matched. */
+  emailVerified?: boolean;
 }
 
 export class PrivacySubjectError extends Error {
@@ -60,12 +82,48 @@ export function normaliseEmailForMatch(email: string): string {
 }
 
 /**
- * Resolves a request to its identifiers. A Customer id or an email that
- * belongs to an account pulls in that account's email, phone and saved
- * address phones; a bare email or phone (a guest, a lead, an enquiry) is
- * used as given. Throws when there is nothing to match on at all.
+ * Resolves a request to its identifiers.
+ *
+ * `trust: "admin"` — a Customer id or an email that belongs to an account
+ * pulls in that account's email, phone and saved address phones; a bare
+ * email or phone (a guest, a lead, an enquiry) is used as given. Throws when
+ * there is nothing to match on at all.
+ *
+ * `trust: "self-service"` — only the signed-in account's id is read from the
+ * request (a client-supplied email or phone is ignored); see SubjectTrust.
+ * `trust` has no default on purpose: forgetting it must not silently widen a
+ * shopper's request to the admin's reach.
  */
-export async function resolveSubject(subject: PersonalDataSubject): Promise<ResolvedSubject> {
+export async function resolveSubject(
+  subject: PersonalDataSubject,
+  options: { trust: SubjectTrust },
+): Promise<ResolvedSubject> {
+  if (options.trust === "self-service") return resolveSelfServiceSubject(subject);
+  return resolveAdminSubject(subject);
+}
+
+async function resolveSelfServiceSubject(subject: PersonalDataSubject): Promise<ResolvedSubject> {
+  if (!subject.customerId) {
+    throw new PrivacySubjectError("A signed-in account is required");
+  }
+  const customer = await db.customer.findUnique({
+    where: { id: subject.customerId },
+    select: { id: true, email: true, emailVerifiedAt: true },
+  });
+  if (!customer) {
+    throw new PrivacySubjectError("This account no longer exists");
+  }
+  const emailVerified = Boolean(customer.emailVerifiedAt);
+  return {
+    customerId: customer.id,
+    emails: emailVerified ? [normaliseEmailForMatch(customer.email)] : [],
+    phones: [],
+    trust: "self-service",
+    emailVerified,
+  };
+}
+
+async function resolveAdminSubject(subject: PersonalDataSubject): Promise<ResolvedSubject> {
   const emails = new Set<string>();
   const phones = new Set<string>();
   let customerId = subject.customerId ?? null;
@@ -99,7 +157,7 @@ export async function resolveSubject(subject: PersonalDataSubject): Promise<Reso
   if (!customerId && emails.size === 0 && phones.size === 0) {
     throw new PrivacySubjectError("An email address, a phone number or a customer is required");
   }
-  return { customerId, emails: [...emails], phones: [...phones] };
+  return { customerId, emails: [...emails], phones: [...phones], trust: "admin" };
 }
 
 /** A short, non-reversible reference for audit rows — the audit trail must

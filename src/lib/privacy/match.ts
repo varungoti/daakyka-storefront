@@ -30,3 +30,21 @@ export function notificationMatches(subject: ResolvedSubject) {
     { metadata: { contains: term, mode: "insensitive" as const } },
   ]);
 }
+
+/**
+ * EmailOutbox rows addressed to SOMEONE ELSE whose rendered body quotes the
+ * subject — in practice the store's own "new order" alert, which goes to the
+ * owner's inbox and carries the buyer's email, phone, street address and
+ * items. Matching on `to` alone leaves that copy behind, so these are found
+ * by searching the body. Only full email addresses and phone numbers of 10+
+ * characters are searched: a short number would sweep up unrelated rows.
+ * (Sealed credential bodies cannot match — they are ciphertext — and are
+ * always addressed to the person, so `to` already covers them.)
+ */
+export function outboxBodyMentions(subject: ResolvedSubject) {
+  const terms = [...subject.emails, ...subject.phones.filter((phone) => phone.length >= 10)];
+  return terms.flatMap((term) => [
+    { html: { contains: term, mode: "insensitive" as const } },
+    { text: { contains: term, mode: "insensitive" as const } },
+  ]);
+}

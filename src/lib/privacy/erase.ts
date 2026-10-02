@@ -1,8 +1,9 @@
 import { logAuditEvent } from "@/lib/auth/audit";
 import { db } from "@/lib/db";
+import { REDACTED_BODY } from "@/lib/engagement/outbox-seal";
 import { reclaimMediaAssetIfUnused } from "@/lib/media/store";
 import { ERASED_EMAIL, anonymiseOrdersById } from "@/lib/privacy/anonymise-orders";
-import { emailMatches, notificationMatches, phoneMatches } from "@/lib/privacy/match";
+import { emailMatches, notificationMatches, outboxBodyMentions, phoneMatches } from "@/lib/privacy/match";
 import { resolveSubject, subjectReference, type PersonalDataSubject } from "@/lib/privacy/subject";
 
 /**
@@ -20,6 +21,19 @@ import { resolveSubject, subjectReference, type PersonalDataSubject } from "@/li
  * dropped, the address is cut down to state / pincode / country (the place of
  * supply GST needs), the guest-access link is revoked, and the link to the
  * Customer row is cut. Totals, items, tax and invoice numbers are untouched.
+ *
+ * What counts as "this person's" rows depends on who is asking (see
+ * SubjectTrust in subject.ts). The owner's request matches on every email and
+ * phone the account carries. A shopper's own request is limited to what their
+ * session proves: the account's rows, plus rows keyed to its email once that
+ * email is verified — never to the unverified phone numbers typed into the
+ * profile, and never to an unverified email, or a throwaway account could
+ * erase a stranger's orders.
+ *
+ * The store's own "new order" alert goes to the owner's inbox, not the
+ * buyer's, and quotes the buyer's details. Those copies are found by body
+ * (not `to`) and blanked — still-unsent ones are also expired so they are
+ * never delivered.
  *
  * An order still being fulfilled (not yet delivered, cancelled or refunded)
  * blocks the erasure — the courier and the payment reconciliation still need
@@ -59,7 +73,7 @@ export interface ErasureReport {
 }
 
 export async function erasePersonalData(input: PersonalDataSubject, options: ErasureOptions): Promise<ErasureReport> {
-  const subject = await resolveSubject(input);
+  const subject = await resolveSubject(input, { trust: options.source === "self-service" ? "self-service" : "admin" });
   const orderOwner = [...(subject.customerId ? [{ customerId: subject.customerId }] : []), ...emailMatches("email", subject)];
 
   const openOrders = await db.order.findMany({
@@ -118,6 +132,22 @@ export async function erasePersonalData(input: PersonalDataSubject, options: Era
         await tx.campaignDelivery.deleteMany({ where: { OR: [...emailMatches("recipient", subject), ...phoneMatches("recipient", subject)] } })
       ).count;
       counts.emailOutbox = (await tx.emailOutbox.deleteMany({ where: { OR: emailMatches("to", subject) } })).count;
+      // Copies inside emails addressed to somebody else (the owner's new-order
+      // alert). Blanked, not deleted: the row is the owner's delivery log.
+      const mentions = outboxBodyMentions(subject);
+      if (mentions.length > 0) {
+        const unsent = await tx.emailOutbox.updateMany({
+          where: { status: "PENDING", html: { not: REDACTED_BODY }, OR: mentions },
+          data: { status: "EXPIRED", lockedAt: null, html: REDACTED_BODY, text: null },
+        });
+        const delivered = await tx.emailOutbox.updateMany({
+          where: { html: { not: REDACTED_BODY }, OR: mentions },
+          data: { html: REDACTED_BODY, text: null },
+        });
+        counts.emailOutboxMentions = unsent.count + delivered.count;
+      } else {
+        counts.emailOutboxMentions = 0;
+      }
       counts.cartAbandonmentEvents = (
         await tx.cartAbandonmentEvent.deleteMany({ where: { OR: emailMatches("email", subject) } })
       ).count;

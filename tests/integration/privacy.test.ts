@@ -122,14 +122,38 @@ async function seedPerson(label: string) {
   const campaign = await db.campaign.create({ data: { name: `Privacy campaign ${unique}`, channel: "EMAIL" } });
   await db.campaignDelivery.create({ data: { campaignId: campaign.id, recipient: email, channel: "EMAIL", status: "sent" } });
 
-  await db.emailOutbox.create({ data: { to: email, subject: "Order confirmed", html: "<p>x</p>", kind: "order_confirmation_admin", status: "SENT" } });
+  // An email to the person themselves, and the store's own "new order" alert:
+  // that one goes to the OWNER's inbox but quotes the buyer's address, phone and street.
+  await db.emailOutbox.create({ data: { to: email, subject: "Back in stock", html: "<p>x</p>", kind: "back_in_stock", status: "SENT" } });
+  const ownerAddress = `privacy-owner-${unique}@example.com`;
+  await db.emailOutbox.create({
+    data: {
+      to: ownerAddress,
+      subject: `New order DK-TEST-${unique}`,
+      html: `<p>Order from ${email} (${phone}) to 12 Test Street, Flat 4, Hyderabad</p>`,
+      text: `Order from ${email}, phone ${phone}, 12 Test Street`,
+      kind: "order_confirmation_admin",
+      status: "SENT",
+    },
+  });
   await db.adminNotification.create({
     data: { title: "New order", body: `${email} — ₹1,000 (paid)`, type: "order_paid", metadata: JSON.stringify({ email, total: 1000 }) },
   });
   await db.cartAbandonmentEvent.create({ data: { email, itemCount: 2, subtotal: 1500 } });
   await db.orderEvent.create({ data: { email, phone, total: 999, source: "shopify" } });
 
-  return { email, phone, customer, product, variant, deliveredOrder, guestOrder, discount, journey, campaign, category };
+  // A second alert, still waiting to be sent (the provider was down).
+  await db.emailOutbox.create({
+    data: {
+      to: ownerAddress.replace("owner-", "owner-unsent-"),
+      subject: "New order (waiting)",
+      html: `<p>Order from ${email}</p>`,
+      kind: "order_confirmation_admin",
+      status: "PENDING",
+    },
+  });
+
+  return { email, phone, customer, product, variant, deliveredOrder, guestOrder, discount, journey, campaign, category, ownerAddress };
 }
 
 type Person = Awaited<ReturnType<typeof seedPerson>>;
@@ -154,6 +178,9 @@ async function remainingRows(person: { email: string; phone: string; customerId?
     journeyEvents: await db.journeyEvent.count({ where: { recipient: email } }),
     campaignDeliveries: await db.campaignDelivery.count({ where: { recipient: email } }),
     emailOutbox: await db.emailOutbox.count({ where: { to: email } }),
+    emailOutboxMentions: await db.emailOutbox.count({
+      where: { OR: [{ html: { contains: person.email, mode: "insensitive" } }, { text: { contains: person.email, mode: "insensitive" } }] },
+    }),
     adminNotifications: await db.adminNotification.count({
       where: { OR: [{ title: { contains: person.email, mode: "insensitive" } }, { body: { contains: person.email, mode: "insensitive" } }, { metadata: { contains: person.email, mode: "insensitive" } }] },
     }),
@@ -203,7 +230,8 @@ describe("personal-data export (F-315)", () => {
     assert.equal(data.journeyEnrollments.length, 1);
     assert.equal(data.journeyMessages.length, 1);
     assert.equal(data.campaignMessages.length, 1);
-    assert.equal(data.emailLog.length, 1);
+    assert.equal(data.emailLog.length, 1, "the email addressed to them");
+    assert.equal(data.emailMentions.length, 2, "the owner's new-order alerts (sent and still waiting) that quote them");
     assert.equal(data.abandonedCarts.length, 1);
     assert.equal(data.legacyOrderEvents.length, 1);
     assert.equal(data.adminNotifications.length, 1);
@@ -251,8 +279,16 @@ describe("personal-data erasure (F-315)", () => {
     assert.deepEqual(remaining, {
       customer: 0, addresses: 0, tokens: 0, wishlist: 0, reviews: 0, ordersWithEmail: 0, contactEnquiries: 0,
       bulkOrderLeads: 0, newsletter: 0, whatsapp: 0, backInStock: 0, enrollments: 0, journeyEvents: 0,
-      campaignDeliveries: 0, emailOutbox: 0, adminNotifications: 0, carts: 0, orderEvents: 0, redemptions: 0,
+      campaignDeliveries: 0, emailOutbox: 0, emailOutboxMentions: 0, adminNotifications: 0, carts: 0, orderEvents: 0, redemptions: 0,
     });
+    // The owner's alert row stays (it is their delivery log) but no longer carries the person.
+    const alert = await db.emailOutbox.findFirstOrThrow({ where: { to: person.ownerAddress } });
+    assert.equal(alert.html, "[body redacted]", "the owner's alert was blanked, not left behind");
+    assert.equal(alert.text, null);
+    assert.equal(alert.status, "SENT", "...and stays in the delivery log");
+    const unsentAlert = await db.emailOutbox.findFirstOrThrow({ where: { to: person.ownerAddress.replace("owner-", "owner-unsent-") } });
+    assert.equal(unsentAlert.status, "EXPIRED", "an alert that had not gone out yet never will");
+    assert.equal(unsentAlert.html, "[body redacted]");
 
     // Orders: still there, money and tax figures untouched, person gone.
     for (const original of [person.deliveredOrder, person.guestOrder]) {
@@ -283,6 +319,7 @@ describe("personal-data erasure (F-315)", () => {
     assert.equal(still.customer, 1);
     assert.equal(still.contactEnquiries, 1);
     assert.equal(still.emailOutbox, 1);
+    assert.equal(still.emailOutboxMentions, 2, "the bystander's own owner-alerts are untouched");
     assert.equal(still.adminNotifications, 1);
     assert.equal((await db.order.findUniqueOrThrow({ where: { id: bystander.deliveredOrder.id } })).email, bystander.email);
 
@@ -342,6 +379,162 @@ describe("personal-data erasure (F-315)", () => {
   });
 });
 
+describe("self-service requests only reach what the session proves (F-315)", () => {
+  const phoneNumber = () => `97${Math.floor(10_000_000 + Math.random() * 89_999_999)}`;
+
+  /** A stranger's records, none of which belong to the account under test. */
+  async function seedStranger() {
+    const unique = uid();
+    const email = `privacy-stranger-${unique}@example.com`;
+    const otherEmail = `privacy-stranger-other-${unique}@example.com`;
+    const phone = phoneNumber();
+    const order = await createOrder({ email, phone, status: "DELIVERED" });
+    await db.orderEvent.create({ data: { email, phone, total: 10, source: "shopify" } });
+    const enquiry = await db.contactEnquiry.create({ data: { name: "Real Victim", email, phone, message: "Secret enquiry text" } });
+    // Held against the PHONE only, with a different email on the row.
+    const phoneEnquiry = await db.contactEnquiry.create({ data: { name: "Real Victim", email: otherEmail, phone, message: "Another secret" } });
+    const lead = await db.bulkOrderLead.create({ data: { organization: "Victim Hospital", contactPerson: "Real Victim", email: otherEmail, phone, notes: "n" } });
+    const subscriber = await db.newsletterSubscriber.create({ data: { email, consentGiven: true, confirmedAt: new Date() } });
+    const optIn = await db.whatsAppOptIn.create({ data: { phone } });
+    const journey = await db.customerJourney.create({ data: { name: `Stranger journey ${unique}`, slug: `privacy-journey-${unique}`, trigger: "t" } });
+    const enrollment = await db.journeyEnrollment.create({ data: { journeyId: journey.id, email: otherEmail, phone, trigger: "t" } });
+    const campaign = await db.campaign.create({ data: { name: `Privacy campaign ${unique}`, channel: "WHATSAPP" } });
+    const delivery = await db.campaignDelivery.create({ data: { campaignId: campaign.id, recipient: phone, channel: "WHATSAPP", status: "sent" } });
+    return { email, otherEmail, phone, order, enquiry, phoneEnquiry, lead, subscriber, optIn, enrollment, delivery };
+  }
+
+  type Stranger = Awaited<ReturnType<typeof seedStranger>>;
+
+  async function strangerIsIntact(stranger: Stranger) {
+    const order = await db.order.findUniqueOrThrow({ where: { id: stranger.order.id } });
+    assert.equal(order.email, stranger.email, "the stranger's order still carries their email");
+    assert.equal((order.shippingAddress as { name: string }).name, "Priya Sharma", "...and their address");
+    assert.equal(order.phone, stranger.phone);
+    assert.equal(await db.contactEnquiry.count({ where: { id: { in: [stranger.enquiry.id, stranger.phoneEnquiry.id] } } }), 2);
+    assert.equal(await db.bulkOrderLead.count({ where: { id: stranger.lead.id } }), 1);
+    assert.equal(await db.newsletterSubscriber.count({ where: { id: stranger.subscriber.id } }), 1);
+    assert.equal(await db.whatsAppOptIn.count({ where: { id: stranger.optIn.id } }), 1);
+    assert.equal(await db.journeyEnrollment.count({ where: { id: stranger.enrollment.id } }), 1);
+    assert.equal(await db.campaignDelivery.count({ where: { id: stranger.delivery.id } }), 1);
+  }
+
+  function assertNothingOfTheirs(data: Awaited<ReturnType<typeof exportPersonalData>>) {
+    assert.equal(data.orders.length, 0);
+    assert.equal(data.contactEnquiries.length, 0);
+    assert.equal(data.bulkOrderLeads.length, 0);
+    assert.equal(data.newsletter.length, 0);
+    assert.equal(data.whatsappOptIns.length, 0);
+    assert.equal(data.journeyEnrollments.length, 0);
+    assert.equal(data.campaignMessages.length, 0);
+    assert.equal(data.legacyOrderEvents.length, 0);
+    const json = JSON.stringify(data);
+    for (const secret of ["Real Victim", "Secret enquiry text", "Another secret", "Victim Hospital", "12 Test Street"]) {
+      assert.ok(!json.includes(secret), `leaked: ${secret}`);
+    }
+  }
+
+  it("an unverified account registered with a stranger's email exports none of their data and erases none of it", async () => {
+    const stranger = await seedStranger();
+    // Registration signs you straight in with emailVerifiedAt unset — and nothing stops it using anyone's address or phone.
+    const throwaway = await db.customer.create({
+      data: { email: stranger.email, name: "Throwaway", phone: stranger.phone, passwordHash: await hashPassword("password123") },
+    });
+    await db.customerAddress.create({
+      data: { customerId: throwaway.id, line1: "1 Mine", city: "Hyderabad", state: "Telangana", postalCode: "500001", phone: stranger.phone },
+    });
+
+    // Even if the request itself names the stranger, only the session's account counts.
+    const copy = await exportPersonalData(
+      { customerId: throwaway.id, email: stranger.email, phone: stranger.phone },
+      { audience: "customer" },
+    );
+    assertNothingOfTheirs(copy);
+    assert.deepEqual(copy.subject.emails, []);
+    assert.deepEqual(copy.subject.phones, []);
+    assert.equal((copy.account as { id: string }).id, throwaway.id, "their own account row is theirs");
+    assert.equal(copy.addresses.length, 1);
+    assert.ok(copy.limitations.some((note) => /email address is not verified/i.test(note)), "the file says it is not the full picture");
+
+    const report = await erasePersonalData({ customerId: throwaway.id, email: stranger.email }, { source: "self-service" });
+    assert.equal(report.customerDeleted, true, "their own account goes");
+    assert.equal(report.counts.ordersAnonymised, 0);
+    assert.equal(report.counts.contactEnquiries, 0);
+    assert.equal(report.counts.newsletterSubscribers, 0);
+    await strangerIsIntact(stranger);
+  });
+
+  it("a verified account that types a stranger's phone into its profile reaches none of the rows held against that phone", async () => {
+    const stranger = await seedStranger();
+    const mine = await db.customer.create({
+      data: {
+        email: `privacy-mine-${uid()}@example.com`,
+        name: "Curious",
+        phone: stranger.phone,
+        passwordHash: await hashPassword("password123"),
+        emailVerifiedAt: new Date(),
+      },
+    });
+    await db.customerAddress.create({
+      data: { customerId: mine.id, line1: "1 Mine", city: "Hyderabad", state: "Telangana", postalCode: "500001", phone: stranger.phone },
+    });
+
+    assertNothingOfTheirs(await exportPersonalData({ customerId: mine.id }, { audience: "customer" }));
+    await erasePersonalData({ customerId: mine.id }, { source: "self-service" });
+    await strangerIsIntact(stranger);
+
+    // The owner, who looks a person up and takes responsibility for the match, still reaches them by phone.
+    const admin = await exportPersonalData({ phone: stranger.phone }, { audience: "admin" });
+    assert.equal(admin.whatsappOptIns.length, 1);
+    assert.equal(admin.bulkOrderLeads.length, 1);
+  });
+
+  it("a verified account still reaches everything held against its own email, but not phone-only records", async () => {
+    const person = await seedPerson("selfscope");
+
+    const copy = await exportPersonalData({ customerId: person.customer.id }, { audience: "customer" });
+
+    assert.deepEqual(copy.subject.emails, [person.email]);
+    assert.deepEqual(copy.subject.phones, []);
+    assert.equal(copy.orders.length, 2, "the account's order and the guest order placed with its verified email");
+    assert.equal(copy.contactEnquiries.length, 1);
+    assert.equal(copy.bulkOrderLeads.length, 1);
+    assert.equal(copy.newsletter.length, 1);
+    assert.equal(copy.backInStockSignups.length, 1);
+    assert.equal(copy.emailLog.length, 1);
+    assert.equal(copy.emailMentions.length, 0, "the owner's alert metadata is not for the shopper");
+    assert.equal(copy.whatsappOptIns.length, 0, "held against the phone number only");
+    assert.ok(!copy.limitations.some((note) => /email address is not verified/i.test(note)));
+    assert.ok(copy.limitations.some((note) => /phone number/i.test(note)));
+
+    await erasePersonalData({ customerId: person.customer.id }, { source: "self-service" });
+    const left = await remainingRows({ email: person.email, phone: person.phone, customerId: person.customer.id });
+    assert.equal(left.customer, 0);
+    assert.equal(left.ordersWithEmail, 0);
+    assert.equal(left.contactEnquiries, 0);
+    assert.equal(left.emailOutboxMentions, 0, "the owner's alert no longer quotes them");
+    assert.equal(left.whatsapp, 1, "the unverified phone is not enough to remove a record");
+  });
+
+  it("an unverified account still gets, and can erase, the orders placed while signed in to it", async () => {
+    const customer = await db.customer.create({
+      data: { email: `privacy-unverified-${uid()}@example.com`, name: "New Shopper", passwordHash: await hashPassword("password123") },
+    });
+    const order = await createOrder({ email: customer.email, customerId: customer.id });
+
+    const copy = await exportPersonalData({ customerId: customer.id }, { audience: "customer" });
+    assert.equal(copy.orders.length, 1);
+
+    await erasePersonalData({ customerId: customer.id }, { source: "self-service" });
+    assert.equal((await db.order.findUniqueOrThrow({ where: { id: order.id } })).email, ERASED_EMAIL);
+  });
+
+  it("refuses a self-service request that is not about a signed-in account", async () => {
+    await assert.rejects(() => exportPersonalData({ email: "someone@example.com" }, { audience: "customer" }), /signed-in/i);
+    await assert.rejects(() => erasePersonalData({ email: "someone@example.com" }, { source: "self-service" }), /signed-in/i);
+    await assert.rejects(() => exportPersonalData({ customerId: "does-not-exist" }, { audience: "customer" }), /no longer exists/i);
+  });
+});
+
 describe("privacy routes without a session", () => {
   const request = (url: string, method = "POST", body: unknown = {}) =>
     new Request(url, { method, headers: { "Content-Type": "application/json" }, body: method === "GET" ? undefined : JSON.stringify(body) });
@@ -385,11 +578,11 @@ describe("account email change (F-315)", () => {
   }
 
   it("signs a token that only this app can read back, and refuses tampered or expired ones", () => {
-    const token = signEmailChangeToken({ customerId: "c1", fromEmail: "a@x.com", toEmail: "b@x.com", expiresAt: Date.now() + 60_000 });
-    assert.deepEqual(readEmailChangeToken(token), { c: "c1", f: "a@x.com", t: "b@x.com", x: readEmailChangeToken(token)!.x });
+    const token = signEmailChangeToken({ customerId: "c1", fromEmail: "a@x.com", toEmail: "b@x.com", sessionVersion: 3, expiresAt: Date.now() + 60_000 });
+    assert.deepEqual(readEmailChangeToken(token), { c: "c1", f: "a@x.com", t: "b@x.com", v: 3, x: readEmailChangeToken(token)!.x });
 
     const [payload, signature] = token.split(".");
-    const forged = Buffer.from(JSON.stringify({ c: "c1", f: "a@x.com", t: "attacker@x.com", x: Date.now() + 60_000 })).toString("base64url");
+    const forged = Buffer.from(JSON.stringify({ c: "c1", f: "a@x.com", t: "attacker@x.com", v: 3, x: Date.now() + 60_000 })).toString("base64url");
     assert.equal(readEmailChangeToken(`${forged}.${signature}`), null, "a payload swapped under the old signature");
     assert.equal(readEmailChangeToken(`${payload}.${signature}x`), null);
     assert.equal(readEmailChangeToken("garbage"), null);
@@ -438,14 +631,41 @@ describe("account email change (F-315)", () => {
     // A scanner pre-opening the link, or a second click, is not an error...
     assert.deepEqual(await confirmEmailChange(token), { ok: true, alreadyApplied: true });
     // ...but a link issued for an address the account no longer has is.
-    const stale = signEmailChangeToken({ customerId: customer.id, fromEmail: customer.email, toEmail: "x@example.com", expiresAt: Date.now() + 60_000 });
+    const stale = signEmailChangeToken({ customerId: customer.id, fromEmail: customer.email, toEmail: "x@example.com", sessionVersion: customer.sessionVersion, expiresAt: Date.now() + 60_000 });
     assert.equal((await confirmEmailChange(stale)).ok, false);
+  });
+
+  it("a link dies when the password is reset or changed, or the account signs out everywhere, after it was issued", async () => {
+    // Asking for a change needs the password — so whoever knows it can ask for a link to a mailbox of their own.
+    // If the owner then recovers the account, that pending link must not still hand the account over.
+    for (const label of ["reset", "signout"]) {
+      const customer = await makeCustomer(`pending-${label}`);
+      const attacker = `privacy-attacker-${label}-${uid()}@example.com`;
+      await requestEmailChange(customer.id, attacker, "http://localhost:3000");
+      const token = new URL((await linkSentTo(attacker))!).searchParams.get("token")!;
+      assert.equal(readEmailChangeToken(token)?.v, customer.sessionVersion);
+
+      // What POST /api/account/reset-password / PATCH profile do (new hash + sessionVersion bump), or a sign-out.
+      await db.customer.update({
+        where: { id: customer.id },
+        data:
+          label === "reset"
+            ? { passwordHash: await hashPassword("a-brand-new-password"), sessionVersion: { increment: 1 } }
+            : { sessionVersion: { increment: 1 } },
+      });
+
+      const result = await confirmEmailChange(token);
+
+      assert.equal(result.ok, false, `${label}: the stale link must be refused`);
+      assert.equal((await db.customer.findUniqueOrThrow({ where: { id: customer.id } })).email, customer.email);
+      assert.equal(await db.emailOutbox.count({ where: { to: customer.email, kind: "customer_email_changed_notice" } }), 0);
+    }
   });
 
   it("refuses when the target address was registered by someone else in the meantime", async () => {
     const customer = await makeCustomer("race");
     const next = `privacy-race-${uid()}@example.com`;
-    const token = signEmailChangeToken({ customerId: customer.id, fromEmail: customer.email, toEmail: next, expiresAt: Date.now() + 60_000 });
+    const token = signEmailChangeToken({ customerId: customer.id, fromEmail: customer.email, toEmail: next, sessionVersion: customer.sessionVersion, expiresAt: Date.now() + 60_000 });
     await db.customer.create({ data: { email: next, name: "Quick", passwordHash: await hashPassword("password123") } });
 
     const result = await confirmEmailChange(token);
@@ -457,7 +677,7 @@ describe("account email change (F-315)", () => {
   it("the confirm route redirects: to sign-in on success, to the profile on a bad link", async () => {
     const customer = await makeCustomer("route");
     const next = `privacy-route-${uid()}@example.com`;
-    const token = signEmailChangeToken({ customerId: customer.id, fromEmail: customer.email, toEmail: next, expiresAt: Date.now() + 60_000 });
+    const token = signEmailChangeToken({ customerId: customer.id, fromEmail: customer.email, toEmail: next, sessionVersion: customer.sessionVersion, expiresAt: Date.now() + 60_000 });
 
     const good = await accountEmailConfirm(new Request(`http://localhost/api/account/email/confirm?token=${encodeURIComponent(token)}`));
     assert.equal(good.status, 307);
@@ -491,6 +711,48 @@ describe("marketing preferences from the account (F-315)", () => {
 
     // Turning it off for an address that never subscribed is a harmless no-op.
     assert.equal(await setMarketingPreference(`privacy-never-${uid()}@example.com`, false), "none");
+  });
+
+  it("turning it back on after unsubscribing reports pending (check your inbox), not unsubscribed", async () => {
+    const email = `privacy-resub-${uid()}@example.com`;
+    await setMarketingPreference(email, true);
+    const first = await db.newsletterSubscriber.findUniqueOrThrow({ where: { email } });
+    await confirmNewsletterSubscriber(first.confirmToken!);
+    assert.equal(await setMarketingPreference(email, false), "unsubscribed");
+    assert.equal(await getMarketingStatus(email), "unsubscribed");
+
+    // The request worked: a fresh confirmation link is on its way, and the page must say so.
+    assert.equal(await setMarketingPreference(email, true), "pending");
+    assert.equal(await getMarketingStatus(email), "pending", "a reload shows the same");
+    const waiting = await db.newsletterSubscriber.findUniqueOrThrow({ where: { email } });
+    assert.ok(waiting.unsubscribedAt, "still unsubscribed until the link is clicked (F-050)");
+    assert.ok(waiting.confirmToken);
+    assert.equal(await db.emailOutbox.count({ where: { to: email, kind: "newsletter_confirm" } }), 2, "one link per request");
+
+    await confirmNewsletterSubscriber(waiting.confirmToken!);
+    assert.equal(await getMarketingStatus(email), "subscribed");
+  });
+
+  it("unsubscribing while a confirmation is still waiting withdraws that request and kills its link", async () => {
+    // A brand-new subscriber who changes their mind before clicking.
+    const fresh = `privacy-changed-mind-${uid()}@example.com`;
+    await setMarketingPreference(fresh, true);
+    const freshToken = (await db.newsletterSubscriber.findUniqueOrThrow({ where: { email: fresh } })).confirmToken!;
+    assert.equal(await setMarketingPreference(fresh, false), "unsubscribed");
+    assert.equal(await getMarketingStatus(fresh), "unsubscribed", "not stuck on pending after a reload");
+    assert.equal((await confirmNewsletterSubscriber(freshToken)).ok, false, "the old link no longer opts them in");
+
+    // Someone whose re-subscribe request is pending, who presses Unsubscribe again.
+    const again = `privacy-resub-cancel-${uid()}@example.com`;
+    await setMarketingPreference(again, true);
+    await confirmNewsletterSubscriber((await db.newsletterSubscriber.findUniqueOrThrow({ where: { email: again } })).confirmToken!);
+    await setMarketingPreference(again, false);
+    assert.equal(await setMarketingPreference(again, true), "pending");
+    const pendingToken = (await db.newsletterSubscriber.findUniqueOrThrow({ where: { email: again } })).confirmToken!;
+
+    assert.equal(await setMarketingPreference(again, false), "unsubscribed");
+    assert.equal(await getMarketingStatus(again), "unsubscribed");
+    assert.equal((await confirmNewsletterSubscriber(pendingToken)).ok, false);
   });
 });
 

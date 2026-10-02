@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const subject = await resolveSubject(parsed.data);
+    const subject = await resolveSubject(parsed.data, { trust: "admin" });
     const data = await exportPersonalData(parsed.data, { audience: "admin" });
 
     await logAuditEvent({

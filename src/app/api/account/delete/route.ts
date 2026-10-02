@@ -3,6 +3,7 @@ import { z } from "zod";
 import { destroyCustomerSession, getCustomerSession } from "@/lib/customer-auth/session";
 import { lockedResponse, verifyCurrentPassword } from "@/lib/customer-auth/verify-current-password";
 import { ErasureBlockedError, erasePersonalData } from "@/lib/privacy/erase";
+import { PrivacySubjectError } from "@/lib/privacy/subject";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 
 const deleteAccountSchema = z.object({
@@ -18,7 +19,10 @@ const deleteAccountSchema = z.object({
  * email (src/lib/privacy/erase.ts). Orders are anonymised rather than
  * deleted, because their tax figures must be kept; an order that is still
  * being fulfilled blocks the deletion (409) until it is delivered, cancelled
- * or refunded.
+ * or refunded. Only what the session proves is erased: the account's own rows,
+ * plus rows keyed to its email once that email is verified (see SubjectTrust in
+ * src/lib/privacy/subject.ts) — an unverified account cannot be used to wipe a
+ * stranger's orders by registering with their address.
  */
 export async function POST(request: Request) {
   const session = await getCustomerSession();
@@ -52,6 +56,9 @@ export async function POST(request: Request) {
         },
         { status: 409 },
       );
+    }
+    if (error instanceof PrivacySubjectError) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     throw error;
   }

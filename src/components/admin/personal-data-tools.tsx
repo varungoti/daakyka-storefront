@@ -36,6 +36,7 @@ const COUNT_LABELS: Record<string, string> = {
   journeyEvents: "journey messages",
   campaignDeliveries: "campaign deliveries",
   emailOutbox: "emails in the log",
+  emailOutboxMentions: "new-order alert emails blanked",
   cartAbandonmentEvents: "abandoned carts",
   orderEvents: "legacy order events",
   adminNotifications: "admin notifications",

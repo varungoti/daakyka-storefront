@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { emailMatches, notificationMatches, phoneMatches } from "@/lib/privacy/match";
+import { emailMatches, notificationMatches, outboxBodyMentions, phoneMatches } from "@/lib/privacy/match";
 import { resolveSubject, type PersonalDataSubject, type ResolvedSubject } from "@/lib/privacy/subject";
 
 /**
@@ -7,6 +7,13 @@ import { resolveSubject, type PersonalDataSubject, type ResolvedSubject } from "
  * JSON document, across the same tables erase.ts removes from. Used by the
  * shopper's own "Download my data" (audience "customer") and the admin's
  * per-customer / per-email export (audience "admin").
+ *
+ * Which rows count as the person's depends on who asks (SubjectTrust in
+ * subject.ts): the owner's export matches every email and phone on the
+ * account; the shopper's own copy only what their session proves — the
+ * account's rows, plus rows keyed to its email once that email is verified.
+ * The `limitations` list says so in the file itself, so a shopper is not left
+ * thinking a shorter export is a complete one.
  *
  * What is deliberately NOT included: password hashes, session and token
  * material, the rendered bodies of emails (they hold live links — see
@@ -18,6 +25,8 @@ export type ExportAudience = "customer" | "admin";
 
 export interface PersonalDataExport {
   generatedAt: string;
+  /** Plain-language notes on what this copy does not cover (empty for the owner's). */
+  limitations: string[];
   subject: { customerId: string | null; emails: string[]; phones: string[] };
   account: unknown;
   addresses: unknown[];
@@ -34,6 +43,8 @@ export interface PersonalDataExport {
   journeyMessages: unknown[];
   campaignMessages: unknown[];
   emailLog: unknown[];
+  /** Admin only: emails addressed to someone else (the store's own new-order alert) that quote this person. */
+  emailMentions: unknown[];
   abandonedCarts: unknown[];
   legacyOrderEvents: unknown[];
   adminNotifications: unknown[];
@@ -43,7 +54,7 @@ export async function exportPersonalData(
   input: PersonalDataSubject,
   options: { audience: ExportAudience },
 ): Promise<PersonalDataExport> {
-  const subject = await resolveSubject(input);
+  const subject = await resolveSubject(input, { trust: options.audience === "customer" ? "self-service" : "admin" });
   return collectPersonalData(subject, options.audience);
 }
 
@@ -70,6 +81,7 @@ async function collectPersonalData(subject: ResolvedSubject, audience: ExportAud
     journeyMessages,
     campaignMessages,
     emailLog,
+    emailMentions,
     abandonedCarts,
     legacyOrderEvents,
     adminNotifications,
@@ -172,6 +184,16 @@ async function collectPersonalData(subject: ResolvedSubject, audience: ExportAud
       orderBy: { createdAt: "asc" },
       select: { to: true, kind: true, subject: true, status: true, createdAt: true, sentAt: true },
     }),
+    audience === "admin" && outboxBodyMentions(subject).length > 0
+      ? db.emailOutbox.findMany({
+          where: {
+            OR: outboxBodyMentions(subject),
+            ...(subject.emails.length > 0 ? { NOT: { OR: emailMatches("to", subject) } } : {}),
+          },
+          orderBy: { createdAt: "asc" },
+          select: { to: true, kind: true, subject: true, status: true, createdAt: true },
+        })
+      : [],
     db.cartAbandonmentEvent.findMany({
       where: { OR: emailMatches("email", subject) },
       select: { email: true, itemCount: true, subtotal: true, recovered: true, createdAt: true },
@@ -191,6 +213,7 @@ async function collectPersonalData(subject: ResolvedSubject, audience: ExportAud
 
   return {
     generatedAt: new Date().toISOString(),
+    limitations: exportLimitations(subject),
     subject: { customerId, emails: subject.emails, phones: subject.phones },
     account,
     addresses,
@@ -207,8 +230,23 @@ async function collectPersonalData(subject: ResolvedSubject, audience: ExportAud
     journeyMessages,
     campaignMessages,
     emailLog,
+    emailMentions,
     abandonedCarts,
     legacyOrderEvents,
     adminNotifications,
   };
+}
+
+function exportLimitations(subject: ResolvedSubject): string[] {
+  if (subject.trust !== "self-service") return [];
+  const notes: string[] = [];
+  if (!subject.emailVerified) {
+    notes.push(
+      "Your email address is not verified yet, so this copy only covers records attached to your account. Verify your email to also include guest orders, enquiries, newsletter and other records made with that address.",
+    );
+  }
+  notes.push(
+    "Records we hold only against a phone number (for example a WhatsApp opt-in) are not linked to your account because the number is not verified. Contact us and we will look them up for you.",
+  );
+  return notes;
 }

@@ -17,6 +17,10 @@ export type MarketingStatus = "subscribed" | "pending" | "unsubscribed" | "none"
 interface Props {
   email: string;
   marketing: MarketingStatus;
+  /** Whether the account's email is verified. Records made as a guest with this
+   * address (orders, enquiries, subscriptions) are only included in the data
+   * download and the deletion once it is. */
+  emailVerified: boolean;
   /** Set by the email-change confirmation link when it could not be applied. */
   emailChangeNotice?: "invalid";
 }
@@ -24,7 +28,7 @@ interface Props {
 const inputClass =
   "w-full rounded-2xl border border-border px-4 py-3 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/20";
 
-export function PrivacyControls({ email, marketing, emailChangeNotice }: Props) {
+export function PrivacyControls({ email, marketing, emailVerified, emailChangeNotice }: Props) {
   return (
     <section aria-labelledby="privacy-heading" className="max-w-md space-y-6">
       <div>
@@ -40,8 +44,8 @@ export function PrivacyControls({ email, marketing, emailChangeNotice }: Props) 
       )}
       <ChangeEmailForm currentEmail={email} />
       <MarketingToggle initial={marketing} />
-      <DownloadData />
-      <DeleteAccount />
+      <DownloadData emailVerified={emailVerified} />
+      <DeleteAccount emailVerified={emailVerified} />
     </section>
   );
 }
@@ -175,7 +179,21 @@ function MarketingToggle({ initial }: { initial: MarketingStatus }) {
   );
 }
 
-function DownloadData() {
+/** What a shopper's own copy / deletion can and cannot reach — the same limits
+ * the server applies (SubjectTrust in src/lib/privacy/subject.ts). */
+function ReachNote({ emailVerified }: { emailVerified: boolean }) {
+  return (
+    <p className="text-xs text-muted">
+      {emailVerified
+        ? "This covers your account and everything we hold against your verified email address. "
+        : "Your email isn't verified yet, so this only covers records attached to your account — verify your email first to include guest orders, enquiries and subscriptions made with it. "}
+      Records we hold only against a phone number (such as a WhatsApp opt-in) aren&apos;t linked to your account; contact
+      us and we&apos;ll handle those too.
+    </p>
+  );
+}
+
+function DownloadData({ emailVerified }: { emailVerified: boolean }) {
   return (
     <div className="space-y-3 rounded-2xl border border-border p-5">
       <h4 className="font-semibold text-ink">Download your data</h4>
@@ -183,6 +201,7 @@ function DownloadData() {
         A copy of everything we hold about you — profile, addresses, orders, reviews, preferences and the emails we
         sent — as a JSON file.
       </p>
+      <ReachNote emailVerified={emailVerified} />
       <a href="/api/account/export" download className={buttonClassNames({ variant: "outline" })}>
         Download my data
       </a>
@@ -190,7 +209,7 @@ function DownloadData() {
   );
 }
 
-function DeleteAccount() {
+function DeleteAccount({ emailVerified }: { emailVerified: boolean }) {
   const router = useRouter();
   const id = useId();
   const [open, setOpen] = useState(false);
@@ -230,6 +249,7 @@ function DeleteAccount() {
         placed are kept for our tax records but no longer carry your name, email, phone or street address. This cannot
         be undone.
       </p>
+      <ReachNote emailVerified={emailVerified} />
       {!open ? (
         <Button variant="outline" onClick={() => setOpen(true)}>
           Delete my account…

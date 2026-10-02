@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { logAuditEvent } from "@/lib/auth/audit";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import { exportPersonalData } from "@/lib/privacy/export";
+import { PrivacySubjectError } from "@/lib/privacy/subject";
 import { identityRateLimitOrResponse } from "@/lib/security/rate-limit";
 
 /**
@@ -10,7 +11,11 @@ import { identityRateLimitOrResponse } from "@/lib/security/rate-limit";
  * marketing consent, enquiries, email log and more; see
  * src/lib/privacy/export.ts for the scope and what is deliberately left out).
  * Only ever the caller's own data: the customer id comes from the session,
- * never from the request.
+ * never from the request, and only what the session proves is matched — rows
+ * keyed to the account, plus rows keyed to its email once that email is
+ * verified (an unverified account could otherwise be registered with a
+ * stranger's address to read their orders). See SubjectTrust in
+ * src/lib/privacy/subject.ts.
  */
 export async function GET(request: Request) {
   const session = await getCustomerSession();
@@ -24,7 +29,14 @@ export async function GET(request: Request) {
   });
   if (limited) return limited;
 
-  const data = await exportPersonalData({ customerId: session.id }, { audience: "customer" });
+  let data;
+  try {
+    data = await exportPersonalData({ customerId: session.id }, { audience: "customer" });
+  } catch (error) {
+    // The account vanished between the session check and the export.
+    if (error instanceof PrivacySubjectError) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    throw error;
+  }
 
   await logAuditEvent({
     action: "export",
