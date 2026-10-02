@@ -23,6 +23,7 @@ import { useOutfitTryOn } from "@/hooks/use-outfit-try-on";
 import { resolveMixMatchProducts } from "@/lib/mix-match/resolve-products";
 import type { TryOnGender } from "@/lib/outfit/types";
 import type { Product } from "@/lib/types";
+import type { WishlistProduct } from "@/lib/wishlist/live-products";
 import { Check, Heart, ShoppingBag } from "lucide-react";
 import { useMemo, useState } from "react";
 
@@ -74,7 +75,7 @@ export function MixMatchStudioBuilder({ products }: MixMatchStudioBuilderProps) 
     setConfig((current) => ({ ...current, [key]: value }));
   };
 
-  const applyFavorite = (product: Product) => {
+  const applyFavorite = (product: WishlistProduct) => {
     const patch = applyFavoriteToConfig(product);
     setConfig((current) => ({ ...current, ...patch }));
     if (product.colorName) {

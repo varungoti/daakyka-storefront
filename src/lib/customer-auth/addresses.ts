@@ -45,6 +45,32 @@ export async function createAddressForCustomer(
 }
 
 /**
+ * PATCH /api/account/addresses/[id]'s write, kept here for the same
+ * testability reason as the helpers above. `data` is the already-validated
+ * partial body (customerAddressUpdateSchema): a key that is absent is left
+ * alone, a key that is `null` clears the column (F-130 — a blank label, line 2
+ * or phone). Making this address the default clears every other default in the
+ * same transaction (F-134), so a request that races another PATCH/POST for this
+ * customer can never leave two addresses marked default at once.
+ */
+export async function updateAddressForCustomer(
+  id: string,
+  customerId: string,
+  data: Prisma.CustomerAddressUpdateInput,
+) {
+  return db.$transaction(async (tx) => {
+    if (data.isDefault) {
+      await tx.customerAddress.updateMany({
+        where: { customerId, id: { not: id } },
+        data: { isDefault: false },
+      });
+    }
+
+    return tx.customerAddress.update({ where: { id }, data });
+  });
+}
+
+/**
  * F-134 fix: deleting the default address used to promote nothing, so
  * "default address" silently stopped meaning anything the moment it was
  * removed — the customer's oldest remaining address (if any) is promoted

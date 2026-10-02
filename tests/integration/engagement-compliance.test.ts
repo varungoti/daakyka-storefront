@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { subscribeToNewsletter, confirmNewsletterSubscriber } from "@/lib/engagement/newsletter";
 import { POST as postNewsletterSubscribe } from "@/app/api/newsletter/subscribe/route";
 import { unsubscribeByToken, isValidUnsubscribeToken } from "@/lib/engagement/unsubscribe";
+import { GET as getUnsubscribe, POST as postUnsubscribe } from "@/app/api/unsubscribe/route";
 import { resolveSegmentRecipients } from "@/lib/engagement/segment-resolver";
 import { claimCampaignForSending, dispatchCampaign } from "@/lib/engagement/campaign-dispatcher";
 import { claimCronRun, runWithCronClaim } from "@/lib/cron/idempotency";
@@ -214,6 +215,9 @@ describe("engagement compliance", () => {
 
       assert.deepEqual(newBody, existingBody, "response body must not reveal subscription state");
       assert.equal(newBody.id, undefined, "response must not echo a subscriber id");
+      // F-086: the one message has to be true for both — it must not promise an
+      // email to an address that gets none, nor say who is subscribed.
+      assert.match(String(newBody.message), /^If this address isn't already subscribed/);
     });
   });
 
@@ -296,6 +300,64 @@ describe("engagement compliance", () => {
       assert.equal(isValidUnsubscribeToken("not-a-real-token"), false);
       const result = await unsubscribeByToken("not-a-real-token");
       assert.equal(result.ok, false);
+    });
+
+    // F-055: GET used to unsubscribe (a mail scanner prefetching the
+    // List-Unsubscribe URL could silently unsubscribe a recipient) and
+    // answered with raw JSON. It must only redirect to the confirmation page.
+    it("GET /api/unsubscribe redirects to the confirmation page without unsubscribing", async () => {
+      const email = testEmail("unsubscribe-get");
+      await subscribeToNewsletter({ email, source: "test" });
+      const subscriber = await db.newsletterSubscriber.findUnique({ where: { email } });
+      await confirmNewsletterSubscriber(subscriber!.confirmToken!);
+      const confirmed = await db.newsletterSubscriber.findUnique({ where: { email } });
+
+      const response = await getUnsubscribe(
+        new Request(`http://localhost/api/unsubscribe?token=${confirmed!.unsubscribeToken}`),
+      );
+      assert.equal(response.status, 303);
+      const location = new URL(response.headers.get("location") ?? "");
+      assert.equal(location.pathname, "/unsubscribe");
+      assert.equal(location.searchParams.get("token"), confirmed!.unsubscribeToken);
+
+      const after = await db.newsletterSubscriber.findUnique({ where: { email } });
+      assert.equal(after?.unsubscribedAt, null, "a GET must never unsubscribe");
+    });
+
+    it("GET /api/unsubscribe without a token still lands on the page, which explains the missing token", async () => {
+      const response = await getUnsubscribe(new Request("http://localhost/api/unsubscribe"));
+      assert.equal(response.status, 303);
+      const location = new URL(response.headers.get("location") ?? "");
+      assert.equal(location.pathname, "/unsubscribe");
+      assert.equal(location.search, "");
+    });
+
+    it("POST /api/unsubscribe still unsubscribes (RFC 8058 one-click) and answers 400 for an unknown link", async () => {
+      const email = testEmail("unsubscribe-post");
+      await subscribeToNewsletter({ email, source: "test" });
+      const subscriber = await db.newsletterSubscriber.findUnique({ where: { email } });
+      await confirmNewsletterSubscriber(subscriber!.confirmToken!);
+      const confirmed = await db.newsletterSubscriber.findUnique({ where: { email } });
+
+      const ok = await postUnsubscribe(
+        new Request(`http://localhost/api/unsubscribe?token=${confirmed!.unsubscribeToken}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: "List-Unsubscribe=One-Click",
+        }),
+      );
+      assert.equal(ok.status, 200);
+      const after = await db.newsletterSubscriber.findUnique({ where: { email } });
+      assert.ok(after?.unsubscribedAt);
+
+      const invalid = await postUnsubscribe(
+        new Request("http://localhost/api/unsubscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: "cinvalidtoken000000000000" }),
+        }),
+      );
+      assert.equal(invalid.status, 400);
     });
   });
 

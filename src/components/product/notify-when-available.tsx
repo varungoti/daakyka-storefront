@@ -1,5 +1,6 @@
 "use client";
 
+import { CollectionNotice } from "@/components/legal/collection-notice";
 import { useState } from "react";
 
 interface NotifyWhenAvailableProps {
@@ -84,6 +85,7 @@ export function NotifyWhenAvailable({ variantId }: NotifyWhenAvailableProps) {
           {error}
         </span>
       )}
+      <CollectionNotice purpose="We'll only use your email to tell you when this is back in stock." className="mt-2" />
     </form>
   );
 }

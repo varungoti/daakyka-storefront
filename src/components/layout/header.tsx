@@ -212,6 +212,15 @@ function isNavItemActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
+// F-090: the desktop nav starts at `lg` (1024px), where eight labels at the
+// full xl padding and tracking don't fit on one row — "FOR HOSPITALS",
+// "SCHOOL UNIFORMS", "KIDS WEAR" and "SIZE GUIDE" each broke onto two lines on
+// an iPad in landscape. `whitespace-nowrap` keeps a label on one line at any
+// width, and the tighter lg spacing is what makes them all fit; xl restores the
+// roomier look.
+const NAV_ITEM_CLASSES =
+  "whitespace-nowrap px-2.5 py-3 text-xs font-bold uppercase tracking-[0.1em] transition-colors hover:text-brand xl:px-4 xl:tracking-[0.15em]";
+
 function DesktopNav({ items, pathname }: { items: NavItem[]; pathname: string }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const navRef = useRef<HTMLDivElement>(null);
@@ -319,10 +328,7 @@ function DesktopNav({ items, pathname }: { items: NavItem[]; pathname: string })
                 key={item.id}
                 href={item.href}
                 onFocus={() => closeUnlessOwnPanel(null)}
-                className={cn(
-                  "px-4 py-3 text-xs font-bold uppercase tracking-[0.15em] transition-colors hover:text-brand",
-                  active ? "text-brand" : "text-ink",
-                )}
+                className={cn(NAV_ITEM_CLASSES, active ? "text-brand" : "text-ink")}
               >
                 {item.label}
               </Link>
@@ -342,10 +348,7 @@ function DesktopNav({ items, pathname }: { items: NavItem[]; pathname: string })
                 aria-controls={`nav-panel-${item.id}`}
                 onClick={() => (isOpen ? closeNow(item.id) : openMenu(item.id))}
                 onFocus={() => closeUnlessOwnPanel(item.id)}
-                className={cn(
-                  "flex items-center gap-1 px-4 py-3 text-xs font-bold uppercase tracking-[0.15em] transition-colors hover:text-brand",
-                  active || isOpen ? "text-brand" : "text-ink",
-                )}
+                className={cn("flex items-center gap-1", NAV_ITEM_CLASSES, active || isOpen ? "text-brand" : "text-ink")}
               >
                 {item.label}
                 <ChevronDown

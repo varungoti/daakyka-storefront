@@ -4,8 +4,9 @@ import { ProductViewTracker } from "@/components/product/product-view-tracker";
 import { JsonLdScript } from "@/components/seo/json-ld-script";
 import { brand } from "@/data/brand";
 import { getSizeChartForProduct } from "@/lib/catalog/size-charts";
-import { getCategoryBySlug, getProductByHandle, getProducts } from "@/lib/products";
+import { getBestSellers, getCategoryBySlug, getProductByHandle, getProducts } from "@/lib/products";
 import { toShopCardProduct } from "@/lib/products/card-product";
+import { pickRelatedProducts } from "@/lib/products/related";
 import { getApprovedReviews, getReviewSummary } from "@/lib/reviews";
 import { canonicalPath } from "@/lib/seo/canonical";
 import {
@@ -157,9 +158,14 @@ export default async function ProductPage({ params }: ProductPageProps) {
     consumerCareEmail: contactEmail,
   };
 
-  const related = allProducts
-    .filter((item) => item.category === product.category && item.id !== product.id)
-    .slice(0, 4);
+  // F-114: same category first, then the same section, then the best sellers —
+  // so a category with a single product still ends with recommendations. The
+  // best-seller read only happens when the first two tiers fall short.
+  const RELATED_LIMIT = 4;
+  let related = pickRelatedProducts(product, allProducts, RELATED_LIMIT);
+  if (related.length < RELATED_LIMIT) {
+    related = pickRelatedProducts(product, allProducts, RELATED_LIMIT, await getBestSellers());
+  }
 
   const base = siteUrlBase();
 

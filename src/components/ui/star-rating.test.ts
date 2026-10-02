@@ -39,6 +39,14 @@ describe("StarRating", () => {
     assert.equal(html.match(/fill-transparent/g)?.length, 2);
   });
 
+  // F-114: the PDP's review summary prints the average as a big number next to
+  // the stars, and the stars printed it again.
+  it("leaves the numeric rating out when showValue is false, and still draws the stars", () => {
+    const html = render({ rating: 4.5, showValue: false });
+    assert.equal(starCount(html), 5);
+    assert.ok(!html.includes(">4.5<"), "the number must not be printed a second time");
+  });
+
   it("omits the review count when none is passed", () => {
     const html = render({ rating: 4 });
     assert.ok(html.includes(">4.0<"));

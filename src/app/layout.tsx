@@ -3,6 +3,7 @@ import { DM_Sans, Outfit } from "next/font/google";
 import { CurrencyProvider } from "@/context/currency-provider";
 import { WishlistProvider } from "@/context/wishlist-provider";
 import { CartProvider } from "@/context/cart-provider";
+import { NavigationProgress } from "@/components/layout/navigation-progress";
 import { SiteShell } from "@/components/layout/site-shell";
 import { GlobalJsonLd } from "@/components/seo/global-json-ld";
 import { isIndexingAllowed } from "@/lib/env";
@@ -125,6 +126,7 @@ export default async function RootLayout({
             only cost every visitor a wasted DNS/TCP attempt. */}
       </head>
       <body className="min-h-full flex flex-col antialiased">
+        <NavigationProgress />
         <GlobalJsonLd contactAddress={contactAddress} contactPhone={contactPhone} contactEmail={contactEmail} />
         <CurrencyProvider freeShippingThresholdInr={freeShippingThresholdInr}>
           <WishlistProvider>

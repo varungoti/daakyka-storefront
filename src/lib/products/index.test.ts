@@ -10,6 +10,7 @@ import {
 } from "@/lib/products/index";
 import { toShopCardProduct } from "@/lib/products/card-product";
 import { toPublicSearchProduct } from "@/lib/products/public-search-product";
+import { pickRelatedProducts } from "@/lib/products/related";
 import { matchProducts } from "@/lib/search/match-products";
 import { findExactVariant, isSizeAvailableForColor, resolveVariant } from "@/lib/products/resolve-variant";
 import type { Product } from "@/lib/types";
@@ -165,6 +166,15 @@ describe("toPublicSearchProduct (F-031)", () => {
     assert.deepEqual(result.colors, [{ name: "Ceil Blue" }]);
   });
 
+  // F-113: the wishlist reads its live price, MRP and sold-out tag from this
+  // index. A yes/no and a price are not stock levels.
+  it("carries the MRP and a sold-out flag for the wishlist, but still no stock count", () => {
+    const result = toPublicSearchProduct({ ...product, compareAtPrice: 1199, available: false });
+    assert.equal(result.compareAtPrice, 1199);
+    assert.equal(result.available, false);
+    assert.equal(JSON.stringify(result).includes("stock"), false);
+  });
+
   it("is a much smaller index than the product it was cut from (F-013)", () => {
     const result = toPublicSearchProduct(product);
     assert.ok(JSON.stringify(result).length < JSON.stringify(product).length / 2);
@@ -182,6 +192,52 @@ describe("toPublicSearchProduct (F-031)", () => {
     toPublicSearchProduct(product);
     assert.equal(product.variants?.length, 1);
     assert.equal(product.variants?.[0].stock, 20);
+  });
+});
+
+// F-114: "You May Also Like" used to be the same leaf category only, so a
+// category with one product (draw sheets, pillow covers, bedsheets) had none.
+describe("pickRelatedProducts (F-114)", () => {
+  const item = (id: string, category: string, section?: Product["section"]) =>
+    ({ id, category, section }) as Pick<Product, "id" | "category" | "section">;
+
+  it("prefers the same category and never recommends the product to itself", () => {
+    const current = item("p1", "tops", "HOSPITAL");
+    const catalogue = [item("p1", "tops", "HOSPITAL"), item("p2", "tops", "HOSPITAL"), item("p3", "bottoms", "HOSPITAL")];
+    assert.deepEqual(pickRelatedProducts(current, catalogue).map((p) => p.id), ["p2", "p3"]);
+  });
+
+  it("fills up from the same section when the category has too few", () => {
+    const current = item("draw", "draw-sheets", "HOSPITAL");
+    const catalogue = [
+      item("draw", "draw-sheets", "HOSPITAL"),
+      item("a", "bedsheets", "HOSPITAL"),
+      item("b", "school-shirt", "SCHOOL"),
+      item("c", "scrub-sets", "HOSPITAL"),
+    ];
+    assert.deepEqual(pickRelatedProducts(current, catalogue).map((p) => p.id), ["a", "c"]);
+  });
+
+  it("then falls back to the best sellers, without repeating anything", () => {
+    const current = item("draw", "draw-sheets", "HOSPITAL");
+    const catalogue = [item("draw", "draw-sheets", "HOSPITAL"), item("a", "bedsheets", "HOSPITAL")];
+    const bestSellers = [item("draw", "draw-sheets", "HOSPITAL"), item("a", "bedsheets", "HOSPITAL"), item("x", "tops"), item("y", "kids")];
+    assert.deepEqual(pickRelatedProducts(current, catalogue, 4, bestSellers).map((p) => p.id), ["a", "x", "y"]);
+  });
+
+  it("stops at the limit, keeping the closest matches", () => {
+    const current = item("p0", "tops", "HOSPITAL");
+    const catalogue = [item("p0", "tops", "HOSPITAL"), ...Array.from({ length: 6 }, (_, i) => item(`t${i}`, "tops", "HOSPITAL"))];
+    assert.deepEqual(pickRelatedProducts(current, catalogue, 4).map((p) => p.id), ["t0", "t1", "t2", "t3"]);
+  });
+
+  it("gives a product with no section and no category match only the fallback", () => {
+    const current = item("p0", "misc");
+    assert.deepEqual(pickRelatedProducts(current, [item("p0", "misc"), item("a", "tops", "HOSPITAL")]).map((p) => p.id), []);
+    assert.deepEqual(
+      pickRelatedProducts(current, [item("p0", "misc")], 4, [item("x", "tops")]).map((p) => p.id),
+      ["x"],
+    );
   });
 });
 

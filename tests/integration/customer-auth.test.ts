@@ -7,7 +7,15 @@ import { HONEYPOT_FIELD_NAME } from "@/lib/validation/honeypot";
 import { hashPassword, verifyPassword } from "@/lib/customer-auth/password";
 import { hashToken, invalidateOutstandingTokens, issueCustomerToken } from "@/lib/customer-auth/tokens";
 import { updateCustomerProfile } from "@/lib/customer-auth/profile";
-import { createAddressForCustomer, deleteAddressAndPromoteDefault, loadOwnAddress } from "@/lib/customer-auth/addresses";
+import {
+  createAddressForCustomer,
+  deleteAddressAndPromoteDefault,
+  loadOwnAddress,
+  updateAddressForCustomer,
+} from "@/lib/customer-auth/addresses";
+import { buildAddressPayload } from "@/lib/customer-auth/address-payload";
+import { verifyEmailToken } from "@/lib/customer-auth/verify-email";
+import { customerAddressSchema, customerAddressUpdateSchema } from "@/lib/validation/schemas";
 import { AccountLockedError, recordFailedLogin, resetLoginFailures } from "@/lib/customer-auth/lockout";
 import { verifyCurrentPassword } from "@/lib/customer-auth/verify-current-password";
 import { revokeCustomerSessions, verifyCustomerSessionTokenResult } from "@/lib/customer-auth/session";
@@ -516,7 +524,10 @@ describe("customer accounts (Phase D1)", () => {
       assert.equal(response.status, 400);
     });
 
-    it("rejects a token that has already been consumed", async () => {
+    // F-136: a second open of the same link (a mail scanner got there first,
+    // or a double click) used to read "Verification Failed" although the
+    // email was verified.
+    it("treats a link that was already used as success once the email is verified", async () => {
       const unique = randomUUID().slice(0, 8);
       const customer = await db.customer.create({
         data: { email: `verify-reuse-${unique}@example.com`, name: "Verify Reuse Test", passwordHash: "x" },
@@ -528,11 +539,85 @@ describe("customer accounts (Phase D1)", () => {
         new Request(`http://localhost/api/account/verify-email?token=${raw}`),
       );
       assert.equal(first.status, 200);
+      assert.equal((await first.json()).alreadyVerified, false);
+      const verifiedAt = (await db.customer.findUnique({ where: { id: customer.id } }))!.emailVerifiedAt;
+      assert.ok(verifiedAt);
 
       const second = await getVerifyEmail(
         new Request(`http://localhost/api/account/verify-email?token=${raw}`),
       );
-      assert.equal(second.status, 400);
+      assert.equal(second.status, 200);
+      assert.equal((await second.json()).alreadyVerified, true);
+
+      // The original timestamp is not overwritten by the second open.
+      const after = await db.customer.findUnique({ where: { id: customer.id } });
+      assert.equal(after!.emailVerifiedAt!.getTime(), verifiedAt!.getTime());
+
+      const viaHelper = await verifyEmailToken(raw);
+      assert.deepEqual(viaHelper, { ok: true, alreadyVerified: true });
+    });
+
+    it("still rejects a used link when the account is not verified (superseded by a resend)", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: { email: `verify-superseded-${unique}@example.com`, name: "Verify Superseded", passwordHash: "x" },
+      });
+      createdCustomerIds.push(customer.id);
+      const { raw } = await issueCustomerToken(customer.id, "VERIFY");
+      await invalidateOutstandingTokens(customer.id, "VERIFY");
+
+      const response = await getVerifyEmail(
+        new Request(`http://localhost/api/account/verify-email?token=${raw}`),
+      );
+      assert.equal(response.status, 400);
+      const still = await db.customer.findUnique({ where: { id: customer.id } });
+      assert.equal(still!.emailVerifiedAt, null, "a spent link must never verify an account");
+    });
+
+    it("treats an expired link as success when the email is already verified, and a failure when it is not", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const verified = await db.customer.create({
+        data: {
+          email: `verify-expired-ok-${unique}@example.com`,
+          name: "Expired Verified",
+          passwordHash: "x",
+          emailVerifiedAt: new Date(),
+        },
+      });
+      const unverified = await db.customer.create({
+        data: { email: `verify-expired-no-${unique}@example.com`, name: "Expired Unverified", passwordHash: "x" },
+      });
+      createdCustomerIds.push(verified.id, unverified.id);
+      const okToken = await issueCustomerToken(verified.id, "VERIFY");
+      const badToken = await issueCustomerToken(unverified.id, "VERIFY");
+      await db.customerToken.updateMany({
+        where: { customerId: { in: [verified.id, unverified.id] } },
+        data: { expiresAt: new Date(Date.now() - 60_000) },
+      });
+
+      assert.deepEqual(await verifyEmailToken(okToken.raw), { ok: true, alreadyVerified: true });
+      const failed = await verifyEmailToken(badToken.raw);
+      assert.equal(failed.ok, false);
+      const stillUnverified = await db.customer.findUnique({ where: { id: unverified.id } });
+      assert.equal(stillUnverified!.emailVerifiedAt, null);
+    });
+
+    it("does not treat a spent RESET token as a verification link", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: {
+          email: `verify-wrongtype-${unique}@example.com`,
+          name: "Wrong Type",
+          passwordHash: "x",
+          emailVerifiedAt: new Date(),
+        },
+      });
+      createdCustomerIds.push(customer.id);
+      const { raw } = await issueCustomerToken(customer.id, "RESET");
+      await invalidateOutstandingTokens(customer.id, "RESET");
+
+      const result = await verifyEmailToken(raw);
+      assert.equal(result.ok, false, "only a VERIFY token can read as already-verified");
     });
   });
 
@@ -849,6 +934,83 @@ describe("customer accounts (Phase D1)", () => {
       assert.ok(tokenRow!.usedAt);
     });
 
+    // F-136: the reset link is emailed to the account's own address, so using
+    // it proves ownership the same way the verification link does.
+    it("marks an unverified account's email verified, and keeps an existing verification time", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const unverified = await db.customer.create({
+        data: {
+          email: `reset-verify-${unique}@example.com`,
+          name: "Reset Verifies",
+          passwordHash: await hashPassword("old-password-123"),
+        },
+      });
+      const earlier = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const verified = await db.customer.create({
+        data: {
+          email: `reset-keeps-${unique}@example.com`,
+          name: "Reset Keeps",
+          passwordHash: await hashPassword("old-password-123"),
+          emailVerifiedAt: earlier,
+        },
+      });
+      createdCustomerIds.push(unverified.id, verified.id);
+
+      for (const customer of [unverified, verified]) {
+        const { raw } = await issueCustomerToken(customer.id, "RESET");
+        const response = await postResetPassword(
+          jsonRequest("http://localhost/api/account/reset-password", "POST", {
+            token: raw,
+            newPassword: "new-password-456",
+          }),
+        );
+        assert.equal(response.status, 200);
+      }
+
+      const afterUnverified = await db.customer.findUnique({ where: { id: unverified.id } });
+      assert.ok(afterUnverified!.emailVerifiedAt, "a completed reset proves the customer owns the inbox");
+      const afterVerified = await db.customer.findUnique({ where: { id: verified.id } });
+      assert.equal(afterVerified!.emailVerifiedAt!.getTime(), earlier.getTime());
+    });
+
+    it("claims guest orders placed under the address once the reset verifies the account", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const email = `reset-claim-${unique}@example.com`;
+      const customer = await db.customer.create({
+        data: { email, name: "Reset Claim", passwordHash: await hashPassword("old-password-123") },
+      });
+      createdCustomerIds.push(customer.id);
+      const order = await db.order.create({
+        data: {
+          number: `DK-TEST-RESET-${unique}`,
+          email,
+          shippingAddress: { name: "Reset Claim", line1: "1 Test St", city: "Hyderabad", state: "TG", pincode: "500001", country: "IN" },
+          subtotal: 100,
+          shipping: 0,
+          discount: 0,
+          total: 100,
+          currency: "INR",
+          status: "PAID",
+          paymentMethod: "RAZORPAY",
+        },
+      });
+
+      try {
+        const { raw } = await issueCustomerToken(customer.id, "RESET");
+        const response = await postResetPassword(
+          jsonRequest("http://localhost/api/account/reset-password", "POST", {
+            token: raw,
+            newPassword: "new-password-456",
+          }),
+        );
+        assert.equal(response.status, 200);
+        const claimed = await db.order.findUnique({ where: { id: order.id } });
+        assert.equal(claimed!.customerId, customer.id);
+      } finally {
+        await db.order.delete({ where: { id: order.id } }).catch(() => {});
+      }
+    });
+
     it("rejects reusing an already-consumed reset token", async () => {
       const unique = randomUUID().slice(0, 8);
       const customer = await db.customer.create({
@@ -1144,6 +1306,91 @@ describe("customer accounts (Phase D1)", () => {
 
       const deletedFirst = await db.customerAddress.findUnique({ where: { id: first.id } });
       assert.equal(deletedFirst, null);
+    });
+
+    // F-130: an edit that emptied Address Line 2, Phone and Label used to leave
+    // all three in the database while the page said it had saved.
+    it("updateAddressForCustomer clears label, line 2 and phone when the edit empties them, and leaves omitted fields alone", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: { email: `addr-clear-${unique}@example.com`, name: "Customer", passwordHash: "x" },
+      });
+      createdCustomerIds.push(customer.id);
+
+      const filled = {
+        label: "Home",
+        recipientName: "Priya Sharma",
+        line1: "221B Baker Street",
+        line2: "Flat 4B",
+        city: "Hyderabad",
+        state: "Telangana",
+        postalCode: "500032",
+        country: "IN",
+        phone: "9876543210",
+        isDefault: false,
+      };
+      // The create path: the form's JSON through customerAddressSchema.
+      const created = customerAddressSchema.parse(JSON.parse(JSON.stringify(buildAddressPayload(filled))));
+      const address = await createAddressForCustomer(customer.id, created);
+      assert.equal(address.line2, "Flat 4B");
+      assert.equal(address.phone, "9876543210");
+      assert.equal(address.label, "Home");
+
+      // The edit path: exactly what the form puts on the wire, then what the
+      // PATCH route does with it.
+      const wire = JSON.parse(
+        JSON.stringify(buildAddressPayload({ ...filled, label: "", line2: "", phone: null })),
+      );
+      const parsed = customerAddressUpdateSchema.parse(wire);
+      const updated = await updateAddressForCustomer(address.id, customer.id, parsed);
+      assert.equal(updated.line2, null);
+      assert.equal(updated.phone, null);
+      assert.equal(updated.label, null);
+
+      const stored = await db.customerAddress.findUnique({ where: { id: address.id } });
+      assert.equal(stored!.line2, null, "line 2 must be removed in the database, not just on screen");
+      assert.equal(stored!.phone, null);
+      assert.equal(stored!.label, null);
+      assert.equal(stored!.line1, "221B Baker Street");
+
+      // A PATCH that does not mention those keys changes nothing.
+      await db.customerAddress.update({
+        where: { id: address.id },
+        data: { line2: "Flat 9", phone: "9123456780", label: "Work" },
+      });
+      await updateAddressForCustomer(address.id, customer.id, customerAddressUpdateSchema.parse({ city: "Pune" }));
+      const afterPartial = await db.customerAddress.findUnique({ where: { id: address.id } });
+      assert.equal(afterPartial!.city, "Pune");
+      assert.equal(afterPartial!.line2, "Flat 9");
+      assert.equal(afterPartial!.phone, "9123456780");
+      assert.equal(afterPartial!.label, "Work");
+    });
+
+    it("updateAddressForCustomer keeps a single default when an edit makes an address the default", async () => {
+      const unique = randomUUID().slice(0, 8);
+      const customer = await db.customer.create({
+        data: { email: `addr-upd-default-${unique}@example.com`, name: "Customer", passwordHash: "x" },
+      });
+      createdCustomerIds.push(customer.id);
+      const first = await createAddressForCustomer(customer.id, {
+        line1: "1 First Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        postalCode: "500001",
+      });
+      const second = await createAddressForCustomer(customer.id, {
+        line1: "2 Second Street",
+        city: "Hyderabad",
+        state: "Telangana",
+        postalCode: "500002",
+      });
+      assert.equal(first.isDefault, true);
+
+      await updateAddressForCustomer(second.id, customer.id, { isDefault: true });
+
+      const all = await db.customerAddress.findMany({ where: { customerId: customer.id } });
+      assert.equal(all.filter((address) => address.isDefault).length, 1);
+      assert.equal(all.find((address) => address.id === second.id)!.isDefault, true);
     });
 
     it("deleteAddressAndPromoteDefault leaves the default untouched when a non-default address is deleted", async () => {

@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { isValidUnsubscribeToken } from "@/lib/engagement/unsubscribe";
+import { classifyUnsubscribeResponse } from "@/lib/engagement/unsubscribe-response";
 
 describe("isValidUnsubscribeToken", () => {
   it("accepts a well-formed cuid-shaped token", () => {
@@ -27,5 +28,24 @@ describe("isValidUnsubscribeToken", () => {
     assert.equal(isValidUnsubscribeToken(undefined), false);
     assert.equal(isValidUnsubscribeToken(null), false);
     assert.equal(isValidUnsubscribeToken(12345), false);
+  });
+});
+
+// F-055: the /unsubscribe page told a shopper with a dead link "Something went
+// wrong. Please try again." — a permanent 400 can never succeed on retry.
+describe("classifyUnsubscribeResponse", () => {
+  it("treats any 2xx as unsubscribed", () => {
+    assert.equal(classifyUnsubscribeResponse(200), "done");
+    assert.equal(classifyUnsubscribeResponse(204), "done");
+  });
+
+  it("calls a 400 an invalid link, which is not retryable", () => {
+    assert.equal(classifyUnsubscribeResponse(400), "invalid-link");
+  });
+
+  it("separates a rate limit from a server fault", () => {
+    assert.equal(classifyUnsubscribeResponse(429), "rate-limited");
+    assert.equal(classifyUnsubscribeResponse(500), "error");
+    assert.equal(classifyUnsubscribeResponse(503), "error");
   });
 });

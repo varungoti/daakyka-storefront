@@ -17,6 +17,7 @@ import { useCart } from "@/context/cart-provider";
 import { useCurrency } from "@/context/currency-provider";
 import type { SizeChartForDisplay } from "@/lib/catalog/size-charts";
 import { selectProductGallery } from "@/lib/catalog/select-product-gallery";
+import { notesStateUnit } from "@/lib/catalog/size-chart-notes";
 import { formatDateIST } from "@/lib/format/datetime";
 import { prepareImageForUpload } from "@/lib/media/prepare-upload";
 import { computePercentOff } from "@/lib/pricing/percent-off";
@@ -256,7 +257,12 @@ export function ProductDetail({
 
           {product.colors.length > 1 && (
             <div id={PDP_COLOR_GROUP_ID}>
-              <p className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Color</p>
+              {/* F-114: name the chosen colour — the swatches alone only say it
+                  to a screen reader (aria-label), so a sighted shopper had to
+                  guess which shade "Wine" or "Ceil Blue" was. */}
+              <p className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">
+                Color: <span className="text-ink">{selectedColor}</span>
+              </p>
               <div className="flex flex-wrap gap-3">
                 {product.colors.map((color) => (
                   <button
@@ -270,7 +276,9 @@ export function ProductDetail({
                       "h-10 w-10 rounded-full border-2 transition",
                       selectedColor === color.name
                         ? "border-brand ring-2 ring-brand/20"
-                        : "border-transparent hover:border-border",
+                        : // F-114: a visible edge, so a white swatch doesn't vanish
+                          // into the white page.
+                          "border-border hover:border-brand/50",
                     )}
                     style={{ backgroundColor: color.hex }}
                   />
@@ -286,7 +294,8 @@ export function ProductDetail({
                 <button
                   type="button"
                   onClick={() => setSizeGuideOpen(true)}
-                  className="text-sm font-semibold text-brand hover:underline"
+                  // F-114: 44px-tall touch target (it was 20px).
+                  className="inline-flex min-h-11 items-center px-2 text-sm font-semibold text-brand hover:underline"
                 >
                   Size Guide
                 </button>
@@ -336,7 +345,8 @@ export function ProductDetail({
               <button
                 type="button"
                 onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                className="px-3 py-2 text-ink transition hover:bg-lilac/40"
+                // F-114: min-h-11/min-w-11 — a 44px touch target (it was 40x32).
+                className="inline-flex min-h-11 min-w-11 items-center justify-center text-ink transition hover:bg-lilac/40"
                 aria-label="Decrease quantity"
               >
                 <Minus size={16} />
@@ -349,7 +359,7 @@ export function ProductDetail({
                 // at Place Order.
                 onClick={() => setQuantity((q) => Math.min(Number.isFinite(maxQuantity) ? maxQuantity : q + 1, q + 1))}
                 disabled={quantity >= maxQuantity}
-                className="px-3 py-2 text-ink transition hover:bg-lilac/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center text-ink transition hover:bg-lilac/40 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
                 aria-label="Increase quantity"
               >
                 <Plus size={16} />
@@ -663,9 +673,13 @@ function SizeChartTable({ chart }: { chart: SizeChartForDisplay }) {
         </table>
       </div>
       {chart.notes && <p className="mt-3 text-xs text-muted">{chart.notes}</p>}
-      <p className="mt-2 text-xs text-muted">
-        Measurements in {chart.unit === "IN" ? "inches" : "centimeters"}.
-      </p>
+      {/* F-114: the unit line is skipped when the chart's own notes already
+          say it ("Measurements in inches, laid flat."), which printed it twice. */}
+      {!notesStateUnit(chart.notes) && (
+        <p className="mt-2 text-xs text-muted">
+          Measurements in {chart.unit === "IN" ? "inches" : "centimeters"}.
+        </p>
+      )}
     </div>
   );
 }
@@ -842,7 +856,9 @@ function ReviewsSection({
                 <span className="font-display text-4xl font-bold text-ink">
                   {summary.average.toFixed(1)}
                 </span>
-                <StarRating rating={summary.average} />
+                {/* F-114: the average is already the big number just before the
+                    stars, so they don't print it a second time. */}
+                <StarRating rating={summary.average} showValue={false} />
               </div>
               <p className="mt-1 text-sm text-muted">
                 Based on {summary.count} review{summary.count === 1 ? "" : "s"}

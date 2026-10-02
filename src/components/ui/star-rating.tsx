@@ -12,6 +12,10 @@ interface StarRatingProps {
    * which is wider than the whole content area of a phone-width card. From
    * `sm` up it is the normal row of five. */
   condenseOnPhone?: boolean;
+  /** Print the numeric rating next to the stars (the default). The PDP's
+   * review summary already shows the average in large type beside the stars,
+   * so it turns this off rather than printing the same number twice (F-114). */
+  showValue?: boolean;
 }
 
 export function StarRating({
@@ -20,6 +24,7 @@ export function StarRating({
   size = "sm",
   className,
   condenseOnPhone = false,
+  showValue = true,
 }: StarRatingProps) {
   const iconSize = size === "sm" ? 14 : 18;
 
@@ -39,9 +44,11 @@ export function StarRating({
         ))}
       </div>
       {condenseOnPhone && <Star size={iconSize} className="fill-amber-400 text-amber-400 sm:hidden" />}
-      <span className={cn("text-sm font-medium text-ink", condenseOnPhone && "max-sm:text-xs")}>
-        {rating.toFixed(1)}
-      </span>
+      {showValue && (
+        <span className={cn("text-sm font-medium text-ink", condenseOnPhone && "max-sm:text-xs")}>
+          {rating.toFixed(1)}
+        </span>
+      )}
       {reviewCount !== undefined && (
         <span className={cn("text-sm text-muted", condenseOnPhone && "max-sm:text-xs")}>({reviewCount})</span>
       )}

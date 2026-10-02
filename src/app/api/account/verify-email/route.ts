@@ -13,7 +13,7 @@ export async function GET(request: Request) {
   }
   const result = await verifyEmailToken(token);
   return result.ok
-    ? NextResponse.json({ ok: true })
+    ? NextResponse.json({ ok: true, alreadyVerified: result.alreadyVerified })
     : NextResponse.json({ error: result.error }, { status: 400 });
 }
 
@@ -31,6 +31,6 @@ export async function POST(request: Request) {
 
   const result = await verifyEmailToken(parsed.data.token);
   return result.ok
-    ? NextResponse.json({ ok: true })
+    ? NextResponse.json({ ok: true, alreadyVerified: result.alreadyVerified })
     : NextResponse.json({ error: result.error }, { status: 400 });
 }

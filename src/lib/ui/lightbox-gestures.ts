@@ -1,0 +1,42 @@
+/**
+ * F-114: the pan arithmetic for the full-screen image viewer, pulled out of
+ * ImageLightbox so it can be tested without a browser.
+ *
+ * The viewer draws the picture with `transform: scale(s) translate(x, y)`, so
+ * `translate` is in the picture's own (unscaled) pixels and moves it on screen
+ * by `s` times as much. A finger drag of `d` screen pixels therefore changes
+ * the translate by `d / s`. The picture is centred in a `width` x `height`
+ * box; zoomed to `s` it overhangs that box by `(s - 1) / 2` of its size on every
+ * side, which is as far as it can be dragged before the edge of the picture
+ * would come into view.
+ */
+export interface Point {
+  x: number;
+  y: number;
+}
+
+function clamp(value: number, limit: number): number {
+  return Math.min(limit, Math.max(-limit, value));
+}
+
+/** Keeps a translate inside what the zoomed picture can actually be dragged
+ * to. At scale 1 (or below) nothing can be dragged, so it is the origin. */
+export function clampTranslate(translate: Point, scale: number, width: number, height: number): Point {
+  if (scale <= 1) return { x: 0, y: 0 };
+  const maxX = (width * (scale - 1)) / (2 * scale);
+  const maxY = (height * (scale - 1)) / (2 * scale);
+  return { x: clamp(translate.x, maxX), y: clamp(translate.y, maxY) };
+}
+
+/** The translate after dragging the picture by (`dxPx`, `dyPx`) screen pixels. */
+export function panBy(
+  translate: Point,
+  dxPx: number,
+  dyPx: number,
+  scale: number,
+  width: number,
+  height: number,
+): Point {
+  if (scale <= 1) return { x: 0, y: 0 };
+  return clampTranslate({ x: translate.x + dxPx / scale, y: translate.y + dyPx / scale }, scale, width, height);
+}

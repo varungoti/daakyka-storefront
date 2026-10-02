@@ -1,6 +1,7 @@
 "use client";
 
 import type { Product } from "@/lib/types";
+import { toggleWishlistEntry, type WishlistEntry } from "@/lib/wishlist/entries";
 import {
   createContext,
   useCallback,
@@ -17,14 +18,23 @@ import {
   subscribeToWishlist,
 } from "@/context/wishlist-store";
 
+/** What toggling needs from a product: only its id and handle are kept (F-113);
+ * a full `Product` satisfies this. */
+type WishlistableProduct = Pick<Product, "id" | "handle">;
+
 interface WishlistContextValue {
-  items: Product[];
+  /** Saved entries — id and handle only. What to show for them (name, photo,
+   * price, availability) comes from the live catalogue: see
+   * useWishlistProducts. */
+  items: WishlistEntry[];
   count: number;
   isOpen: boolean;
   openWishlist: () => void;
   closeWishlist: () => void;
-  toggleWishlist: (product: Product) => void;
+  toggleWishlist: (product: WishlistableProduct) => void;
   removeFromWishlist: (productId: string) => void;
+  /** Drops several entries at once (products the catalogue no longer has). */
+  removeManyFromWishlist: (productIds: readonly string[]) => void;
   isWishlisted: (productId: string) => boolean;
 }
 
@@ -38,18 +48,22 @@ export function WishlistProvider({ children }: { children: ReactNode }) {
   );
   const [isOpen, setIsOpen] = useState(false);
 
-  const toggleWishlist = useCallback((product: Product) => {
-    setWishlistItems((current) => {
-      const exists = current.some((item) => item.id === product.id);
-      if (exists) {
-        return current.filter((item) => item.id !== product.id);
-      }
-      return [...current, product];
-    });
+  const toggleWishlist = useCallback((product: WishlistableProduct) => {
+    setWishlistItems((current) => toggleWishlistEntry(current, product));
   }, []);
 
   const removeFromWishlist = useCallback((productId: string) => {
     setWishlistItems((current) => current.filter((item) => item.id !== productId));
+  }, []);
+
+  const removeManyFromWishlist = useCallback((productIds: readonly string[]) => {
+    if (productIds.length === 0) return;
+    const gone = new Set(productIds);
+    setWishlistItems((current) => {
+      const next = current.filter((item) => !gone.has(item.id));
+      // Same array back when nothing matched, so a no-op does not re-render.
+      return next.length === current.length ? current : next;
+    });
   }, []);
 
   const isWishlisted = useCallback(
@@ -66,9 +80,10 @@ export function WishlistProvider({ children }: { children: ReactNode }) {
       closeWishlist: () => setIsOpen(false),
       toggleWishlist,
       removeFromWishlist,
+      removeManyFromWishlist,
       isWishlisted,
     }),
-    [items, isOpen, isWishlisted, removeFromWishlist, toggleWishlist],
+    [items, isOpen, isWishlisted, removeFromWishlist, removeManyFromWishlist, toggleWishlist],
   );
 
   return (

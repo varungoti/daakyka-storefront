@@ -22,6 +22,21 @@ let loaded: SearchProduct[] | null = null;
 
 export function loadSearchIndex(fetchImpl: FetchLike = (input) => fetch(input)): Promise<SearchProduct[]> {
   if (loaded) return Promise.resolve(loaded);
+  return download(fetchImpl);
+}
+
+/**
+ * F-113: downloads the index again even if an earlier call cached it. The
+ * wishlist shows prices and availability from it, and a tab left open across a
+ * price change would otherwise keep showing the price from its first download.
+ * Shares an in-flight request with `loadSearchIndex`, and a failed refresh
+ * leaves the earlier copy in place.
+ */
+export function refreshSearchIndex(fetchImpl: FetchLike = (input) => fetch(input)): Promise<SearchProduct[]> {
+  return download(fetchImpl);
+}
+
+function download(fetchImpl: FetchLike): Promise<SearchProduct[]> {
   if (pending) return pending;
 
   const request = fetchImpl(SEARCH_INDEX_URL)

@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
-import { deleteAddressAndPromoteDefault, loadOwnAddress } from "@/lib/customer-auth/addresses";
+import {
+  deleteAddressAndPromoteDefault,
+  loadOwnAddress,
+  updateAddressForCustomer,
+} from "@/lib/customer-auth/addresses";
 import { getCustomerSession } from "@/lib/customer-auth/session";
-import { db } from "@/lib/db";
 import { readJsonBody } from "@/lib/security/parse-json-body";
 import { customerAddressUpdateSchema } from "@/lib/validation/schemas";
 
@@ -34,22 +37,8 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     }
 
     // F-134: clearing every other default and setting this one happen in
-    // the same transaction as the update itself, so a request that races
-    // another PATCH/POST for this customer can never leave two addresses
-    // marked default at once.
-    const address = await db.$transaction(async (tx) => {
-      if (parsed.data.isDefault) {
-        await tx.customerAddress.updateMany({
-          where: { customerId: session.id, id: { not: id } },
-          data: { isDefault: false },
-        });
-      }
-
-      return tx.customerAddress.update({
-        where: { id },
-        data: parsed.data,
-      });
-    });
+    // the same transaction as the update itself (see updateAddressForCustomer).
+    const address = await updateAddressForCustomer(id, session.id, parsed.data);
 
     return NextResponse.json({ address });
   } catch {

@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { FocusedStatus } from "@/components/ui/focused-status";
+import { CollectionNotice } from "@/components/legal/collection-notice";
 import { HoneypotField } from "@/components/ui/honeypot-field";
 import { HONEYPOT_FIELD_NAME } from "@/lib/validation/honeypot";
 import { retryAfterMessage } from "@/lib/security/retry-after";
@@ -174,6 +175,7 @@ export function ContactForm({
       <Button type="submit" className="w-full" disabled={status === "loading"}>
         {status === "loading" ? "Sending..." : "Send Enquiry"}
       </Button>
+      <CollectionNotice purpose="We use your details only to reply to your enquiry." />
     </form>
   );
 }

@@ -9,6 +9,7 @@ import {
   customerAddressSchema,
   customerAddressUpdateSchema,
   customerForgotPasswordSchema,
+  customerProfileUpdateSchema,
   customerRegisterSchema,
   customerResetPasswordSchema,
   discountSchema,
@@ -36,6 +37,7 @@ import {
   userUpdateSchema,
 } from "@/lib/validation/schemas";
 import { formatApiError } from "@/lib/validation/format-api-error";
+import { buildAddressPayload } from "@/lib/customer-auth/address-payload";
 
 describe("validation schemas", () => {
   it("requires bulk order consent", () => {
@@ -370,6 +372,118 @@ describe("validation schemas", () => {
       assert.equal(result.data.isDefault, true);
       assert.equal(result.data.country, "IN");
     }
+  });
+
+  // F-130: label, line 2 and phone could be replaced but never removed — the
+  // form sent `undefined` for a blank field (dropped from the JSON, so the
+  // PATCH never touched the column) and the schema had no way to say "clear".
+  describe("F-130 clearing optional address and profile fields", () => {
+    const filledForm = {
+      label: "Home",
+      recipientName: "Priya Sharma",
+      line1: "221B Baker Street",
+      line2: "Flat 4B",
+      city: "Hyderabad",
+      state: "Telangana",
+      postalCode: "500032",
+      country: "IN",
+      phone: "9876543210",
+      isDefault: false,
+    };
+
+    it("the form sends an emptied label, line 2 and phone as explicit nulls that survive JSON", () => {
+      const wire = JSON.parse(
+        JSON.stringify(buildAddressPayload({ ...filledForm, label: "", line2: "   ", phone: null })),
+      );
+      // An own key with a null value, not an absent key: absent means "unchanged".
+      assert.equal(Object.hasOwn(wire, "label"), true);
+      assert.equal(wire.label, null);
+      assert.equal(Object.hasOwn(wire, "line2"), true);
+      assert.equal(wire.line2, null);
+      assert.equal(Object.hasOwn(wire, "phone"), true);
+      assert.equal(wire.phone, null);
+      // Everything else is untouched.
+      assert.equal(wire.line1, "221B Baker Street");
+      assert.equal(wire.city, "Hyderabad");
+    });
+
+    it("the form still sends filled optional fields as values", () => {
+      const wire = JSON.parse(JSON.stringify(buildAddressPayload({ ...filledForm, label: " Home ", line2: " Flat 4B " })));
+      assert.equal(wire.label, "Home");
+      assert.equal(wire.line2, "Flat 4B");
+      assert.equal(wire.phone, "9876543210");
+    });
+
+    it("an edit that cleared label, line 2 and phone parses to nulls the route hands to the database", () => {
+      const wire = JSON.parse(
+        JSON.stringify(buildAddressPayload({ ...filledForm, label: "", line2: "", phone: null })),
+      );
+      const result = customerAddressUpdateSchema.safeParse(wire);
+      assert.equal(result.success, true);
+      if (result.success) {
+        assert.equal(result.data.label, null);
+        assert.equal(result.data.line2, null);
+        assert.equal(result.data.phone, null);
+        assert.equal(result.data.line1, "221B Baker Street");
+      }
+    });
+
+    it("customerAddressUpdateSchema treats null and a blank string alike as 'clear'", () => {
+      for (const blank of [null, "", "   "]) {
+        const result = customerAddressUpdateSchema.safeParse({ label: blank, line2: blank, phone: blank });
+        assert.equal(result.success, true, `${JSON.stringify(blank)} should be accepted`);
+        if (result.success) {
+          assert.equal(result.data.label, null);
+          assert.equal(result.data.line2, null);
+          assert.equal(result.data.phone, null);
+        }
+      }
+    });
+
+    it("customerAddressUpdateSchema leaves an omitted label, line 2 and phone out, so PATCH stays partial", () => {
+      const result = customerAddressUpdateSchema.safeParse({ city: "Pune" });
+      assert.equal(result.success, true);
+      if (result.success) {
+        assert.deepEqual(result.data, { city: "Pune" });
+      }
+    });
+
+    it("a non-blank phone still has to be a valid Indian mobile number", () => {
+      assert.equal(customerAddressUpdateSchema.safeParse({ phone: "12345" }).success, false);
+      assert.equal(customerAddressSchema.safeParse({ ...filledForm, phone: "12345" }).success, false);
+      const ok = customerAddressUpdateSchema.safeParse({ phone: "+91 98765 43210" });
+      assert.equal(ok.success, true);
+      if (ok.success) assert.equal(ok.data.phone, "9876543210");
+    });
+
+    it("an over-long line 2 is still rejected", () => {
+      assert.equal(customerAddressUpdateSchema.safeParse({ line2: "x".repeat(201) }).success, false);
+    });
+
+    it("a new address with no optional fields saves them as null", () => {
+      const wire = JSON.parse(
+        JSON.stringify(buildAddressPayload({ ...filledForm, label: "", line2: "", phone: null })),
+      );
+      const result = customerAddressSchema.safeParse(wire);
+      assert.equal(result.success, true);
+      if (result.success) {
+        assert.equal(result.data.line2, null);
+        assert.equal(result.data.phone, null);
+        assert.equal(result.data.label, null);
+      }
+    });
+
+    it("customerProfileUpdateSchema clears the phone on null or blank and leaves it alone when omitted", () => {
+      for (const blank of [null, "", "  "]) {
+        const result = customerProfileUpdateSchema.safeParse({ phone: blank });
+        assert.equal(result.success, true);
+        if (result.success) assert.equal(result.data.phone, null);
+      }
+      const omitted = customerProfileUpdateSchema.safeParse({ name: "Priya Sharma" });
+      assert.equal(omitted.success, true);
+      if (omitted.success) assert.equal("phone" in omitted.data, false);
+      assert.equal(customerProfileUpdateSchema.safeParse({ phone: "12345" }).success, false);
+    });
   });
 
   // F-128: customerAddressSchema.country now matches shippingAddressSchema

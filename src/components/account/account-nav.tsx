@@ -1,5 +1,6 @@
 "use client";
 
+import { LogoutButton } from "@/components/account/logout-button";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -51,6 +52,9 @@ export function AccountNav() {
           </Link>
         );
       })}
+      {/* F-144: sign out is reachable from every account page, not only the
+          bottom of Profile. */}
+      <LogoutButton className="sm:ml-auto" />
     </div>
   );
 }

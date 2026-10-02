@@ -1,5 +1,6 @@
 "use client";
 
+import { CollectionNotice } from "@/components/legal/collection-notice";
 import { Button } from "@/components/ui/button";
 import { FocusedStatus } from "@/components/ui/focused-status";
 import { HoneypotField } from "@/components/ui/honeypot-field";
@@ -254,6 +255,7 @@ export function BulkOrderForm() {
       <Button type="submit" className="w-full" disabled={status === "loading"}>
         {status === "loading" ? "Submitting..." : "Submit Enquiry"}
       </Button>
+      <CollectionNotice purpose="We use these details only to prepare and follow up on your quote." />
     </form>
   );
 }

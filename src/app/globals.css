@@ -251,6 +251,22 @@ textarea::placeholder {
   animation: scale-in 0.7s ease-out 0.1s both;
 }
 
+/* F-091: the top navigation progress bar (layout/navigation-progress.tsx).
+   Eases towards 85% and waits there for the new page; the reduced-motion rule
+   above collapses it to a static bar. */
+@keyframes nav-progress {
+  from {
+    width: 0;
+  }
+  to {
+    width: 85%;
+  }
+}
+
+.animate-nav-progress {
+  animation: nav-progress 8s cubic-bezier(0.1, 0.7, 0.3, 1) both;
+}
+
 @keyframes breathe {
   0%,
   100% {

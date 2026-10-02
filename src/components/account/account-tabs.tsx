@@ -2,7 +2,10 @@
 
 import { ResendVerificationButton } from "@/components/account/resend-verification-button";
 import { Button, buttonClassNames } from "@/components/ui/button";
+import { WishlistItemRow } from "@/components/wishlist/wishlist-item-row";
+import { useWishlistProducts } from "@/context/wishlist-products";
 import { useWishlist } from "@/context/wishlist-provider";
+import { buildAddressPayload } from "@/lib/customer-auth/address-payload";
 import { INDIAN_PHONE_HINT, INDIAN_PINCODE_HINT, normalizeIndianPhone, normalizeIndianPincode } from "@/lib/validation/india";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -206,18 +209,20 @@ function AddressForm({
 
     setStatus("loading");
 
-    const payload = {
-      label: form.get("label") || undefined,
+    // F-130: blank optional fields go out as `null` (clear), not `undefined`
+    // (dropped from the JSON, so never cleared) — see buildAddressPayload.
+    const payload = buildAddressPayload({
+      label: String(form.get("label") ?? ""),
       recipientName: rawRecipientName,
-      line1: form.get("line1"),
-      line2: form.get("line2") || undefined,
-      city: form.get("city"),
-      state: form.get("state"),
-      postalCode: normalizedPostalCode,
-      country: (form.get("country") as string) || "IN",
-      phone: normalizedPhone ?? undefined,
+      line1: String(form.get("line1") ?? ""),
+      line2: String(form.get("line2") ?? ""),
+      city: String(form.get("city") ?? ""),
+      state: String(form.get("state") ?? ""),
+      postalCode: normalizedPostalCode ?? "",
+      country: String(form.get("country") ?? ""),
+      phone: normalizedPhone,
       isDefault: form.get("isDefault") === "on",
-    };
+    });
 
     try {
       const response = await fetch(
@@ -468,7 +473,10 @@ function StatusBadge({ status }: { status: string }) {
 // ---------------------------------------------------------------------------
 
 export function WishlistTab() {
-  const { items } = useWishlist();
+  const { items, removeFromWishlist } = useWishlist();
+  // F-113/F-142: name, photo, price and availability are read live — the
+  // browser only keeps which products were saved.
+  const { rows, status } = useWishlistProducts();
 
   if (items.length === 0) {
     return (
@@ -486,18 +494,22 @@ export function WishlistTab() {
       <p className="mb-4 text-sm text-muted">
         Saved on this device. Syncing your wishlist to your account is coming soon.
       </p>
-      <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
-        {items.map((item) => (
-          <Link
-            key={item.id}
-            href={`/products/${item.handle}`}
-            className="rounded-2xl border border-border p-4 hover:border-brand"
-          >
-            <p className="font-semibold text-ink">{item.name}</p>
-            <p className="text-sm text-muted">₹{item.price}</p>
-          </Link>
+      <ul className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
+        {rows.map(({ entry, product }) => (
+          <WishlistItemRow
+            key={entry.id}
+            entry={entry}
+            product={product}
+            loading={status === "loading"}
+            onRemove={() => removeFromWishlist(entry.id)}
+          />
         ))}
-      </div>
+      </ul>
+      {status === "error" && (
+        <p role="status" className="mt-4 text-sm text-muted">
+          Couldn&apos;t load the latest prices and photos. Check your connection and reload the page.
+        </p>
+      )}
     </div>
   );
 }
@@ -726,23 +738,7 @@ export function ProfileTab({ customer, children }: { customer: CustomerInfo; chi
           export, delete) — rendered by the profile page, which loads the
           consent state server-side. */}
       {children}
-
-      <LogoutButton />
     </div>
-  );
-}
-
-function LogoutButton() {
-  const router = useRouter();
-  const handleLogout = async () => {
-    await fetch("/api/account/logout", { method: "POST" });
-    router.push("/");
-    router.refresh();
-  };
-  return (
-    <Button variant="outline" onClick={handleLogout}>
-      Sign Out
-    </Button>
   );
 }
 

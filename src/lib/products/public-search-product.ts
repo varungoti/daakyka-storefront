@@ -6,6 +6,10 @@ import type { Product } from "@/lib/types";
  * fields it ranks on, and src/components/search/search-dialog.tsx for what a
  * result row shows. A `colors` entry carries the name only: the dialog never
  * draws a swatch.
+ *
+ * `compareAtPrice` and `available` (a yes/no, never a stock count) are there
+ * for the wishlist (F-113), which shows a live price and a sold-out tag from
+ * this same index instead of a copy saved when the heart was tapped.
  */
 export type SearchProduct = Pick<
   Product,
@@ -14,6 +18,8 @@ export type SearchProduct = Pick<
   | "name"
   | "colorName"
   | "price"
+  | "compareAtPrice"
+  | "available"
   | "image"
   | "category"
   | "categorySlug"
@@ -47,6 +53,8 @@ export function toPublicSearchProduct(product: Product): SearchProduct {
     name: product.name,
     colorName: product.colorName,
     price: product.price,
+    compareAtPrice: product.compareAtPrice,
+    available: product.available,
     image: product.image,
     category: product.category,
     categorySlug: product.categorySlug,
