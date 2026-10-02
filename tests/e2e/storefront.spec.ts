@@ -75,6 +75,22 @@ test.describe("Storefront E2E", () => {
     });
   });
 
+  // F-154: checkout's "Having trouble? Contact us" link lands on help copy with
+  // the form already on Product Support, not the old "Checkout is being connected".
+  test("checkout help link opens a support-ready contact page", async ({ page }) => {
+    await page.goto("/contact?intent=checkout");
+    await expect(page.getByRole("heading", { name: "Need Help With Your Order?", level: 1 })).toBeVisible();
+    await expect(page.getByText(/being connected/i)).toHaveCount(0);
+    await expect(page.getByLabel("Enquiry Type")).toHaveValue("SUPPORT");
+  });
+
+  // F-131: a signed-out visitor following a deep account link is sent to sign in
+  // and returned to that exact page, not to /account.
+  test("a signed-out deep account link keeps its destination through sign-in", async ({ page }) => {
+    await page.goto("/account/orders/DK-2026-0000000001");
+    await expect(page).toHaveURL(/\/account\/login\?returnTo=%2Faccount%2Forders%2FDK-2026-0000000001$/);
+  });
+
   test("newsletter rejects without consent", async ({ page }) => {
     await page.goto("/");
     const response = await page.request.post("/api/newsletter/subscribe", {

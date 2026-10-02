@@ -2,6 +2,8 @@ import { fabricTechPages } from "@/data/fabric-tech";
 import { getSeoGuideGroups } from "@/data/seo-landing-pages";
 import { canonicalPath } from "@/lib/seo/canonical";
 import { baseOpenGraph } from "@/lib/seo/json-ld";
+import { withSeoOverride } from "@/lib/seo/records";
+import { GUIDES_INDEX_PAGE } from "@/lib/seo/static-pages";
 import { isPageEnabled } from "@/lib/settings";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { PageContentSection, PageHeroBand } from "@/components/ui/page-shell";
@@ -9,13 +11,15 @@ import { ArrowRight } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
 
-export const metadata: Metadata = {
-  title: "Medical Scrubs Guides",
-  description:
-    "Buying guides, fabric science, and hospital uniform resources from DAAKYKA Apparels — Pan India medical apparel experts.",
-  alternates: { canonical: canonicalPath("/guides") },
-  openGraph: baseOpenGraph("/guides"),
-};
+// F-052: an admin override saved for /guides in /admin/seo lands here.
+export async function generateMetadata(): Promise<Metadata> {
+  return withSeoOverride("/guides", {
+    title: GUIDES_INDEX_PAGE.title,
+    description: GUIDES_INDEX_PAGE.description,
+    alternates: { canonical: canonicalPath("/guides") },
+    openGraph: baseOpenGraph("/guides"),
+  });
+}
 
 export default async function GuidesIndexPage() {
   const { commercial, intent } = getSeoGuideGroups();
@@ -26,7 +30,7 @@ export default async function GuidesIndexPage() {
       <PageHeroBand innerClassName="max-w-4xl text-center">
         <SectionHeading
           eyebrow="Knowledge Hub"
-          title="Medical Apparel Guides"
+          title={GUIDES_INDEX_PAGE.h1}
           description="Expert guides for choosing scrubs, hospital uniforms, fabric technology, and institutional procurement — built for healthcare professionals across India."
           align="center"
           titleAs="h1"

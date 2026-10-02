@@ -6,6 +6,7 @@ import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { AccountNav } from "@/components/account/account-nav";
+import { RegisteredNotice } from "@/components/account/register-form";
 import { BulkOrderForm } from "@/components/bulk-orders/bulk-order-form";
 import { ContactForm } from "@/components/contact/contact-form";
 import { UnsubscribeForm } from "@/components/engagement/unsubscribe-form";
@@ -237,5 +238,47 @@ describe("pdp and navigation sources (F-090, F-091, F-114)", () => {
     assert.match(source, /"border-border hover:border-brand\/50"/);
     assert.equal(source.match(/min-h-11 min-w-11/g)?.length, 2, "both quantity buttons");
     assert.match(source, /inline-flex min-h-11 items-center px-2 text-sm font-semibold text-brand/);
+  });
+});
+
+describe("registration notice (F-136)", () => {
+  it("tells a new customer which address the verification link went to, and offers Continue", () => {
+    const html = render(
+      h(AppRouterContext.Provider, { value: router }, createElement(RegisteredNotice, { email: "nurse@example.com", returnTo: "/checkout" })),
+    );
+    assert.match(html, /Account created/);
+    assert.match(html, /verification link to <span[^>]*>nurse@example\.com<\/span>/);
+    assert.match(html, /inbox/);
+    assert.match(html, /<button[^>]*>Continue<\/button>/);
+    // A live region, so a screen reader announces it when the form is replaced.
+    assert.match(html, /role="status"/);
+  });
+
+  it("escapes the address it echoes back", () => {
+    const html = render(
+      h(AppRouterContext.Provider, { value: router }, createElement(RegisteredNotice, { email: '<img src=x onerror="1">', returnTo: "/account" })),
+    );
+    assert.ok(!html.includes("<img"));
+  });
+
+  it("the register form swaps to the notice on success instead of redirecting straight on", () => {
+    const source = readFileSync(path.join(process.cwd(), "src/components/account/register-form.tsx"), "utf8");
+    const handler = source.slice(source.indexOf("const handleSubmit"), source.indexOf("if (registeredEmail !== null)"));
+    assert.ok(handler.includes("setRegisteredEmail("));
+    assert.ok(!handler.includes("router.push(returnTo)"), "navigation happens from the notice's Continue button");
+    assert.ok(!handler.includes("router.refresh()"), "a refresh would redirect the signed-in visitor off /account/register past the notice");
+  });
+});
+
+describe("checkout help on /contact (F-154)", () => {
+  it("asks what went wrong at checkout, not for uniform requirements, when opened from checkout", () => {
+    const help = render(createElement(ContactForm, { defaultType: "SUPPORT", checkoutHelp: true }));
+    assert.match(help, /What went wrong at checkout\?/);
+    assert.doesNotMatch(help, /uniform or linen requirements/);
+    assert.match(help, /<option value="SUPPORT" selected="">Product Support<\/option>/);
+
+    const plain = render(createElement(ContactForm));
+    assert.match(plain, /uniform or linen requirements/);
+    assert.doesNotMatch(plain, /went wrong at checkout/);
   });
 });

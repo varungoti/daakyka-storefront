@@ -1,4 +1,5 @@
 import { AddressesTab } from "@/components/account/account-tabs";
+import { accountLoginPath } from "@/lib/customer-auth/return-to";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import { db } from "@/lib/db";
 import type { Metadata } from "next";
@@ -14,7 +15,7 @@ export const metadata: Metadata = { title: "My Addresses" };
  */
 export default async function AccountAddressesPage() {
   const session = await getCustomerSession();
-  if (!session) redirect("/account/login?returnTo=/account/addresses");
+  if (!session) redirect(accountLoginPath("/account/addresses"));
 
   const addresses = await db.customerAddress.findMany({
     where: { customerId: session.id },

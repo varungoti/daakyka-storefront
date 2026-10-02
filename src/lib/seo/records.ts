@@ -3,14 +3,15 @@ import { logAuditEvent } from "@/lib/auth/audit";
 import { db } from "@/lib/db";
 import type { SeoPageRecord } from "@/generated/prisma/client";
 import type { z } from "zod";
-import { isWiredSeoPath } from "@/lib/seo/wired-paths";
+import { mergeSeoOverride, type SeoOverride } from "@/lib/seo/apply-override";
+import { WIRED_SEO_PATHS, isWiredSeoPath } from "@/lib/seo/wired-paths";
 import type { seoPageRecordSchema, seoPageRecordUpdateSchema } from "@/lib/validation/schemas";
+import type { Metadata } from "next";
 
-// isWiredSeoPath (src/lib/seo/wired-paths.ts): both wired paths are
-// statically prerendered (confirmed via `npm run build`'s route list: "○
-// /" and "ƒ /shop" — home in particular is fully static), so an admin edit
-// needs an explicit revalidatePath() or it would never show up without a
-// full rebuild/redeploy — the whole point of making these editable. Any
+// isWiredSeoPath (src/lib/seo/wired-paths.ts): most wired paths are
+// statically prerendered (home in particular is fully static), so an admin
+// edit needs an explicit revalidatePath() or it would never show up without
+// a full rebuild/redeploy — the whole point of making these editable. Any
 // other path is just a recorded override with no live storefront read, so
 // there's nothing to revalidate for it.
 
@@ -33,14 +34,14 @@ function safeRevalidatePath(path: string): void {
  * read `db.seoPageRecord.findMany()`, with no write path at all).
  *
  * Previously these rows were purely a dashboard/audit display with no
- * storefront read path. getSeoOverrideForPath() below is now called from
- * src/app/page.tsx and src/app/shop/page.tsx's generateMetadata() so an
- * admin override actually reaches <title>/<meta name="description">
- * for the home and shop pages — the two highest-traffic pages, and a
- * small, low-risk place to start. Every other page (category, product,
- * blog, etc.) still generates its own metadata from its own content, same
- * as before; wiring all of them up is a larger, separate follow-up (see
- * the task report).
+ * storefront read path. getSeoOverrideForPath() / withSeoOverride() below are
+ * now called from the generateMetadata() of every page listed in
+ * src/lib/seo/wired-paths.ts (home, shop, bulk-orders, about, contact, the
+ * guides index and each guide) so an admin override actually reaches
+ * <title>/<meta name="description"> there. Category, product and blog pages
+ * still generate their metadata from their own content (category and product
+ * SEO fields have their own columns); a path outside that list is recorded
+ * but never read.
  */
 
 export type SeoPageRecordInput = z.infer<typeof seoPageRecordSchema>;
@@ -68,7 +69,7 @@ export class SeoPagePathConflictError extends Error {
  * doesn't call this. */
 export class SeoPagePathNotWiredError extends Error {
   constructor(path: string) {
-    super(`"${path}" isn't read live by the storefront yet — only / and /shop are`);
+    super(`"${path}" isn't read live by the storefront yet — pick one of the listed pages`);
     this.name = "SeoPagePathNotWiredError";
   }
 }
@@ -194,4 +195,29 @@ export async function getSeoOverrideForPath(
   } catch {
     return null;
   }
+}
+
+/** Every stored override whose path the storefront actually reads (see
+ * WIRED_SEO_PATHS), in one query — for the admin SEO audit, which would
+ * otherwise do one lookup per wired page. Never throws (returns an empty map
+ * on a DB error), same as getSeoOverrideForPath. */
+export async function listLiveSeoOverrides(): Promise<Map<string, SeoOverride>> {
+  try {
+    const records = await db.seoPageRecord.findMany({
+      where: { path: { in: [...WIRED_SEO_PATHS] } },
+      select: { path: true, title: true, metaDescription: true },
+    });
+    return new Map(records.map((record) => [record.path, { title: record.title, metaDescription: record.metaDescription }]));
+  } catch {
+    return new Map();
+  }
+}
+
+/** F-052: a page's own metadata with the admin override for `path` (if one is
+ * stored) laid over its title and description — what each wired page's
+ * generateMetadata() returns. Falls back to `base` unchanged when there is no
+ * override or the lookup fails. */
+export async function withSeoOverride(path: string, base: Metadata): Promise<Metadata> {
+  if (!isWiredSeoPath(path)) return base;
+  return mergeSeoOverride(base, await getSeoOverrideForPath(path));
 }

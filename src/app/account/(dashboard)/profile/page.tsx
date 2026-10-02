@@ -1,5 +1,6 @@
 import { ProfileTab } from "@/components/account/account-tabs";
 import { PrivacyControls } from "@/components/account/privacy-controls";
+import { accountLoginPath } from "@/lib/customer-auth/return-to";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import { db } from "@/lib/db";
 import { getMarketingStatus } from "@/lib/privacy/preferences";
@@ -21,13 +22,13 @@ export default async function AccountProfilePage({
   searchParams: Promise<{ emailChange?: string | string[] }>;
 }) {
   const session = await getCustomerSession();
-  if (!session) redirect("/account/login?returnTo=/account/profile");
+  if (!session) redirect(accountLoginPath("/account/profile"));
 
   const customer = await db.customer.findUnique({
     where: { id: session.id },
     select: { id: true, email: true, name: true, phone: true, emailVerifiedAt: true },
   });
-  if (!customer) redirect("/account/login?returnTo=/account/profile");
+  if (!customer) redirect(accountLoginPath("/account/profile"));
 
   const [marketing, { emailChange }] = await Promise.all([getMarketingStatus(customer.email), searchParams]);
 

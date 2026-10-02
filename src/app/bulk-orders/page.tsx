@@ -6,6 +6,8 @@ import { whatsappHref } from "@/lib/contact/whatsapp";
 import { getSiteImage } from "@/lib/media/get-site-image";
 import { canonicalPath } from "@/lib/seo/canonical";
 import { baseOpenGraph } from "@/lib/seo/json-ld";
+import { withSeoOverride } from "@/lib/seo/records";
+import { BULK_ORDERS_PAGE } from "@/lib/seo/static-pages";
 import { getSetting } from "@/lib/settings";
 import { Building2, MessageCircle, ShieldCheck, Users } from "lucide-react";
 import type { Metadata } from "next";
@@ -15,13 +17,16 @@ import Link from "next/link";
 // so /bulk-orders inherited the root layout's canonical (the homepage) and
 // its og:title/og:url — a B2B lead page listed in its own right in
 // sitemap.ts, not a duplicate of "/".
-export const metadata: Metadata = {
-  title: "Bulk Orders",
-  description:
-    "Bulk uniform enquiries for hospitals, schools, sports teams and corporate offices — DAAKYKA Apparels, Pan India.",
-  alternates: { canonical: canonicalPath("/bulk-orders") },
-  openGraph: baseOpenGraph("/bulk-orders"),
-};
+// F-052: an admin override saved for /bulk-orders in /admin/seo now lands
+// here too (it used to be recorded and never read).
+export async function generateMetadata(): Promise<Metadata> {
+  return withSeoOverride("/bulk-orders", {
+    title: BULK_ORDERS_PAGE.title,
+    description: BULK_ORDERS_PAGE.description,
+    alternates: { canonical: canonicalPath("/bulk-orders") },
+    openGraph: baseOpenGraph("/bulk-orders"),
+  });
+}
 
 export default async function BulkOrdersPage() {
   const [heroImage, contactWhatsapp] = await Promise.all([
@@ -34,7 +39,7 @@ export default async function BulkOrdersPage() {
       <PageHeroBand image={heroImage}>
         <SectionHeading
           eyebrow="B2B"
-          title="Uniforms for Institutions & Teams"
+          title={BULK_ORDERS_PAGE.h1}
           description="Department-wise uniform planning, logo embroidery, color standardization, and bulk pricing for hospitals, schools, sports teams, and corporate offices."
           align="center"
           titleAs="h1"

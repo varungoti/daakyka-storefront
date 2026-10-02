@@ -6,8 +6,12 @@ import manifest from "@/app/manifest";
 import { metadata as notFoundMetadata } from "@/app/not-found";
 import { generateMetadata as newsletterConfirmedMetadata } from "@/app/newsletter/confirmed/page";
 import { metadata as unsubscribeMetadata } from "@/app/unsubscribe/page";
+import { SEO_GUIDE_SLUGS } from "@/data/seo-guide-slugs";
+import { seoLandingPages } from "@/data/seo-landing-pages";
+import { mergeSeoOverride } from "@/lib/seo/apply-override";
 import { resolveCategoryMetadata } from "@/lib/seo/category-seo";
 import { siteVerification } from "@/lib/seo/verification";
+import { STATIC_WIRED_SEO_PATHS, WIRED_SEO_PATHS, isWiredSeoPath } from "@/lib/seo/wired-paths";
 
 /**
  * release-hardening F-147/F-151/F-045/F-012/F-089/F-098/F-320: per-route SEO
@@ -199,5 +203,98 @@ describe("siteVerification (F-320)", () => {
       google: "g-token",
       other: { "facebook-domain-verification": "fb-token" },
     });
+  });
+});
+
+/**
+ * F-052: an admin override saved in /admin/seo only reaches a page whose
+ * generateMetadata() reads it. WIRED_SEO_PATHS is the list the admin form
+ * offers and the API accepts, so it must be exactly the set of pages that
+ * really do — a path listed but not wired would repeat the original bug (an
+ * override that "saves" and never applies).
+ */
+describe("admin SEO overrides reach every wired page (F-052)", () => {
+  // The page file behind each static wired path (the guides share one file).
+  const PAGE_FILE: Record<(typeof STATIC_WIRED_SEO_PATHS)[number], string> = {
+    "/": "page.tsx",
+    "/shop": "shop/page.tsx",
+    "/bulk-orders": "bulk-orders/page.tsx",
+    "/about": "about/page.tsx",
+    "/contact": "contact/page.tsx",
+    "/guides": "guides/page.tsx",
+  };
+
+  it("lists the home, shop, bulk-orders, about, contact and guides pages plus every guide", () => {
+    assert.deepEqual([...STATIC_WIRED_SEO_PATHS], Object.keys(PAGE_FILE));
+    for (const slug of SEO_GUIDE_SLUGS) assert.ok(isWiredSeoPath(`/guides/${slug}`), slug);
+    assert.equal(WIRED_SEO_PATHS.length, STATIC_WIRED_SEO_PATHS.length + SEO_GUIDE_SLUGS.length);
+    assert.equal(new Set(WIRED_SEO_PATHS).size, WIRED_SEO_PATHS.length, "no duplicates");
+  });
+
+  it("does not claim paths no page reads", () => {
+    for (const path of ["/size-guide", "/our-story", "/for-hospitals", "/guides/not-a-guide", "/test-seo-x", "", "/shop/"]) {
+      assert.equal(isWiredSeoPath(path), false, path);
+    }
+  });
+
+  it("the guide slug list is exactly the guides the app serves", () => {
+    assert.deepEqual(
+      [...SEO_GUIDE_SLUGS].sort(),
+      seoLandingPages.map((page) => page.slug).sort(),
+      "update src/data/seo-guide-slugs.ts when a guide is added or removed",
+    );
+  });
+
+  it("each static wired page reads its own override in generateMetadata", () => {
+    for (const [wiredPath, file] of Object.entries(PAGE_FILE)) {
+      const source = stripComments(readSource(file));
+      const reads =
+        source.includes(`withSeoOverride("${wiredPath}"`) || source.includes(`getSeoOverrideForPath("${wiredPath}")`);
+      assert.ok(reads, `${file} must read the SEO override for ${wiredPath}`);
+    }
+  });
+
+  it("every guide's metadata reads the override for its own /guides/<slug> path", () => {
+    const source = stripComments(readSource("guides/[slug]/page.tsx"));
+    assert.ok(source.includes("withSeoOverride(`/guides/${slug}`"), "guides/[slug] must read the per-guide override");
+  });
+
+  it("no page reads an override for a path that is not wired", () => {
+    const overridePaths = new Set<string>();
+    for (const page of PAGES) {
+      const source = stripComments(readSource(page));
+      for (const match of source.matchAll(/(?:withSeoOverride|getSeoOverrideForPath)\(\s*"([^"]+)"/g)) {
+        overridePaths.add(match[1]);
+      }
+    }
+    assert.ok(overridePaths.size >= STATIC_WIRED_SEO_PATHS.length - 1);
+    for (const path of overridePaths) assert.ok(isWiredSeoPath(path), `${path} reads an override but is not in WIRED_SEO_PATHS`);
+  });
+});
+
+describe("mergeSeoOverride (F-052)", () => {
+  const base = {
+    title: "Bulk Orders",
+    description: "Page description.",
+    alternates: { canonical: "/bulk-orders" },
+    openGraph: { url: "/bulk-orders" },
+  };
+
+  it("returns the page's own metadata when there is no override", () => {
+    assert.equal(mergeSeoOverride(base, null), base);
+  });
+
+  it("replaces only the title and description, keeping the canonical and og:url", () => {
+    const merged = mergeSeoOverride(base, { title: "  Uniform Quotes  ", metaDescription: " Get a quote. " });
+    assert.equal(merged.title, "Uniform Quotes");
+    assert.equal(merged.description, "Get a quote.");
+    assert.deepEqual(merged.alternates, base.alternates);
+    assert.deepEqual(merged.openGraph, base.openGraph);
+  });
+
+  it("falls back per field when an override field is blank", () => {
+    const merged = mergeSeoOverride(base, { title: "   ", metaDescription: "Only the description." });
+    assert.equal(merged.title, base.title);
+    assert.equal(merged.description, "Only the description.");
   });
 });

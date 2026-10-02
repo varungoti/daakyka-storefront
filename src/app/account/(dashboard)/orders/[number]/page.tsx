@@ -6,6 +6,7 @@ import { OrderTrackingCard } from "@/components/account/order-tracking-card";
 import { brand } from "@/data/brand";
 import { formatCurrencyAmount } from "@/lib/currency/convert";
 import { db } from "@/lib/db";
+import { accountLoginPath } from "@/lib/customer-auth/return-to";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import { getAuthorizedOrder } from "@/lib/orders/get-order";
 import { formatReceiptDate, getReceiptPaymentSummary } from "@/lib/orders/receipt";
@@ -59,7 +60,7 @@ export default async function AccountOrderDetailPage({
   // here before this ever renders — this per-page redirect only matters
   // for a cookie that exists but no longer verifies, and must carry the
   // order number the shopper actually asked for, not the bare list.
-  if (!session) redirect(`/account/login?returnTo=${encodeURIComponent(`/account/orders/${number}`)}`);
+  if (!session) redirect(accountLoginPath(`/account/orders/${encodeURIComponent(number)}`));
 
   const requestHeaders = await headers();
   const ip = getClientIp({ headers: requestHeaders } as unknown as Request);

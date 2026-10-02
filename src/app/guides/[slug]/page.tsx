@@ -9,6 +9,7 @@ import { getPublishedBlogPosts } from "@/lib/blog";
 import { getBestSellers, getProductsByCategory } from "@/lib/products";
 import { canonicalPath } from "@/lib/seo/canonical";
 import { baseOpenGraph } from "@/lib/seo/json-ld";
+import { withSeoOverride } from "@/lib/seo/records";
 import { isPageEnabled } from "@/lib/settings";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
@@ -61,12 +62,14 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
   const { slug } = await params;
   const page = seoLandingPages.find((p) => p.slug === slug);
   if (!page) return { title: "Not Found" };
-  return {
+  // F-052: an admin override saved for this guide's path in /admin/seo lands
+  // here (the path is one of WIRED_SEO_PATHS — see src/lib/seo/wired-paths.ts).
+  return withSeoOverride(`/guides/${slug}`, {
     title: page.title,
     description: page.metaDescription,
     alternates: { canonical: canonicalPath(`/guides/${slug}`) },
     openGraph: baseOpenGraph(`/guides/${slug}`),
-  };
+  });
 }
 
 export default async function SeoGuidePage({ params }: PageProps) {

@@ -1,12 +1,18 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { generateMetadata as aboutMetadata } from "@/app/about/page";
+import { generateMetadata as bulkOrdersMetadata } from "@/app/bulk-orders/page";
 import { generateMetadata as categoryMetadata } from "@/app/category/[slug]/page";
+import { generateMetadata as contactMetadata } from "@/app/contact/page";
 import { generateMetadata as forHospitalsMetadata } from "@/app/for-hospitals/page";
+import { generateMetadata as guideMetadata } from "@/app/guides/[slug]/page";
+import { generateMetadata as guidesIndexMetadata } from "@/app/guides/page";
 import sitemap from "@/app/sitemap";
 import nextConfig from "../../next.config";
 import { getNavigation } from "@/lib/navigation/get-navigation";
 import { getCategoryTree, getProducts, type CategoryTreeNode } from "@/lib/products";
 import { db } from "@/lib/db";
+import { createSeoRecord, deleteSeoRecord, listLiveSeoOverrides, withSeoOverride } from "@/lib/seo/records";
 import { getSetting, setSetting } from "@/lib/settings";
 import { seedCatalog } from "../../prisma/seed-catalog";
 import { findAnyAdminId } from "../helpers/admin-user";
@@ -342,5 +348,79 @@ describe("category page metadata (F-098, F-101, F-012)", () => {
     const metadata = await categoryMetadata(categoryProps("no-such-category"));
     assert.deepEqual(metadata.robots, { index: false, follow: true });
     assert.equal(metadata.alternates, undefined);
+  });
+});
+
+describe("page metadata honours admin SEO overrides (F-052)", () => {
+  const TOUCHED_PATHS = ["/bulk-orders", "/about", "/contact", "/guides", "/guides/hospital-uniforms", "/size-guide"];
+  let adminId: string;
+  // Rows the seed (or an earlier run) left for these paths — put back afterwards,
+  // since the tests below clear a path to see the page's own metadata.
+  let originals: Awaited<ReturnType<typeof db.seoPageRecord.findMany>> = [];
+
+  before(async () => {
+    adminId = await findAnyAdminId();
+    originals = await db.seoPageRecord.findMany({ where: { path: { in: TOUCHED_PATHS } } });
+  });
+
+  after(async () => {
+    await db.seoPageRecord.deleteMany({ where: { path: { in: TOUCHED_PATHS } } });
+    if (originals.length) await db.seoPageRecord.createMany({ data: originals });
+  });
+
+  /** Saves an override through the same service the admin API uses, replacing
+   * any row the seed left for that path. */
+  async function saveOverride(path: string, title: string, metaDescription: string) {
+    await db.seoPageRecord.deleteMany({ where: { path } });
+    return createSeoRecord({ path, title, metaDescription }, adminId);
+  }
+
+  const pages: Array<{ path: string; metadata: () => Promise<Awaited<ReturnType<typeof aboutMetadata>>> }> = [
+    { path: "/bulk-orders", metadata: () => bulkOrdersMetadata() },
+    { path: "/about", metadata: () => aboutMetadata() },
+    { path: "/contact", metadata: () => contactMetadata() },
+    { path: "/guides", metadata: () => guidesIndexMetadata() },
+    {
+      path: "/guides/hospital-uniforms",
+      metadata: () => guideMetadata({ params: Promise.resolve({ slug: "hospital-uniforms" }) }),
+    },
+  ];
+
+  for (const { path, metadata } of pages) {
+    it(`${path}: a saved override replaces the title and description, and nothing else`, async () => {
+      await db.seoPageRecord.deleteMany({ where: { path } });
+      const own = await metadata();
+      assert.ok(own.title && own.description, `${path} has its own title and description`);
+
+      await saveOverride(path, `Override title for ${path}`, `Override description for ${path}, long enough to be a real meta description.`);
+      const overridden = await metadata();
+      assert.equal(overridden.title, `Override title for ${path}`);
+      assert.equal(overridden.description, `Override description for ${path}, long enough to be a real meta description.`);
+      // The canonical and og:url the page declares are not the admin's to change.
+      assert.deepEqual(overridden.alternates, own.alternates);
+      assert.deepEqual(overridden.openGraph, own.openGraph);
+
+      // Deleting the override puts the page's own metadata back.
+      const record = await db.seoPageRecord.findUniqueOrThrow({ where: { path } });
+      await deleteSeoRecord(record.id, adminId);
+      assert.deepEqual(await metadata(), own);
+    });
+  }
+
+  it("lists only the overrides the storefront reads, in one lookup", async () => {
+    await saveOverride("/about", "About override", "About override description that is long enough.");
+    await db.seoPageRecord.deleteMany({ where: { path: "/size-guide" } });
+    await db.seoPageRecord.create({
+      data: { path: "/size-guide", title: "Not read", metaDescription: "No page reads this one.", status: "ok", issues: "[]" },
+    });
+
+    const live = await listLiveSeoOverrides();
+    assert.equal(live.get("/about")?.title, "About override");
+    assert.equal(live.has("/size-guide"), false, "an off-wired row is recorded but never applied");
+  });
+
+  it("withSeoOverride ignores an off-wired path even when a row exists for it", async () => {
+    const base = { title: "Size Guide", description: "The page's own description." };
+    assert.deepEqual(await withSeoOverride("/size-guide", base), base);
   });
 });

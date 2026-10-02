@@ -1,6 +1,7 @@
 import { EmptyState } from "@/components/account/account-tabs";
 import { OrderStatusBadge } from "@/components/account/order-status-badge";
 import { formatCurrencyAmount } from "@/lib/currency/convert";
+import { accountLoginPath } from "@/lib/customer-auth/return-to";
 import { getCustomerSession } from "@/lib/customer-auth/session";
 import { formatDateIST } from "@/lib/format/datetime";
 import { listOrdersForCustomer } from "@/lib/orders/customer-orders";
@@ -36,11 +37,12 @@ export default async function AccountOrdersPage({
 }: {
   searchParams: Promise<{ page?: string }>;
 }) {
-  const session = await getCustomerSession();
-  if (!session) redirect("/account/login?returnTo=/account/orders");
-
   const { page: rawPage } = await searchParams;
   const page = pageParamSchema.parse(rawPage);
+
+  const session = await getCustomerSession();
+  // F-131: back to the page of the list they were on, not always page 1.
+  if (!session) redirect(accountLoginPath(page > 1 ? `/account/orders?page=${page}` : "/account/orders"));
 
   const { items, page: currentPage, totalPages, total } = await listOrdersForCustomer(session.id, { page });
 

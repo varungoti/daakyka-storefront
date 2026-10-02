@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { sanitizeReturnTo } from "@/lib/customer-auth/return-to";
+import { accountLoginPath, sanitizeReturnTo } from "@/lib/customer-auth/return-to";
 
 describe("sanitizeReturnTo", () => {
   it("accepts a plain relative path", () => {
@@ -50,5 +50,37 @@ describe("sanitizeReturnTo", () => {
 
   it("rejects an overlong value", () => {
     assert.equal(sanitizeReturnTo(`/${"a".repeat(3000)}`), "/account");
+  });
+});
+
+// F-131: every page that bounces a signed-out visitor to the login page builds the
+// URL with this, so signing in lands them back on the exact page they asked for.
+describe("accountLoginPath", () => {
+  it("carries the full path as an encoded returnTo", () => {
+    assert.equal(accountLoginPath("/account/addresses"), "/account/login?returnTo=%2Faccount%2Faddresses");
+    assert.equal(
+      accountLoginPath("/account/orders/DK-2026-0000000001"),
+      "/account/login?returnTo=%2Faccount%2Forders%2FDK-2026-0000000001",
+    );
+  });
+
+  it("keeps a query string inside returnTo instead of splitting it off as a login parameter", () => {
+    const url = new URL(accountLoginPath("/account/orders?page=3"), "https://daakyka.com");
+    assert.equal(url.pathname, "/account/login");
+    assert.deepEqual([...url.searchParams.keys()], ["returnTo"]);
+    assert.equal(url.searchParams.get("returnTo"), "/account/orders?page=3");
+  });
+
+  it("round-trips through sanitizeReturnTo, which is what the login page applies", () => {
+    for (const path of ["/account/orders/DK-X", "/account/orders?page=2", "/account/profile"]) {
+      const returnTo = new URL(accountLoginPath(path), "https://daakyka.com").searchParams.get("returnTo");
+      assert.equal(sanitizeReturnTo(returnTo), path);
+    }
+  });
+
+  it("never names another site: an unusable value falls back to /account", () => {
+    for (const bad of ["https://evil.com", "//evil.com", "/\\evil.com", "account", "/x?u=https://evil.com", ""]) {
+      assert.equal(accountLoginPath(bad), "/account/login?returnTo=%2Faccount", bad);
+    }
   });
 });

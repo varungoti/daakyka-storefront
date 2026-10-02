@@ -10,8 +10,12 @@ import { useEffect, useRef, useState } from "react";
 
 export function ContactForm({
   defaultType = "GENERAL",
+  checkoutHelp = false,
 }: {
   defaultType?: "GENERAL" | "BULK_ORDER" | "INSTITUTIONAL" | "SUPPORT";
+  /** F-154: opened from checkout's "Having trouble? Contact us" — the message
+   * prompt asks what went wrong instead of for uniform requirements. */
+  checkoutHelp?: boolean;
 }) {
   const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState("");
@@ -159,7 +163,11 @@ export function ContactForm({
           className={`w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-brand/20 ${
             fieldErrors.message ? "border-red-400 focus:border-red-500" : "border-border focus:border-brand"
           }`}
-          placeholder="Tell us about your uniform or linen requirements..."
+          placeholder={
+            checkoutHelp
+              ? "What went wrong at checkout? Tell us the products you were ordering and any error you saw..."
+              : "Tell us about your uniform or linen requirements..."
+          }
         />
         {fieldErrors.message && (
           <p id="message-error" className="mt-1 text-xs text-red-600">
