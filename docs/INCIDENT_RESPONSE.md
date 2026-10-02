@@ -42,7 +42,9 @@ Do these in order; each one is cheap to reverse and expensive to skip.
    - Suspected admin account misuse: `/admin/users` -> deactivate the user, then rotate `AUTH_SECRET`
      (below) to log every session out.
    - Suspected data exfiltration through the app: promote the last known-good deployment
-     (`npx vercel rollback`, see the go-live runbook) while you investigate.
+     (`npx vercel rollback <deployment>`; check the target first with
+     `node scripts/check-rollback-target.mjs <deployment>`, because a deployment from before
+     2026-09-22 points at the old database, see the go-live runbook) while you investigate.
 3. **Rotate the secrets that could have been exposed.** Update the value where it lives, then
    redeploy so the new value is picked up (a rollback restores the old deployment's old values, so
    never roll back past a rotation).

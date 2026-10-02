@@ -43,7 +43,8 @@ describe("env validation", () => {
   const validProductionEnv = {
     VERCEL_ENV: "production",
     AUTH_SECRET: "a".repeat(32),
-    DATABASE_URL: "postgresql://user:pass@host:5432/db",
+    // Explicit sslmode, like production (F-371); the implicit cases are tested below.
+    DATABASE_URL: "postgresql://user:pass@host:5432/db?sslmode=verify-full",
     CRON_SECRET: "cron-secret",
     // Strict mode checks this first, so every case below needs it (a CI
     // runner has no .env to supply one — F-249).
@@ -150,6 +151,66 @@ describe("env validation", () => {
         );
       },
     );
+  });
+
+  // F-371: pg prints "SSL modes ... are aliases for verify-full" on every
+  // cold start and pg v9 will silently weaken them, so a production
+  // DATABASE_URL has to pin its TLS mode explicitly. Warn-only.
+  async function sslWarningsFor(databaseUrl: string | undefined, extra: Record<string, string | undefined> = {}) {
+    const warnings: string[] = [];
+    await withEnv({ ...validProductionEnv, DATABASE_URL: databaseUrl, ...extra }, () => {
+      const originalWarn = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warnings.push(String(args[0]));
+      };
+      try {
+        assert.doesNotThrow(() => validateEnv());
+      } finally {
+        console.warn = originalWarn;
+      }
+    });
+    return warnings.filter((message) => message.includes("DATABASE_URL"));
+  }
+
+  it("warns in production when DATABASE_URL has no sslmode", async () => {
+    const warnings = await sslWarningsFor("postgresql://user:pass@db.example.com:6543/postgres?pgbouncer=true");
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /no sslmode/);
+    assert.match(warnings[0], /sslmode=verify-full/);
+  });
+
+  it("warns in production about the sslmode values pg v9 will weaken", async () => {
+    for (const mode of ["require", "prefer", "verify-ca"]) {
+      const warnings = await sslWarningsFor(`postgresql://user:pass@db.example.com:5432/postgres?sslmode=${mode}`);
+      assert.equal(warnings.length, 1, mode);
+      assert.match(warnings[0], /pg v9/);
+    }
+  });
+
+  it("warns in production about sslmodes that skip certificate verification", async () => {
+    for (const mode of ["disable", "allow", "no-verify"]) {
+      const warnings = await sslWarningsFor(`postgresql://user:pass@db.example.com:5432/postgres?sslmode=${mode}`);
+      assert.equal(warnings.length, 1, mode);
+      assert.match(warnings[0], /does not verify/);
+    }
+  });
+
+  it("does not warn when sslmode=verify-full, libpq compat is explicit, or the host is loopback", async () => {
+    assert.deepEqual(await sslWarningsFor("postgresql://u:p@db.example.com:5432/postgres?sslmode=verify-full"), []);
+    assert.deepEqual(
+      await sslWarningsFor("postgresql://u:p@db.example.com:5432/postgres?uselibpqcompat=true&sslmode=require"),
+      [],
+    );
+    assert.deepEqual(await sslWarningsFor("postgresql://u:p@localhost:5432/daakyka"), []);
+    assert.deepEqual(await sslWarningsFor("postgresql://u:p@127.0.0.1:5432/daakyka"), []);
+  });
+
+  it("never throws over the sslmode, and stays quiet outside production", async () => {
+    const warnings = await sslWarningsFor("postgresql://u:p@db.example.com:5432/postgres", {
+      VERCEL_ENV: "preview",
+      ENFORCE_PRODUCTION_ENV: undefined,
+    });
+    assert.deepEqual(warnings, []);
   });
 
   // F-237: the boot-time R2 warning fired on every production build even

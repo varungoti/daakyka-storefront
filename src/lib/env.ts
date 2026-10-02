@@ -84,6 +84,81 @@ function warnIfSiteUrlLooksProtected(): void {
   }
 }
 
+export type DatabaseSslModeIssue = "missing" | "legacy-alias" | "unverified";
+
+/**
+ * F-371: how a Postgres connection string pins TLS, as node-postgres
+ * (pg 8.x / pg-connection-string 2.x) reads it. Null means it is explicit and
+ * fine (sslmode=verify-full, an explicit uselibpqcompat=true, which is a
+ * reviewed opt-in to libpq semantics and, for require/prefer, to no
+ * certificate check at all; or ssl=true), the host is loopback, or this is
+ * not a Postgres URL.
+ *
+ * - "missing": no sslmode at all, so pg connects without TLS unless the
+ *   server insists on it.
+ * - "legacy-alias": sslmode=prefer|require|verify-ca. pg 8 treats these as
+ *   aliases for verify-full (and prints a SECURITY WARNING on every process
+ *   start, error severity in Vercel's logs); pg 9 / pg-connection-string 3
+ *   will give them weaker libpq semantics, so the next major bump would
+ *   loosen certificate checks without anyone changing the URL.
+ * - "unverified": disable, allow, no-verify, or a value pg does not know.
+ *
+ * scripts/lib/deploy-checks.mjs keeps a copy for check-deploy-env.mjs, which
+ * runs under plain node; deploy-checks.test.ts asserts the two agree.
+ */
+export function databaseSslModeIssue(databaseUrl: string | undefined): DatabaseSslModeIssue | null {
+  if (!databaseUrl) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(databaseUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") return null;
+  if (["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)) return null;
+
+  const params = parsed.searchParams;
+  if (params.get("uselibpqcompat") === "true") return null;
+  const mode = params.get("sslmode")?.toLowerCase();
+  if (!mode) {
+    const ssl = params.get("ssl")?.toLowerCase();
+    return ssl === "true" || ssl === "1" ? null : "missing";
+  }
+  if (mode === "verify-full") return null;
+  if (mode === "prefer" || mode === "require" || mode === "verify-ca") return "legacy-alias";
+  return "unverified";
+}
+
+/**
+ * F-371: a production DATABASE_URL must say how TLS is verified, explicitly.
+ * Warn only, never throw: a connection string that works today must not fail
+ * a build over wording, and an owner may have reviewed a weaker mode on
+ * purpose. docs/GO_LIVE_RUNBOOK.md ("Database TLS mode") has the full steps.
+ */
+function warnIfDatabaseSslModeIsImplicit(): void {
+  const issue = databaseSslModeIssue(process.env.DATABASE_URL);
+  if (!issue) return;
+  const fix =
+    "Set sslmode=verify-full on the production DATABASE_URL and redeploy (on pg 8 that is " +
+    "exactly what require/prefer/verify-ca already do, minus the warning).";
+  if (issue === "missing") {
+    console.warn(
+      "[env] DATABASE_URL has no sslmode, so the database connection may be unencrypted. " + fix,
+    );
+  } else if (issue === "legacy-alias") {
+    console.warn(
+      "[env] DATABASE_URL uses sslmode=prefer/require/verify-ca, which pg currently treats as " +
+        "verify-full (and warns about on every start) but pg v9 will weaken to libpq semantics. " +
+        fix,
+    );
+  } else {
+    console.warn(
+      "[env] DATABASE_URL sets a sslmode that does not verify the database server's certificate. " +
+        fix,
+    );
+  }
+}
+
 /**
  * Validates required environment variables at startup/build.
  * Strict failures only on Vercel production; CI/local builds warn instead.
@@ -97,6 +172,8 @@ export function validateEnv(): void {
     isVercelProduction() || process.env.ENFORCE_PRODUCTION_ENV === "1";
 
   const databaseUrl = process.env.DATABASE_URL ?? "";
+
+  if (enforceStrict) warnIfDatabaseSslModeIsImplicit();
 
   if (isVercel() && databaseUrl.startsWith("file:")) {
     throw new Error(

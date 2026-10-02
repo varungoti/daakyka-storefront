@@ -91,7 +91,9 @@ function die(message) {
   if (completedStages.includes("deployed to Vercel production")) {
     console.error(
       "The new code is already live. If it's broken for real users, roll back with " +
-        "`npx vercel rollback` to return to the previous production deployment while you investigate.",
+        "`npx vercel rollback <deployment>` to return to the previous production deployment while you " +
+        "investigate. Check the target first with `node scripts/check-rollback-target.mjs <deployment>`: " +
+        "a deployment built before 2026-09-22 points production at the old Neon database.",
     );
   }
   process.exit(1);

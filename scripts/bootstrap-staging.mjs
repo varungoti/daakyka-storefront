@@ -51,7 +51,7 @@ export function readAdminEmail(argv, env) {
  */
 export function generateStagingEnv({ adminEmail, random = randomBytes } = {}) {
   return {
-    DATABASE_URL: "postgresql://USER:PASSWORD@HOST:5432/daakyka_staging?sslmode=require",
+    DATABASE_URL: "postgresql://USER:PASSWORD@HOST:5432/daakyka_staging?sslmode=verify-full",
     AUTH_SECRET: random(32).toString("hex"),
     CRON_SECRET: random(24).toString("hex"),
     NEXT_PUBLIC_SITE_URL: "https://YOUR-PROJECT.vercel.app",

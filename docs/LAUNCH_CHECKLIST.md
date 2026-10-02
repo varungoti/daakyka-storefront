@@ -148,7 +148,10 @@ the account and dashboard steps that make it useful. Details: [GO_LIVE_RUNBOOK.m
 - [ ] `ERROR_WEBHOOK_URL` set on Vercel Production and a test error reaches the channel (or Sentry connected)
 - [ ] Uptime monitor on `/api/health` (not cron URLs)
 - [ ] Supabase plan and backup tier written down; restore drill done once (go-live runbook, "Backups & restore")
-- [ ] Rollback understood: `npx vercel rollback`, and migrations stay backward compatible for one release
+- [ ] Rollback understood: `npx vercel rollback`, migrations stay backward compatible for one release, and the
+      target is checked first with `node scripts/check-rollback-target.mjs <deployment>` (deployments built before
+      2026-09-22 point at the old Neon database; remove them in Vercel so nobody promotes one)
+- [ ] Production `DATABASE_URL` ends in `sslmode=verify-full` (go-live runbook, "Database TLS mode")
 - [ ] Vercel Log Drain with at least 180-day retention (CERT-In), recorded in INCIDENT_RESPONSE.md §7
 - [ ] Incident owner and backup named in INCIDENT_RESPONSE.md; counsel has confirmed the notification deadlines
 - [ ] `public/.well-known/security.txt` contact is a mailbox someone reads; renewal date on the calendar

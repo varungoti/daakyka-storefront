@@ -175,3 +175,154 @@ export function vercelIgnoreCoversEnvSecrets(vercelIgnoreText) {
     mustNotBeIgnored.every((name) => !isIgnored(name))
   );
 }
+
+/**
+ * F-371: how a Postgres connection string pins TLS, as far as node-postgres
+ * (pg 8.x / pg-connection-string 2.x) is concerned. Returns:
+ *
+ *   "missing"       no sslmode at all (and no ssl=true): pg opens a plaintext
+ *                   connection unless the server insists on TLS.
+ *   "legacy-alias"  sslmode=prefer|require|verify-ca. pg 8 treats these as
+ *                   aliases for verify-full and prints a SECURITY WARNING on
+ *                   every process start (error severity on Vercel); pg 9 will
+ *                   switch them to weaker libpq semantics, silently loosening
+ *                   certificate checks on the next major bump.
+ *   "unverified"    sslmode=disable|allow|no-verify (or anything unknown).
+ *   null            explicit and fine: sslmode=verify-full, an explicit
+ *                   uselibpqcompat=true (a reviewed choice), ssl=true, a
+ *                   loopback host, or not a Postgres URL at all.
+ *
+ * Mirrors databaseSslModeIssue() in src/lib/env.ts. That one runs inside the
+ * app; this copy exists because check-deploy-env.mjs runs under plain `node`,
+ * before any TypeScript loader. deploy-checks.test.ts keeps the two in step.
+ */
+export function databaseUrlSslModeIssue(databaseUrl) {
+  if (!databaseUrl) return null;
+  let parsed;
+  try {
+    parsed = new URL(databaseUrl);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") return null;
+  if (["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname)) return null;
+
+  const params = parsed.searchParams;
+  if (params.get("uselibpqcompat") === "true") return null;
+  const mode = params.get("sslmode")?.toLowerCase();
+  if (!mode) {
+    const ssl = params.get("ssl")?.toLowerCase();
+    return ssl === "true" || ssl === "1" ? null : "missing";
+  }
+  if (mode === "verify-full") return null;
+  if (mode === "prefer" || mode === "require" || mode === "verify-ca") return "legacy-alias";
+  return "unverified";
+}
+
+/**
+ * F-344: Vercel keeps, per deployment, the env it was built with, so an
+ * Instant Rollback to a deployment built while production still pointed at
+ * the old Neon database serves the live store from that database. Every
+ * production build runs `prisma migrate deploy`, and Prisma prints which
+ * database it migrated:
+ *
+ *   Datasource "db": PostgreSQL database "postgres", schema "public" at "<host>:5432"
+ *
+ * These helpers read that line out of `vercel inspect <deployment> --logs`
+ * so scripts/check-rollback-target.mjs can refuse a target that was built
+ * against anything but the current production database.
+ */
+
+/** Database hosts known to be a retired production database. */
+const RETIRED_DATABASE_HOSTS = [/(^|\.)neon\.tech$/i];
+
+/** Lower-cased hostnames from every Prisma `Datasource ... at "host:port"` line, de-duplicated. */
+export function extractDatasourceHosts(buildLog) {
+  const hosts = new Set();
+  for (const match of String(buildLog ?? "").matchAll(/Datasource\s+"[^"\n]*":[^\n]*?\sat\s+"([^"\n]+)"/gi)) {
+    const host = match[1].trim().toLowerCase().replace(/:\d+$/, "");
+    if (host) hosts.add(host);
+  }
+  return [...hosts];
+}
+
+/** Lower-cased hostname of a Postgres URL, or null. Never returns credentials. */
+export function databaseHostFromUrl(databaseUrl) {
+  if (!databaseUrl) return null;
+  try {
+    return new URL(databaseUrl).hostname.toLowerCase() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Decides whether a deployment's build log proves it was built against the
+ * current production database. Fails closed: no `Datasource` line (a Preview
+ * build never migrates, a truncated log, a CLI format change) is "unsafe",
+ * because nothing proves which database that build used.
+ *
+ * `expectedHost` is the production database host. Without it only the known
+ * retired hosts (Neon) can be rejected, and a clean result is reported with
+ * `confirmed: false` so the caller can say so instead of claiming safety.
+ */
+export function classifyRollbackTarget(buildLog, { expectedHost } = {}) {
+  const hosts = extractDatasourceHosts(buildLog);
+  const expected = expectedHost ? expectedHost.toLowerCase() : null;
+
+  if (hosts.length === 0) {
+    return {
+      safe: false,
+      confirmed: false,
+      reason: "no-datasource",
+      hosts,
+      message:
+        "The build log has no Prisma `Datasource` line, so there is no proof of which database this " +
+        "deployment was built against (a Preview build, a truncated log, or a build that skipped migrations).",
+    };
+  }
+
+  const retired = hosts.filter((host) => RETIRED_DATABASE_HOSTS.some((pattern) => pattern.test(host)));
+  if (retired.length > 0) {
+    return {
+      safe: false,
+      confirmed: true,
+      reason: "retired-database",
+      hosts,
+      message:
+        `Built against a retired production database (${retired.join(", ")}). Rolling back to it would ` +
+        "serve the live store from the old database: orders, customers and admin edits stored in " +
+        "the current one would disappear from the store.",
+    };
+  }
+
+  if (expected) {
+    const others = hosts.filter((host) => host !== expected);
+    if (others.length > 0) {
+      return {
+        safe: false,
+        confirmed: true,
+        reason: "wrong-database",
+        hosts,
+        message: `Built against ${others.join(", ")}, not the production database ${expected}.`,
+      };
+    }
+    return {
+      safe: true,
+      confirmed: true,
+      reason: "ok",
+      hosts,
+      message: `Built against the production database host ${expected}.`,
+    };
+  }
+
+  return {
+    safe: true,
+    confirmed: false,
+    reason: "unconfirmed",
+    hosts,
+    message:
+      `Built against ${hosts.join(", ")}: not a known retired host, but no expected production database ` +
+      "host was supplied to compare against.",
+  };
+}

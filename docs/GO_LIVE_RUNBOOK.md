@@ -107,7 +107,8 @@ Steps:
 2. **Percent-encode the password** in the URL if it contains any special characters (`@`, `#`, `%`,
    `/`, etc. all need encoding, or the URL parses wrong).
 3. In Vercel Production, set `DATABASE_URL` to the transaction-pooler URL on port 6543 with
-   `pgbouncer=true` in its query string (per Supabase and Prisma's pooler guidance), and set
+   `pgbouncer=true&sslmode=verify-full` in its query string (per Supabase and Prisma's pooler
+   guidance; why `sslmode` must be explicit: [Database TLS mode](#database-tls-mode-sslmode)), and set
    `MIGRATION_DATABASE_URL` to the session-pooler URL on port 5432. The Prisma CLI uses the
    latter; the application runtime uses the former. Do not point both at the session pooler.
    This repo's local `.env` happens to keep a copy of the production value under
@@ -256,7 +257,7 @@ else these are warnings) and `.env.local.example`/`.env.staging.example`.
 
 | Variable | Requirement |
 |---|---|
-| `DATABASE_URL` | Postgres URL (not `file:`) |
+| `DATABASE_URL` | Postgres URL (not `file:`). Should carry `sslmode=verify-full`; boot and `check:deploy-env` only warn if it does not (see [Database TLS mode](#database-tls-mode-sslmode)) |
 | `AUTH_SECRET` | ≥ 32 characters |
 | `CREDENTIAL_ENCRYPTION_KEY` | Decodes to exactly 32 bytes, base64 or hex — generate with `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. Root key for `/admin/integrations` credential encryption; not itself admin-editable. |
 | `CRON_SECRET` | Any value — protects `/api/cron/*` |
@@ -328,10 +329,58 @@ What the owner still has to set up (accounts and dashboards, not code):
 
 ## Rolling back a bad deploy
 
-1. **Roll back first, debug second.** `npx vercel rollback` (or Vercel dashboard -> Deployments ->
-   the last good deployment -> Promote to Production) points the production domain at an older
-   build in seconds. It does **not** rebuild, so `scripts/vercel-build.mjs` does not run: the
-   database stays at whatever schema the newer build migrated it to.
+### Which deployment is safe to roll back to (F-344)
+
+**Not every older production deployment is a safe target.** Vercel keeps, per deployment, the env
+vars it was built with, so promoting an old deployment also restores its `DATABASE_URL`. Production
+moved from the old **Neon** database to **Supabase** on 2026-09-22. Every production deployment
+built before that (the audit found `etbbsb4tk`, 2026-09-20, `jiph2wfv5`, and everything older)
+points at Neon. Rolling back to one serves the live store from the old database: orders, customers
+and admin edits made since then disappear from the store, and new orders are written to the wrong
+database.
+
+| Deployment | Database it was built against | Roll back to it? |
+|---|---|---|
+| Any production deployment from before 2026-09-22 (`etbbsb4tk`, `jiph2wfv5`, older) | Neon (`...neon.tech`) | **Never** |
+| `kgagbak0s` (2026-09-22) | Supabase | Last resort only: it was built with the noindex / SSO-alias canonical env and its static pages baked in the legacy seed catalogue |
+| The most recent *previous* production deployment | Supabase | **Yes**, once the check below passes. This is the normal target |
+
+A safe target is a production deployment that (a) was built against the current Supabase database,
+(b) already contains every migration applied to production, and (c) is the newest one that does.
+Point (b) matters most for `20260917203326_engagement_compliance`: it backfills and then sets
+`NewsletterSubscriber.unsubscribeToken` to `NOT NULL` with no database default, so a build older
+than it cannot insert a newsletter signup against the current schema. Every build after it only
+adds things.
+
+Do not trust the deployment's date or name. Check what it was actually built against, before you
+promote it (read-only, changes nothing):
+
+```bash
+npx vercel ls storefront --prod                      # find the previous production deployment
+node scripts/check-rollback-target.mjs <deployment-url>
+```
+
+The script reads the `Datasource "db": ... at "<host>"` line Prisma prints into every production
+build log (`vercel inspect <deployment> --logs`) and compares the host with the production
+database (from `--expect-host`, `ROLLBACK_EXPECT_DB_HOST`, or the host of `SUPABASE_DATABASE_URL` /
+`MIGRATION_DATABASE_URL` in this shell or `.env`; only the host name is read and printed). It exits
+`1`, and tells you not to roll back, for a Neon-bound or any other-database build, and also when the
+log has no `Datasource` line (a Preview build, a truncated log) or there is no production host to
+compare against, because nothing then proves the target is safe. Exit `0` means the database
+matches; it does not know about migrations, so still apply point (b) yourself.
+
+**Owner action (dashboard, not code):** remove the pre-2026-09-22 production deployments so nobody
+can promote one by accident: `npx vercel remove <deployment-url>` for each Neon-bound one. Before
+deleting them, check whether the old Neon database holds leads or newsletter subscribers that were
+never copied to Supabase, and copy those first.
+
+### Steps
+
+1. **Roll back first, debug second.** `npx vercel rollback <checked deployment>` (or Vercel
+   dashboard -> Deployments -> the checked deployment -> Promote to Production) points the
+   production domain at an older build in seconds. It does **not** rebuild, so
+   `scripts/vercel-build.mjs` does not run: the database stays at whatever schema the newer build
+   migrated it to.
 2. **Therefore migrations must be backward compatible for one release** (expand, then contract):
    - Release N adds the new column or table (nullable, or with a default) and starts writing it.
    - Release N+1, only after N has been stable, stops reading the old shape.
@@ -383,6 +432,49 @@ restored is a hope, not a backup, so:
    (not public, served through `/cdn`). R2 has no automatic backup; the originals of reviewed product
    photos should also be kept outside it, in the owner's own copies.
 
+## Database TLS mode (sslmode)
+
+Production's `DATABASE_URL` must pin its TLS mode explicitly: `sslmode=verify-full` (F-371).
+For example `...?pgbouncer=true&sslmode=verify-full` on the transaction-pooler URL.
+
+Why:
+
+- The app's `pg` driver (pg 8 / pg-connection-string 2) treats `sslmode=prefer`, `require` and
+  `verify-ca` as aliases for `verify-full` and prints a `SECURITY WARNING: The SSL modes ... are
+  treated as aliases for 'verify-full'` line on every process start. Vercel files that stderr line
+  at error severity, so it repeats on every cold start and at least 3-4 times per `next build`,
+  burying real errors.
+- On pg 8 the four modes build the identical TLS config (certificate verification on, Node's CA
+  store), so switching to `sslmode=verify-full` changes nothing about how the connection behaves; it
+  only removes the warning and pins today's behaviour.
+- pg v9 / pg-connection-string v3 will give `prefer`, `require` and `verify-ca` plain libpq
+  meaning: `require` encrypts but does **not** verify the server certificate. A URL that says
+  `require` would then silently get weaker on the next major bump, with no change in the URL or in
+  this repo. A URL with no `sslmode` at all does not use TLS at all.
+- Do not "fix" the warning with `uselibpqcompat=true&sslmode=require`, even though pg's own message
+  suggests it: on pg 8 that turns certificate verification off.
+
+What to do (owner, Vercel dashboard or CLI; nothing in this repo changes the secret):
+
+1. Edit `DATABASE_URL` in the Vercel **Production** environment so its query string ends with
+   `sslmode=verify-full` (add `&sslmode=verify-full` after `pgbouncer=true`; replace any existing
+   `sslmode=`). Do the same for a staging `DATABASE_URL` if you use one.
+2. Leave `MIGRATION_DATABASE_URL` as it is: it is read by the Prisma CLI, not the `pg` pool, and
+   does not print this warning.
+3. Redeploy, then check `GET /api/health` is `{"status":"ok"}` and that the runtime logs no longer
+   contain `aliases for 'verify-full'`. If the connection then fails with a certificate error,
+   restore the old value and escalate; do not leave `sslmode` off.
+
+Safety nets in the code: `src/lib/env.ts` logs a boot-time `[env]` warning on a Vercel production
+runtime when `DATABASE_URL` has no `sslmode`, a `prefer`/`require`/`verify-ca` one, or one that
+skips verification (it never throws), and `npm run check:deploy-env -- --production` prints the same
+as a non-blocking warning. Both stay quiet for `sslmode=verify-full`, an explicit
+`uselibpqcompat=true`, and a loopback host.
+
+**Dependency upgrades:** before bumping `pg` to v9 or `pg-connection-string` to v3, confirm the
+production and staging `DATABASE_URL` already say `sslmode=verify-full`, and read the release notes
+for the TLS changes. Test the upgrade against staging first.
+
 ## Function region
 
 `vercel.json` pins every function to `hnd1` (Tokyo), next to the production database. Before this
@@ -433,12 +525,29 @@ Environment changes only apply to new deployments; existing preview deployments 
 values until they are deleted or redeployed. If preview URLs were ever shared outside the team,
 also rotate the Supabase service key and revoke the Cloudflare API token.
 
+## Node version
+
+Everything that tests the app (the local Docker CI image `Dockerfile.ci`, the GitHub workflow, a
+typical developer machine) runs **Node 22**, but the Vercel project runs **Node 24.x**, so what is
+tested is not exactly what runs in production (F-075). `package.json` has no `engines` field and
+there is no `.nvmrc`, so nothing in the repo pins either side. This is an owner decision because
+setting `engines.node` makes Vercel use that version on the next deploy:
+
+- **Move the tests to 24** (no production change): set `node:24-bookworm` in `Dockerfile.ci`,
+  `node-version: "24"` in the three `setup-node` steps of `storefront-verify.yml`, and add
+  `"engines": { "node": "24.x" }` to `package.json`; run `node scripts/local-release.mjs` on it first.
+- **Or move production to 22**: set the Vercel project's Node.js Version to 22.x and add
+  `"engines": { "node": "22.x" }`; run a Preview deploy first.
+
+Whichever is chosen, keep Vercel, `engines`, `Dockerfile.ci` and the workflow on the same major.
+
 ## Verification commands
 
 | Command | When |
 |---------|------|
 | `npm run verify:101` | Before every merge to staging/main. Pass `--kill-port` (or `KILL_PORT=1`) to let it stop a leftover process on its port; it refuses otherwise |
 | `npm run check:deploy-env -- --production` | Before promoting env vars — checks the current shell, not Vercel itself; see the caveat in A2 |
+| `node scripts/check-rollback-target.mjs <deployment-url>` | **Before every `vercel rollback` / Promote to Production** — read-only; refuses a deployment built against the retired Neon database (see "Rolling back a bad deploy") |
 | `npm run probe:deploy -- --staging` | After staging deploy |
 | `npm run verify:staging -- --dogfood` | Full remote QA |
 
