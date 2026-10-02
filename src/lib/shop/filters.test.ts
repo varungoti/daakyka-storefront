@@ -13,6 +13,7 @@ import {
   parseShopFiltersFromSearchParams,
   parseShopSearchQuery,
   parseShopVisibleCount,
+  pruneFiltersToFacets,
   SHOP_PAGE_SIZE,
   withShopVisibleCount,
   type ShopFilters,
@@ -1103,6 +1104,42 @@ describe("deriveShopFacets", () => {
     const all = deriveShopFacets(products).price;
     const kids = deriveShopFacets(products, { category: "kids-shirts" }).price;
     assert.deepEqual(kids, all);
+  });
+
+  it("drops the colours and sizes a new category has no product in, so a pick can't hide the whole category (F-095)", () => {
+    const picked: ShopFilters = {
+      ...defaultShopFilters,
+      category: "for-kids",
+      colors: ["Wine", "navy"],
+      sizes: ["M", "2-3y"],
+      priceMax: 500,
+    };
+    const kids = deriveShopFacets(products, { category: "for-kids", categoryDescendants: descendants });
+    const pruned = pruneFiltersToFacets(picked, kids);
+    // Wine and M exist only outside Kids; Navy and 2-3Y exist there (matched
+    // case-insensitively, keeping the spelling the shopper had).
+    assert.deepEqual(pruned.colors, ["navy"]);
+    assert.deepEqual(pruned.sizes, ["2-3y"]);
+    // Everything that isn't a colour or size is carried over untouched.
+    assert.equal(pruned.category, "for-kids");
+    assert.equal(pruned.priceMax, 500);
+
+    // M is the only size picked and Kids has no M: that used to show "0 Products".
+    const onlyM: ShopFilters = { ...defaultShopFilters, category: "for-kids", sizes: ["M"] };
+    assert.equal(filterProducts(products, onlyM, descendants).length, 0);
+    const reconciled = pruneFiltersToFacets(onlyM, kids);
+    assert.deepEqual(reconciled.sizes, []);
+    assert.equal(filterProducts(products, reconciled, descendants).length, 1);
+  });
+
+  it("returns the very same filters when every selected colour and size is still offered", () => {
+    const hospitals = deriveShopFacets(products, {
+      category: "for-hospitals",
+      categoryDescendants: descendants,
+    });
+    const filters: ShopFilters = { ...defaultShopFilters, colors: ["Navy", "wine"], sizes: ["S", "King"] };
+    assert.equal(pruneFiltersToFacets(filters, hospitals), filters);
+    assert.equal(pruneFiltersToFacets(defaultShopFilters, hospitals), defaultShopFilters);
   });
 });
 

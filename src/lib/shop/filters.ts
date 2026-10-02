@@ -405,6 +405,28 @@ export function deriveShopFacets(
   };
 }
 
+/**
+ * `filters` without the colours and sizes `facets` doesn't offer. Run it on
+ * the filters a category change produces, against the facets of the NEW
+ * category: a "Size M" picked under All Products must not follow the shopper
+ * into Kids Wear, where no product has an M, and quietly hide every product
+ * there (F-095). A dropped value could never have matched anything in that
+ * category, so the result is the same list minus the dead end. Returns
+ * `filters` itself when nothing needs dropping.
+ */
+export function pruneFiltersToFacets(filters: ShopFilters, facets: ShopFacets): ShopFilters {
+  const offered = (values: readonly string[]) => new Set(values.map(normalizeFacetValue));
+  const offeredColors = offered(facets.colors.map((color) => color.name));
+  const offeredSizes = offered(facets.sizes.map((size) => size.value));
+
+  const colors = filters.colors.filter((color) => offeredColors.has(normalizeFacetValue(color)));
+  const sizes = filters.sizes.filter((size) => offeredSizes.has(normalizeFacetValue(size)));
+  if (colors.length === filters.colors.length && sizes.length === filters.sizes.length) {
+    return filters;
+  }
+  return { ...filters, colors, sizes };
+}
+
 // ---------------------------------------------------------------------------
 // URL <-> ShopFilters (storefront-ux audit F5 / "Full facet→URL sync")
 //
