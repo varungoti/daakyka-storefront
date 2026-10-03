@@ -73,8 +73,8 @@ const defaultHero: HeroContent = {
   headline: "Expertly Designed, Meticulously Crafted",
   subheadline: "Quality Uniforms & Linens for Pan India",
   description:
-    "Hospital linens, medical scrubs, school uniforms, and corporate wear by Babaji Enterprises — Hyderabad-based, Pan India delivery.",
-  primaryCta: "Shop All Scrubs",
+    "Kids wear, medical scrubs, hospital linens, and school uniforms by Babaji Enterprises — Hyderabad-based, Pan India delivery.",
+  primaryCta: "Shop Kids Wear",
   secondaryCta: "Build Your Fit",
   // Phase C3: no fabricated star rating or follower count — these were
   // unverifiable claims flagged for removal. ratingLabel now carries a
@@ -244,7 +244,7 @@ export function legacyHeroToSlide(
     headline: hero.headline,
     subheadline: hero.subheadline,
     description: hero.description,
-    primaryCta: { label: hero.primaryCta, href: "/shop" },
+    primaryCta: { label: hero.primaryCta, href: hero.primaryCta === "Shop Kids Wear" ? "/kids-wear" : "/shop" },
     secondaryCta: { label: hero.secondaryCta, href: "/for-hospitals" },
     image: mainImage ? { assetId: "home.hero.1", url: mainImage.url, alt: mainImage.alt } : null,
     secondaryImage: secondaryImage

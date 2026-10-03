@@ -13,6 +13,19 @@ test.describe("Storefront E2E", () => {
     await expect(page.getByRole("navigation").getByRole("button", { name: "Shop", exact: true })).toBeVisible();
   });
 
+  test("homepage presents Kids Wear before Hospitals and School Uniforms", async ({ page }) => {
+    await page.goto("/");
+    const categories = page.locator("section").filter({ has: page.getByRole("heading", { name: "Shop by Category" }) });
+    await expect(categories.locator('a[href="/kids-wear"]')).toBeVisible();
+    const sectionLinks = await categories.locator("a[href]").evaluateAll((links) => links.map((link) => link.getAttribute("href")));
+    expect(sectionLinks.slice(0, 3)).toEqual(["/kids-wear", "/for-hospitals", "/school-uniforms"]);
+    const bandPositions = await Promise.all([
+      "Browse Kids Wear", "Browse Hospital Range", "Browse School Range",
+    ].map((name) => page.getByRole("link", { name, exact: true }).evaluate((link) => link.getBoundingClientRect().top + window.scrollY)));
+    expect(bandPositions[1]).toBeGreaterThan(bandPositions[0]);
+    expect(bandPositions[2]).toBeGreaterThan(bandPositions[1]);
+  });
+
   test("skip to main content link exists", async ({ page }) => {
     await page.goto("/");
     await expect(page.getByRole("link", { name: "Skip to main content" })).toBeAttached();

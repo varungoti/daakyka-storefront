@@ -8,6 +8,7 @@ import type { Product } from "@/lib/types";
 import { ArrowRight } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 /**
  * Phase C3: shared shell for the new top-level section landing pages
@@ -25,6 +26,7 @@ export function SectionLandingPage({
   products,
   bulkNote,
   bannerImage,
+  children,
 }: {
   eyebrow: string;
   title: string;
@@ -36,6 +38,7 @@ export function SectionLandingPage({
    * `getSiteImage` by the page (for-hospitals/school-uniforms/kids-wear).
    * `null`/omitted keeps today's plain text-only band. */
   bannerImage?: { url: string; alt: string } | null;
+  children?: ReactNode;
 }) {
   const subCategories = category.children.filter((child) => child.showInMenu);
 
@@ -92,6 +95,8 @@ export function SectionLandingPage({
           <ProductGrid products={products} totalCount={products.length} />
         </div>
       </PageContentSection>
+
+      {children}
 
       <section className="bg-brand-violet py-12 md:py-16">
         <div className="mx-auto flex max-w-[1320px] flex-col items-center gap-6 px-4 text-center text-white lg:px-8">

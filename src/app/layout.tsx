@@ -27,7 +27,7 @@ const dmSans = DM_Sans({
 });
 
 const SITE_DESCRIPTION =
-  "Expertly designed, meticulously crafted. Hospital linens, medical scrubs, school uniforms, and corporate wear by Babaji Enterprises — Hyderabad, Pan India delivery.";
+  "Kids wear, hospital apparel and linens, and school uniforms by Babaji Enterprises — Hyderabad, Pan India delivery.";
 
 // F-089: the mobile browser chrome's brand colour — matches manifest.ts's
 // theme_color so the two never drift apart.
@@ -41,7 +41,7 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://daakyka.com"),
     title: {
-      default: "DAAKYKA Apparels | Quality Uniforms & Linens for Pan India",
+      default: "DAAKYKA Apparels | Kids Wear, Hospital & School Uniforms",
       template: "%s | DAAKYKA Apparels",
     },
     description: SITE_DESCRIPTION,

@@ -31,7 +31,7 @@ export function ShopByCategorySection({ categories }: { categories: ShopByCatego
         <SectionHeading
           eyebrow="Browse"
           title="Shop by Category"
-          description="Everything you need for hospitals, schools, and everyday kids' wear."
+          description="Everyday kids' wear, hospital apparel and linens, and school uniforms."
         />
 
         <div className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">

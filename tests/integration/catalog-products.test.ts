@@ -151,6 +151,18 @@ describe("products admin service (Phase B1)", () => {
     assert.equal((await db.product.findUnique({ where: { id: product.id } }))?.status, "DRAFT");
   });
 
+  it("an ordinary edit cannot turn an active listing into an unverified concept", async () => {
+    const unique = randomUUID().slice(0, 8);
+    const product = await createProduct({ name: `Verified Listing ${unique}`, categoryId, price: 500 }, adminId);
+    createdProductIds.push(product.id);
+    await replaceVariants(product.id, [{ size: "S", color: "Navy", sku: `DK-VER-${unique}`, stock: 5, active: true }], adminId);
+    await publishProduct(product.id, adminId);
+
+    await assert.rejects(() => updateProduct(product.id, { price: 0 }, adminId), ProductNotPublishableError);
+    await assert.rejects(() => updateProduct(product.id, { tags: ["concept-pending-verification"] }, adminId), ProductNotPublishableError);
+    assert.equal((await db.product.findUnique({ where: { id: product.id } }))?.status, "ACTIVE");
+  });
+
   it("archiveProduct sets status to ARCHIVED", async () => {
     const unique = randomUUID().slice(0, 8);
     const product = await createProduct({ name: `Archive Me ${unique}`, categoryId, price: 500 }, adminId);

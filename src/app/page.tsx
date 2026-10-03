@@ -1,4 +1,5 @@
 import { BulkOrdersSection } from "@/components/home/bulk-orders-section";
+import { FEATURED_PRODUCT_SLUGS } from "@/data/catalog/featured-products";
 import { FeaturedProductsGrid } from "@/components/home/featured-products-grid";
 import { HeroCarousel } from "@/components/home/hero-carousel";
 import { OffersStrip } from "@/components/home/offers-strip";
@@ -15,7 +16,7 @@ import { baseOpenGraph } from "@/lib/seo/json-ld";
 import { getSeoOverrideForPath } from "@/lib/seo/records";
 import { getSetting, isSaleEnabled } from "@/lib/settings";
 import { getTestimonials } from "@/lib/testimonials";
-import { GraduationCap, HeartPulse } from "lucide-react";
+import { Baby, GraduationCap, HeartPulse } from "lucide-react";
 import type { Product } from "@/lib/types";
 import type { Metadata } from "next";
 
@@ -27,9 +28,9 @@ import type { Metadata } from "next";
  * slide has ever been configured (see getHeroSlidesContent()'s doc comment
  * in src/lib/homepage/index.ts). */
 const HOME_IMAGE_SLOTS = [
+  "home.tile.kids-wear",
   "home.tile.for-hospitals",
   "home.tile.school-uniforms",
-  "home.tile.kids-wear",
   "home.tile.sale",
 ] as const;
 
@@ -58,7 +59,7 @@ export async function generateMetadata(): Promise<Metadata> {
  * Phase C3: the new store home — "shop now", not "brand story" (that
  * moved to /our-story). Section order follows the approved plan:
  * hero -> shop-by-category tiles -> best sellers/new arrivals grids ->
- * For Hospitals / School Uniforms feature bands -> bulk enquiry band ->
+ * Kids Wear / For Hospitals / School Uniforms feature bands -> bulk enquiry band ->
  * testimonials -> a values row.
  */
 export default async function HomePage() {
@@ -97,6 +98,13 @@ export default async function HomePage() {
   // sub-category grid) — falling back to null (→ a neutral placeholder in
   // ShopByCategorySection) when neither exists yet.
   const categoryTiles: ShopByCategoryTile[] = [];
+  if (kidsCategory) {
+    categoryTiles.push({
+      title: kidsCategory.name,
+      href: "/kids-wear",
+      image: siteImages["home.tile.kids-wear"]?.url ?? kidsCategory.image?.url ?? null,
+    });
+  }
   if (hospitalsCategory) {
     categoryTiles.push({
       title: hospitalsCategory.name,
@@ -111,13 +119,6 @@ export default async function HomePage() {
       image: siteImages["home.tile.school-uniforms"]?.url ?? schoolCategory.image?.url ?? null,
     });
   }
-  if (kidsCategory) {
-    categoryTiles.push({
-      title: kidsCategory.name,
-      href: "/kids-wear",
-      image: siteImages["home.tile.kids-wear"]?.url ?? kidsCategory.image?.url ?? null,
-    });
-  }
   if (saleEnabled) {
     categoryTiles.push({
       title: "Sale",
@@ -127,14 +128,25 @@ export default async function HomePage() {
     });
   }
 
-  const [bestSellers, newArrivalsRaw, hospitalProducts, schoolProducts] = await Promise.all([
-    getProducts({ featured: true, limit: 8 }),
+  const [featuredRaw, newArrivalsRaw, kidsProducts, hospitalProducts, schoolProducts] = await Promise.all([
+    getProducts({ featured: true }),
     getProducts({ limit: 12 }),
+    kidsCategory ? getProducts({ categorySlug: "kids-wear", limit: 4 }) : Promise.resolve([]),
     hospitalsCategory ? getProducts({ categorySlug: "for-hospitals", limit: 4 }) : Promise.resolve([]),
     schoolCategory ? getProducts({ categorySlug: "school-uniforms", limit: 4 }) : Promise.resolve([]),
   ]);
 
   const newArrivals = newArrivalsRaw.filter((product) => product.isNew).slice(0, 8);
+  const featuredProducts = featuredRaw
+    .filter((product) => (product.images ?? []).some((image) => image.url && !image.url.includes("placeholder")))
+    .sort((a, b) => {
+      const rank = (handle: string) => {
+        const index = FEATURED_PRODUCT_SLUGS.findIndex((slug) => slug === handle);
+        return index < 0 ? FEATURED_PRODUCT_SLUGS.length : index;
+      };
+      return rank(a.handle) - rank(b.handle);
+    })
+    .slice(0, 12);
 
   // F-257: these grids only ever render product cards, so they get the slim
   // card shape (no descriptions, SEO fields or variant detail) instead of the
@@ -155,7 +167,7 @@ export default async function HomePage() {
       {/* release-hardening audit F-020: `bestSellers` is the admin
           "Featured" flag, not real sales data — see product-card.tsx's
           matching badge-copy fix. */}
-      <FeaturedProductsGrid eyebrow="Curated For You" title="Featured" products={cardProducts(bestSellers)} />
+      <FeaturedProductsGrid eyebrow="Curated For You" title="Featured" products={cardProducts(featuredProducts)} />
       {newArrivals.length > 0 && (
         <FeaturedProductsGrid
           eyebrow="Just In"
@@ -165,6 +177,15 @@ export default async function HomePage() {
         />
       )}
       <SectionFeatureBand
+        icon={Baby}
+        eyebrow="Kids Wear"
+        title="Everyday Comfort for Little Explorers"
+        description="T-shirts, joggers, frocks, co-ord sets, and hoodies for play and everyday wear."
+        products={cardProducts(kidsProducts)}
+        browseHref="/kids-wear"
+        browseLabel="Browse Kids Wear"
+      />
+      <SectionFeatureBand
         icon={HeartPulse}
         eyebrow="For Hospitals"
         title="Scrubs, Gowns & Hospital Linens"
@@ -172,6 +193,7 @@ export default async function HomePage() {
         products={cardProducts(hospitalProducts)}
         browseHref="/for-hospitals"
         browseLabel="Browse Hospital Range"
+        variant="alt"
       />
       <SectionFeatureBand
         icon={GraduationCap}
@@ -181,7 +203,6 @@ export default async function HomePage() {
         products={cardProducts(schoolProducts)}
         browseHref="/school-uniforms"
         browseLabel="Browse School Range"
-        variant="alt"
       />
       <BulkOrdersSection />
       <TestimonialsSection testimonials={testimonials} />

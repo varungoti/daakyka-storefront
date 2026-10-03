@@ -15,10 +15,10 @@ interface PageProps {
  * Every AdminRole has "dashboard:view" (see src/lib/auth/rbac.ts), so
  * this is reachable by every role, not just SUPER_ADMIN.
  *
- * `?required=1` is set by the (panel) layout's redirect when
+ * `?required=1` is set by the server-side page/session gate when
  * `mustChangePassword` is still set on the signed-in admin (a fresh
- * invite, or an admin-triggered reset) — see admin-shell.tsx, which is
- * what actually enforces staying here until the password is changed.
+ * invite, or an admin-triggered reset). The API gate independently blocks
+ * all admin actions except changing the password.
  */
 export default async function AdminAccountPage({ searchParams }: PageProps) {
   await requireAdminPage("dashboard:view");

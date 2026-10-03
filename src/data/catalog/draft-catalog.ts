@@ -11,6 +11,8 @@
  * daakyka.com lists no prices publicly.
  */
 
+import { FEATURED_PRODUCT_SLUG_SET } from "./featured-products";
+
 export type CategorySection = "HOSPITAL" | "SCHOOL" | "KIDS" | "GENERAL";
 
 export type DraftProductGender =
@@ -87,7 +89,7 @@ export const draftCategories: DraftCategory[] = [
     name: "For Hospitals",
     description: "Scrubs, gowns, uniforms and linens for healthcare teams.",
     section: "HOSPITAL",
-    sortOrder: 10,
+    sortOrder: 20,
     showInMenu: true,
   },
   {
@@ -292,7 +294,7 @@ export const draftCategories: DraftCategory[] = [
     name: "Kids Wear",
     description: "Everyday cotton wear for kids.",
     section: "KIDS",
-    sortOrder: 50,
+    sortOrder: 10,
     showInMenu: true,
   },
   {
@@ -1709,7 +1711,7 @@ export const draftProducts: DraftProduct[] = productSpecs.map((p) => ({
   care: p.care,
   gender: p.gender,
   tags: p.tags ?? [],
-  featured: p.featured ?? false,
+  featured: FEATURED_PRODUCT_SLUG_SET.has(p.slug) || (p.featured ?? false),
   isNew: p.isNew ?? false,
   price: p.price,
   compareAtPrice: p.compareAtPrice,

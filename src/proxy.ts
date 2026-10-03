@@ -34,10 +34,10 @@ import { CUSTOMER_SESSION_COOKIE } from "@/lib/customer-auth/constants";
  *    small window before the real check below runs is the wrong trade.
  * 2. That real check always runs immediately afterward, on every path
  *    that matters, and is what this codebase actually relies on for
- *    authorization: src/app/admin/(panel)/layout.tsx calls getSession()
+ *    authorization: src/app/admin/(panel)/layout.tsx calls getSessionResult()
  *    (the full, DB-backed, sessionVersion-checked verify) before
  *    rendering any admin page, and every admin API route under
- *    src/app/api/admin/ calls requireAdminPermission() -> getSession()
+ *    src/app/api/admin/ calls requireAdminPermission() -> getSessionResult()
  *    before doing anything — statically enforced by
  *    src/lib/auth/admin-routes-guarded.test.ts, so no admin API route
  *    can ship without it. A revoked session that slips past this gate
@@ -90,7 +90,9 @@ export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (pathname.startsWith("/admin/login")) {
-    return NextResponse.next();
+    const headers = new Headers(request.headers);
+    headers.set("x-admin-pathname", pathname);
+    return NextResponse.next({ request: { headers } });
   }
 
   if (pathname.startsWith("/api/admin")) {
@@ -106,7 +108,9 @@ export async function proxy(request: NextRequest) {
     if (!authorized) {
       return NextResponse.redirect(new URL("/admin/login", request.url));
     }
-    return NextResponse.next();
+    const headers = new Headers(request.headers);
+    headers.set("x-admin-pathname", pathname);
+    return NextResponse.next({ request: { headers } });
   }
 
   // F-131 fix: every protected /account/* page used to redirect a

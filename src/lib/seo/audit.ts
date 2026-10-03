@@ -40,9 +40,9 @@ function renderedTitle(path: string, rawTitle: string): string {
 // heavier and riskier dependency than two short strings that rarely
 // change. F-052: this used to be `brand.description`, a different string
 // the home page never actually rendered.
-const HOME_DEFAULT_TITLE = "DAAKYKA Apparels | Quality Uniforms & Linens for Pan India";
+const HOME_DEFAULT_TITLE = "DAAKYKA Apparels | Kids Wear, Hospital & School Uniforms";
 const HOME_DEFAULT_DESCRIPTION =
-  "Expertly designed, meticulously crafted. Hospital linens, medical scrubs, school uniforms, and corporate wear by Babaji Enterprises — Hyderabad, Pan India delivery.";
+  "Kids wear, hospital apparel and linens, and school uniforms by Babaji Enterprises — Hyderabad, Pan India delivery.";
 
 export const STATIC_SEO_PAGES: Omit<SeoPageAudit, "status" | "issues">[] = [
   { path: "/", title: HOME_DEFAULT_TITLE, metaDescription: HOME_DEFAULT_DESCRIPTION, h1: "Expertly Designed, Meticulously Crafted" },

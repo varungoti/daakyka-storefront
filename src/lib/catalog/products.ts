@@ -232,6 +232,13 @@ export class ProductNotPublishableError extends Error {
   }
 }
 
+function assertVerifiedForPublishing(price: number, tags: string[]): void {
+  if (price <= 0) throw new ProductNotPublishableError("Set a verified price before listing this product");
+  if (tags.includes("concept-pending-verification")) {
+    throw new ProductNotPublishableError("Verify the physical product, sizes, price and stock, then remove its concept review tag before listing");
+  }
+}
+
 /** F-063: thrown by updateProduct when the caller's ProductWriteOptions
  * says they lack `products:publish` but the requested status change would
  * move the product to or off ACTIVE — the one control CATALOG_MANAGER is
@@ -457,6 +464,11 @@ export async function updateProduct(
   if (nextCompareAt != null && nextCompareAt <= nextPrice) {
     throw new InvalidCompareAtPriceError();
   }
+  // An existing live listing must not become a zero-price concept through
+  // an ordinary edit that leaves its status unchanged.
+  if ((input.status ?? existing.status) === "ACTIVE") {
+    assertVerifiedForPublishing(nextPrice, input.tags ?? existing.tags);
+  }
 
   // F-063/F-028: only look at this when the caller is actually attempting
   // a status *change* — an ordinary field edit that happens to re-send the
@@ -474,8 +486,8 @@ export async function updateProduct(
     if (isPublishTransition && options.canPublish === false) {
       throw new ProductStatusPermissionError();
     }
-    if (input.status === "ACTIVE" && !(await hasActiveVariant(id))) {
-      throw new ProductNotPublishableError();
+    if (input.status === "ACTIVE") {
+      if (!(await hasActiveVariant(id))) throw new ProductNotPublishableError();
     }
   }
 
@@ -611,6 +623,7 @@ export async function publishProduct(id: string, userId: string): Promise<Produc
   const existing = await db.product.findUnique({ where: { id } });
   if (!existing) throw new ProductNotFoundError(id);
   if (existing.status === "ARCHIVED") throw new ProductNotPublishableError("Unarchive this product before listing it");
+  assertVerifiedForPublishing(Number(existing.price), existing.tags);
   if (!(await hasActiveVariant(id))) throw new ProductNotPublishableError();
 
   const updated = await db.product.update({ where: { id }, data: { status: "ACTIVE" } });
@@ -1554,7 +1567,7 @@ function bulkActionAuditDetails(
 export async function performBulkAction(input: BulkActionInput, userId: string): Promise<BulkActionResult> {
   const products = await db.product.findMany({
     where: { id: { in: input.ids } },
-    select: { id: true, slug: true, name: true, price: true, compareAtPrice: true, status: true },
+    select: { id: true, slug: true, name: true, price: true, compareAtPrice: true, status: true, tags: true },
   });
   if (products.length === 0) return { action: input.action, affected: 0 };
 
@@ -1594,6 +1607,9 @@ export async function performBulkAction(input: BulkActionInput, userId: string):
       for (const p of products) {
         if (!publishableIds.has(p.id)) {
           skipped.push({ id: p.id, name: p.name, reason: "no active variants" });
+        } else if (p.price.toNumber() <= 0 || p.tags.includes("concept-pending-verification")) {
+          publishableIds.delete(p.id);
+          skipped.push({ id: p.id, name: p.name, reason: "concept details or price not verified" });
         }
       }
       const idsToPublish = products.filter((p) => publishableIds.has(p.id)).map((p) => p.id);

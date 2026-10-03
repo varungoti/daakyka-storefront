@@ -39,9 +39,9 @@ export interface FooterFlags {
 export function buildFooterLinks(flags: FooterFlags): FooterLinks {
   const shopLinks: FooterLink[] = [
     { label: "Shop All", href: "/shop" },
+    { label: "Kids Wear", href: "/kids-wear" },
     { label: "For Hospitals", href: "/for-hospitals" },
     { label: "School Uniforms", href: "/school-uniforms" },
-    { label: "Kids Wear", href: "/kids-wear" },
   ];
   if (flags.saleEnabled) {
     shopLinks.push({ label: "Sale", href: "/sale" });

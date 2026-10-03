@@ -168,6 +168,11 @@ describe("legacyHeroToSlide", () => {
     assert.deepEqual(slide.secondaryCta, { label: "Build Your Fit", href: "/for-hospitals" });
   });
 
+  it("takes the Kids-first fallback hero CTA to the Kids Wear landing page", () => {
+    const slide = legacyHeroToSlide({ ...hero, primaryCta: "Shop Kids Wear" }, null, null);
+    assert.deepEqual(slide.primaryCta, { label: "Shop Kids Wear", href: "/kids-wear" });
+  });
+
   it("maps null site images to null slide images (renders the neutral placeholder)", () => {
     const slide = legacyHeroToSlide(hero, null, null);
     assert.equal(slide.image, null);

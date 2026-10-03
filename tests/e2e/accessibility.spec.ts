@@ -66,6 +66,11 @@ test.describe("Accessibility (axe)", () => {
     await scanForSeriousViolations(page);
   });
 
+  test("kids-wear page has no serious/critical violations", async ({ page }) => {
+    await gotoAndSettle(page, "/kids-wear");
+    await scanForSeriousViolations(page);
+  });
+
   test("a product page has no serious/critical violations", async ({ page }) => {
     const productsResponse = await page.request.get("/api/products");
     expect(productsResponse.ok()).toBeTruthy();

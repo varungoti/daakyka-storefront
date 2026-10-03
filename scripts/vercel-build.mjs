@@ -117,6 +117,11 @@ async function main() {
     run("npx tsx prisma/seed.ts");
 
     if (process.env.VERCEL_ENV === "production") {
+      console.log("\n▶ seed reviewed Kids Wear concepts as non-purchasable drafts");
+      run("npx tsx prisma/seed-kids-concepts.ts");
+    }
+
+    if (process.env.VERCEL_ENV === "production") {
       console.log("\n▶ sync reviewed generated product images");
       run("npx tsx scripts/sync-generated-product-images.ts --apply");
     }

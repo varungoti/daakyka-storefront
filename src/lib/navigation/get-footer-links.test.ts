@@ -20,7 +20,7 @@ describe("buildFooterLinks", () => {
       saleEnabled: false,
     });
     const hrefs = links.shop.links.map((link) => link.href);
-    assert.deepEqual(hrefs, ["/shop", "/for-hospitals", "/school-uniforms", "/kids-wear"]);
+    assert.deepEqual(hrefs, ["/shop", "/kids-wear", "/for-hospitals", "/school-uniforms"]);
   });
 
   it("adds Sale to the Shop column only when saleEnabled is true", () => {

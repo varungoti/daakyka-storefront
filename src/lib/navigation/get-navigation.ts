@@ -59,6 +59,7 @@ const HOSPITALS_SLUG = "for-hospitals";
 const HOSPITAL_LINENS_SLUG = "hospital-linens";
 const SCHOOL_SLUG = "school-uniforms";
 const KIDS_SLUG = "kids-wear";
+const SECTION_ORDER = [KIDS_SLUG, HOSPITALS_SLUG, SCHOOL_SLUG];
 
 function toNavLink(node: CategoryTreeNode): NavLink {
   return { label: node.name, href: `/category/${node.slug}` };
@@ -95,7 +96,13 @@ export function buildNavigationFromTree(
   flags: { saleEnabled: boolean },
 ): NavigationTree {
   const items: NavItem[] = [];
-  const menuCategories = visible(tree);
+  const menuCategories = visible(tree).sort((a, b) => {
+    const rank = (slug: string) => {
+      const index = SECTION_ORDER.indexOf(slug);
+      return index === -1 ? SECTION_ORDER.length : index;
+    };
+    return rank(a.slug) - rank(b.slug) || a.sortOrder - b.sortOrder;
+  });
 
   // "Shop" — a mega grid of every active top-level category with
   // showInMenu, each tile carrying its own children as quick links. This
@@ -112,6 +119,16 @@ export function buildNavigationFromTree(
   // hiding "Kids Wear" (say) drops its header entry and its mobile-drawer
   // entry too. A section whose every child is hidden degrades to a plain link
   // to its landing page rather than a menu of "Coming soon".
+  const kids = menuCategories.find((category) => category.slug === KIDS_SLUG);
+  if (kids) {
+    const kidsLinks = visible(kids.children).map(toNavLink);
+    items.push(
+      kidsLinks.length > 0
+        ? { id: "kids-wear", kind: "simple", label: "Kids Wear", href: "/kids-wear", children: kidsLinks }
+        : { id: "kids-wear", kind: "link", label: "Kids Wear", href: "/kids-wear" },
+    );
+  }
+
   const hospitals = menuCategories.find((category) => category.slug === HOSPITALS_SLUG);
   if (hospitals) {
     const hospitalChildren = visible(hospitals.children);
@@ -149,16 +166,6 @@ export function buildNavigationFromTree(
             promo: { label: "School bulk orders →", href: "/bulk-orders" },
           }
         : { id: "school-uniforms", kind: "link", label: "School Uniforms", href: "/school-uniforms" },
-    );
-  }
-
-  const kids = menuCategories.find((category) => category.slug === KIDS_SLUG);
-  if (kids) {
-    const kidsLinks = visible(kids.children).map(toNavLink);
-    items.push(
-      kidsLinks.length > 0
-        ? { id: "kids-wear", kind: "simple", label: "Kids Wear", href: "/kids-wear", children: kidsLinks }
-        : { id: "kids-wear", kind: "link", label: "Kids Wear", href: "/kids-wear" },
     );
   }
 

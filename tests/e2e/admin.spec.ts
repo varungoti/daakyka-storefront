@@ -1,7 +1,9 @@
 import { test, expect } from "@playwright/test";
+import { randomBytes } from "node:crypto";
 
 import { resolveAdminCredentials } from "./helpers/admin-credentials";
 import {
+  baseUrl,
   residueWritesAllowed,
   residueWritesSkipReason,
   restorableWritesAllowed,
@@ -25,12 +27,64 @@ async function loginAsAdmin(page: import("@playwright/test").Page) {
   await page.getByLabel(/password/i).fill(password);
   await page.getByRole("button", { name: /sign in|log in/i }).click();
   await expect(page).toHaveURL(/\/admin\/dashboard/, { timeout: 15000 });
+  await expect(page.getByRole("heading", { name: /Dashboard/i })).toBeVisible();
 }
 
 test.describe("Admin E2E", () => {
   test("login and reach dashboard", async ({ page }) => {
     await loginAsAdmin(page);
     await expect(page.getByRole("heading", { name: /Dashboard/i })).toBeVisible();
+  });
+
+  test("temporary admin login requires password change before admin API access", async ({ page }) => {
+    test.skip(!residueWritesAllowed, residueWritesSkipReason);
+    await loginAsAdmin(page);
+    const email = `temp-gate-${randomBytes(7).toString("hex")}@example.invalid`;
+    const invited = await page.evaluate(async (newEmail) => {
+      const response = await fetch("/api/admin/users", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "Temporary gate test", email: newEmail, role: "CATALOG_MANAGER" }),
+      });
+      return { status: response.status, body: await response.json() };
+    }, email);
+    expect(invited.status).toBe(201);
+    const { user, tempPassword } = invited.body as { user: { id: string }; tempPassword: string };
+    const context = await page.context().browser()!.newContext({ baseURL: baseUrl });
+    try {
+      const temporaryPage = await context.newPage();
+      await temporaryPage.goto("/admin/login");
+      await temporaryPage.getByLabel(/email/i).fill(email);
+      await temporaryPage.getByLabel(/password/i).fill(tempPassword);
+      await temporaryPage.getByRole("button", { name: /sign in|log in/i }).click();
+      await expect(temporaryPage).toHaveURL(/\/admin\/account/, { timeout: 15000 });
+      expect(await temporaryPage.evaluate(async () => (await fetch("/api/admin/products")).status)).toBe(423);
+      await temporaryPage.goto("/admin/products");
+      await expect(temporaryPage).toHaveURL(/\/admin\/account\?required=1/);
+
+      const newPassword = randomBytes(24).toString("base64url");
+      const changed = await temporaryPage.evaluate(async ({ currentPassword, newPassword }) => {
+        const response = await fetch("/api/admin/account/password", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ currentPassword, newPassword }),
+        });
+        return response.status;
+      }, { currentPassword: tempPassword, newPassword });
+      expect(changed).toBe(200);
+      expect(await temporaryPage.evaluate(async () => (await fetch("/api/admin/products")).status)).toBe(200);
+    } finally {
+      await context.close();
+      const deactivated = await page.evaluate(async (id) => {
+        const response = await fetch(`/api/admin/users/${id}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: "Temporary gate test", role: "CATALOG_MANAGER", active: false }),
+        });
+        return response.status;
+      }, user.id);
+      expect(deactivated).toBe(200);
+    }
   });
 
   test("product listing switch unlists and relists a public product", async ({ page }) => {

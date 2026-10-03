@@ -1,4 +1,6 @@
 import { SectionLandingPage } from "@/components/category/section-landing-page";
+import { KidsConceptGallery } from "@/components/category/kids-concept-gallery";
+import { getKidsConceptGallery } from "@/lib/catalog/kids-concept-gallery";
 import { getSiteImage } from "@/lib/media/get-site-image";
 import { getCategoryBySlug, getProducts } from "@/lib/products";
 import { canonicalPath } from "@/lib/seo/canonical";
@@ -28,9 +30,10 @@ export default async function KidsWearPage() {
   const category = await getCategoryBySlug(CATEGORY_SLUG);
   if (!category) notFound();
 
-  const [products, bannerImage] = await Promise.all([
+  const [products, bannerImage, concepts] = await Promise.all([
     getProducts({ categorySlug: CATEGORY_SLUG }),
     getSiteImage(`category.${CATEGORY_SLUG}`),
+    getKidsConceptGallery(),
   ]);
 
   return (
@@ -42,6 +45,8 @@ export default async function KidsWearPage() {
       products={products}
       bulkNote="Outfitting a daycare, camp, or kids' program? We support bulk orders for kids' wear too."
       bannerImage={bannerImage}
-    />
+    >
+      <KidsConceptGallery concepts={concepts} />
+    </SectionLandingPage>
   );
 }

@@ -84,7 +84,8 @@ describe("buildNavigationFromTree", () => {
     const tileSlugs = shop.tiles.map((tile) => tile.href);
     // F-101: the three sections link to their landing pages, not the
     // /category/<slug> duplicates that canonicalize to them.
-    assert.deepEqual(tileSlugs, ["/for-hospitals", "/school-uniforms", "/kids-wear"]);
+    assert.deepEqual(tileSlugs, ["/kids-wear", "/for-hospitals", "/school-uniforms"]);
+    assert.deepEqual(nav.items.slice(1, 4).map((item) => item.id), ["kids-wear", "for-hospitals", "school-uniforms"]);
   });
 
   it("splits For Hospitals into Apparel and Linens columns, excluding the linens category itself from Apparel", () => {

@@ -188,15 +188,25 @@ export async function POST(request: Request) {
   const slotRaw = form.get("slot");
   const slot = typeof slotRaw === "string" && slotRaw.trim() ? slotRaw.trim().slice(0, 200) : undefined;
 
+  // An authenticated admin may import artwork generated in the ChatGPT
+  // workspace. Preserve its origin instead of mislabelling it UPLOAD in
+  // Media Library and on product galleries. Ordinary uploads stay UPLOAD.
+  const aiPromptRaw = form.get("aiPrompt");
+  const aiPrompt = typeof aiPromptRaw === "string" ? aiPromptRaw.trim() : "";
+  if (aiPrompt.length > 4000) {
+    return NextResponse.json({ error: "AI prompt must be 4000 characters or fewer" }, { status: 400 });
+  }
+
   const buffer = Buffer.from(await file.arrayBuffer());
 
   try {
     const asset = await saveMediaAsset({
       buffer,
       usage: usage as MediaUsage,
-      source: MediaSource.UPLOAD,
+      source: aiPrompt ? MediaSource.AI : MediaSource.UPLOAD,
       alt,
       slot,
+      ...(aiPrompt ? { prompt: aiPrompt, model: "ChatGPT Images" } : {}),
       createdById: session.id,
     });
 
@@ -205,7 +215,7 @@ export async function POST(request: Request) {
       action: "create",
       entity: "media_asset",
       entityId: asset.id,
-      metadata: { usage, source: "UPLOAD", key: asset.key },
+      metadata: { usage, source: aiPrompt ? "AI" : "UPLOAD", key: asset.key },
     });
 
     return NextResponse.json({ asset }, { status: 201 });

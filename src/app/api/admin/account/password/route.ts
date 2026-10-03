@@ -21,7 +21,7 @@ import {
  * actual verification/lockout/update logic this route just maps to HTTP.
  */
 export async function POST(request: Request) {
-  const { session, error } = await requireAdminPermission("dashboard:view");
+  const { session, error } = await requireAdminPermission("dashboard:view", { allowPasswordChangeRequired: true });
   if (error) return error;
 
   const limited = await rateLimitOrResponse(request, "admin-change-password", 5, 60_000);

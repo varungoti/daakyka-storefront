@@ -10,7 +10,7 @@ import { getSessionResult } from "@/lib/auth/session";
  * their own `hasPermission(session.role, ...)` check against the returned
  * session and translate a failure to a 403 themselves.
  */
-export async function requireAdminSession() {
+export async function requireAdminSession(options: { allowPasswordChangeRequired?: boolean } = {}) {
   const result = await getSessionResult();
   // F-369: a DB outage while checking the session is not the same thing
   // as "not logged in" — surface it as a distinct, clean 503 instead of a
@@ -27,6 +27,12 @@ export async function requireAdminSession() {
   if (result.status !== "ok") {
     return { session: null, error: Response.json({ error: "Unauthorized" }, { status: 401 }) };
   }
+  if (result.user.mustChangePassword && !options.allowPasswordChangeRequired) {
+    return {
+      session: null,
+      error: Response.json({ error: "Change your temporary password before using admin features" }, { status: 423 }),
+    };
+  }
   return { session: result.user, error: null };
 }
 
@@ -39,8 +45,11 @@ export async function requireAdminSession() {
  * whose page now opens for several different permissions at once (see
  * src/lib/admin/notifications-access.ts) rather than one.
  */
-export async function requireAdminPermission(permission: Permission | Permission[]) {
-  const { session, error } = await requireAdminSession();
+export async function requireAdminPermission(
+  permission: Permission | Permission[],
+  options: { allowPasswordChangeRequired?: boolean } = {},
+) {
+  const { session, error } = await requireAdminSession(options);
   if (error) return { session: null, error };
   const allowed = Array.isArray(permission)
     ? permission.some((p) => hasPermission(session.role, p))

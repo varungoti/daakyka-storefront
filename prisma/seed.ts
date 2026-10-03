@@ -6,6 +6,8 @@ import { DEFAULT_ADMIN_SEED_EMAIL, isInsecureSeedPassword } from "../src/lib/aut
 import { isVercel } from "../src/lib/env";
 import { settingDefaults } from "../src/lib/settings";
 import { runSeededContentCorrections } from "./seed-corrections";
+import { applyKidsFirstMerchandising } from "./merchandising-correction";
+import { recoverProductionAdmin } from "./admin-recovery";
 import type { Prisma } from "../src/generated/prisma/client";
 import bcrypt from "bcryptjs";
 
@@ -46,8 +48,8 @@ const defaultHomepageSections = [
       headline: "Expertly Designed, Meticulously Crafted",
       subheadline: "Quality Uniforms & Linens for Pan India",
       description:
-        "Hospital linens, medical scrubs, school uniforms, and corporate wear by Babaji Enterprises — Hyderabad-based, Pan India delivery.",
-      primaryCta: "Shop All Scrubs",
+        "Kids wear, medical scrubs, hospital linens, and school uniforms by Babaji Enterprises — Hyderabad-based, Pan India delivery.",
+      primaryCta: "Shop Kids Wear",
       secondaryCta: "Build Your Fit",
       // Phase C3: no fabricated star rating or follower count (removed
       // unverifiable claims) — ratingLabel carries a real, verifiable
@@ -233,6 +235,15 @@ async function main() {
     }
   }
 
+  const recovered = await recoverProductionAdmin(prisma, {
+    vercelEnvironment: process.env.VERCEL_ENV,
+    configuredAdminEmail: email,
+    recoveryEmail: process.env.ADMIN_RECOVERY_EMAIL,
+    recoveryFlag: process.env.ADMIN_RECOVERY_ONCE,
+    temporaryPassword: process.env.ADMIN_RECOVERY_TEMP_PASSWORD,
+  });
+  if (recovered) console.log("[seed] One-time production admin recovery completed; all prior sessions revoked.");
+
   const viewerEmail = process.env.VIEWER_SEED_EMAIL;
   const viewerPassword = process.env.VIEWER_SEED_PASSWORD;
 
@@ -393,6 +404,11 @@ async function main() {
     },
   ];
 
+  heroSlideSeeds.sort((a, b) => {
+    const priority = ["kids-wear", "hospital-scrubs", "school-uniforms"];
+    return priority.indexOf(a.id) - priority.indexOf(b.id);
+  });
+
   const heroSlides = await Promise.all(
     heroSlideSeeds.map(async (seed) => {
       const { main, secondary } = await resolveHeroSlideImages(seed.slug, seed.bandSlot);
@@ -503,6 +519,8 @@ async function main() {
   // to ensureContentSeeded() doesn't matter: a fresh database has nothing
   // legacy for it to match.
   await runSeededContentCorrections(prisma);
+  const merchandising = await applyKidsFirstMerchandising(prisma);
+  if (merchandising) console.log(`[seed] Kids-first merchandising: ${JSON.stringify(merchandising)}`);
 
   await ensureContentSeeded();
 

@@ -9,7 +9,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "DAAKYKA Apparels",
     short_name: "DAAKYKA",
     description:
-      "Hospital linens, medical scrubs, school uniforms, and corporate wear by Babaji Enterprises — Hyderabad, Pan India delivery.",
+      "Kids wear, hospital apparel and linens, and school uniforms by Babaji Enterprises — Hyderabad, Pan India delivery.",
     start_url: "/",
     display: "standalone",
     background_color: "#FFFFFF",

@@ -3,7 +3,8 @@ import type { AdminRole } from "@/generated/prisma/client";
 import { shouldUseSecureSessionCookie } from "@/lib/auth/session-cookie";
 import { db } from "@/lib/db";
 import { SignJWT, jwtVerify } from "jose";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { cache } from "react";
 
 const SESSION_MAX_AGE = 60 * 60 * 24 * 7; // 7 days
@@ -13,6 +14,8 @@ export interface SessionUser {
   email: string;
   name: string;
   role: AdminRole;
+  /** Read from the DB on verification; deliberately never trusted from the JWT. */
+  mustChangePassword?: boolean;
 }
 
 /**
@@ -122,6 +125,7 @@ export async function verifySessionTokenResult(token: string): Promise<SessionRe
         role: true,
         active: true,
         sessionVersion: true,
+        mustChangePassword: true,
       },
     });
   } catch (error) {
@@ -143,7 +147,7 @@ export async function verifySessionTokenResult(token: string): Promise<SessionRe
 
   return {
     status: "ok",
-    user: { id: user.id, email: user.email, name: user.name, role: user.role },
+    user: { id: user.id, email: user.email, name: user.name, role: user.role, mustChangePassword: user.mustChangePassword },
   };
 }
 
@@ -185,7 +189,18 @@ export const getSessionResult = cache(async function getSessionResult(): Promise
  * `requireAdminPermission`, the admin panel layout). */
 export async function getSession(): Promise<SessionUser | null> {
   const result = await getSessionResult();
-  return result.status === "ok" ? result.user : null;
+  if (result.status !== "ok") return null;
+  await enforceAdminPasswordChange(result.user);
+  return result.user;
+}
+
+/** Checked on every page segment, including a client-side RSC navigation. */
+export async function enforceAdminPasswordChange(user: SessionUser): Promise<void> {
+  if (!user.mustChangePassword) return;
+  const pathname = (await headers()).get("x-admin-pathname");
+  if ((pathname === "/admin" || pathname?.startsWith("/admin/")) && pathname !== "/admin/account") {
+    redirect("/admin/account?required=1");
+  }
 }
 
 export async function requireSession(): Promise<SessionUser> {
