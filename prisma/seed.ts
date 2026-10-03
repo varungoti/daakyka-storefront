@@ -6,7 +6,7 @@ import { DEFAULT_ADMIN_SEED_EMAIL, isInsecureSeedPassword } from "../src/lib/aut
 import { isVercel } from "../src/lib/env";
 import { settingDefaults } from "../src/lib/settings";
 import { runSeededContentCorrections } from "./seed-corrections";
-import { applyKidsFirstMerchandising } from "./merchandising-correction";
+import { applyKidsFirstMerchandising, applyKidsFirstSeoCorrection, KIDS_FIRST_HOME_SEO, KIDS_FIRST_SHOP_SEO } from "./merchandising-correction";
 import { recoverProductionAdmin } from "./admin-recovery";
 import type { Prisma } from "../src/generated/prisma/client";
 import bcrypt from "bcryptjs";
@@ -523,6 +523,8 @@ async function main() {
   if (merchandising) console.log(`[seed] Kids-first merchandising: ${JSON.stringify(merchandising)}`);
 
   await ensureContentSeeded();
+  const correctedSeoRecords = await applyKidsFirstSeoCorrection(prisma);
+  if (correctedSeoRecords !== null) console.log(`[seed] Kids-first SEO records corrected: ${correctedSeoRecords}`);
 
   console.log("Database seeded successfully.");
 }
@@ -822,8 +824,8 @@ async function seedContent(): Promise<void> {
   });
 
   const seoPages = [
-    { path: "/", title: "DAAKYKA Apparels | Quality Uniforms & Linens for Pan India", metaDescription: "Expertly designed medical scrubs and institutional uniforms. Pan India delivery by Babaji Enterprises.", h1: "Expertly Designed, Meticulously Crafted", status: "ok" },
-    { path: "/shop", title: "Shop Apparel & Uniforms", metaDescription: "Browse DAAKYKA medical scrubs, hospital apparel, institutional linens, school uniforms and kidswear by size and category.", h1: "Shop All Apparel & Uniforms", status: "ok" },
+    { path: "/", ...KIDS_FIRST_HOME_SEO, h1: "Expertly Designed, Meticulously Crafted", status: "ok" },
+    { path: "/shop", ...KIDS_FIRST_SHOP_SEO, h1: "Shop All Apparel & Uniforms", status: "ok" },
     { path: "/bulk-orders", title: "Bulk Orders", metaDescription: "Hospital and institutional uniform quotes with logo embroidery and Pan India fulfillment.", h1: "Uniforms for Healthcare Teams", status: "ok" },
   ];
 

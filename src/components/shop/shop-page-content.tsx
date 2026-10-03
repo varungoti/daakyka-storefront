@@ -503,7 +503,7 @@ export function ShopPageContent({
   const pageEyebrow = heading?.eyebrow ?? "Browse";
   const pageDescription =
     heading?.description ??
-    "Explore medical scrubs, hospital apparel, institutional linens, school uniforms and kidswear by category and size.";
+    "Explore kidswear, hospital scrubs and apparel, institutional linens, and school uniforms by category and size.";
   const breadcrumbLabel = heading?.breadcrumbLabel ?? "Shop";
 
   return (

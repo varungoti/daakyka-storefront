@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { FEATURED_PRODUCT_SLUGS } from "../src/data/catalog/featured-products";
 import { draftProducts } from "../src/data/catalog/draft-catalog";
 import reviewedViews from "../src/data/media/generated-product-views.json";
-import { applyKidsFirstMerchandising } from "./merchandising-correction";
+import { applyKidsFirstMerchandising, applyKidsFirstSeoCorrection, KIDS_FIRST_HOME_SEO, KIDS_FIRST_SHOP_SEO } from "./merchandising-correction";
 import type { PrismaClient } from "../src/generated/prisma/client";
 
 describe("kids-first merchandising", () => {
@@ -59,5 +59,37 @@ describe("kids-first merchandising", () => {
     assert.deepEqual(result.slides.find((slide: { id: string }) => slide.id === "kids-wear").image, { assetId: "kids-photo" });
     assert.equal(await applyKidsFirstMerchandising(fakeDb), null);
     assert.equal(featuredWrites, 1);
+  });
+
+  it("replaces only exact old seed SEO metadata and leaves admin edits intact", async () => {
+    const rows = new Map([
+      ["/", { title: "DAAKYKA Apparels | Quality Uniforms & Linens for Pan India", metaDescription: "Expertly designed medical scrubs and institutional uniforms. Pan India delivery by Babaji Enterprises." }],
+      ["/shop", { title: "Admin-authored shop title", metaDescription: "Browse DAAKYKA medical scrubs, hospital apparel, institutional linens, school uniforms and kidswear by size and category." }],
+    ]);
+    let marker = false;
+    const fakeDb = {
+      siteSetting: {
+        findUnique: async () => marker ? { key: "done" } : null,
+        create: async () => { marker = true; },
+      },
+      seoPageRecord: {
+        updateMany: async ({ where, data }: { where: { path: string; title: string; metaDescription: string }; data: { title: string; metaDescription: string } }) => {
+          const row = rows.get(where.path);
+          if (!row || row.title !== where.title || row.metaDescription !== where.metaDescription) return { count: 0 };
+          rows.set(where.path, { ...data });
+          return { count: 1 };
+        },
+      },
+    } as unknown as PrismaClient;
+
+    assert.equal(await applyKidsFirstSeoCorrection(fakeDb), 1);
+    assert.deepEqual(rows.get("/"), KIDS_FIRST_HOME_SEO);
+    assert.equal(rows.get("/shop")?.title, "Admin-authored shop title");
+    assert.equal(await applyKidsFirstSeoCorrection(fakeDb), null);
+
+    marker = false;
+    rows.set("/shop", { title: "Shop Apparel & Uniforms", metaDescription: "Browse DAAKYKA medical scrubs, hospital apparel, institutional linens, school uniforms and kidswear by size and category." });
+    assert.equal(await applyKidsFirstSeoCorrection(fakeDb), 1);
+    assert.deepEqual(rows.get("/shop"), KIDS_FIRST_SHOP_SEO);
   });
 });
