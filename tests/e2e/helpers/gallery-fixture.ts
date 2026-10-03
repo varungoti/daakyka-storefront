@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { APIRequestContext } from "@playwright/test";
 import pg from "pg";
+import { ADMIN_SESSION_COOKIE } from "@/lib/auth/constants";
 import { assertDisposableEnvironment } from "../../../scripts/lib/assert-disposable-db.mjs";
 import { resolveAdminCredentials } from "./admin-credentials";
 
@@ -91,6 +92,16 @@ export async function refreshCatalogueCache(request: APIRequestContext, productI
   const { email, password } = resolveAdminCredentials();
   const login = await request.post("/api/auth/login", { data: { email, password } });
   if (!login.ok()) throw new Error(`Admin login failed (${login.status()}) — needed to refresh the catalogue cache.`);
-  const refreshed = await request.post(`/api/admin/products/${productId}/publish`, { data: { action: "publish" } });
+  // Production uses a Secure cookie. Playwright's APIRequestContext does not
+  // replay it over the disposable HTTP test server, so send this one freshly
+  // issued session cookie explicitly for the local cache-refresh request.
+  const setCookie = login.headersArray().find(({ name, value }) =>
+    name.toLowerCase() === "set-cookie" && value.startsWith(`${ADMIN_SESSION_COOKIE}=`),
+  )?.value;
+  if (!setCookie) throw new Error("Admin login did not issue a session cookie for cache refresh.");
+  const refreshed = await request.post(`/api/admin/products/${productId}/publish`, {
+    headers: { Cookie: setCookie.split(";", 1)[0] },
+    data: { action: "publish" },
+  });
   if (!refreshed.ok()) throw new Error(`Could not refresh the product cache (${refreshed.status()}).`);
 }

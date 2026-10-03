@@ -9,7 +9,7 @@ const schema = z.object({
   enabled: z.boolean(),
 });
 
-const providers: IntegrationProviderName[] = ["SHOPIFY", "BREVO", "WATI", "HERMES"];
+const providers: IntegrationProviderName[] = ["BREVO", "WATI", "HERMES"];
 
 interface RouteParams {
   params: Promise<{ provider: string }>;

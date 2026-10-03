@@ -1,7 +1,9 @@
 import { db } from "@/lib/db";
 import { isProviderConfigured } from "@/lib/integrations/status";
 
-export type IntegrationProviderName = "SHOPIFY" | "BREVO" | "WATI" | "HERMES";
+// Shopify's optional orders webhook uses its secret directly; it has no
+// enabled flag to toggle in the storefront.
+export type IntegrationProviderName = "BREVO" | "WATI" | "HERMES";
 
 export async function isIntegrationEnabled(
   provider: IntegrationProviderName,

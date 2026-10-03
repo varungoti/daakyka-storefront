@@ -1,71 +1,26 @@
 # DAAKYKA Storefront — Launch Status
 
-**Updated:** 2026-09-26
-**Production:** https://storefront-nu-woad.vercel.app
+**Updated:** 2026-10-03
+**Public soft-launch URL:** https://storefront-nu-woad.vercel.app
 
-## Done (101% code)
+## Verified October 1 production baseline
 
-| Area | Status |
-|------|--------|
-| Storefront + admin (Phases 1–7) | ✅ |
-| PostgreSQL production path | ✅ |
-| Automated QA (198 tests) | ✅ |
-| Production deploy + remote verification | ✅ |
-| Security hardening | ✅ |
-| Handover docs | ✅ |
+The public alias served commit `48925bce1805664af213a4dac7a87963eecca8cd` as deployment `dpl_8VNBK4Uo8pwMyCGgMBqvufFkzzyX` on 2026-10-01. Its exact-commit local Docker gate passed: dependency audit, migrations and seed, lint, typecheck, 639 integration tests, production build, 53 core browser tests (two skips), 61 dogfood journeys, nine accessibility cases, nine Lighthouse mobile assertions, and a clean local link crawl. The AR Docker image passed nine tests and a health smoke. Check the current alias and `dogfood-output/local-ci/deployment-report.json` for a newer deployment receipt.
 
-**Evidence:** `dogfood-output/COMPLETION.json` — `verify:101` + `verify:staging:full` passed.
+Post-deploy checks found 5/5 healthy probes, 27/27 populated navigation categories, 131 sitemap pages, 199 internal anchor targets, 145 rendered image targets, and no link or image HTTP failures. The reviewed manifest's 235 generated image keys are linked across 59 live product pages; their R2 objects and source references passed preflight. These are representative illustrations, not verified photographs of each size.
 
-## Live production
+## Committed integration line after that baseline
 
-| Item | Value |
-|------|--------|
-| URL | https://storefront-nu-woad.vercel.app |
-| Admin | `/admin/login` |
-| Vercel | `varubs-projects/storefront` |
-| Database | Supabase Postgres, **session pooler** connection (see [HANDOVER.md](./HANDOVER.md)) |
-| Media | Cloudflare R2 bucket `daakyka-media`, private, served via `/cdn/[...key]` |
+The committed `integrate/main-20261003` history includes the local `master` theme refactor, the media-picker/gallery follow-up, and audit fix waves 4-5. Promote this line only from a clean, exact-commit local Docker release gate, with its deployment and hosted behavior recorded. Product hero video code is staged separately in the integration checkout; it has not passed the R2 video-host, carrier/device, and live playback launch gates.
 
-**Change the seed admin password after first login.**
+GitHub's default branch is `master`, and the fetched `origin/master` is behind this release line. GitHub Actions are disabled; the supported verification path is `node scripts/local-release.mjs --deploy` from an exact clean commit, followed by the hosted audits in [LOCAL_CI_CD.md](./LOCAL_CI_CD.md).
 
-## Blocked on credentials / config
+## Open public-launch gates
 
-| Step | Doc | Env vars |
-|------|-----|----------|
-| Online payment (Razorpay) | `PAYMENTS_RAZORPAY.md`, `LAUNCH_CHECKLIST.md` §3 | `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` (or set via `/admin/integrations`) — checkout works without these via the order-request fallback |
-| Email (Brevo) | `ENGAGEMENT_SETUP.md` | `BREVO_API_KEY` (or via `/admin/integrations`) |
-| WhatsApp (WATI) | `ENGAGEMENT_SETUP.md` | `WATI_API_KEY` |
-| Production DNS cutover | `GO_LIVE_RUNBOOK.md` | `daakyka.com` still resolves to the old Hostinger site, not this Vercel project |
-| Search indexing | `LAUNCH_CHECKLIST.md` §6 | production must **not** have `NEXT_PUBLIC_ALLOW_INDEXING=false` left set (`src/lib/env.ts`'s `isIndexingAllowed()`) |
+- **Product proof:** The three-view colourway lower-bound gap is closed, but the listed 558 size variants still need owner verification or exact-size photography. Nine views for three source-photo-free colours are disclosed sibling-colour interpretations needing seller confirmation.
+- **Payments and messaging:** The production environment has no Razorpay or Brevo variable names. Admin-saved credentials, real checkout capture, refund behavior, and message delivery have not been independently proved. WATI is also unconfigured in the visible Production environment list.
+- **Admin access:** The existing hosted admin password does not match the seed value; authenticated admin operation and password rotation remain unverified.
+- **Domain and indexing:** `robots.txt` currently disallows all crawlers. Verify the final domain, DNS, Search Console, and production configuration before enabling indexing.
+- **Operations:** Check backup and restore, uptime and error alerting, incident contacts, credential scope and Preview environment hygiene, and a real customer journey before public launch. See [LAUNCH_CHECKLIST.md](./LAUNCH_CHECKLIST.md) and [GO_LIVE_RUNBOOK.md](./GO_LIVE_RUNBOOK.md).
 
-There is no Shopify integration blocking anything — checkout is Razorpay + this app's own catalog;
-see "How the system actually works today" in [HANDOVER.md](./HANDOVER.md).
-
-## Manual before full go-live
-
-- Cross-browser QA (`QA_CHECKLIST.md`)
-- Admin password rotated from seed
-- Confirm production robots.txt/meta allow indexing once ready for search engines
-
-## Verification commands
-
-```bash
-cd storefront
-
-# Local full gate (docker compose up -d first)
-npm run verify:101
-
-# Remote tests against a Preview/staging deployment — never production, they write data.
-# Production only gets the GET-only checks: `... npm run verify:staging:full -- --production-readonly`
-TEST_BASE_URL=https://<preview-or-staging-host> npm run verify:staging:full
-
-# After adding production env vars
-npm run go-live:check -- --production
-# Use the actual live production host — daakyka.com still serves the old
-# Hostinger site until GO_LIVE_RUNBOOK.md's Domain & DNS cutover is done.
-TEST_BASE_URL=https://storefront-nu-woad.vercel.app npm run probe:deploy
-```
-
-## Explicitly excluded
-
-AI Fit Scan
+The store is a working **soft launch**. A green code gate and a healthy public alias do not close the external commercial and product-accuracy gates above.

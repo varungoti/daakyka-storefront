@@ -23,8 +23,9 @@ export const metadata: Metadata = { title: "Integrations" };
 // Only these providers have the DB-backed enable/disable toggle
 // (src/lib/integrations/enabled.ts); Razorpay's "readiness" is derived
 // purely from whether its credentials are set, so it has no separate
-// enabled flag to toggle.
-const toggleableProviders = new Set(["SHOPIFY", "BREVO", "WATI", "HERMES"]);
+// enabled flag to toggle. Shopify's optional orders webhook also checks its
+// secret directly, so a toggle for that card would have no effect.
+const toggleableProviders = new Set(["BREVO", "WATI", "HERMES"]);
 
 async function buildFieldStates(provider: CredentialProvider): Promise<CredentialFieldState[]> {
   return Promise.all(
@@ -187,7 +188,7 @@ function StatusBadge({ status, source }: { status: string; source?: string }) {
 
 function envVarHint(provider: string): string {
   const map: Record<string, string> = {
-    SHOPIFY: "NEXT_PUBLIC_SHOPIFY_*",
+    SHOPIFY: "SHOPIFY_WEBHOOK_SECRET",
     BREVO: "BREVO_API_KEY",
     WATI: "WATI_API_KEY",
     HERMES: "HERMES_LOCAL_URL or HERMES_API_URL",

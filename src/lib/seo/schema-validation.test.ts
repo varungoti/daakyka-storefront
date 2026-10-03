@@ -8,6 +8,7 @@ import {
   organizationJsonLd,
   PLACEHOLDER_PRODUCT_IMAGE,
   productJsonLd,
+  siteUrlBase,
   websiteJsonLd,
 } from "@/lib/seo/json-ld";
 import { validateJsonLdObject } from "@/lib/seo/schema-validation";
@@ -148,7 +149,7 @@ describe("productJsonLd merchant-listing fields (F-110, F-320)", () => {
       ...BASE_PRODUCT,
       images: [PLACEHOLDER_PRODUCT_IMAGE, "/cdn/media/real.webp"],
     });
-    assert.deepEqual(mixed.image, ["https://daakyka.com/cdn/media/real.webp"]);
+    assert.deepEqual(mixed.image, [`${siteUrlBase()}/cdn/media/real.webp`]);
   });
 
   it("adds shipping details and a return policy from the shipping/returns settings", () => {

@@ -43,15 +43,6 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatus[]> {
 
   return [
     {
-      provider: "SHOPIFY",
-      label: "Shopify Storefront",
-      status: process.env.NEXT_PUBLIC_SHOPIFY_STORE_DOMAIN &&
-        process.env.NEXT_PUBLIC_SHOPIFY_STOREFRONT_ACCESS_TOKEN
-        ? "configured"
-        : "missing",
-      hint: "Product catalog and checkout",
-    },
-    {
       provider: "BREVO",
       label: "Brevo Email",
       status: brevoConfigured ? "configured" : "missing",
@@ -84,6 +75,12 @@ export async function getIntegrationStatuses(): Promise<IntegrationStatus[]> {
       status: razorpay ? "configured" : "missing",
       hint: "Online checkout payment capture",
       source: razorpay ?? undefined,
+    },
+    {
+      provider: "SHOPIFY",
+      label: "Shopify Orders Webhook",
+      status: process.env.SHOPIFY_WEBHOOK_SECRET ? "configured" : "missing",
+      hint: "Import orders from an existing Shopify store",
     },
   ];
 }

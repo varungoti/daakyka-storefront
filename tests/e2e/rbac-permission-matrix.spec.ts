@@ -87,7 +87,7 @@ const MATRIX: MatrixCase[] = [
   // MARKETING_ADMIN is explicitly denied integrations:manage (see the
   // comment in rbac.ts / rbac.test.ts — payment/email credentials are
   // deliberately narrower than the rest of settings:manage).
-  { permission: "integrations:manage", allowRole: "SUPER_ADMIN", denyRole: "MARKETING_ADMIN", route: { kind: "api", method: "PATCH", path: "/api/admin/integrations/shopify" } },
+  { permission: "integrations:manage", allowRole: "SUPER_ADMIN", denyRole: "MARKETING_ADMIN", route: { kind: "api", method: "PATCH", path: "/api/admin/integrations/brevo" } },
   { permission: "seo:manage", allowRole: "SEO_MANAGER", denyRole: "VIEWER", route: { kind: "api", method: "GET", path: "/api/admin/seo" } },
   { permission: "offers:manage", allowRole: "MARKETING_ADMIN", denyRole: "VIEWER", route: { kind: "api", method: "GET", path: "/api/admin/offers" } },
   { permission: "market:view", allowRole: "MARKETING_ADMIN", denyRole: "VIEWER", route: { kind: "page", path: "/admin/market", allowedMarker: "Market Intelligence" } },

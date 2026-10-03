@@ -117,8 +117,17 @@ test.describe("Storefront E2E", () => {
 
   test("desktop navigation opens a populated category", async ({ page }) => {
     await page.goto("/");
-    await page.getByRole("navigation").getByRole("button", { name: "Shop", exact: true }).click();
-    await page.getByRole("region", { name: "Shop menu" }).getByRole("link", { name: "Scrub Sets" }).click();
+    const shopTrigger = page.getByRole("navigation").getByRole("button", { name: "Shop", exact: true });
+    await shopTrigger.click();
+    await expect(page.getByRole("region", { name: "Shop menu" })).toBeVisible();
+    await shopTrigger.click();
+    await expect(page.getByRole("region", { name: "Shop menu" })).toHaveCount(0);
+    await shopTrigger.click();
+    await page.getByRole("region", { name: "Shop menu" }).getByRole("link", { name: "For Hospitals", exact: true }).click();
+    await expect(page).toHaveURL(/\/for-hospitals$/);
+    await expect(page.locator("article").first()).toBeVisible();
+    await page.getByRole("navigation").getByRole("button", { name: "For Hospitals", exact: true }).click();
+    await page.getByRole("region", { name: "For Hospitals menu" }).getByRole("link", { name: "Scrub Sets", exact: true }).click();
     await expect(page).toHaveURL(/\/category\/scrub-sets$/);
     await expect(page.locator("article")).toHaveCount(4);
   });

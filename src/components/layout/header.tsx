@@ -226,6 +226,10 @@ function DesktopNav({ items, pathname }: { items: NavItem[]; pathname: string })
   const navRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const triggerRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  // Hover opens a desktop panel before a pointer click lands. Remember that
+  // opening so the first click leaves the panel available to select a link;
+  // a later click on the same trigger still closes it.
+  const hoverOpenedId = useRef<string | null>(null);
   // True from a mousedown inside the nav until the matching mouseup — see
   // the blur handler below.
   const pointerDownInside = useRef(false);
@@ -336,7 +340,13 @@ function DesktopNav({ items, pathname }: { items: NavItem[]; pathname: string })
           }
 
           return (
-            <div key={item.id} onMouseEnter={() => openMenu(item.id)}>
+            <div
+              key={item.id}
+              onMouseEnter={() => {
+                if (openId !== item.id) hoverOpenedId.current = item.id;
+                openMenu(item.id);
+              }}
+            >
               <button
                 type="button"
                 ref={(el) => {
@@ -346,7 +356,12 @@ function DesktopNav({ items, pathname }: { items: NavItem[]; pathname: string })
                 aria-haspopup="true"
                 aria-expanded={isOpen}
                 aria-controls={`nav-panel-${item.id}`}
-                onClick={() => (isOpen ? closeNow(item.id) : openMenu(item.id))}
+                onClick={() => {
+                  const openedOnHover = hoverOpenedId.current === item.id;
+                  hoverOpenedId.current = null;
+                  if (isOpen && !openedOnHover) closeNow(item.id);
+                  else openMenu(item.id);
+                }}
                 onFocus={() => closeUnlessOwnPanel(item.id)}
                 className={cn("flex items-center gap-1", NAV_ITEM_CLASSES, active || isOpen ? "text-brand" : "text-ink")}
               >
