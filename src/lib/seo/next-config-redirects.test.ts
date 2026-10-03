@@ -47,6 +47,20 @@ describe("next.config.ts redirects — legacy fabric-tech URLs (F-156)", () => {
  * crawler followed a redirect from the site's own internal links.
  */
 describe("guide CTA links point at final URLs (F-048)", () => {
+  it("keeps fixed guide CTAs on durable pages, even when a blog post is unpublished", () => {
+    for (const page of seoLandingPages) {
+      assert.ok(
+        !page.secondaryHref?.startsWith("/blog/"),
+        `guide "${page.slug}" hard-links to a database-managed blog post`,
+      );
+      assert.notEqual(
+        page.secondaryHref,
+        `/guides/${page.slug}`,
+        `guide "${page.slug}" links back to itself`,
+      );
+    }
+  });
+
   it("maps a legacy guide path to its /guides/<slug> page, and /hospital-uniforms to the section landing", () => {
     assert.equal(resolveLegacyGuidePath("/doctor-scrubs"), "/guides/doctor-scrubs");
     assert.equal(resolveLegacyGuidePath("/nurse-uniforms"), "/guides/nurse-uniforms");

@@ -194,7 +194,11 @@ test.describe("Dogfood — interactive flows", () => {
   });
 
   test("blog post renders", async ({ page }) => {
-    await page.goto("/blog/how-to-choose-medical-scrubs");
+    await page.goto("/blog");
+    const href = await page.locator('a[href^="/blog/"]').first().getAttribute("href");
+    expect(href).toBeTruthy();
+    const response = await page.goto(href!);
+    expect(response?.status()).toBe(200);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   });
 
