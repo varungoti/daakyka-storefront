@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { DEFAULT_SHOP_METADATA, resolveShopMetadata } from "@/lib/seo/shop-metadata";
 
 describe("shop metadata", () => {
+  it("leads with Kids Wear in the default description", () => {
+    assert.match(DEFAULT_SHOP_METADATA.description, /^Browse DAAKYKA kidswear,/);
+  });
   it("replaces only the untouched scrub-only seed pair", () => {
     assert.deepEqual(resolveShopMetadata({
       title: "Shop All Scrubs",

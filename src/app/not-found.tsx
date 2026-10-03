@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 // F-012: without this, the root 404 kept the layout's default <title>
-// ("DAAKYKA Apparels | Quality Uniforms & Linens for Pan India") — a
+// (the storefront's default title) — a
 // visitor on an unknown URL saw a homepage-branded browser tab with no clue
 // the page didn't exist. Next already injects its own `noindex` meta tag
 // whenever `notFound()` fires (see node_modules/next/dist/docs/01-app/
@@ -19,9 +19,9 @@ export const metadata: Metadata = {
 // section landings (the same destinations as the header's top-level nav)
 // give them a way to find what they were after.
 const SECTION_LINKS = [
+  { label: "Kids Wear", href: "/kids-wear" },
   { label: "For Hospitals", href: "/for-hospitals" },
   { label: "School Uniforms", href: "/school-uniforms" },
-  { label: "Kids Wear", href: "/kids-wear" },
 ];
 
 export default function NotFound() {

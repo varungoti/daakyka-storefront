@@ -1,6 +1,7 @@
 /** Replace only the exact scrub-only seed copy on an existing database. */
 import "dotenv/config";
 import { db } from "../src/lib/db";
+import { KIDS_FIRST_SHOP_SEO } from "../prisma/merchandising-correction";
 
 const path = "/shop";
 const legacy = {
@@ -9,8 +10,7 @@ const legacy = {
   h1: "Shop All Scrubs",
 };
 const replacement = {
-  title: "Shop Apparel & Uniforms",
-  metaDescription: "Browse DAAKYKA medical scrubs, hospital apparel, institutional linens, school uniforms and kidswear by size and category.",
+  ...KIDS_FIRST_SHOP_SEO,
   h1: "Shop All Apparel & Uniforms",
 };
 

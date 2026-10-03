@@ -1,7 +1,7 @@
 export const DEFAULT_SHOP_METADATA = {
   title: "Shop Apparel & Uniforms",
   description:
-    "Browse DAAKYKA medical scrubs, hospital apparel, institutional linens, school uniforms and kidswear by size and category.",
+    "Browse DAAKYKA kidswear, hospital scrubs and apparel, institutional linens, and school uniforms by size and category.",
 };
 
 const LEGACY_SHOP_SEED = {

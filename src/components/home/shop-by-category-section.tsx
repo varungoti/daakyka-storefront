@@ -15,8 +15,8 @@ const TILE_PLACEHOLDER = placeholderForAspect("portrait");
 
 /**
  * Phase C3: the new store home's "shop by category" tiles — built from
- * the top-level DB category tree (For Hospitals / School Uniforms / Kids
- * Wear) plus an optional Sale tile, instead of the old hardcoded
+ * the top-level DB category tree (Kids Wear / For Hospitals / School
+ * Uniforms) plus an optional Sale tile, instead of the old hardcoded
  * tops/bottoms/sets/bespoke seed categories. `image` (resolved in
  * src/app/page.tsx via getSiteImage's `home.tile.*` manifest slots, see
  * Phase E2) is null until an admin generates or uploads one, in which

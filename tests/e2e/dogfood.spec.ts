@@ -95,7 +95,7 @@ test.describe("Dogfood — interactive flows", () => {
     await expect(page.getByRole("main")).toBeVisible();
     await expect(page.locator('head meta[name="description"]')).toHaveAttribute(
       "content",
-      /medical scrubs, hospital apparel, institutional linens/i,
+      /kidswear, hospital scrubs and apparel, institutional linens/i,
     );
   });
 
