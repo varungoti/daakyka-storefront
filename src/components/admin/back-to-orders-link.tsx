@@ -17,7 +17,7 @@ import { useEffect, useState } from "react";
  * `/admin/orders` path first, and falls back to the bare list URL exactly
  * like before otherwise.
  */
-export function BackToOrdersLink() {
+export function BackToOrdersLink({ returnTo }: { returnTo?: string }) {
   const [href, setHref] = useState("/admin/orders");
 
   useEffect(() => {
@@ -33,7 +33,7 @@ export function BackToOrdersLink() {
   }, []);
 
   return (
-    <Link href={href} className="text-xs font-semibold text-brand hover:underline">
+    <Link href={returnTo?.startsWith("/admin/orders?") ? returnTo : href} className="text-xs font-semibold text-brand hover:underline">
       ← Back to Orders
     </Link>
   );

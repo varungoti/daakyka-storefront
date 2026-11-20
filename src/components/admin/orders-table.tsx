@@ -46,11 +46,7 @@ function formatInr(amount: number): string {
   return formatInrExact(amount);
 }
 
-/** F-200 fix: filter/search/sort/page state that should survive a
- * round trip to an order's detail page and back — read once, on mount,
- * from the current URL (not `useSearchParams`, so this client component
- * needs no Suspense boundary from its server-rendered parent). */
-interface OrdersFilterState {
+export interface OrdersFilterState {
   search: string;
   status: string;
   paymentMethod: string;
@@ -58,31 +54,6 @@ interface OrdersFilterState {
   dateTo: string;
   sort: string;
   page: number;
-}
-
-const DEFAULT_FILTERS: OrdersFilterState = {
-  search: "",
-  status: "",
-  paymentMethod: "",
-  dateFrom: "",
-  dateTo: "",
-  sort: "createdAt-desc",
-  page: 1,
-};
-
-function readFiltersFromLocation(): OrdersFilterState {
-  if (typeof window === "undefined") return DEFAULT_FILTERS;
-  const params = new URLSearchParams(window.location.search);
-  const page = Number(params.get("page"));
-  return {
-    search: params.get("q") ?? params.get("search") ?? "",
-    status: params.get("status") ?? "",
-    paymentMethod: params.get("paymentMethod") ?? "",
-    dateFrom: params.get("dateFrom") ?? "",
-    dateTo: params.get("dateTo") ?? "",
-    sort: params.get("sort") ?? DEFAULT_FILTERS.sort,
-    page: Number.isSafeInteger(page) && page > 0 ? page : 1,
-  };
 }
 
 /**
@@ -100,18 +71,13 @@ function readFiltersFromLocation(): OrdersFilterState {
  * opening an order and pressing Back restores exactly what was on screen,
  * and the list is shareable/bookmarkable with its filters intact.
  */
-export function OrdersTable() {
+export function OrdersTable({ initialFilters }: { initialFilters: OrdersFilterState }) {
   const [items, setItems] = useState<OrderListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Lazy `useState` initializer: `readFiltersFromLocation` only actually
-  // runs once, on mount — a plain call here would re-parse
-  // `window.location.search` on every render for a value React would
-  // discard after the first anyway.
-  const [initialFilters] = useState(readFiltersFromLocation);
   const [page, setPage] = useState(initialFilters.page);
   // `searchInput` is what the text field shows (updates every keystroke);
   // `search` is what's actually queried/URL-synced, 300ms after the admin
@@ -130,10 +96,7 @@ export function OrdersTable() {
   // run" guard the way this used to (that guard existed only to stop the
   // debounce's own post-mount fire from resetting `page` back to 1, which
   // would have thrown away a page number just read from the URL, e.g.
-  // after Back from an order on page 3). A lazy `useState` initializer,
-  // not `useRef` — the same "run once, keep across renders" pattern
-  // `initialFilters` above uses; `react-hooks/refs` forbids reading
-  // `.current` during render, which a `useRef(...).current` one-liner does.
+  // after Back from an order on page 3).
   const [debouncedSetSearch] = useState(() =>
     debounce((value: string) => {
       setSearch(value);
@@ -215,7 +178,10 @@ export function OrdersTable() {
     window.history.replaceState(null, "", url);
   }, [buildParams]);
 
-  const exportParams = buildParams();
+  const listParams = buildParams();
+  const orderHref = (id: string) =>
+    `/admin/orders/${id}?${new URLSearchParams({ returnTo: `/admin/orders?${listParams}` })}`;
+  const exportParams = new URLSearchParams(listParams);
   exportParams.delete("page");
   exportParams.delete("sort");
   const exportSearchTerm = exportParams.get("q");
@@ -340,7 +306,7 @@ export function OrdersTable() {
               items.map((order) => (
                 <tr key={order.id} className="border-t border-border align-top">
                   <td className="p-3">
-                    <Link href={`/admin/orders/${order.id}`} className="font-semibold text-ink hover:underline">
+                    <Link href={orderHref(order.id)} className="font-semibold text-ink hover:underline">
                       {order.number}
                     </Link>
                   </td>
@@ -358,7 +324,7 @@ export function OrdersTable() {
                   </td>
                   <td className="p-3 text-muted">{order.paymentMethod === "RAZORPAY" ? "Razorpay" : "Order Request"}</td>
                   <td className="p-3 text-right">
-                    <Link href={`/admin/orders/${order.id}`} className="text-xs font-semibold text-brand hover:underline">
+                    <Link href={orderHref(order.id)} className="text-xs font-semibold text-brand hover:underline">
                       View
                       <span className="sr-only"> order {order.number}</span>
                     </Link>
@@ -382,7 +348,7 @@ export function OrdersTable() {
             <div key={order.id} className="rounded-2xl border border-border bg-surface p-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <Link href={`/admin/orders/${order.id}`} className="font-semibold text-ink hover:underline">
+                  <Link href={orderHref(order.id)} className="font-semibold text-ink hover:underline">
                     {order.number}
                   </Link>
                   <p className="text-ink">{order.customerName ?? order.guestName ?? "Guest"}</p>
@@ -411,7 +377,7 @@ export function OrdersTable() {
                 </div>
               </dl>
               <div className="mt-3 text-right">
-                <Link href={`/admin/orders/${order.id}`} className="inline-flex min-h-9 items-center px-3 text-xs font-semibold text-brand hover:underline">
+                <Link href={orderHref(order.id)} className="inline-flex min-h-9 items-center px-3 text-xs font-semibold text-brand hover:underline">
                   View
                   <span className="sr-only"> order {order.number}</span>
                 </Link>

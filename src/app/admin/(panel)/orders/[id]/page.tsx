@@ -6,6 +6,7 @@ import { getSession } from "@/lib/auth/session";
 import { getOrderForAdmin, getOrderHistory, OrderNotFoundError } from "@/lib/orders/admin-orders";
 import { OrderDetailActions } from "@/components/admin/order-detail-actions";
 import { BackToOrdersLink } from "@/components/admin/back-to-orders-link";
+import { firstParam, type RawSearchParam } from "@/lib/admin/pagination";
 import { OrderTimeline } from "@/components/admin/order-timeline";
 import { formatInrExact } from "@/lib/currency/admin-money";
 import { formatDateTimeIST } from "@/lib/format/datetime";
@@ -49,7 +50,10 @@ function orderRequestPaymentNote(status: OrderStatus, paid: boolean): string {
   }
 }
 
-export default async function AdminOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function AdminOrderDetailPage({ params, searchParams }: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ returnTo?: RawSearchParam }>;
+}) {
   const session = await getSession();
   if (!session || !hasPermission(session.role, "orders:view")) {
     redirect("/admin/dashboard");
@@ -76,7 +80,7 @@ export default async function AdminOrderDetailPage({ params }: { params: Promise
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <BackToOrdersLink />
+          <BackToOrdersLink returnTo={firstParam((await searchParams).returnTo)} />
           <h1 className="mt-2 font-display text-3xl font-bold text-ink">{order.number}</h1>
           <p className="text-muted">
             Placed {order.createdAt.toLocaleString("en-IN")} · Last updated {order.updatedAt.toLocaleString("en-IN")}

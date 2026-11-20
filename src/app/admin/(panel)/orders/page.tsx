@@ -2,9 +2,10 @@ import Link from "next/link";
 import { hasPermission } from "@/lib/auth/rbac";
 import { getSession } from "@/lib/auth/session";
 import { db } from "@/lib/db";
+import { firstParam, parsePageParam, type RawSearchParam } from "@/lib/admin/pagination";
 import { CUSTOMER_ORDER_EMAIL_KINDS, getUndeliveredEmailCount } from "@/lib/engagement/outbox";
 import { redirect } from "next/navigation";
-import { OrdersTable } from "@/components/admin/orders-table";
+import { OrdersTable, type OrdersFilterState } from "@/components/admin/orders-table";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Orders" };
@@ -24,13 +25,13 @@ export const metadata: Metadata = { title: "Orders" };
  * heading. The Shopify webhook route itself
  * (src/app/api/webhooks/shopify/orders/route.ts) is untouched.
  */
-export default async function AdminOrdersPage() {
+export default async function AdminOrdersPage({ searchParams }: { searchParams: Promise<Record<string, RawSearchParam>> }) {
   const session = await getSession();
   if (!session || !hasPermission(session.role, "orders:view")) {
     redirect("/admin/dashboard");
   }
 
-  const [legacyCount, undeliveredEmail] = await Promise.all([
+  const [legacyCount, undeliveredEmail, params] = await Promise.all([
     db.orderEvent.count(),
     // F7 fix: order confirmations are the highest-stakes transactional
     // email this store sends — surface undelivered ones right where the
@@ -39,8 +40,18 @@ export default async function AdminOrdersPage() {
     // status updates) — not password resets, verification links or the
     // store's own copy, which would inflate the number several times over.
     getUndeliveredEmailCount({ kinds: CUSTOMER_ORDER_EMAIL_KINDS }),
+    searchParams,
   ]);
   const canManage = hasPermission(session.role, "orders:manage");
+  const initialFilters: OrdersFilterState = {
+    search: firstParam(params.q) ?? firstParam(params.search) ?? "",
+    status: firstParam(params.status) ?? "",
+    paymentMethod: firstParam(params.paymentMethod) ?? "",
+    dateFrom: firstParam(params.dateFrom) ?? "",
+    dateTo: firstParam(params.dateTo) ?? "",
+    sort: firstParam(params.sort) ?? "createdAt-desc",
+    page: parsePageParam(params.page),
+  };
 
   return (
     <div className="space-y-6">
@@ -75,7 +86,7 @@ export default async function AdminOrdersPage() {
         </p>
       )}
 
-      <OrdersTable />
+      <OrdersTable key={JSON.stringify(initialFilters)} initialFilters={initialFilters} />
     </div>
   );
 }

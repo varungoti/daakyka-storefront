@@ -176,7 +176,9 @@ describe("focus indicators and tab stops (F-239, F-083 review follow-ups)", () =
     // a link in the scroll region axe's scrollable-region-focusable fires
     // for the freshly opened, empty-query dialog.
     const source = readFileSync("src/components/search/search-dialog.tsx", "utf8");
-    const region = source.slice(source.indexOf("max-h-[420px] overflow-y-auto"));
+    const regionStart = source.indexOf('overflow-y-auto p-4"');
+    assert.ok(regionStart >= 0, "search suggestions need a scrollable region");
+    const region = source.slice(regionStart);
     assert.ok(region.includes("Browse all products"), "empty query needs a 'Browse all products' link");
     assert.match(region, /href="\/shop"/);
     assert.ok(region.includes("Search all products for"), "typed query keeps its 'Search all products' link");
@@ -438,7 +440,18 @@ describe("admin controls have accessible names (F-066, F-220)", () => {
   });
 
   it("the orders, products and customers lists name every search box and filter/sort select", () => {
-    const orders = renderAdmin(createElement(OrdersTable));
+    const orders = renderAdmin(createElement(OrdersTable, {
+      initialFilters: {
+        search: "guest@example.test",
+        status: "",
+        paymentMethod: "",
+        dateFrom: "",
+        dateTo: "",
+        sort: "createdAt-desc",
+        page: 1,
+      },
+    }));
+    assert.match(orders, /aria-label="Search orders"[^>]*value="guest@example\.test"/);
     const products = renderAdmin(
       createElement(ProductsTable, {
         categoryOptions: [{ id: "c1", name: "Scrubs", section: "Women" }],
