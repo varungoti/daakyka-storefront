@@ -1015,7 +1015,7 @@ export async function replaceVariants(productId: string, variants: VariantInput[
 export async function addProductImage(
   productId: string,
   mediaAssetId: string,
-  options: { color?: string | null; alt?: string | null },
+  options: { color?: string | null; alt?: string | null; reuseExisting?: boolean },
   userId: string,
 ) {
   const product = await db.product.findUnique({ where: { id: productId }, select: { id: true, slug: true } });
@@ -1023,6 +1023,14 @@ export async function addProductImage(
 
   const media = await db.mediaAsset.findUnique({ where: { id: mediaAssetId }, select: { id: true } });
   if (!media) throw new ProductImageNotFoundError(mediaAssetId);
+
+  if (options.reuseExisting) {
+    const existing = await db.productImage.findFirst({
+      where: { productId, mediaId: mediaAssetId, color: options.color ?? null, alt: options.alt ?? null },
+      include: { media: true },
+    });
+    if (existing) return existing;
+  }
 
   const maxSort = await db.productImage.aggregate({ where: { productId }, _max: { sortOrder: true } });
   const nextSort = (maxSort._max.sortOrder ?? -1) + 1;

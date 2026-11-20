@@ -2,6 +2,7 @@ import { OrderPrintButton } from "@/components/account/order-print-button";
 import { OrderStatusBadge } from "@/components/account/order-status-badge";
 import { OrderTimelineView } from "@/components/account/order-timeline";
 import { OrderTrackingCard } from "@/components/account/order-tracking-card";
+import { PaymentStatusRefresh } from "@/components/account/payment-status-refresh";
 import { brand } from "@/data/brand";
 import { formatCurrencyAmount } from "@/lib/currency/convert";
 import { getCustomerSession } from "@/lib/customer-auth/session";
@@ -152,7 +153,7 @@ export default async function OrderConfirmationPage({
               <HeroIcon size={32} className={heroIconClass} />
             )}
             <h1 className="font-display text-3xl font-bold text-ink">
-              {isConfirmingPayment ? "Payment received — confirming" : hero.label}
+              {isConfirmingPayment ? "Checking your payment" : hero.label}
             </h1>
           </div>
           <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-muted">
@@ -193,11 +194,15 @@ export default async function OrderConfirmationPage({
       {isConfirmingPayment && (
         <div className="mt-6 flex items-start gap-3 rounded-2xl border border-accent/40 bg-accent/10 p-4 text-sm text-ink print:hidden">
           <Loader2 size={20} className="mt-0.5 shrink-0 animate-spin" />
-          <p>
-            We&rsquo;ve received your payment and are confirming it — this can take a minute. Please don&rsquo;t
-            place the order again. If this doesn&rsquo;t update soon, contact us with your order number{" "}
-            <span className="font-semibold">{order.number}</span>.
-          </p>
+          <div>
+            <p>
+              We&rsquo;re waiting for payment confirmation. Please avoid placing the order again.
+              If the status stays the same,{" "}
+              <Link href="/contact?intent=checkout" className="font-semibold text-brand underline">contact us</Link>
+              {" "}with order number <span className="font-semibold">{order.number}</span>.
+            </p>
+            <PaymentStatusRefresh />
+          </div>
         </div>
       )}
 

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { adminRequest } from "@/lib/admin/request";
 
 export function IntegrationToggle({
   provider,
@@ -19,6 +20,7 @@ export function IntegrationToggle({
 }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [isEnabled, setIsEnabled] = useState(enabled);
   // F-267: this local state used to only ever read `enabled` on first
   // mount, so it went stale as soon as the server value changed out from
@@ -38,19 +40,24 @@ export function IntegrationToggle({
   const toggle = async () => {
     setLoading(true);
     const next = !isEnabled;
-    const response = await fetch(`/api/admin/integrations/${provider.toLowerCase()}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: next }),
-    });
-    if (response.ok) {
+    setError(null);
+    try {
+      await adminRequest(`/api/admin/integrations/${provider.toLowerCase()}`, "Couldn't change the integration setting.", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
       setIsEnabled(next);
       router.refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Couldn't change the integration setting.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
+    <>
     <button
       type="button"
       disabled={loading || !configured}
@@ -71,5 +78,7 @@ export function IntegrationToggle({
     >
       {loading ? "Saving…" : isEnabled ? "Enabled — click to disable" : "Disabled — click to enable"}
     </button>
+      {error && <p role="alert" className="mt-2 basis-full text-xs text-red-700">{error}</p>}
+    </>
   );
 }

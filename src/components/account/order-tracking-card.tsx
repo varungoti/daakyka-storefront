@@ -19,6 +19,7 @@ export function OrderTrackingCard({
 }) {
   if (!trackingNumber) return null;
   const trackingUrl = getCourierTrackingUrl(courier, trackingNumber);
+  const isBlueDart = courier?.trim().toLowerCase().replace(/[^a-z]/g, "") === "bluedart";
 
   return (
     <section className="rounded-2xl border border-border bg-surface p-5">
@@ -41,10 +42,24 @@ export function OrderTrackingCard({
               rel="noreferrer"
               className="inline-flex items-center gap-1 font-mono text-sm font-semibold text-brand hover:underline"
             >
-              {trackingNumber} →
+              Track shipment {trackingNumber} →
             </a>
           ) : (
-            <CopyTrackingNumber value={trackingNumber} />
+            <>
+              <CopyTrackingNumber value={trackingNumber} />
+              {isBlueDart ? (
+                <p className="mt-2 text-muted">
+                  Enter this waybill number on{" "}
+                  <a href="https://www.bluedart.com/how-to-track" target="_blank" rel="noreferrer" className="font-semibold text-brand underline">
+                    Blue Dart’s tracking page
+                  </a>.
+                </p>
+              ) : courier ? (
+                <p className="mt-2 text-muted">Use this number on {courier}’s tracking page.</p>
+              ) : (
+                <p className="mt-2 text-muted">Contact us if you need help tracking this shipment.</p>
+              )}
+            </>
           )}
         </div>
       </div>

@@ -7,37 +7,34 @@ import { useState, type HTMLAttributes } from "react";
 import { ChevronDown, ChevronUp, GripVertical, Pencil, Trash2 } from "lucide-react";
 import type { AdminCategoryNode } from "@/lib/catalog/categories";
 import { swapStepsForMove } from "@/lib/admin/reorder";
+import { adminRequest } from "@/lib/admin/request";
 import { cn } from "@/lib/utils";
 
-async function patchCategory(id: string, patch: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> {
-  const response = await fetch(`/api/admin/categories/${id}`, {
+async function patchCategory(id: string, patch: Record<string, unknown>) {
+  await adminRequest(`/api/admin/categories/${id}`, "Couldn't save the category.", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(patch),
   });
-  if (response.ok) return { ok: true };
-  const body = await response.json().catch(() => ({}));
-  return { ok: false, error: body?.error ?? "Something went wrong" };
 }
 
 /** Single-step "swap with adjacent sibling" call — the same request both
  * the ▲▼ buttons and the drag-and-drop handler below issue, deliberately
  * *not* followed by a `router.refresh()` here so a multi-step drag can
  * await several of these in a row and refresh only once at the end. */
-async function reorderStep(id: string, direction: "up" | "down"): Promise<boolean> {
-  const response = await fetch(`/api/admin/categories/${id}/reorder`, {
+async function reorderStep(id: string, direction: "up" | "down") {
+  await adminRequest(`/api/admin/categories/${id}/reorder`, "Couldn't reorder the category.", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ direction }),
   });
-  return response.ok;
 }
 
 function Row({
   node,
   depth,
   dragHandleProps,
-  busy,
+  busy: groupBusy,
 }: {
   node: AdminCategoryNode;
   depth: number;
@@ -48,37 +45,29 @@ function Row({
 }) {
   const router = useRouter();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const busy = saving || groupBusy;
 
-  const toggle = async (field: "active" | "showInMenu") => {
+  const run = async (action: () => Promise<unknown>) => {
+    if (busy) return;
     setErrorMessage(null);
-    const result = await patchCategory(node.id, { [field]: !node[field] });
-    if (result.ok) {
+    setSaving(true);
+    try {
+      await action();
       router.refresh();
-    } else {
-      setErrorMessage(result.error ?? "Couldn't save — try again.");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Couldn't update the category.");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const move = async (direction: "up" | "down") => {
-    setErrorMessage(null);
-    const ok = await reorderStep(node.id, direction);
-    if (ok) {
-      router.refresh();
-    } else {
-      setErrorMessage("Couldn't reorder — try again.");
-    }
-  };
+  const toggle = (field: "active" | "showInMenu") => run(() => patchCategory(node.id, { [field]: !node[field] }));
+  const move = (direction: "up" | "down") => run(() => reorderStep(node.id, direction));
 
   const remove = async () => {
     if (!window.confirm(`Delete "${node.name}"? This can't be undone.`)) return;
-    setErrorMessage(null);
-    const response = await fetch(`/api/admin/categories/${node.id}`, { method: "DELETE" });
-    if (response.ok) {
-      router.refresh();
-    } else {
-      const body = await response.json().catch(() => ({}));
-      setErrorMessage(body?.error ?? "Couldn't delete — try again.");
-    }
+    await run(() => adminRequest(`/api/admin/categories/${node.id}`, "Couldn't delete the category.", { method: "DELETE" }));
   };
 
   return (
@@ -128,7 +117,7 @@ function Row({
           {node.childCount > 0 ? ` · ${node.childCount} sub-categor${node.childCount === 1 ? "y" : "ies"}` : ""}
           {node.sizeChartName ? ` · Size chart: ${node.sizeChartName}` : ""}
         </p>
-        {errorMessage ? <p className="mt-1 text-xs text-red-600">{errorMessage}</p> : null}
+        {errorMessage ? <p role="alert" className="mt-1 text-xs text-red-600">{errorMessage}</p> : null}
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
@@ -206,6 +195,7 @@ function SiblingList({ nodes, depth }: { nodes: AdminCategoryNode[]; depth: numb
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
   const [reordering, setReordering] = useState(false);
+  const [reorderError, setReorderError] = useState<string | null>(null);
 
   async function handleDrop(targetIndex: number) {
     const fromIndex = dragIndex;
@@ -216,20 +206,24 @@ function SiblingList({ nodes, depth }: { nodes: AdminCategoryNode[]; depth: numb
     const steps = swapStepsForMove(fromIndex, targetIndex);
     const id = nodes[fromIndex].id;
     setReordering(true);
+    setReorderError(null);
     // Sequential and awaited on purpose: each step re-reads the current
     // sortOrder server-side (see reorderCategory), so steps must land in
     // order rather than racing — see src/lib/admin/reorder.ts's doc
     // comment for why N single-step swaps are equivalent to one splice.
-    for (const direction of steps) {
-      const ok = await reorderStep(id, direction);
-      if (!ok) break;
+    try {
+      for (const direction of steps) await reorderStep(id, direction);
+    } catch (error) {
+      setReorderError(error instanceof Error ? error.message : "Couldn't reorder the category.");
+    } finally {
+      setReordering(false);
+      router.refresh();
     }
-    setReordering(false);
-    router.refresh();
   }
 
   return (
     <div className="space-y-2">
+      {reorderError && <p role="alert" className="text-sm text-red-700">{reorderError}</p>}
       {nodes.map((node, index) => (
         <div
           key={node.id}
@@ -240,6 +234,7 @@ function SiblingList({ nodes, depth }: { nodes: AdminCategoryNode[]; depth: numb
           }}
           onDrop={(event) => {
             event.preventDefault();
+            event.stopPropagation();
             void handleDrop(index);
           }}
           className={cn(

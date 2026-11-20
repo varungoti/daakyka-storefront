@@ -1,5 +1,8 @@
 "use client";
 
+import { adminRequest } from "@/lib/admin/request";
+import { ListLoadError } from "@/components/admin/list-load-error";
+
 import Image from "next/image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -48,6 +51,7 @@ export function ProductsTable({
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const initialParams = useSearchParams();
   // F-341 fix: `searchInput` is what the text field shows (updates every
@@ -91,6 +95,7 @@ export function ProductsTable({
   const load = useCallback(async () => {
     const requestId = loadGuard.start();
     setLoading(true);
+    setLoadError(null);
     const params = new URLSearchParams({ page: String(page), sort });
     // F-341 fix: below MIN_SEARCH_CHARS, behaves as if the search box were
     // empty rather than querying the server on a 1-character prefix.
@@ -100,16 +105,23 @@ export function ProductsTable({
     if (status) params.set("status", status);
     if (stockFilter !== "all") params.set("stockFilter", stockFilter);
 
-    const response = await fetch(`/api/admin/products?${params}`);
-    if (response.ok) {
-      const body = await response.json();
+    const fallback = "Couldn't load products.";
+    try {
+      const response = await adminRequest(`/api/admin/products?${params}`, fallback);
+      const body: { items: ProductListItem[]; total: number; totalPages: number; page: number } = await response.json();
       if (!loadGuard.isCurrent(requestId)) return;
       setItems(body.items);
       setTotal(body.total);
       setTotalPages(body.totalPages);
-      setLoading(false);
-    } else if (loadGuard.isCurrent(requestId)) {
-      setLoading(false);
+      const visibleIds = new Set(body.items.map((item) => item.id));
+      setSelected((current) => new Set([...current].filter((id) => visibleIds.has(id))));
+      if (Number.isInteger(body.page) && body.page > 0 && body.page !== page) setPage(body.page);
+    } catch (error) {
+      if (loadGuard.isCurrent(requestId)) {
+        setLoadError(error instanceof Error && !(error instanceof SyntaxError) ? error.message : fallback);
+      }
+    } finally {
+      if (loadGuard.isCurrent(requestId)) setLoading(false);
     }
   }, [page, sort, search, categoryId, status, stockFilter, loadGuard]);
 
@@ -151,16 +163,18 @@ export function ProductsTable({
     setBulkBusy(true);
     setNotice(null);
     setSuccessNotice(null);
-    const response = await fetch("/api/admin/products/bulk", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, ids: Array.from(selected), ...extra }),
-    });
-    setBulkBusy(false);
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      setNotice(body?.error ?? `Couldn't ${action}.`);
+    let response: Response;
+    try {
+      response = await adminRequest("/api/admin/products/bulk", "Couldn't update the selected products.", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ids: Array.from(selected), ...extra }),
+      });
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Couldn't update the selected products.");
       return;
+    } finally {
+      setBulkBusy(false);
     }
     // adjust-price-pct can partially apply: rows that would push price
     // past the product's compareAtPrice are skipped rather than silently
@@ -325,7 +339,7 @@ export function ProductsTable({
         </select>
       </div>
 
-      {canManage && selected.size > 0 && (
+      {canManage && !loading && !loadError && selected.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-brand/30 bg-brand/5 p-3">
           <span className="text-xs font-semibold text-ink">{selected.size} selected</span>
           <span title={canPublish ? "" : "Requires products:publish"}>
@@ -446,6 +460,7 @@ export function ProductsTable({
           pushing Stock, Status and Edit off-screen behind an
           easy-to-miss horizontal scrollbar (F-332). `xl` (1280px) is the
           first width this table actually has room for every column at. */}
+      {loadError && <ListLoadError message={loadError} onRetry={load} />}
       <div className="hidden overflow-x-auto rounded-2xl border border-border xl:block">
         <table className="w-full min-w-[900px] text-sm">
           <thead className="bg-surface-muted text-left text-xs font-semibold text-muted">
@@ -472,7 +487,7 @@ export function ProductsTable({
             </tr>
           </thead>
           <tbody>
-            {loading ? (
+            {loadError ? null : loading ? (
               <tr>
                 <td colSpan={canManage ? 8 : 7} className="p-6 text-center text-muted">
                   Loading…
@@ -544,7 +559,7 @@ export function ProductsTable({
           (checkbox select, Edit link) so nothing needs horizontal
           scrolling to reach. */}
       <div className="space-y-3 xl:hidden">
-        {loading ? (
+        {loadError ? null : loading ? (
           <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">Loading…</p>
         ) : items.length === 0 ? (
           <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">No products found.</p>
@@ -606,7 +621,7 @@ export function ProductsTable({
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
+      <div className={loadError || loading ? "hidden" : "flex flex-wrap items-center justify-between gap-2 text-sm text-muted"}>
         {/* F-03: `total` starts at 0, so rendering it unconditionally
             raced the table body's own "Loading…" state and flashed "0
             products" on every fresh navigation, before the same fetch

@@ -1,5 +1,10 @@
 "use client";
 
+import { adminRequest } from "@/lib/admin/request";
+import { ListLoadError } from "@/components/admin/list-load-error";
+import { createLoadGuard, debounce, normalizeSearchTerm } from "@/lib/admin/list-query";
+import { formatInrExact } from "@/lib/currency/admin-money";
+
 import { useCallback, useEffect, useState } from "react";
 
 interface GuestBuyerItem {
@@ -7,10 +12,6 @@ interface GuestBuyerItem {
   orderCount: number;
   totalSpent: number;
   lastOrderAt: string;
-}
-
-function formatInr(amount: number): string {
-  return `₹${amount.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 }
 
 /**
@@ -26,43 +27,61 @@ export function GuestBuyersTable() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [loadGuard] = useState(createLoadGuard);
+  const [debouncedSetSearch] = useState(() => debounce((value: string) => {
+    setSearch(value);
+    setPage(1);
+  }, 300));
+  useEffect(() => () => debouncedSetSearch.cancel(), [debouncedSetSearch]);
 
   const load = useCallback(async () => {
+    const requestId = loadGuard.start();
     setLoading(true);
+    setLoadError(null);
     const params = new URLSearchParams({ page: String(page) });
-    if (search.trim()) params.set("search", search.trim());
+    const term = normalizeSearchTerm(search);
+    if (term) params.set("search", term);
 
-    const response = await fetch(`/api/admin/customers/guests?${params}`);
-    if (response.ok) {
-      const body = await response.json();
+    const fallback = "Couldn't load guest buyers.";
+    try {
+      const response = await adminRequest(`/api/admin/customers/guests?${params}`, fallback);
+      const body: { items: GuestBuyerItem[]; total: number; totalPages: number; page: number } = await response.json();
+      if (!loadGuard.isCurrent(requestId)) return;
       setItems(body.items);
       setTotal(body.total);
       setTotalPages(body.totalPages);
+      if (Number.isInteger(body.page) && body.page > 0 && body.page !== page) setPage(body.page);
+    } catch (error) {
+      if (loadGuard.isCurrent(requestId)) {
+        setLoadError(error instanceof Error && !(error instanceof SyntaxError) ? error.message : fallback);
+      }
+    } finally {
+      if (loadGuard.isCurrent(requestId)) setLoading(false);
     }
-    setLoading(false);
-  }, [page, search]);
+  }, [page, search, loadGuard]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, [load]);
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setPage(1);
-  }, [search]);
-
   return (
     <div className="space-y-4">
       <input
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
+        value={searchInput}
+        onChange={(e) => {
+          setSearchInput(e.target.value);
+          debouncedSetSearch(e.target.value);
+        }}
         placeholder="Search by email…"
         aria-label="Search guest buyers by email"
-        className="w-72 rounded-xl border border-border p-2 text-sm"
+        className="w-full max-w-72 rounded-xl border border-border p-2 text-sm"
       />
 
+      {loadError && <ListLoadError message={loadError} onRetry={load} />}
       <div className="hidden overflow-x-auto rounded-2xl border border-border lg:block">
         <table className="w-full min-w-[640px] text-sm">
           <thead className="bg-surface-muted text-left text-xs font-semibold text-muted">
@@ -77,7 +96,7 @@ export function GuestBuyersTable() {
             </tr>
           </thead>
           <tbody>
-            {loading ? (
+            {loadError ? null : loading ? (
               <tr>
                 <td colSpan={5} className="p-6 text-center text-muted">
                   Loading…
@@ -94,11 +113,11 @@ export function GuestBuyersTable() {
                 <tr key={g.email} className="border-t border-border align-top">
                   <td className="p-3 text-ink">{g.email}</td>
                   <td className="p-3">{g.orderCount}</td>
-                  <td className="p-3 font-semibold text-ink">{formatInr(g.totalSpent)}</td>
+                  <td className="p-3 font-semibold text-ink">{formatInrExact(g.totalSpent)}</td>
                   <td className="p-3 text-muted">{new Date(g.lastOrderAt).toLocaleDateString("en-IN")}</td>
                   <td className="p-3 text-right">
                     <a
-                      href={`/admin/orders?search=${encodeURIComponent(g.email)}`}
+                      href={`/admin/orders?q=${encodeURIComponent(g.email)}`}
                       className="text-xs font-semibold text-brand hover:underline"
                     >
                       View orders
@@ -112,7 +131,7 @@ export function GuestBuyersTable() {
       </div>
 
       <div className="space-y-3 lg:hidden">
-        {loading ? (
+        {loadError ? null : loading ? (
           <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">Loading…</p>
         ) : items.length === 0 ? (
           <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">
@@ -129,7 +148,7 @@ export function GuestBuyersTable() {
                 </div>
                 <div>
                   <dt className="text-muted">Total spent</dt>
-                  <dd className="font-semibold text-ink">{formatInr(g.totalSpent)}</dd>
+                  <dd className="font-semibold text-ink">{formatInrExact(g.totalSpent)}</dd>
                 </div>
                 <div>
                   <dt className="text-muted">Last order</dt>
@@ -138,7 +157,7 @@ export function GuestBuyersTable() {
               </dl>
               <div className="mt-3 text-right">
                 <a
-                  href={`/admin/orders?search=${encodeURIComponent(g.email)}`}
+                  href={`/admin/orders?q=${encodeURIComponent(g.email)}`}
                   className="text-xs font-semibold text-brand hover:underline"
                 >
                   View orders
@@ -149,7 +168,7 @@ export function GuestBuyersTable() {
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
+      <div className={loadError || loading ? "hidden" : "flex flex-wrap items-center justify-between gap-2 text-sm text-muted"}>
         <span>{total} guest buyers</span>
         <div className="flex items-center gap-2">
           <button

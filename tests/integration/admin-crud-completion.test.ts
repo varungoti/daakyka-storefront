@@ -667,15 +667,15 @@ describe("notifications mark-read admin", () => {
     });
     createdIds.push(notification.id);
 
-    const marked = await markNotificationRead(notification.id, true, adminId);
+    const marked = await markNotificationRead(notification.id, true, adminId, "SUPER_ADMIN");
     assert.equal(marked.read, true);
 
-    const unmarked = await markNotificationRead(notification.id, false, adminId);
+    const unmarked = await markNotificationRead(notification.id, false, adminId, "SUPER_ADMIN");
     assert.equal(unmarked.read, false);
   });
 
   it("markNotificationRead throws NotificationNotFoundError for an unknown id", async () => {
-    await assert.rejects(() => markNotificationRead("does-not-exist", true, adminId), NotificationNotFoundError);
+    await assert.rejects(() => markNotificationRead("does-not-exist", true, adminId, "SUPER_ADMIN"), NotificationNotFoundError);
   });
 
   it("markAllNotificationsRead marks every unread notification read", async () => {
@@ -683,7 +683,7 @@ describe("notifications mark-read admin", () => {
     const b = await db.adminNotification.create({ data: { title: "B", body: "B body", type: "test" } });
     createdIds.push(a.id, b.id);
 
-    const count = await markAllNotificationsRead(adminId);
+    const count = await markAllNotificationsRead(adminId, "SUPER_ADMIN");
     assert.ok(count >= 2);
 
     const refetched = await db.adminNotification.findMany({ where: { id: { in: [a.id, b.id] } } });

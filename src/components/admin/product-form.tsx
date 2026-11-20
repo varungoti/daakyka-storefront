@@ -350,6 +350,16 @@ export function ProductForm({
    * silently leaving pending field edits unsaved.
    */
   async function saveDraft(): Promise<boolean> {
+    try {
+      return await persistDraft();
+    } catch {
+      setSaveStatus("error");
+      setErrorMessage("Couldn't finish saving the product. Check your connection and try again.");
+      return false;
+    }
+  }
+
+  async function persistDraft(): Promise<boolean> {
     setSaveStatus("saving");
     setErrorMessage(null);
     setFieldErrors({});
@@ -390,7 +400,6 @@ export function ProductForm({
     // failed (see below: the form stays on /new so the grid isn't lost)
     // would `POST` a second product instead of `PATCH`ing the one already
     // created.
-    const isFirstSave = !productId;
     const response = await fetch(productId ? `/api/admin/products/${productId}` : "/api/admin/products", {
       method: productId ? "PATCH" : "POST",
       headers: { "Content-Type": "application/json" },
@@ -425,32 +434,20 @@ export function ProductForm({
     // into a single pass instead of the old save → reload → scroll to
     // Images → upload two-round-trip flow.
     //
-    // Only ever non-empty on the very first save: an edit form starts with
-    // `productId` already set, so StagedProductImageGallery never renders
-    // and stagedImages never gets populated. Individual attach failures are
-    // tolerated (attachStagedImages never throws) rather than blocking the
-    // rest of the save — the product itself already saved successfully by
-    // this point, and every staged image is a real, already-persisted
-    // MediaAsset, so losing one photo must not cost the admin the whole
-    // product. A failed one simply won't appear in the gallery; the
-    // already-uploaded file isn't lost (it becomes an unattached MediaAsset
-    // the admin can re-add, or that scripts/cleanup-orphaned-media.ts will
-    // eventually sweep) — see that script's file comment for the full
-    // orphan-lifecycle story. There's no in-UI warning for this specific
-    // rare case: on success this is normally followed by a navigation to
-    // the real edit page (see below), which unmounts this form before any
-    // message set here could ever be seen — F-179: *normally*, because
-    // that navigation is now conditional on the variant save below too.
-    if (isFirstSave && stagedImages.length > 0) {
-      const { attached } = await attachStagedImages(savedId, stagedImages, {
+    // Keep only failed attachments staged so retrying reuses the saved
+    // product and the uploaded assets.
+    let failedImages = 0;
+    if (stagedImages.length > 0) {
+      const { attached, failed } = await attachStagedImages(savedId, stagedImages, {
         attach: async (id, staged) => {
           const attachResponse = await fetch(`/api/admin/products/${id}/images`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mediaAssetId: staged.mediaAssetId, color: staged.color, alt: staged.alt || undefined }),
-          });
-          if (!attachResponse.ok) return null;
-          const attachBody = await attachResponse.json();
+            body: JSON.stringify({ mediaAssetId: staged.mediaAssetId, color: staged.color, alt: staged.alt || undefined, reuseExisting: true }),
+          }).catch(() => null);
+          if (!attachResponse?.ok) return null;
+          const attachBody = await attachResponse.json().catch(() => null);
+          if (!attachBody?.image) return null;
           return {
             id: attachBody.image.id,
             mediaId: attachBody.image.mediaId,
@@ -461,12 +458,18 @@ export function ProductForm({
           };
         },
       });
-      setImages(attached);
-      setStagedImages([]);
+      failedImages = failed.length;
+      setImages((previous) => [...previous, ...attached.filter((image) => !previous.some((row) => row.id === image.id))]);
+      setStagedImages(failed);
     }
 
     const variantsResult = await saveVariantsIfChanged(savedId);
-    setSaveStatus(variantsResult.ok ? "idle" : "error");
+    const savedAll = variantsResult.ok && failedImages === 0;
+    setSaveStatus(savedAll ? "idle" : "error");
+    if (failedImages > 0) {
+      const message = `${failedImages} image${failedImages === 1 ? "" : "s"} could not be attached. Save again to retry the pending images.`;
+      setErrorMessage((previous) => previous ? `${previous} ${message}` : message);
+    }
 
     // F-13/F-179: fold in whatever actually saved. The product fields above
     // always saved successfully by this point (the response was `ok`), so
@@ -478,27 +481,27 @@ export function ProductForm({
     const fieldsSnapshot = buildSnapshot();
     setInitialSnapshot((prev) => ({ ...fieldsSnapshot, variants: variantsResult.ok ? variantsResult.variants : prev.variants }));
 
-    if (variantsResult.ok) {
+    if (savedAll) {
       // F-03/F-16: match the Orders page's own "Saved." confirmation
       // pattern (src/components/admin/order-detail-actions.tsx) instead of
       // leaving a save with no visible confirmation at all.
       setSaved(true);
     }
 
-    if (isFirstSave) {
+    if (!isEdit) {
       // F-179: only leave /new once everything actually saved. Previously
       // this always navigated to the edit page, even when the variants
       // POST just 400'd — the admin landed on an edit page with an empty
       // variant grid and no visible reason why. Staying put leaves the
       // grid and the error banner (set inside saveVariantsIfChanged) on
       // screen so the admin can fix the grid and save again.
-      if (variantsResult.ok) {
+      if (savedAll) {
         router.push(`/admin/products/${savedId}`);
       }
     } else {
       router.refresh();
     }
-    return variantsResult.ok;
+    return savedAll;
   }
 
   async function runAction(action: string, run: () => Promise<Response>) {
@@ -506,16 +509,22 @@ export function ProductForm({
     setErrorMessage(null);
     setFieldErrors({});
     setSaved(false);
-    const response = await run();
-    setBusyAction(null);
-    if (!response.ok) {
-      const body = await response.json().catch(() => ({}));
-      const { summary, fieldErrors: fe } = formatApiError(body, `Couldn't ${action}.`);
-      setErrorMessage(summary);
-      setFieldErrors(fe);
+    try {
+      const response = await run();
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const { summary, fieldErrors: fe } = formatApiError(body, `Couldn't ${action}.`);
+        setErrorMessage(summary);
+        setFieldErrors(fe);
+        return false;
+      }
+      return true;
+    } catch {
+      setErrorMessage(`Couldn't ${action}. Check your connection and try again.`);
       return false;
+    } finally {
+      setBusyAction(null);
     }
-    return true;
   }
 
   /**
@@ -574,31 +583,25 @@ export function ProductForm({
 
   async function duplicate() {
     if (!productId) return;
-    setBusyAction("duplicate");
-    setErrorMessage(null);
-    const response = await fetch(`/api/admin/products/${productId}/duplicate`, { method: "POST" });
-    setBusyAction(null);
-    if (response.ok) {
-      const body = await response.json();
-      router.push(`/admin/products/${body.product.id}`);
-    } else {
-      const body = await response.json().catch(() => ({}));
-      setErrorMessage(formatApiError(body, "Couldn't duplicate the product.").summary);
-    }
+    if (dirty) return;
+    let duplicateId: string | undefined;
+    const ok = await runAction("duplicate", async () => {
+      const response = await fetch(`/api/admin/products/${productId}/duplicate`, { method: "POST" });
+      if (response.ok) duplicateId = (await response.json()).product.id;
+      return response;
+    });
+    if (ok && duplicateId) router.push(`/admin/products/${duplicateId}`);
   }
 
   async function remove() {
     if (!productId || !canDelete) return;
     if (!confirm("Delete this product permanently?")) return;
-    setBusyAction("delete");
-    const response = await fetch(`/api/admin/products/${productId}`, { method: "DELETE" });
-    setBusyAction(null);
-    if (response.ok) {
+    const ok = await runAction("delete", () =>
+      fetch(`/api/admin/products/${productId}`, { method: "DELETE" }),
+    );
+    if (ok) {
       setInitialSnapshot(buildSnapshot());
       router.push("/admin/products");
-    } else {
-      const body = await response.json().catch(() => ({}));
-      setErrorMessage(formatApiError(body, "Couldn't delete the product.").summary);
     }
   }
 
@@ -700,7 +703,8 @@ export function ProductForm({
             aiFields={{ name, category: selectedCategory?.name, gender, fabric }}
             onChange={setImages}
           />
-        ) : (
+        ) : null}
+        {(!productId || stagedImages.length > 0) && (
           // F-04: images can now be selected/generated before the first
           // save — see StagedProductImageGallery and the attach step in
           // saveDraft() above.
@@ -828,7 +832,7 @@ export function ProductForm({
         <button
           type="button"
           onClick={saveDraft}
-          disabled={saveStatus === "saving" || !name.trim() || !price || Boolean(variantGridError)}
+          disabled={saveStatus === "saving" || busyAction !== null || !name.trim() || price === "" || Boolean(variantGridError)}
           title={variantGridError ?? ""}
           className="rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50 max-md:min-h-11 max-md:flex-1 max-md:px-4"
         >
@@ -853,7 +857,7 @@ export function ProductForm({
           // delete. Unarchive needs `products:manage`, not
           // `products:publish` (see the /publish route's own comment), so
           // it's never gated on `canPublish`.
-          <button type="button" onClick={unarchive} disabled={!productId || busyAction === "unarchive"} className="rounded-full bg-brand px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11 max-md:px-4">
+          <button type="button" onClick={unarchive} disabled={!productId || busyAction !== null || saveStatus === "saving"} className="rounded-full bg-brand px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11 max-md:px-4">
             Unarchive
           </button>
         ) : (
@@ -907,7 +911,7 @@ export function ProductForm({
               <button
                 type="button"
                 onClick={duplicate}
-                disabled={dirty || busyAction === "duplicate"}
+                disabled={dirty || busyAction !== null || saveStatus === "saving"}
                 aria-describedby={dirty ? duplicateHintId : undefined}
                 className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-muted hover:bg-lilac/40 disabled:cursor-not-allowed disabled:opacity-50 max-md:min-h-11 max-md:w-full max-md:text-left"
               >
@@ -927,7 +931,7 @@ export function ProductForm({
             <button
               type="button"
               onClick={archive}
-              disabled={busyAction === "archive"}
+              disabled={busyAction !== null || saveStatus === "saving"}
               className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-muted hover:bg-lilac/40 max-md:min-h-11 max-md:w-full max-md:text-left"
             >
               Archive
@@ -939,7 +943,7 @@ export function ProductForm({
               <button
                 type="button"
                 onClick={remove}
-                disabled={!canDelete || busyAction === "delete"}
+                disabled={!canDelete || busyAction !== null || saveStatus === "saving"}
                 aria-describedby={canDelete ? undefined : deleteHintId}
                 className="rounded-full border border-border px-5 py-2.5 text-sm font-semibold text-red-600 disabled:cursor-not-allowed disabled:opacity-40 max-md:min-h-11 max-md:w-full max-md:text-left"
               >

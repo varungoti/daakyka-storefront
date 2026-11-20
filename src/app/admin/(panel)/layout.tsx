@@ -1,6 +1,7 @@
 import { AdminShell } from "@/components/admin/admin-shell";
 import { UnsavedChangesProvider } from "@/components/admin/unsaved-changes";
 import { hasPermission } from "@/lib/auth/rbac";
+import { canViewNotificationsPage } from "@/lib/admin/notifications-access";
 import { enforceAdminPasswordChange, getSessionResult } from "@/lib/auth/session";
 import { getUnreadNotificationCount } from "@/lib/notifications";
 import { getPendingReviewCount } from "@/lib/reviews/pending-count";
@@ -65,7 +66,7 @@ export default async function AdminPanelLayout({
     // Cheap enough to fetch on every admin page load — a single count()
     // query — and getUnreadNotificationCount() already swallows DB errors
     // (returns 0) so a hiccup here never breaks the whole admin shell.
-    getUnreadNotificationCount(),
+    canViewNotificationsPage(session.role) ? getUnreadNotificationCount(session.role) : Promise.resolve(0),
     // F-297: same shape, only fetched for a role that can act on it —
     // getPendingReviewCount() also swallows DB errors, same as above.
     hasPermission(session.role, "reviews:moderate") ? getPendingReviewCount() : Promise.resolve(0),

@@ -291,15 +291,16 @@ describe("search index loader (F-013)", () => {
     assert.equal(calls.length, 3);
   });
 
-  it("treats a response with no products as an empty index (and keeps it)", async () => {
+  it("retries a malformed response and caches a valid empty index", async () => {
     const calls: string[] = [];
     const impl = async (url: string) => {
       calls.push(url);
-      return { ok: true, json: async () => ({}) };
+      return { ok: true, json: async () => calls.length === 1 ? {} : { products: [] } };
     };
+    await assert.rejects(loadSearchIndex(impl), /unavailable/);
     assert.deepEqual(await loadSearchIndex(impl), []);
     assert.deepEqual(await loadSearchIndex(impl), []);
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2);
   });
 
   it("preloading never throws, even when the download fails", async () => {

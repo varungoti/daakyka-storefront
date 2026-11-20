@@ -1,5 +1,6 @@
 import { CheckoutPageContent } from "@/components/checkout/checkout-page-content";
 import { db } from "@/lib/db";
+import { isRazorpayConfigured } from "@/lib/payments/razorpay";
 import { getSetting } from "@/lib/settings";
 import type { Metadata } from "next";
 
@@ -101,15 +102,17 @@ export default async function CheckoutPage() {
   // createOrderFromCart uses (src/lib/orders/create-order.ts), read here
   // so the page can show a real Shipping/Total before Place Order instead
   // of just at confirmation — same pattern as products/[handle]/page.tsx.
-  const [customerHint, flatRate, freeAbove] = await Promise.all([
+  const [customerHint, flatRate, freeAbove, canPayOnline] = await Promise.all([
     getCheckoutCustomerHint(),
     getSetting("shipping.flatRate"),
     getSetting("shipping.freeAbove"),
+    isRazorpayConfigured(),
   ]);
   return (
     <CheckoutPageContent
       customerHint={customerHint}
       shipping={{ flatRate, freeAbove }}
+      canPayOnline={canPayOnline}
     />
   );
 }

@@ -12,6 +12,7 @@ const addImageSchema = z.object({
   mediaAssetId: z.string().trim().min(1),
   color: z.string().trim().max(60).optional().nullable(),
   alt: z.string().trim().max(300).optional().nullable(),
+  reuseExisting: z.boolean().optional(),
 });
 
 export async function POST(request: Request, { params }: RouteParams) {
@@ -28,7 +29,8 @@ export async function POST(request: Request, { params }: RouteParams) {
   }
 
   try {
-    const image = await addProductImage(id, parsed.data.mediaAssetId, { color: parsed.data.color, alt: parsed.data.alt }, session.id);
+    const { mediaAssetId, color, alt, reuseExisting } = parsed.data;
+    const image = await addProductImage(id, mediaAssetId, { color, alt, reuseExisting }, session.id);
     return NextResponse.json({ image }, { status: 201 });
   } catch (err) {
     if (err instanceof ProductNotFoundError) {

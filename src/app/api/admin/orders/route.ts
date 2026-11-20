@@ -9,6 +9,7 @@ import {
 } from "@/lib/orders/admin-orders";
 import { parseIstDateOnly, parseIstDateOnlyExclusiveEnd } from "@/lib/format/datetime";
 import type { OrderStatus, PaymentMethod } from "@/generated/prisma/client";
+import { parsePageParam } from "@/lib/admin/pagination";
 
 export async function GET(request: Request) {
   const { error } = await requireAdminPermission("orders:view");
@@ -18,6 +19,7 @@ export async function GET(request: Request) {
   const status = url.searchParams.get("status");
   const paymentMethod = url.searchParams.get("paymentMethod");
   const sort = url.searchParams.get("sort");
+  const pageSize = Number(url.searchParams.get("pageSize"));
 
   const result = await listOrdersForAdmin({
     search: url.searchParams.get("search") ?? undefined,
@@ -33,8 +35,8 @@ export async function GET(request: Request) {
     dateFrom: parseIstDateOnly(url.searchParams.get("dateFrom")),
     dateTo: parseIstDateOnlyExclusiveEnd(url.searchParams.get("dateTo")),
     sort: sort && (orderListSortValues as readonly string[]).includes(sort) ? (sort as OrderListSort) : undefined,
-    page: Number(url.searchParams.get("page")) || 1,
-    pageSize: Number(url.searchParams.get("pageSize")) || undefined,
+    page: parsePageParam(url.searchParams.get("page") ?? undefined),
+    pageSize: Number.isSafeInteger(pageSize) && pageSize > 0 ? pageSize : undefined,
   });
 
   return NextResponse.json(result);

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { adminRequest } from "@/lib/admin/request";
 
 /** Generic "delete with confirm" button shared by the admin CRUD screens
  * added to close out the read-only-admin audit gaps (testimonials,
@@ -28,13 +29,10 @@ export function DeleteButton({
     if (!window.confirm(confirmMessage)) return;
     setBusy(true);
     try {
-      const response = await fetch(href, { method: "DELETE" });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        window.alert(body?.error ?? "Couldn't delete — it may be in use elsewhere.");
-        return;
-      }
+      await adminRequest(href, "Couldn't delete the record.", { method: "DELETE" });
       router.refresh();
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "Couldn't delete the record.");
     } finally {
       setBusy(false);
     }

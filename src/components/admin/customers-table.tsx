@@ -1,5 +1,8 @@
 "use client";
 
+import { adminRequest } from "@/lib/admin/request";
+import { ListLoadError } from "@/components/admin/list-load-error";
+
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { formatInrExact } from "@/lib/currency/admin-money";
@@ -34,6 +37,7 @@ export function CustomersTable() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // F-341 fix: `searchInput` is what the text field shows (updates every
   // keystroke); `search` is what's actually queried, 300ms after the admin
@@ -57,6 +61,7 @@ export function CustomersTable() {
   const load = useCallback(async () => {
     const requestId = loadGuard.start();
     setLoading(true);
+    setLoadError(null);
     const params = new URLSearchParams({ page: String(page) });
     // F-341 fix: below MIN_SEARCH_CHARS, behaves as if the search box were
     // empty rather than querying the server on a 1-character prefix.
@@ -64,16 +69,21 @@ export function CustomersTable() {
     if (term) params.set("search", term);
     if (active) params.set("active", active);
 
-    const response = await fetch(`/api/admin/customers?${params}`);
-    if (response.ok) {
-      const body = await response.json();
+    const fallback = "Couldn't load customers.";
+    try {
+      const response = await adminRequest(`/api/admin/customers?${params}`, fallback);
+      const body: { items: CustomerListItem[]; total: number; totalPages: number; page: number } = await response.json();
       if (!loadGuard.isCurrent(requestId)) return;
       setItems(body.items);
       setTotal(body.total);
       setTotalPages(body.totalPages);
-      setLoading(false);
-    } else if (loadGuard.isCurrent(requestId)) {
-      setLoading(false);
+      if (Number.isInteger(body.page) && body.page > 0 && body.page !== page) setPage(body.page);
+    } catch (error) {
+      if (loadGuard.isCurrent(requestId)) {
+        setLoadError(error instanceof Error && !(error instanceof SyntaxError) ? error.message : fallback);
+      }
+    } finally {
+      if (loadGuard.isCurrent(requestId)) setLoading(false);
     }
   }, [page, search, active, loadGuard]);
 
@@ -119,6 +129,7 @@ export function CustomersTable() {
           an easy-to-miss horizontal scrollbar. `xl` (1280px) is the first
           width the table actually has room for every column beside the
           sidebar — see the matching comment in products-table.tsx. */}
+      {loadError && <ListLoadError message={loadError} onRetry={load} />}
       <div className="hidden overflow-x-auto rounded-2xl border border-border xl:block">
         <table className="w-full min-w-[840px] text-sm">
           <thead className="bg-surface-muted text-left text-xs font-semibold text-muted">
@@ -135,7 +146,7 @@ export function CustomersTable() {
             </tr>
           </thead>
           <tbody>
-            {loading ? (
+            {loadError ? null : loading ? (
               <tr>
                 <td colSpan={7} className="p-6 text-center text-muted">
                   Loading…
@@ -187,7 +198,7 @@ export function CustomersTable() {
       {/* Mobile/tablet stacked-card layout (below `xl` — see the F-332 fix
           comment above). */}
       <div className="space-y-3 xl:hidden">
-        {loading ? (
+        {loadError ? null : loading ? (
           <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">Loading…</p>
         ) : items.length === 0 ? (
           <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">No customers found.</p>
@@ -237,7 +248,7 @@ export function CustomersTable() {
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
+      <div className={loadError || loading ? "hidden" : "flex flex-wrap items-center justify-between gap-2 text-sm text-muted"}>
         <span>{total} customers</span>
         <div className="flex items-center gap-2">
           <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold disabled:opacity-40">

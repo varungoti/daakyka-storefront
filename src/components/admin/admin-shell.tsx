@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { adminRequest } from "@/lib/admin/request";
 import {
   BarChart3,
   Bell,
@@ -398,6 +399,8 @@ export function AdminShell({
     "/admin/reviews": pendingReviews,
   };
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
   // F-244 fix: so the mobile nav drawer can return focus here on close —
   // see MobileNavDrawer's `triggerRef`.
   const hamburgerRef = useRef<HTMLButtonElement>(null);
@@ -407,16 +410,23 @@ export function AdminShell({
     // F-13: signing out is exactly the kind of navigation a dirty form
     // needs protecting from too — it's not a <Link>, so it isn't covered
     // by GuardedLink's onNavigate check.
-    if (!confirmLeave()) return;
+    if (signingOut || !confirmLeave()) return;
     // F-160: close the drawer once the sign-out is actually proceeding (not
     // before confirmLeave, so a cancelled prompt leaves the drawer open) —
     // its cleanup restores document.body's scroll lock, and it keeps the
     // drawer from lingering, half-visible, during the redirect.
     setDrawerOpen(false);
-    const res = await fetch("/api/auth/logout", { method: "POST" });
-    if (!res.ok) return;
-    router.push("/admin/login");
-    router.refresh();
+    setLogoutError(null);
+    setSigningOut(true);
+    try {
+      await adminRequest("/api/auth/logout", "Couldn't sign out.", { method: "POST" });
+      router.replace("/admin/login");
+      router.refresh();
+    } catch (error) {
+      setLogoutError(error instanceof Error ? error.message : "Couldn't sign out.");
+    } finally {
+      setSigningOut(false);
+    }
   };
 
   const visibleGroups = navGroups
@@ -516,6 +526,7 @@ export function AdminShell({
             </div>
           </header>
           <main id="admin-main" tabIndex={-1} className="p-4 outline-none lg:p-8 print:p-0">
+            {logoutError && <p role="alert" className="mb-4 rounded-xl border border-red-200 p-3 text-sm text-red-700">{logoutError}</p>}
             {children}
           </main>
         </div>

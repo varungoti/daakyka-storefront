@@ -4,10 +4,18 @@ import {
   canViewEmailOutbox,
   canViewJourneyLog,
   canViewNotificationsPage,
+  ORDER_NOTIFICATION_TYPES,
+  visibleNotificationFilter,
 } from "@/lib/admin/notifications-access";
 import { resolveNotificationLink } from "@/lib/admin/notification-links";
 
 describe("notifications page access (F-268)", () => {
+  it("filters order alerts out of both bulk and marketing notification queries", () => {
+    for (const role of ["BULK_ORDER_MANAGER", "MARKETING_ADMIN"] as const) {
+      assert.deepEqual(visibleNotificationFilter(role), { type: { notIn: ORDER_NOTIFICATION_TYPES } });
+    }
+    assert.deepEqual(visibleNotificationFilter("ORDER_MANAGER"), {});
+  });
   it("MARKETING_ADMIN can open the page and see the journey log, but not the email outbox", () => {
     assert.equal(canViewNotificationsPage("MARKETING_ADMIN"), true);
     assert.equal(canViewJourneyLog("MARKETING_ADMIN"), true);

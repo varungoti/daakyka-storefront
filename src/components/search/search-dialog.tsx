@@ -25,9 +25,9 @@ const optionId = (productId: string) => `search-option-${productId}`;
 // F-083: where a shopper with no matches can go next. Only routes that
 // exist and are live today — no Mix & Match / Try-On.
 const BROWSE_SHORTCUTS = [
+  { href: "/kids-wear", label: "Kids wear" },
   { href: "/for-hospitals", label: "Hospital range" },
   { href: "/school-uniforms", label: "School uniforms" },
-  { href: "/kids-wear", label: "Kids wear" },
   { href: "/sale", label: "Sale" },
 ] as const;
 
@@ -174,7 +174,7 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
                 }}
                 onKeyDown={handleInputKeyDown}
                 placeholder="Search scrubs, colors, fabrics..."
-                className="flex-1 bg-transparent text-base outline-none placeholder:text-muted"
+                className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-muted"
               />
               <button
                 type="button"
@@ -186,11 +186,18 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
               </button>
             </form>
 
-            <div className="max-h-[420px] overflow-y-auto p-4">
+            <div className="max-h-[min(420px,calc(100dvh-11rem))] overflow-y-auto p-4">
               {loading ? (
                 <p role="status" className="px-2 py-8 text-center text-sm text-muted">
                   Searching...
                 </p>
+              ) : loadFailed ? (
+                <div className="px-2 py-6 text-center text-sm">
+                  <p role="alert" className="text-muted">Search is temporarily unavailable.</p>
+                  <button type="button" onClick={() => setLoadFailed(false)} className="mt-3 font-semibold text-brand hover:underline">
+                    Try search again
+                  </button>
+                </div>
               ) : results.length === 0 ? (
                 <div role="status" className="px-2 py-6 text-center">
                   <p className="text-sm text-muted">

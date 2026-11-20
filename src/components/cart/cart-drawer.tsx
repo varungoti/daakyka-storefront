@@ -41,8 +41,9 @@ export function CartDrawer() {
   const overlayInitial = useMotionInitial({ opacity: 0 });
   const panelInitial = useMotionInitial({ x: "100%" });
 
-  const [problem, setProblem] = useState<CartLineProblem | null>(null);
+  const [availability, setAvailability] = useState<{ key: string; problem: CartLineProblem | null } | null>(null);
   const cartItemsKey = cart.lines.map((line) => `${line.variantId}:${line.quantity}`).sort().join("|");
+  const problem = availability?.key === cartItemsKey ? availability.problem : null;
 
   // F-121: the drawer used to never ask the server whether a line was
   // still purchasable — an unpublished or sold-out item only surfaced a
@@ -67,21 +68,19 @@ export function CartDrawer() {
     })
       .then(async (response) => {
         if (response.ok) {
-          setProblem(null);
+          if (!controller.signal.aborted) setAvailability({ key: cartItemsKey, problem: null });
           return;
         }
         const data = (await response.json().catch(() => null)) as
           | { variantId?: string; available?: number }
           | null;
-        if (!data?.variantId) {
-          setProblem(null);
-          return;
+        if (!controller.signal.aborted && data?.variantId) {
+          setAvailability({ key: cartItemsKey, problem: {
+            variantId: data.variantId,
+            status: response.status === 409 ? "insufficient" : "unavailable",
+            available: typeof data.available === "number" ? data.available : null,
+          } });
         }
-        setProblem({
-          variantId: data.variantId,
-          status: response.status === 409 ? "insufficient" : "unavailable",
-          available: typeof data.available === "number" ? data.available : null,
-        });
       })
       .catch(() => {
         // Network hiccup, or the endpoint is rate-limited — this is a
@@ -146,10 +145,10 @@ export function CartDrawer() {
                     Your cart is empty
                   </p>
                   <p className="mt-2 text-sm text-muted">
-                    Explore premium scrubs built for long shifts.
+                    Browse kids wear, hospital apparel, and school uniforms.
                   </p>
                   <Link href="/shop" onClick={closeCart} className={buttonClassNames({ className: "mt-6" })}>
-                    Shop All Scrubs
+                    Shop all products
                   </Link>
                 </div>
               ) : (

@@ -67,3 +67,8 @@ export const ORDER_NOTIFICATION_TYPES: readonly string[] = [
   "order_request",
   "order_created",
 ];
+
+/** Scope the feed, sidebar count, and read actions to the same rows. */
+export function visibleNotificationFilter(role: AdminRole) {
+  return canViewEmailOutbox(role) ? {} : { type: { notIn: [...ORDER_NOTIFICATION_TYPES] } };
+}

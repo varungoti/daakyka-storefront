@@ -26,18 +26,26 @@ export function loadRazorpayCheckoutScript(): Promise<void> {
   if (loadPromise) return loadPromise;
 
   loadPromise = new Promise<void>((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>(`script[src="${RAZORPAY_SCRIPT_SRC}"]`);
-    if (existing) {
-      existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () => reject(new Error("Failed to load Razorpay checkout script")));
-      return;
-    }
-
     const script = document.createElement("script");
     script.src = RAZORPAY_SCRIPT_SRC;
     script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Failed to load Razorpay checkout script"));
+    const fail = () => {
+      clearTimeout(timeout);
+      script.onload = null;
+      script.onerror = null;
+      script.remove();
+      reject(new Error("Failed to load Razorpay checkout script"));
+    };
+    const timeout = setTimeout(fail, 12_000);
+    script.onload = () => {
+      if (!window.Razorpay) {
+        fail();
+        return;
+      }
+      clearTimeout(timeout);
+      resolve();
+    };
+    script.onerror = fail;
     document.body.appendChild(script);
   }).catch((error) => {
     loadPromise = null;

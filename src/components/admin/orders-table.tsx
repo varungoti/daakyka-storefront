@@ -1,5 +1,8 @@
 "use client";
 
+import { adminRequest } from "@/lib/admin/request";
+import { ListLoadError } from "@/components/admin/list-load-error";
+
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { formatInrExact } from "@/lib/currency/admin-money";
@@ -72,13 +75,13 @@ function readFiltersFromLocation(): OrdersFilterState {
   const params = new URLSearchParams(window.location.search);
   const page = Number(params.get("page"));
   return {
-    search: params.get("q") ?? "",
+    search: params.get("q") ?? params.get("search") ?? "",
     status: params.get("status") ?? "",
     paymentMethod: params.get("paymentMethod") ?? "",
     dateFrom: params.get("dateFrom") ?? "",
     dateTo: params.get("dateTo") ?? "",
     sort: params.get("sort") ?? DEFAULT_FILTERS.sort,
-    page: Number.isFinite(page) && page > 0 ? page : 1,
+    page: Number.isSafeInteger(page) && page > 0 ? page : 1,
   };
 }
 
@@ -102,6 +105,7 @@ export function OrdersTable() {
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Lazy `useState` initializer: `readFiltersFromLocation` only actually
   // runs once, on mount — a plain call here would re-parse
@@ -172,24 +176,28 @@ export function OrdersTable() {
   const load = useCallback(async () => {
     const requestId = loadGuard.start();
     setLoading(true);
+    setLoadError(null);
     const apiParams = new URLSearchParams(buildParams());
     const searchTerm = apiParams.get("q");
     apiParams.delete("q");
     if (searchTerm) apiParams.set("search", searchTerm);
-    const response = await fetch(`/api/admin/orders?${apiParams}`);
-    // F-341 fix: a response for a request that's no longer the latest one
-    // in flight is dropped rather than applied — see loadGuard above.
-    if (response.ok) {
-      const body = await response.json();
+    const fallback = "Couldn't load orders.";
+    try {
+      const response = await adminRequest(`/api/admin/orders?${apiParams}`, fallback);
+      const body: { items: OrderListItem[]; total: number; totalPages: number; page: number } = await response.json();
       if (!loadGuard.isCurrent(requestId)) return;
       setItems(body.items);
       setTotal(body.total);
       setTotalPages(body.totalPages);
-      setLoading(false);
-    } else if (loadGuard.isCurrent(requestId)) {
-      setLoading(false);
+      if (Number.isInteger(body.page) && body.page > 0 && body.page !== page) setPage(body.page);
+    } catch (error) {
+      if (loadGuard.isCurrent(requestId)) {
+        setLoadError(error instanceof Error && !(error instanceof SyntaxError) ? error.message : fallback);
+      }
+    } finally {
+      if (loadGuard.isCurrent(requestId)) setLoading(false);
     }
-  }, [buildParams, loadGuard]);
+  }, [buildParams, loadGuard, page]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -298,6 +306,7 @@ export function OrdersTable() {
           screen signalling there was more to see. `xl` (1280px) is the
           first width the table actually has room for every column beside
           the sidebar — see the matching comment in products-table.tsx. */}
+      {loadError && <ListLoadError message={loadError} onRetry={load} />}
       <div className="hidden overflow-x-auto rounded-2xl border border-border xl:block">
         <table className="w-full min-w-[900px] text-sm">
           <thead className="bg-surface-muted text-left text-xs font-semibold text-muted">
@@ -315,7 +324,7 @@ export function OrdersTable() {
             </tr>
           </thead>
           <tbody>
-            {loading ? (
+            {loadError ? null : loading ? (
               <tr>
                 <td colSpan={8} className="p-6 text-center text-muted">
                   Loading…
@@ -364,7 +373,7 @@ export function OrdersTable() {
       {/* Mobile/tablet stacked-card layout (below `xl` — see the F-332 fix
           comment above). */}
       <div className="space-y-3 xl:hidden">
-        {loading ? (
+        {loadError ? null : loading ? (
           <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">Loading…</p>
         ) : items.length === 0 ? (
           <p className="rounded-2xl border border-border bg-surface p-6 text-center text-sm text-muted">No orders found.</p>
@@ -412,7 +421,7 @@ export function OrdersTable() {
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
+      <div className={loadError || loading ? "hidden" : "flex flex-wrap items-center justify-between gap-2 text-sm text-muted"}>
         <span>{total} orders</span>
         <div className="flex items-center gap-2">
           <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded-full border border-border px-3 py-1.5 text-xs font-semibold disabled:opacity-40">

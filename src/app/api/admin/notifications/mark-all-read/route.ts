@@ -10,6 +10,6 @@ export async function POST() {
   const { session, error } = await requireAdminPermission(NOTIFICATIONS_PAGE_PERMISSIONS);
   if (error) return error;
 
-  const count = await markAllNotificationsRead(session!.id);
+  const count = await markAllNotificationsRead(session.id, session.role);
   return NextResponse.json({ success: true, count });
 }

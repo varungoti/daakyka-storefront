@@ -5,7 +5,7 @@ import {
   canViewEmailOutbox,
   canViewJourneyLog,
   canViewNotificationsPage,
-  ORDER_NOTIFICATION_TYPES,
+  visibleNotificationFilter,
 } from "@/lib/admin/notifications-access";
 import { adminListHref, firstParam, getPageWindow, parsePageParam } from "@/lib/admin/pagination";
 import { getSession } from "@/lib/auth/session";
@@ -49,7 +49,7 @@ export default async function AdminNotificationsPage({ searchParams }: PageProps
   // Order-type AdminNotification rows (new-order alerts — see
   // src/lib/orders/notify.ts) carry the same customer email + amount the
   // outbox does, so they're excluded from the generic list the same way.
-  const notificationWhere = canOutbox ? {} : { type: { notIn: [...ORDER_NOTIFICATION_TYPES] } };
+  const notificationWhere = visibleNotificationFilter(session.role);
 
   const rawParams = await searchParams;
   const unreadOnly = firstParam(rawParams.filter) === "unread";

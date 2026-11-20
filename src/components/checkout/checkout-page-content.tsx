@@ -218,10 +218,12 @@ export function CheckoutPageContent({
   customerHint = {},
   prefillAddress,
   shipping,
+  canPayOnline = false,
 }: {
   customerHint?: CheckoutCustomerHint;
   prefillAddress?: CheckoutAddressPrefill;
   shipping?: CheckoutShippingSettings;
+  canPayOnline?: boolean;
 }) {
   const { cart, mode, updateQuantity, removeLine } = useCart();
   const { formatPrice, currency } = useCurrency();
@@ -322,7 +324,7 @@ export function CheckoutPageContent({
   // the discount from scratch server-side; nothing here is ever trusted as
   // the actual amount charged.
   const [discountCodeInput, setDiscountCodeInput] = useState("");
-  const [appliedDiscount, setAppliedDiscount] = useState<AppliedDiscount | null>(null);
+  const [discountPreview, setAppliedDiscount] = useState<(AppliedDiscount & { context: string }) | null>(null);
   const [discountApplying, setDiscountApplying] = useState(false);
   const [discountError, setDiscountError] = useState<string | null>(null);
 
@@ -331,12 +333,14 @@ export function CheckoutPageContent({
   // (instead of the price frozen in the cart at add-to-cart time). This is
   // a display-only refresh — POST /api/checkout still re-prices and
   // re-validates everything from scratch, same as before this existed.
-  const [quote, setQuote] = useState<CheckoutQuote | null>(null);
-  const [quoteUnavailableVariantId, setQuoteUnavailableVariantId] = useState<string | null>(null);
-  // F-121: see problemAvailable's doc comment — same idea, for the
-  // background quote check rather than a submit attempt.
-  const [quoteUnavailableAvailable, setQuoteUnavailableAvailable] = useState<number | null>(null);
+  const [quoteResult, setQuoteResult] = useState<{ key: string; data: CheckoutQuote | CheckoutQuoteError } | null>(null);
   const cartItemsKey = cart.lines.map((line) => `${line.variantId}:${line.quantity}`).sort().join("|");
+  const discountContext = JSON.stringify([cartItemsKey, email.trim().toLowerCase()]);
+  const appliedDiscount = discountPreview?.context === discountContext ? discountPreview : null;
+  const currentQuote = quoteResult?.key === cartItemsKey ? quoteResult.data : null;
+  const quote = currentQuote && !("error" in currentQuote) ? currentQuote : null;
+  const quoteUnavailableVariantId = currentQuote && "error" in currentQuote ? currentQuote.variantId ?? null : null;
+  const quoteUnavailableAvailable = currentQuote && "error" in currentQuote ? currentQuote.available ?? null : null;
 
   useEffect(() => {
     // Nothing to price, and the component renders the "cart is empty"
@@ -356,17 +360,9 @@ export function CheckoutPageContent({
       })
         .then(async (response) => {
           const data = (await response.json()) as CheckoutQuote | CheckoutQuoteError;
-          if (!response.ok || "error" in data) {
-            setQuote(null);
-            setQuoteUnavailableVariantId("variantId" in data ? (data.variantId ?? null) : null);
-            setQuoteUnavailableAvailable(
-              "available" in data && typeof data.available === "number" ? data.available : null,
-            );
-            return;
+          if (!controller.signal.aborted && (response.ok || "error" in data)) {
+            setQuoteResult({ key: cartItemsKey, data });
           }
-          setQuote(data);
-          setQuoteUnavailableVariantId(null);
-          setQuoteUnavailableAvailable(null);
         })
         .catch(() => {
           // Network hiccup, or the endpoint is rate-limited — this is a
@@ -450,6 +446,7 @@ export function CheckoutPageContent({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(8_000),
         });
         const verifyData = (await verifyRes.json().catch(() => null)) as { ok?: boolean } | null;
         if (verifyRes.ok && verifyData?.ok) return true;
@@ -479,6 +476,7 @@ export function CheckoutPageContent({
     }
 
     const { orderNumber, orderToken, razorpayOrderId, keyId, amount, currency: payCurrency } = details;
+    let paymentReported = false;
     const razorpay = new window.Razorpay({
       key: keyId,
       amount,
@@ -489,6 +487,8 @@ export function CheckoutPageContent({
       prefill: { name, email, contact: phone },
       notes: { orderNumber },
       handler: async (response: unknown) => {
+        if (paymentReported) return;
+        paymentReported = true;
         const paymentResponse = response as {
           razorpay_payment_id?: string;
           razorpay_order_id?: string;
@@ -518,6 +518,7 @@ export function CheckoutPageContent({
       },
       modal: {
         ondismiss: () => {
+          if (paymentReported) return;
           // Genuinely not charged — keep the pending order so a retry
           // reuses this same Razorpay order (F-124) instead of minting a
           // new one, and leave the cart alone.
@@ -528,8 +529,7 @@ export function CheckoutPageContent({
     });
 
     razorpay.on("payment.failed", () => {
-      showError("Payment failed. Your cart is unchanged — you can try again.");
-      setSubmitting(false);
+      if (!paymentReported) showError("Payment failed. Try again in the payment window or close it to return to checkout.");
     });
 
     razorpay.open();
@@ -539,6 +539,7 @@ export function CheckoutPageContent({
     const items = [...cart.lines].map((line) => `${line.variantId}:${line.quantity}`).sort().join(",");
     return JSON.stringify([
       items,
+      name.trim(),
       email.trim().toLowerCase(),
       phone.trim(),
       line1.trim(),
@@ -575,7 +576,7 @@ export function CheckoutPageContent({
         return;
       }
 
-      setAppliedDiscount({ code: data.code, type: data.type, value: data.value, amount: data.amount });
+      setAppliedDiscount({ code: data.code, type: data.type, value: data.value, amount: data.amount, context: discountContext });
     } catch {
       setAppliedDiscount(null);
       setDiscountError("Could not apply this code. Please check your connection and try again.");
@@ -601,6 +602,7 @@ export function CheckoutPageContent({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting || discountApplying || quoteUnavailableVariantId) return;
     setError(null);
     setFieldErrors({});
     setProblemVariantId(null);
@@ -637,17 +639,15 @@ export function CheckoutPageContent({
     // on this exact same cart and details, instead of minting a new order
     // (and a new Razorpay order) on every retry.
     const signature = buildCheckoutSignature();
-    const pending = readPendingRazorpayOrder();
-    if (pending) {
-      if (pending.signature === signature && Date.now() - pending.createdAt < PENDING_ORDER_MAX_AGE_MS) {
-        await openRazorpayCheckout(pending);
-        return;
-      }
-      // Stale, or for a different cart/details — don't carry it forward.
-      clearPendingRazorpayOrder();
-    }
-
     try {
+      const pending = readPendingRazorpayOrder();
+      if (pending) {
+        if (canPayOnline && pending.signature === signature && Date.now() - pending.createdAt < PENDING_ORDER_MAX_AGE_MS) {
+          await openRazorpayCheckout(pending);
+          return;
+        }
+        clearPendingRazorpayOrder();
+      }
       const response = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -961,8 +961,7 @@ export function CheckoutPageContent({
                 setProblemAvailable(null);
               }
               if (quoteUnavailableVariantId === line.variantId) {
-                setQuoteUnavailableVariantId(null);
-                setQuoteUnavailableAvailable(null);
+                setQuoteResult(null);
               }
             }
 
@@ -1127,7 +1126,7 @@ export function CheckoutPageContent({
             type="submit"
             className="mt-6 w-full"
             size="lg"
-            disabled={submitting || Boolean(quoteUnavailableVariantId)}
+            disabled={submitting || discountApplying || Boolean(quoteUnavailableVariantId)}
           >
             <Lock size={18} />
             {submitting
@@ -1136,6 +1135,11 @@ export function CheckoutPageContent({
                 ? "Place Order"
                 : `Place Order · ${formatBasePrice(displayTotal, "INR")}`}
           </Button>
+          <p className="mt-2 text-center text-xs text-muted">
+            {canPayOnline
+              ? "You’ll review and complete payment securely with Razorpay."
+              : "This submits an order request. No online payment is collected at this step."}
+          </p>
 
           {/* F-149: checkout used to link to no policy at all — the only
               way to reach Terms/Refund/Privacy was the footer, which isn't

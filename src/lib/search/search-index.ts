@@ -20,7 +20,9 @@ type FetchLike = (input: string) => Promise<Pick<Response, "ok" | "json">>;
 let pending: Promise<SearchProduct[]> | null = null;
 let loaded: SearchProduct[] | null = null;
 
-export function loadSearchIndex(fetchImpl: FetchLike = (input) => fetch(input)): Promise<SearchProduct[]> {
+const fetchIndex: FetchLike = (input) => fetch(input, { signal: AbortSignal.timeout(10_000) });
+
+export function loadSearchIndex(fetchImpl: FetchLike = fetchIndex): Promise<SearchProduct[]> {
   if (loaded) return Promise.resolve(loaded);
   return download(fetchImpl);
 }
@@ -32,7 +34,7 @@ export function loadSearchIndex(fetchImpl: FetchLike = (input) => fetch(input)):
  * Shares an in-flight request with `loadSearchIndex`, and a failed refresh
  * leaves the earlier copy in place.
  */
-export function refreshSearchIndex(fetchImpl: FetchLike = (input) => fetch(input)): Promise<SearchProduct[]> {
+export function refreshSearchIndex(fetchImpl: FetchLike = fetchIndex): Promise<SearchProduct[]> {
   return download(fetchImpl);
 }
 
@@ -43,7 +45,8 @@ function download(fetchImpl: FetchLike): Promise<SearchProduct[]> {
     .then(async (response) => {
       if (!response.ok) throw new Error("Search index request failed");
       const data = (await response.json()) as { products?: SearchProduct[] };
-      loaded = Array.isArray(data.products) ? data.products : [];
+      if (!Array.isArray(data.products)) throw new Error("Search index response is unavailable");
+      loaded = data.products;
       return loaded;
     })
     .finally(() => {

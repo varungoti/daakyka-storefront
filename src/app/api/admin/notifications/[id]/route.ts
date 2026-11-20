@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { Prisma } from "@/generated/prisma/client";
 import { NOTIFICATIONS_PAGE_PERMISSIONS } from "@/lib/admin/notifications-access";
 import { requireAdminPermission } from "@/lib/auth/admin-api";
 import { markNotificationRead, NotificationNotFoundError } from "@/lib/notifications";
@@ -8,10 +7,6 @@ import { notificationMarkReadSchema } from "@/lib/validation/schemas";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
-}
-
-function isRecordNotFound(err: unknown): boolean {
-  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2025";
 }
 
 // F-268: matches the page's own (now multi-permission) access rule — see
@@ -30,10 +25,10 @@ export async function PATCH(request: Request, { params }: RouteParams) {
   }
 
   try {
-    const notification = await markNotificationRead(id, parsed.data.read, session!.id);
+    const notification = await markNotificationRead(id, parsed.data.read, session.id, session.role);
     return NextResponse.json(notification);
   } catch (err) {
-    if (err instanceof NotificationNotFoundError || isRecordNotFound(err)) {
+    if (err instanceof NotificationNotFoundError) {
       return NextResponse.json({ error: "Notification not found" }, { status: 404 });
     }
     throw err;
