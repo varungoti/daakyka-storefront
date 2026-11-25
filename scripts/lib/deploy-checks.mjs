@@ -222,9 +222,8 @@ export function databaseUrlSslModeIssue(databaseUrl) {
 /**
  * F-344: Vercel keeps, per deployment, the env it was built with, so an
  * Instant Rollback to a deployment built while production still pointed at
- * the old Neon database serves the live store from that database. Every
- * production build runs `prisma migrate deploy`, and Prisma prints which
- * database it migrated:
+ * the old Neon database serves the live store from that database. Older builds print the database from Prisma's migration step;
+ * compile-only builds print the verified hosted database hostname in the same format:
  *
  *   Datasource "db": PostgreSQL database "postgres", schema "public" at "<host>:5432"
  *

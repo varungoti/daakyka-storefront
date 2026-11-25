@@ -1,158 +1,142 @@
-/**
- * Vercel production build with resilient Prisma migrate (retries advisory lock timeouts).
- */
+/** Vercel's compile entry point. No migration, seeding, or image writes. */
 import { execSync } from "node:child_process";
-import { setTimeout as sleep } from "node:timers/promises";
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import pg from "pg";
 
-function run(command, extraEnv) {
-  execSync(command, {
-    stdio: "inherit",
-    shell: true,
-    env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
-  });
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/** @param {Record<string, string | undefined>} env */
+export function buildDatabaseEnvironment(env = process.env) {
+  let url;
+  try { url = new URL(env.BUILD_DATABASE_URL ?? ""); } catch { /* report without revealing URL */ }
+  if (!url || !/^postgres(ql)?:$/.test(url.protocol) || !url.hostname ||
+      !url.username || !url.pathname.slice(1)) {
+    throw new Error("BUILD_DATABASE_URL must name a PostgreSQL database and a dedicated read-only build role.");
+  }
+  if (["host", "hostaddr", "user", "dbname", "port", "database", "options"].some((key) => url.searchParams.has(key))) {
+    throw new Error("BUILD_DATABASE_URL must express its target in the URL authority, without query overrides.");
+  }
+  const fixture = env.DAAKYKA_LOCAL_FIXTURE === "1";
+  if (fixture && (env.VERCEL || !LOOPBACK.has(url.hostname) || env.NEXT_PUBLIC_ALLOW_INDEXING !== "false")) {
+    throw new Error("Local fixture builds require a loopback database, no indexing, and no Vercel platform context.");
+  }
+  if (!fixture && (LOOPBACK.has(url.hostname) || url.searchParams.getAll("sslmode").join(",") !== "verify-full")) {
+    throw new Error("Hosted builds require a non-loopback build database and sslmode=verify-full.");
+  }
+
+  if (!fixture) {
+    let runtime;
+    try { runtime = new URL(env.DATABASE_URL ?? ""); } catch { /* no credentials in errors */ }
+    const overrides = ["host", "hostaddr", "user", "dbname", "port", "database", "options"];
+    if (!runtime || !/^postgres(ql)?:$/.test(runtime.protocol) ||
+        overrides.some((key) => runtime.searchParams.has(key)) ||
+        runtime.hostname !== url.hostname || runtime.pathname !== url.pathname ||
+        runtime.username === url.username) {
+      throw new Error("BUILD_DATABASE_URL and DATABASE_URL must target the same host and database, with distinct roles.");
+    }
+    // Supabase's shared pooler encodes tenant identity in username.project-ref.
+    if (url.hostname.endsWith(".pooler.supabase.com")) {
+      const tenant = (username) => decodeURIComponent(username).split(".").slice(1).join(".");
+      if (!tenant(url.username) || tenant(url.username) !== tenant(runtime.username)) {
+        throw new Error("Build and runtime Supabase pooler URLs identify different projects.");
+      }
+    }
+  }
+
+  // Both Prisma's config and Next's server-side prerender queries must
+  // receive only the non-writer build role, never the operator credential.
+  /** @type {Record<string, string | undefined>} */
+  const childEnv = { ...env, DATABASE_URL: url.href, MIGRATION_DATABASE_URL: url.href, DB_POOL_MAX: env.DB_POOL_MAX ?? "2" };
+  delete childEnv.SUPABASE_DATABASE_URL;
+  return { databaseUrl: url.href, databaseHost: url.hostname, fixture, childEnv };
 }
 
-/**
- * Like `run()`, but captures stdout/stderr instead of streaming them live,
- * so the caller can inspect what Prisma actually printed. Printed as one
- * block once the command finishes either way, so nothing is lost — this
- * only delays it by however long a single `prisma migrate deploy` takes,
- * not the whole retry loop below.
- */
-function runCapture(command, extraEnv) {
-  // Both streams explicitly piped (not the execSync default, which
-  // inherits stderr live) so nothing prints twice: this fully captures
-  // the output first, then writes it out exactly once below, whichever
-  // branch runs.
-  const options = {
-    encoding: "utf8",
-    shell: true,
-    stdio: ["inherit", "pipe", "pipe"],
-    env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
-  };
+const MIGRATIONS = new URL("../prisma/migrations/", import.meta.url);
+const digest = (content) => createHash("sha256").update(content).digest("hex");
+export function expectedMigrations(root = MIGRATIONS) {
+  return new Map(readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map(({ name }) => {
+    const raw = readFileSync(new URL(name + "/migration.sql", root), "utf8");
+    const lf = raw.replace(/\r\n/g, "\n");
+    return [name, new Set([digest(lf), digest(lf.replace(/\n/g, "\r\n"))])];
+  }));
+}
+
+export function assertMigrationHistory(expected, rows) {
+  const completed = new Map();
+  for (const row of rows) {
+    if (row.rolled_back_at) continue;
+    if (!row.finished_at || completed.has(row.migration_name)) {
+      throw new Error("Build database has an unfinished or ambiguous migration: " + row.migration_name);
+    }
+    completed.set(row.migration_name, row.checksum);
+  }
+  for (const [name, checksums] of expected) {
+    if (!checksums.has(completed.get(name))) {
+      throw new Error("Build database migration is absent or differs from the checked-out source: " + name);
+    }
+  }
+  if (completed.size !== expected.size) {
+    throw new Error("Build database contains migrations not present in this checkout.");
+  }
+}
+
+export async function verifySchemaReadOnly(databaseUrl) {
+  const client = new pg.Client({ connectionString: databaseUrl, connectionTimeoutMillis: 5000, query_timeout: 8000 });
+  let ledger;
   try {
-    const stdout = execSync(command, options);
-    process.stdout.write(stdout);
-    return { ok: true, output: stdout };
-  } catch (error) {
-    const output = `${error.stdout ?? ""}${error.stderr ?? ""}`;
-    process.stdout.write(output);
-    return { ok: false, output };
-  }
-}
-
-// F-353: only retry a genuine advisory-lock contention — Prisma error
-// P1002 ("Timed out trying to acquire a lock"), the exact scenario this
-// retry loop exists for (several build workers racing to migrate the same
-// database concurrently). This used to retry EVERY failure up to
-// `maxAttempts` times, including a migration that will never succeed no
-// matter how many times it's retried (a broken migration's P3009/P3018,
-// a SQL syntax error, ...) — burning ~2 minutes of build time relabeling
-// it "Migrate lock timeout" before finally reporting the real error.
-export function isLockTimeout(output) {
-  return /P1002\b/.test(output) || /Timed out trying to acquire a lock/i.test(output);
-}
-
-async function migrateWithRetry(maxAttempts = 5) {
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const result = runCapture("npx prisma migrate deploy");
-    if (result.ok) return;
-
-    if (!isLockTimeout(result.output)) {
-      console.error("prisma migrate deploy failed (not a lock timeout — not retrying; see output above)");
-      process.exit(1);
-    }
-    if (attempt === maxAttempts) {
-      console.error(`prisma migrate deploy failed after ${maxAttempts} lock-timeout attempts`);
-      process.exit(1);
-    }
-    const waitMs = attempt * 8000;
-    console.warn(
-      `Migrate lock timeout (attempt ${attempt}/${maxAttempts}). Retrying in ${waitMs / 1000}s…`,
+    await client.connect();
+    await client.query("BEGIN READ ONLY");
+    const result = await client.query(
+      "SELECT current_setting('default_transaction_read_only') = 'on' AS readonly, " +
+      "NOT has_schema_privilege(current_user, 'public', 'CREATE') AS no_schema_create, " +
+      "NOT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND " +
+      "has_table_privilege(current_user, quote_ident(schemaname) || '.' || quote_ident(tablename), " +
+      "'INSERT,UPDATE,DELETE,TRUNCATE')) AS no_table_writes",
     );
-    await sleep(waitMs);
+    const [permission] = result.rows;
+    if (!permission?.readonly || !permission.no_schema_create || !permission.no_table_writes) {
+      throw new Error("BUILD_DB_ROLE_WRITABLE");
+    }
+    ({ rows: ledger } = await client.query(
+      'SELECT migration_name, checksum, finished_at, rolled_back_at FROM public."_prisma_migrations"',
+    ));
+    // Verify the tables used in anonymous static pages, which normally
+    // fall back to bundled demo data on a database read failure.
+    await client.query('SELECT "slug", "status" FROM public."Product" LIMIT 0');
+    await client.query('SELECT "productId" FROM public."ProductVariant" LIMIT 0');
+    for (const table of ["Category", "SiteSetting", "BlogPostRecord"]) {
+      await client.query('SELECT * FROM public."' + table + '" LIMIT 0');
+    }
+    await client.query("ROLLBACK");
+  } catch (error) {
+    if (error.message === "BUILD_DB_ROLE_WRITABLE") {
+      throw new Error("Refusing to compile with a database build role that can write. Use a dedicated read-only role.");
+    }
+    throw new Error("Vercel compile stopped: the build database schema could not be read. Verify the read-only connection, grants, and migrations.");
+  } finally {
+    await client.end().catch(() => {});
   }
+  assertMigrationHistory(expectedMigrations(), ledger);
 }
-
-// F-229: this one script builds every environment (vercel.json's
-// buildCommand applies to Preview and Production alike), and it used to
-// run `prisma migrate deploy` + the seed unconditionally — so pushing ANY
-// branch built a Preview that applied that branch's unreviewed migrations
-// and seeded an admin user against the SAME Supabase pooler database
-// Production uses, with no review step. Vercel sets VERCEL_ENV to
-// "production" only for actual production deploys (it's unset locally,
-// "preview" for a branch/PR deploy); gate the two DB-mutating steps on
-// it. A Preview environment deliberately pointed at its own staging
-// database can still opt in with RUN_DB_MIGRATIONS=1. See
-// docs/GO_LIVE_RUNBOOK.md.
-//
-// Exported (and pure) so scripts/vercel-build.test.ts can assert this
-// branch decision directly without running an actual build.
-/** @param {Record<string, string | undefined>} [env] */
-export function computeShouldMigrate(env = process.env) {
-  return env.VERCEL_ENV === "production" || env.RUN_DB_MIGRATIONS === "1";
-}
-
-const shouldMigrate = computeShouldMigrate();
 
 async function main() {
-  console.log("\n▶ prisma generate");
-  run("npx prisma generate");
-
-  if (shouldMigrate) {
-    console.log("\n▶ prisma migrate deploy (with retry)");
-    await migrateWithRetry();
-
-    // prisma/seed.ts is safe to run on every deploy: the admin/viewer
-    // users, homepage sections, integration settings and site-setting
-    // defaults are create-only (an existing row is never overwritten), and
-    // real /admin content (blog posts, SEO records, segments, templates,
-    // journeys, offers) is only ever (re-)seeded once per database — see
-    // ensureContentSeeded() in prisma/seed.ts (F-223) — so an admin's
-    // deletion of seeded content is never undone by a later deploy. On
-    // Vercel it also refuses to run at all without a real, non-default
-    // ADMIN_SEED_PASSWORD — see prisma/seed.ts's resolveAdminSeedPassword.
-    console.log("\n▶ prisma seed");
-    run("npx tsx prisma/seed.ts");
-
-    if (process.env.VERCEL_ENV === "production") {
-      console.log("\n▶ seed reviewed Kids Wear concepts as non-purchasable drafts");
-      run("npx tsx prisma/seed-kids-concepts.ts");
-    }
-
-    if (process.env.VERCEL_ENV === "production") {
-      console.log("\n▶ sync reviewed generated product images");
-      run("npx tsx scripts/sync-generated-product-images.ts --apply");
-    }
-  } else {
-    console.log(
-      `\n▶ skipping prisma migrate/seed (VERCEL_ENV=${process.env.VERCEL_ENV ?? "unset"}; ` +
-        "set RUN_DB_MIGRATIONS=1 to opt a non-production environment in)",
-    );
+  const { databaseUrl, databaseHost, childEnv, fixture } = buildDatabaseEnvironment();
+  await verifySchemaReadOnly(databaseUrl);
+  // Kept compatible with the rollback verifier's hostname-only parser.
+  console.log('Datasource "db": read-only PostgreSQL schema at "' + databaseHost + '"');
+  console.log("Read-only database schema matches this checkout.");
+  if (fixture) console.log("SYNTHETIC FIXTURE BUILD. DO NOT DEPLOY THIS ARTIFACT.");
+  execSync("npm run build", { stdio: "inherit", env: childEnv });
+  if (fixture) {
+    writeFileSync(".next/DO_NOT_DEPLOY_SYNTHETIC_FIXTURE", "The static pages include disposable synthetic data. Rebuild the exact source with the approved hosted read-only database role.\n");
   }
-
-  console.log("\n▶ next build");
-  // F-074: static generation runs several build workers in parallel, each
-  // opening its own pg.Pool (src/lib/create-prisma-client.ts). At the
-  // default DB_POOL_MAX, 3 build workers alone can claim Supabase's
-  // entire session-pooler budget (EMAXCONNSESSION), which starves the
-  // build of real DB access partway through and silently bakes the
-  // legacy fallback catalog (src/data/products.ts) into static output
-  // like the sitemap until the next deploy. Cap the per-worker pool for
-  // this step specifically, unless the caller already set DB_POOL_MAX
-  // explicitly.
-  run("npx next build", { DB_POOL_MAX: process.env.DB_POOL_MAX ?? "2" });
-
-  console.log("\n✓ Vercel build complete\n");
 }
 
-// Only run the build when this file is executed directly (`node
-// scripts/vercel-build.mjs`, as vercel.json's buildCommand does) — not
-// when scripts/vercel-build.test.ts imports computeShouldMigrate above.
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error) => {
-    console.error(error);
-    process.exit(1);
+    console.error(error.status ? "Vercel compile did not complete. See the build output above." : error.message);
+    process.exitCode = 1;
   });
 }

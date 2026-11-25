@@ -31,30 +31,20 @@ Any Postgres works for staging (a separate Supabase project, Neon, etc.) — it 
 the same one production uses.
 
 1. Create a **staging** Postgres database.
-2. Set it as Vercel's `DATABASE_URL` env var for the Preview/staging environment. The Prisma CLI
-   uses `MIGRATION_DATABASE_URL` when set, and otherwise uses `DATABASE_URL`; keep the migration
-   variable unset in a simple staging setup.
-3. **Migrations do *not* run automatically on Preview** (fixed post-F-229 — every Git push used to
-   build a Preview that ran `prisma migrate deploy` + the seed against whatever `DATABASE_URL`
-   Preview had, including, once, the *production* Supabase database). `scripts/vercel-build.mjs`
-   only runs those two steps when `VERCEL_ENV === "production"`. If this staging database should
-   get Preview's migrations too, set `RUN_DB_MIGRATIONS=1` on the Preview environment — see A2.
+2. Set its application `DATABASE_URL` and dedicated readonly `BUILD_DATABASE_URL` in the
+   Vercel Preview environment. Do not use a production value for either.
+3. Only run an explicit database preparation against the reviewed staging target when a schema
+   or seed change needs it. No Preview or Production build will ever prepare a database.
 
 ### A2. Vercel project
 
-1. Import the repo; leave **Root Directory** = `.` — the repo root *is* this app (there is no
-   nested `storefront/` folder to point at inside the Vercel project's own checkout).
-2. Add env vars — see [Environment variables](#environment-variables-what-is-actually-required)
-   below (do **not** just copy `.env.staging.example` blindly; it lists optional integrations too).
-3. Deploy the preview/staging branch. The build command (`vercel.json` → `node scripts/vercel-build.mjs`)
-   always runs `prisma generate` then `next build`. It only runs `prisma migrate deploy` (retried on
-   advisory-lock timeouts) and `prisma/seed.ts` (safe to run on every deploy: admin/viewer users,
-   homepage sections and settings are create-only, and real `/admin` content — blog posts, SEO
-   records, segments, templates, journeys, offers — is only ever seeded once per database, so a
-   deleted record never comes back on the next deploy; it also refuses to run at all on Vercel
-   without a real, non-default `ADMIN_SEED_PASSWORD`) when `VERCEL_ENV === "production"` **or**
-   `RUN_DB_MIGRATIONS=1` is set on this environment — set the latter on Preview if this staging
-   database should track new migrations automatically.
+1. Import the repo; use the repository root. Keep the Build Command set to the repository's
+   definition: `node scripts/vercel-build.mjs`.
+2. Configure the Preview build role as described in [Production database](#phase-b--production-database-supabase).
+3. Prepare schema/data outside Vercel if needed, then deploy the branch. The build checks that
+   the readonly role can query the expected schema and the Prisma migration checksums match
+   the checkout. It runs compile only (`npm run build`: Prisma generate and Next build).
+   `RUN_DB_MIGRATIONS` no longer controls the build; it is ignored.
 
 ```bash
 # After deploy — from storefront/
@@ -106,20 +96,35 @@ Steps:
 1. Get both pooler connection strings from Supabase (Project Settings → Database → Connection string).
 2. **Percent-encode the password** in the URL if it contains any special characters (`@`, `#`, `%`,
    `/`, etc. all need encoding, or the URL parses wrong).
-3. In Vercel Production, set `DATABASE_URL` to the transaction-pooler URL on port 6543 with
-   `pgbouncer=true&sslmode=verify-full` in its query string (per Supabase and Prisma's pooler
-   guidance; why `sslmode` must be explicit: [Database TLS mode](#database-tls-mode-sslmode)), and set
-   `MIGRATION_DATABASE_URL` to the session-pooler URL on port 5432. The Prisma CLI uses the
-   latter; the application runtime uses the former. Do not point both at the session pooler.
-   This repo's local `.env` happens to keep a copy of the production value under
-   `SUPABASE_DATABASE_URL` purely as a reference — that's a deliberately different name so a local
-   `npm run dev`/`npm test` (which loads `.env` and always uses `DATABASE_URL`) can never point at
-   production by accident. **Never copy that value into `.env`'s own `DATABASE_URL`.**
-4. Production has already been migrated and seeded once — a fresh
-   **production** deploy (`VERCEL_ENV === "production"`) just re-runs the same `migrate deploy` +
-   `seed.ts` from A2, which is safe (see the note there: real content seeds at most once per
-   database, so it won't resurrect anything already deleted from `/admin`). A Preview/branch deploy
-   does not touch this database at all — see A1.
+3. Set the application `DATABASE_URL` to the production transaction pooler on port 6543 with
+   `pgbouncer=true&sslmode=verify-full`. Set a separate `BUILD_DATABASE_URL` in Vercel Production
+   for the **same database** with a dedicated read-only PostgreSQL login and verified TLS. Its role
+   needs `CONNECT`, schema `USAGE`, `SELECT` on the Prisma ledger and app tables, no schema
+   creation or table write grants, and `default_transaction_read_only=on`. Reapply read grants to
+   newly created tables (or set the migration owner's default table grants). Never use the writable
+   application role for builds. Keep the migration/session URL in the operator's secret store;
+   the compilation subprocess uses only `BUILD_DATABASE_URL`. Keep local `.env`'s `DATABASE_URL`
+   pointed at local Postgres. Do not use a synthetic fixture URL for a release.
+4. Only when a reviewed migration, seed, or image-sync change requires it, run the explicit
+   operator script from the exact candidate source outside Vercel. Prepare backups and verify the
+   database host, name, and role against the approved environment. Export the operator's
+   `MIGRATION_DATABASE_URL` via the approved secret store, never as a command argument, then run:
+
+   ```bash
+   node scripts/vercel-db-release.mjs --apply --target=production --expect-host=REVIEWED_HOST --expect-database=REVIEWED_DB --expect-role=REVIEWED_ROLE
+   ```
+
+   Replace the placeholders independently of the URL. For staging use `--target=staging` and
+   the separate staging identity. The operator runs migrations (retrying only advisory lock
+   contention) and base seed; production also seeds reviewed kids' drafts and syncs reviewed images.
+   Review status before retrying if any write stage fails. Code-only releases need no operator step
+   when the ledger matches. A missing, unreachable, writable, mismatched, or out-of-date build
+   database stops the build instead of silently baking a fallback fixture catalogue.
+5. For local QA only, `DAAKYKA_LOCAL_FIXTURE=1` accepts a loopback readonly database outside
+   Vercel with indexing disabled. Its output is marked `DO_NOT_DEPLOY_SYNTHETIC_FIXTURE`. Use it
+   only for validation, not for upload or Vercel prebuilt promotion. Generate a fresh build from
+   reviewed source with the approved hosted read-only role before releasing.
+
 
 ---
 
@@ -140,44 +145,23 @@ rather than failing — see [IMAGES_AI.md](./IMAGES_AI.md).
 
 ---
 
-## Phase D — Domain & DNS cutover
+## Phase D — Optional storefront domain, separately approved
 
-Do this **before** registering the Razorpay webhook in Phase E — a webhook (or a crawler, or a
-customer clicking an emailed link) pointed at a host that isn't live yet just fails (F-350). Today,
-`daakyka.com` is **not** attached to this Vercel project — DNS still points at the old Hostinger
-site (`vercel domains ls` only lists other projects' domains; `curl -sI https://daakyka.com`
-answers `200` from that old site, not this app).
+The current storefront has Vercel aliases; `daakyka.com` and `www.daakyka.com` remain the
+institutional brochure site. Leave both web records and all existing mail DNS records unchanged.
+A code-only storefront release does not require a domain change.
 
-1. **Attach the domain**: `vercel domains add daakyka.com` (and `vercel domains add www.daakyka.com`)
-   on the `storefront` project. Vercel then tells you the exact records to set — they don't change
-   often, but confirm them there rather than trusting the table below blindly.
-2. **At the DNS host (currently Hostinger)**, set:
+For a separately approved shop subdomain:
 
-   | Record | Type | Value | Notes |
-   |---|---|---|---|
-   | `daakyka.com` (apex) | `A` | shown by `vercel domains add` / the Project → Domains page (at the time of writing, `76.76.21.21`) | Use an `ALIAS`/`ANAME` record instead if the registrar supports one and prefers it over a bare `A` — Vercel's own instructions always take precedence over the value cached here |
-   | `www.daakyka.com` | `CNAME` | `cname.vercel-dns.com` | |
-   | `daakyka.com` `MX` | *(leave as-is)* | `mx1.hostinger.com` / `mx2.hostinger.com` | Do **not** touch — mail keeps flowing through Hostinger regardless of where the web traffic points |
-   | `daakyka.com` `TXT` (SPF) | *(leave as-is, then extend)* | existing `v=spf1 include:_spf.mail.hostinger.com ~all`, plus `include:` Brevo's SPF host once authenticated below | Removing the Hostinger include breaks existing mail; only add to it |
-   | `hostingermail-a._domainkey` | *(leave as-is)* | existing key | Existing Hostinger mail DKIM — untouched |
-
-3. **Authenticate the sending domain in Brevo** (Brevo → Senders, Domains & Dedicated IPs →
-   Domains → Authenticate a domain) so `noreply@daakyka.com` mail passes DKIM/DMARC alignment —
-   without this, Brevo signs with its own shared domain instead, which does not align with the
-   `daakyka.com` `From:` address. Brevo generates the exact records for this account (they are
-   unique per account — this doc can't state them, only where to get them):
-   - A domain-ownership `TXT` (`brevo-code=...`) at the apex.
-   - Two DKIM `CNAME` records, typically `brevo1._domainkey`/`brevo2._domainkey` (or similar) →
-     the targets Brevo's dashboard shows.
-   - Optionally, a dedicated SPF-include host to add to the `TXT` record above.
-   Also add/relax a `_dmarc.daakyka.com` `TXT` record (currently `v=DMARC1; p=none`) to
-   `v=DMARC1; p=none; rua=mailto:<an address you monitor>` once DKIM/SPF alignment is confirmed
-   working, so a misconfiguration surfaces as a report instead of silent spam-folder placement.
-4. **Verify before moving on**: `dig +short daakyka.com A` resolves to Vercel's IP, `curl -sI
-   https://daakyka.com` answers `200` from *this app* (check for `DAAKYKA` in the body, not the old
-   site), and SSL is issued (Vercel does this automatically once DNS resolves).
-5. Only then move to Phase E and register the Razorpay webhook, and update `NEXT_PUBLIC_SITE_URL`
-   to `https://daakyka.com` (see [LAUNCH_CHECKLIST.md](./LAUNCH_CHECKLIST.md) §1).
+1. Confirm the dedicated project/domain and use only the exact DNS records shown by Vercel for
+   that subdomain. Verify public TLS and that both the brochure and new storefront resolve to
+   their intended apps. Do not update mail, DNS or existing aliases as a side effect.
+2. Scope `NEXT_PUBLIC_SITE_URL` to the verified public shop URL. Inspect canonical, robots and
+   sitemap output; verify one synthetic order/customer absolute link points to the intended host.
+3. Browser carts are origin-scoped. Verify stale-cart recovery on the old storefront origin and a
+   fresh synthetic cart/checkout on the new one. A redirect cannot migrate saved carts.
+4. Verify authorization and target independently for payment mode, webhook, or Brevo sender/DNS
+   changes. Use sandbox data to test; do not place a real order to check the new hostname.
 
 ---
 
@@ -194,7 +178,7 @@ A value entered through `/admin/integrations` always wins over the env var for t
 (`src/lib/integrations/credential-store.ts`) — either path works, and you can start with env vars
 and move to admin-managed keys later without a code change.
 
-Test the real flow after setting keys: place an order → Razorpay Checkout.js → `/api/checkout/verify`
+In an authorized staging checkout using sandbox keys, verify: synthetic order → Razorpay Checkout.js → `/api/checkout/verify`
 → `/admin/orders` → post-purchase journey.
 
 ---
@@ -202,7 +186,8 @@ Test the real flow after setting keys: place an order → Razorpay Checkout.js �
 ## Go-live with scripts/go-live.mjs
 
 `scripts/go-live.mjs` automates Phases B and E's env-push + migrate + deploy sequence (not Phase C,
-D or the rest of E's third-party dashboard steps — see "What it does NOT do" below). Run it from
+D or the rest of E's third-party dashboard steps — see "What it does NOT do" below). Verify that the readonly `BUILD_DATABASE_URL` is already configured in
+Vercel Production before running the mutating go-live command. Run it from
 `storefront/` with the production values in `.env` (`SUPABASE_DATABASE_URL`, `ADMIN_SEED_PASSWORD`,
 `CREDENTIAL_ENCRYPTION_KEY`, `AUTH_SECRET`, `CRON_SECRET`, `NEXT_PUBLIC_SITE_URL`, and optionally
 `OPENAI_API_KEY`/the R2 or `CLOUDFLARE_*` trio):
@@ -257,6 +242,7 @@ else these are warnings) and `.env.local.example`/`.env.staging.example`.
 
 | Variable | Requirement |
 |---|---|
+| `BUILD_DATABASE_URL` | Vercel compile only: dedicated readonly PostgreSQL role with verified TLS (Phase B). |
 | `DATABASE_URL` | Postgres URL (not `file:`). Should carry `sslmode=verify-full`; boot and `check:deploy-env` only warn if it does not (see [Database TLS mode](#database-tls-mode-sslmode)) |
 | `AUTH_SECRET` | ≥ 32 characters |
 | `CREDENTIAL_ENCRYPTION_KEY` | Decodes to exactly 32 bytes, base64 or hex — generate with `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. Root key for `/admin/integrations` credential encryption; not itself admin-editable. |
@@ -379,8 +365,8 @@ never copied to Supabase, and copy those first.
 1. **Roll back first, debug second.** `npx vercel rollback <checked deployment>` (or Vercel
    dashboard -> Deployments -> the checked deployment -> Promote to Production) points the
    production domain at an older build in seconds. It does **not** rebuild, so
-   `scripts/vercel-build.mjs` does not run: the database stays at whatever schema the newer build
-   migrated it to.
+   `scripts/vercel-build.mjs` does not run: the database stays at whatever schema the most recent operator migration
+   applied.
 2. **Therefore migrations must be backward compatible for one release** (expand, then contract):
    - Release N adds the new column or table (nullable, or with a default) and starts writing it.
    - Release N+1, only after N has been stable, stops reading the old shape.
