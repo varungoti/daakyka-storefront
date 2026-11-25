@@ -20,3 +20,9 @@ bin/cloudflared.exe
 dogfood-output/
 .lighthouseci/
 *.tsbuildinfo
+
+# Local-only verification outputs may contain synthetic prerendered pages.
+.next/
+.frozen-*/
+.storefront-ci-audit-*/
+.disposable-debian/

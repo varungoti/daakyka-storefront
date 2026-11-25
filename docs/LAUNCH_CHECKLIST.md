@@ -30,38 +30,21 @@ Production values, one at a time:
 | `DB_POOL_MAX` | Optional | Defaults to 5; keep small with a connection pooler |
 | `HERMES_API_URL` / `HERMES_API_KEY` | Optional | Agent runtime |
 
-`scripts/go-live.mjs` (see [GO_LIVE_RUNBOOK.md](./GO_LIVE_RUNBOOK.md#go-live-with-scriptsgo-livemjs))
-runs migrate + seed against production for you, in the right order, as part of the full go-live —
-use it instead of the commands below unless you have a specific reason to run them by hand. Every
-Vercel deploy also re-runs both automatically (`scripts/vercel-build.mjs`).
+Vercel builds only verify the database's migration ledger and compile the app. They no longer
+migrate, seed, or synchronize product images. Follow the guarded operator procedure in
+[Production database](./GO_LIVE_RUNBOOK.md#phase-b--production-database-supabase) when database
+preparation is necessary, then run the normal deploy. For code-only releases use the reviewed
+schema as-is. `scripts/go-live.mjs --yes` still runs its explicit migration step unless
+`--skip-migrate` is supplied; any required seed or image changes are a separate operator step.
 
-If running by hand, target `SUPABASE_DATABASE_URL` explicitly — plain `npx prisma migrate deploy`
-uses whatever `DATABASE_URL` your shell/`.env` currently has, which under the split this repo uses
-(`DATABASE_URL` = local Docker Postgres, `SUPABASE_DATABASE_URL` = production reference copy) is
-**not** production:
+## 2. Optional custom host
 
-```bash
-DATABASE_URL="$SUPABASE_DATABASE_URL" npx prisma migrate deploy
-DATABASE_URL="$SUPABASE_DATABASE_URL" npx tsx prisma/seed.ts
-```
+Code-only releases can keep the current storefront alias. Leave the brochure's apex and www, and
+existing mail DNS, unchanged. If a dedicated storefront subdomain is approved, follow [Phase D](./GO_LIVE_RUNBOOK.md#phase-d--optional-storefront-domain-separately-approved).
 
-`prisma/seed.ts` only ever creates the admin user — it never overwrites an existing one — so
-re-running it is always safe. Change the seed password immediately after first login regardless.
-
-## 2. Domain & DNS
-
-Do this **before** §3 Payments below — a webhook or SEO check pointed at a URL that isn't live yet
-just fails.
-
-- [ ] `daakyka.com` (and `www`) attached to the `storefront` Vercel project (`vercel domains add
-      daakyka.com`) — see [GO_LIVE_RUNBOOK.md](./GO_LIVE_RUNBOOK.md) for the exact DNS records
-- [ ] DNS cut over at the registrar (apex A/ALIAS + `www` CNAME to Vercel's values) — MX, SPF and
-      the existing mail DKIM records are left untouched so email keeps working through the cutover
-- [ ] SSL certificate active on the custom domain
-- [ ] `curl -sI https://daakyka.com` answers `200` from **this app** (not the old site, not a
-      Vercel SSO redirect) — check the response headers/body, since a stale DNS cache can return
-      `200` from either
-- [ ] 301 redirects verified (SEO paths → `/guides/*`)
+- [ ] Dedicated domain/TLS is verified and the old brochure still works
+- [ ] Public site URL, canonical tags, robots, sitemap and one synthetic customer/order link use the intended host
+- [ ] Stale-cart recovery verified on the old storefront origin; a fresh synthetic checkout works on the new one
 
 ## 3. Payments (Razorpay)
 
@@ -74,8 +57,8 @@ online payment) when Razorpay isn't configured. To enable real online payment:
    enter Key ID and Key Secret at `/admin/integrations` after deploy (encrypted at rest; no
    redeploy needed; a value entered there always wins over the env var) — the webhook secret goes
    in the same place once you have it, from step 3 below.
-3. Register a webhook (Settings → Webhooks) pointed at `https://daakyka.com/api/webhooks/razorpay`
-   (only after §2's DNS cutover is live — see [PAYMENTS_RAZORPAY.md](./PAYMENTS_RAZORPAY.md) for
+3. Register a webhook (Settings → Webhooks) pointed at `/api/webhooks/razorpay` on the reviewed public storefront host
+   (only after that host and this payment change are independently approved — see [PAYMENTS_RAZORPAY.md](./PAYMENTS_RAZORPAY.md) for
    what to use before then, and why a `*-projects.vercel.app` URL never works here), subscribed to
    at least `payment.captured`, `payment.failed`, `refund.processed`. Put its signing secret in the
    same place as the two keys above: enter it as **Webhook Secret** at `/admin/integrations`, or
@@ -84,7 +67,7 @@ online payment) when Razorpay isn't configured. To enable real online payment:
    env vars (e.g. keys via env, webhook secret via env, but not all three) fails the production
    build with "must all be set together". All three via `/admin/integrations` with no Razorpay env
    vars set is fine.
-4. Place a real test order — verify `/admin/orders` and the post-purchase journey enrollment.
+4. Use a synthetic order and sandbox keys during staging verification — verify `/admin/orders` and the post-purchase journey enrollment.
 
 Full detail, including the stock-decrement/idempotency design: [PAYMENTS_RAZORPAY.md](./PAYMENTS_RAZORPAY.md).
 

@@ -10,16 +10,10 @@
  *   4. deploy      — vercel --prod
  *   5. smoke       — fetch the deployed site and run the checks below
  *
- * Step 2 is not what makes deploying new code against old tables safe —
- * scripts/vercel-build.mjs's build step re-runs `prisma migrate deploy`
- * itself before `next build` on every real production deploy, so a bare
- * `vercel --prod` with no separate migrate step here would already apply
- * migrations before the new code goes live, in the same safe order. Step 2
- * exists to fail fast and locally instead: a broken migration (or a
- * DATABASE_URL that doesn't actually connect — see F-352) shows up here,
- * with a plain exit code and a recovery hint, before Vercel env has been
- * touched or a deploy has even been attempted — not buried in a remote
- * Vercel build log after both already happened.
+ * Vercel now compiles only and refuses a build against an outdated schema.
+ * Step 2 is this operator workflow's explicit migration step; it never runs
+ * as part of a normal Vercel build. Seeds and reviewed image sync, when
+ * required, are a separate reviewed operation (vercel-db-release.mjs).
  *
  * Usage:
  *   node scripts/go-live.mjs                    # dry run — shows the plan, changes nothing
@@ -283,7 +277,7 @@ if (SKIP_MIGRATE) {
   const result = spawnSync("npx", ["prisma", "migrate", "deploy"], {
     // Override only for this child. The parent's .env-backed DATABASE_URL,
     // which points at the local test database, is left untouched.
-    env: { ...process.env, DATABASE_URL: supabaseUrl },
+    env: { ...process.env, DATABASE_URL: supabaseUrl, MIGRATION_DATABASE_URL: supabaseUrl },
     stdio: "inherit",
     shell: true,
   });
