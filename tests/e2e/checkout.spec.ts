@@ -35,6 +35,21 @@ async function fillValidCheckoutDetails(page: import("@playwright/test").Page) {
 }
 
 test.describe("Checkout page UX (release-hardening)", () => {
+  test("a returning shopper with an obsolete saved basket can continue shopping", async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem("daakyka-cart", JSON.stringify({ lines: null }));
+    });
+    await page.goto("/checkout");
+    await expect(page.getByRole("heading", { name: "Your cart is empty" })).toBeVisible();
+    const backToShop = page.getByRole("link", { name: "Continue Shopping", exact: true });
+    await backToShop.click();
+    await expect(page).toHaveURL(/\/shop(?:[?#]|$)/);
+    // Do not accept the server-rendered empty cart alone as proof: open the
+    // hydrated client drawer after navigating from checkout.
+    await page.getByRole("button", { name: "Cart", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Shopping cart" })).toBeVisible();
+  });
+
   // F-117: Enter in the "Have a discount code?" field used to submit the
   // whole form at full price instead of applying the code.
   test("pressing Enter in the discount-code field applies the code instead of placing the order", async ({
