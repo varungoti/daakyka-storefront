@@ -1,4 +1,5 @@
-import type { Cart } from "@/lib/types";
+import type { Cart, CartLine } from "@/lib/types";
+import { buildLocalCart } from "@/lib/cart/service";
 
 const CART_STORAGE_KEY = "daakyka-cart";
 const CART_ID_KEY = "daakyka-cart-id";
@@ -16,6 +17,32 @@ let cachedCartId = "";
 let hydrated = false;
 const listeners = new Set<() => void>();
 
+// The cache survives application upgrades. Never hand decoded JSON directly
+// to CartDrawer: it reads cart.lines on every page, even before the drawer opens.
+function usableLine(value: unknown): value is CartLine {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Record<string, unknown>;
+  return ["id", "variantId", "productHandle", "productTitle", "variantTitle", "image"]
+    .every((key) => typeof row[key] === "string") &&
+    typeof row.quantity === "number" && Number.isSafeInteger(row.quantity) && row.quantity > 0 &&
+    typeof row.price === "number" && Number.isFinite(row.price) && row.price >= 0 &&
+    (row.maxQuantity === undefined || (typeof row.maxQuantity === "number" &&
+      Number.isSafeInteger(row.maxQuantity) && row.maxQuantity >= 0));
+}
+
+function restoreLocalCart(stored: string | null): Cart {
+  if (!stored) return EMPTY_CART;
+  const parsed: unknown = JSON.parse(stored);
+  if (!parsed || typeof parsed !== "object" || !("lines" in parsed) || !Array.isArray(parsed.lines)) {
+    return EMPTY_CART;
+  }
+  // Retain valid selections even if another line is damaged. The catalog and
+  // quote service remain authoritative for current availability and pricing.
+  const lines = parsed.lines.filter(usableLine);
+  const id = "id" in parsed && typeof parsed.id === "string" ? parsed.id : cachedCartId;
+  return buildLocalCart(lines, id);
+}
+
 function hydrateFromStorage() {
   if (hydrated) return;
   hydrated = true;
@@ -26,7 +53,7 @@ function hydrateFromStorage() {
   }
   try {
     const stored = window.localStorage.getItem(CART_STORAGE_KEY);
-    cachedCart = stored ? (JSON.parse(stored) as Cart) : EMPTY_CART;
+    cachedCart = restoreLocalCart(stored);
   } catch {
     cachedCart = EMPTY_CART;
   }
@@ -75,7 +102,9 @@ export function getServerCartIdSnapshot(): string {
 export function subscribeToCart(onStoreChange: () => void): () => void {
   listeners.add(onStoreChange);
   const onStorageEvent = (event: StorageEvent) => {
-    if (event.key === CART_STORAGE_KEY || event.key === CART_ID_KEY) {
+    // A different tab's localStorage.clear() uses a null key, not one event
+    // per removed item. Otherwise this tab can resurrect a cleared basket.
+    if (event.key === null || event.key === CART_STORAGE_KEY || event.key === CART_ID_KEY) {
       hydrated = false;
       onStoreChange();
     }
