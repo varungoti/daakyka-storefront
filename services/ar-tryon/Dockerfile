@@ -2,7 +2,7 @@
 # trixie, resolved 2026-10-02) so a rebuild cannot silently pick up a different base image.
 # Dependabot (.github/dependabot.yml, docker ecosystem) proposes the bump; to refresh by hand:
 #   docker buildx imagetools inspect python:3.11-slim   (use the top-level Digest)
-FROM python:3.11-slim@sha256:bab1b7ef4b450c81002278d035eff85ebe394ae94df904f7a3ba14f7e16e487b
+FROM python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
 
 WORKDIR /app
 
