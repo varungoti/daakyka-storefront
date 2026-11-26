@@ -223,11 +223,30 @@ test.describe("Storefront E2E", () => {
       }
 
       const mainImage = page.locator(".relative.aspect-\\[4\\/5\\] img").first();
+      const hero = page.getByRole("button", { name: `View full-screen images of ${chosen.name}` });
       const initialSrc = await mainImage.getAttribute("src");
+      const previous = await mainImage.elementHandle();
+      if (!previous || !initialSrc) throw new Error("Expected a mounted first gallery photo");
       const secondThumbnail = secondThumbnailOf(chosen.name);
       await expect(secondThumbnail).toHaveCount(1);
-      await secondThumbnail.click();
-      await expect(mainImage).not.toHaveAttribute("src", initialSrc ?? "");
+      await secondThumbnail.focus();
+      await page.keyboard.press("Enter");
+      await expect(mainImage).not.toHaveAttribute("src", initialSrc);
+      // Changing src on the same img can leave its old decoded pixels
+      // painted while the new request is pending. Keep the button, not the img.
+      expect(await previous.evaluate((img) => img.isConnected)).toBe(false);
+      await previous.evaluate((img) => img.dispatchEvent(new Event("error")));
+      await expect(hero.getByText("Photo unavailable")).toHaveCount(0);
+      await expect(secondThumbnail).toBeFocused();
+      // A failed current request must not show a broken or stale image.
+      await mainImage.dispatchEvent("error");
+      await expect(hero.getByText("Photo unavailable")).toBeVisible();
+      await expect(hero.locator("img")).toHaveCount(0);
+      await previous.dispose();
+      const firstThumbnail = page.getByRole("button", { name: `View ${chosen.name} image 1`, exact: true });
+      await firstThumbnail.click();
+      await expect(mainImage).toHaveAttribute("src", initialSrc);
+      await expect(hero.getByText("Photo unavailable")).toHaveCount(0);
     } finally {
       if (fixture) {
         await fixture.remove();

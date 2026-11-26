@@ -585,14 +585,7 @@ function GalleryColumn({
               aria-label={`View ${productName} image ${index + 1}`}
               aria-current={index === activeIndex}
             >
-              <Image
-                src={image.url}
-                alt={image.alt ?? `${productName} view ${index + 1}`}
-                fill
-                unoptimized={image.url.endsWith(".svg")}
-                className="object-cover"
-                sizes="80px"
-              />
+              <GalleryPhoto image={image} fallbackAlt={`${productName} view ${index + 1}`} />
             </button>
           ))}
         </div>
@@ -604,15 +597,9 @@ function GalleryColumn({
         aria-label={`View full-screen images of ${productName}`}
         className="relative aspect-[4/5] flex-1 overflow-hidden rounded-[2rem] border border-border bg-lilac/20"
       >
-        <Image
-          src={active.url}
-          alt={active.alt ?? productName}
-          fill
-          preload
-          unoptimized={active.url.endsWith(".svg")}
-          className="object-cover"
-          sizes="(max-width: 1024px) 100vw, 50vw"
-        />
+        {/* Keep the button (and focus), but not the previous photo's decoded
+            bitmap or callbacks while the new variant's request is pending. */}
+        <GalleryPhoto key={active.url} image={active} fallbackAlt={productName} hero />
       </button>
     </div>
     {representativeFallback && (
@@ -622,6 +609,45 @@ function GalleryColumn({
       <p className="text-xs text-muted">AI colour interpretation based on another colour of this product. Confirm the shade and design with us before ordering.</p>
     )}
     </div>
+  );
+}
+
+/** The parent keys each photo by URL, so late events cannot update a new image. */
+function GalleryPhoto({
+  image,
+  fallbackAlt,
+  hero = false,
+}: {
+  image: LightboxImage;
+  fallbackAlt: string;
+  hero?: boolean;
+}) {
+  const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
+  return (
+    <>
+      {state !== "ready" && (
+        <span
+          role={hero ? "status" : undefined}
+          aria-hidden={hero ? undefined : true}
+          className={cn("absolute inset-0 grid place-items-center bg-lilac/20 text-muted", hero ? "text-sm" : "text-xs")}
+        >
+          {state === "failed" ? (hero ? "Photo unavailable" : "No photo") : (hero ? "Loading photo…" : "Loading…")}
+        </span>
+      )}
+      {state !== "failed" && (
+        <Image
+          src={image.url}
+          alt={image.alt ?? fallbackAlt}
+          fill
+          preload={hero}
+          unoptimized={image.url.endsWith(".svg")}
+          className="object-cover"
+          sizes={hero ? "(max-width: 1024px) 100vw, 50vw" : "80px"}
+          onLoad={() => setState("ready")}
+          onError={() => setState("failed")}
+        />
+      )}
+    </>
   );
 }
 
