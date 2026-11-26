@@ -24,7 +24,7 @@ import { resolveAdminCredentials } from "./admin-credentials";
  */
 
 const KEY_PREFIX = "e2e-gallery/";
-const PHOTOS = ["/placeholder-banner.svg", "/placeholder-scene.svg"];
+const PHOTOS = ["/placeholder-banner.svg", "/placeholder-scene.svg"] as const;
 
 export interface GalleryFixture {
   productId: string;
@@ -32,7 +32,10 @@ export interface GalleryFixture {
   remove: () => Promise<void>;
 }
 
-export async function createGalleryFixture(slug: string): Promise<GalleryFixture> {
+export async function createGalleryFixture(
+  slug: string,
+  photoUrls: readonly [string, string] = PHOTOS,
+): Promise<GalleryFixture> {
   assertDisposableEnvironment(process.env);
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
 
@@ -52,7 +55,7 @@ export async function createGalleryFixture(slug: string): Promise<GalleryFixture
     if (colors.length === 0) throw new Error(`Gallery fixture: product "${slug}" has no variants.`);
 
     for (const color of colors) {
-      for (const [index, url] of PHOTOS.entries()) {
+      for (const [index, url] of photoUrls.entries()) {
         const mediaId = randomUUID();
         await pool.query(
           `INSERT INTO "MediaAsset" (id, key, url, alt, usage, "updatedAt") VALUES ($1, $2, $3, $4, 'PRODUCT', NOW())`,

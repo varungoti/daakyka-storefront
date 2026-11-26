@@ -6,7 +6,7 @@ import { useCart } from "@/context/cart-provider";
 import { useCurrency } from "@/context/currency-provider";
 import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { Minus, Plus, ShoppingBag, X } from "lucide-react";
-import Image from "next/image";
+import { ProductPhoto as Image } from "@/components/ui/product-photo";
 import Link from "next/link";
 import { AnimatePresence, m } from "framer-motion";
 import { useEffect, useState } from "react";

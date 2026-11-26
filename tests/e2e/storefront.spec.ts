@@ -1,7 +1,8 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator } from "@playwright/test";
+import sharp from "sharp";
 
 import { createGalleryFixture, refreshCatalogueCache, type GalleryFixture } from "./helpers/gallery-fixture";
-import { targetIsLocal } from "./helpers/target";
+import { baseUrl, targetIsLocal } from "./helpers/target";
 
 test.describe("Storefront E2E", () => {
   test("homepage loads with brand and navigation", async ({ page }) => {
@@ -222,16 +223,16 @@ test.describe("Storefront E2E", () => {
         await page.goto(`/products/${chosen.handle}`);
       }
 
-      const mainImage = page.locator(".relative.aspect-\\[4\\/5\\] img").first();
       const hero = page.getByRole("button", { name: `View full-screen images of ${chosen.name}` });
-      const initialSrc = await mainImage.getAttribute("src");
+      const mainImage = hero.locator("img");
+      const initialSrc = await mainImage.evaluate((node: HTMLImageElement) => node.src);
       const previous = await mainImage.elementHandle();
       if (!previous || !initialSrc) throw new Error("Expected a mounted first gallery photo");
       const secondThumbnail = secondThumbnailOf(chosen.name);
       await expect(secondThumbnail).toHaveCount(1);
       await secondThumbnail.focus();
       await page.keyboard.press("Enter");
-      await expect(mainImage).not.toHaveAttribute("src", initialSrc);
+      await expect.poll(() => mainImage.evaluate((node: HTMLImageElement) => node.src)).not.toBe(initialSrc);
       // Changing src on the same img can leave its old decoded pixels
       // painted while the new request is pending. Keep the button, not the img.
       expect(await previous.evaluate((img) => img.isConnected)).toBe(false);
@@ -245,7 +246,7 @@ test.describe("Storefront E2E", () => {
       await previous.dispose();
       const firstThumbnail = page.getByRole("button", { name: `View ${chosen.name} image 1`, exact: true });
       await firstThumbnail.click();
-      await expect(mainImage).toHaveAttribute("src", initialSrc);
+      await expect.poll(() => mainImage.evaluate((node: HTMLImageElement) => node.src)).toBe(initialSrc);
       await expect(hero.getByText("Photo unavailable")).toHaveCount(0);
     } finally {
       if (fixture) {
@@ -253,6 +254,93 @@ test.describe("Storefront E2E", () => {
         // Forget the fixture photos so no later test sees them.
         await refreshCatalogueCache(request, fixture.productId);
       }
+    }
+  });
+
+  test("catalogue images recover from an optimizer outage without replacing the photo", async ({ page, request }) => {
+    test.skip(!targetIsLocal, "injects private fixtures only into a disposable local catalogue");
+
+    const photos = [
+      "/cdn/media/product/2026/09/13133657-c9ee-4087-9982-10f5e3e75a20.webp",
+      "/cdn/media/product/2026/09/ee1df112-dc58-40b7-9cec-33672d09e3bb.webp",
+    ] as const;
+    const webp = await sharp({ create: { width: 16, height: 12, channels: 3, background: "#330066" } }).webp().toBuffer();
+    const productsResponse = await request.get("/api/products");
+    expect(productsResponse.ok()).toBeTruthy();
+    const { products } = (await productsResponse.json()) as { products: { handle: string; name: string }[] };
+    expect(products.length).toBeGreaterThan(0);
+    const product = products[0];
+
+    let optimizerDown = false;
+    const attempts = { optimized: 0, direct: 0, firstDirect: 0 };
+    const origin = new URL(baseUrl).origin;
+    const knownPhoto = (value: string | null) => value === photos[0] || value === photos[1];
+    const expectDirectPhoto = (image: Locator) => expect.poll(() => image.evaluate(
+      (node: HTMLImageElement) => new URL(node.currentSrc || node.src, node.ownerDocument.location.origin).href,
+    )).toBe(origin + photos[0]);
+    await page.route((url) => url.origin === origin && (
+      (url.pathname === "/_next/image" && knownPhoto(url.searchParams.get("url"))) || knownPhoto(url.pathname)
+    ), async (route) => {
+      const url = new URL(route.request().url());
+      const optimized = url.pathname === "/_next/image";
+      const path = optimized ? url.searchParams.get("url") : url.pathname;
+      attempts[optimized ? "optimized" : "direct"] += 1;
+      if (!optimized && path === photos[0]) attempts.firstDirect += 1;
+      const headers = { "cache-control": "no-store" };
+      if ((optimized && optimizerDown) || path === photos[1]) {
+        await route.fulfill({ status: optimized ? 503 : 404, headers });
+      } else {
+        await route.fulfill({ status: 200, contentType: "image/webp", body: webp, headers });
+      }
+    });
+
+    const fixture = await createGalleryFixture(product.handle, photos);
+    try {
+      await refreshCatalogueCache(request, fixture.productId);
+      const url = `/products/${product.handle}`;
+      const hero = page.getByRole("button", { name: `View full-screen images of ${product.name}` });
+      const heroImage = hero.getByRole("img");
+
+      await page.goto(url);
+      await expect(heroImage).toHaveAttribute("src", /^\/_next\/image\?/);
+      await expect.poll(() => heroImage.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBe(16);
+      // Photo 2 may fail and use its own legitimate fallback. Photo 1 has not
+      // been requested directly while its optimizer still works.
+      expect(await heroImage.evaluate((node: HTMLImageElement) => new URL(node.currentSrc).pathname)).toBe("/_next/image");
+      expect(attempts.firstDirect).toBe(0);
+
+      optimizerDown = true;
+      await page.reload();
+      await expectDirectPhoto(heroImage);
+      await expect.poll(() => heroImage.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBe(16);
+      expect(attempts.optimized).toBeGreaterThan(0);
+      expect(attempts.direct).toBeGreaterThan(0);
+      await expect(hero.getByText("Photo unavailable")).toHaveCount(0);
+
+      await hero.click();
+      const lightbox = page.getByRole("dialog", { name: "Image viewer" });
+      await expectDirectPhoto(lightbox.getByRole("img", { name: "E2E gallery photo 1" }));
+      await page.keyboard.press("Escape");
+      await expect(lightbox).toBeHidden();
+
+      const other = page.getByRole("button", { name: `View ${product.name} image 2`, exact: true });
+      await other.focus();
+      await page.keyboard.press("Enter");
+      await expect(hero.getByText("Photo unavailable")).toBeVisible();
+      await expect(hero.locator("img")).toHaveCount(0);
+      await expect(other).toBeFocused();
+      await page.getByRole("button", { name: `View ${product.name} image 1`, exact: true }).click();
+      await expectDirectPhoto(heroImage);
+
+      await page.goto("/shop");
+      const card = page.locator("article").filter({ has: page.locator(`a[href="${url}"]`) }).first();
+      await card.scrollIntoViewIfNeeded();
+      const cardImage = card.locator("img").first();
+      await expectDirectPhoto(cardImage);
+      await expect.poll(() => cardImage.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBe(16);
+    } finally {
+      await fixture.remove();
+      await refreshCatalogueCache(request, fixture.productId);
     }
   });
 });

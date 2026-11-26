@@ -7,7 +7,7 @@ import { wishlistToggleLabel } from "@/lib/a11y/labels";
 import type { WishlistEntry } from "@/lib/wishlist/entries";
 import { nameFromHandle, type WishlistProduct } from "@/lib/wishlist/live-products";
 import { Heart, ShoppingBag } from "lucide-react";
-import Image from "next/image";
+import { ProductPhoto as Image } from "@/components/ui/product-photo";
 import Link from "next/link";
 
 /**

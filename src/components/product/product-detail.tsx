@@ -30,6 +30,7 @@ import { cn } from "@/lib/utils";
 import { ChevronDown, Minus, Plus } from "lucide-react";
 import dynamic from "next/dynamic";
 import Image from "next/image";
+import { ProductPhoto } from "@/components/ui/product-photo";
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
@@ -635,7 +636,7 @@ function GalleryPhoto({
         </span>
       )}
       {state !== "failed" && (
-        <Image
+        <ProductPhoto
           src={image.url}
           alt={image.alt ?? fallbackAlt}
           fill

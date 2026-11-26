@@ -15,7 +15,7 @@ import {
   normalizeIndianPincode,
 } from "@/lib/validation/india";
 import { AlertCircle, Lock, ShoppingBag } from "lucide-react";
-import Image from "next/image";
+import { ProductPhoto as Image } from "@/components/ui/product-photo";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type RefObject } from "react";
