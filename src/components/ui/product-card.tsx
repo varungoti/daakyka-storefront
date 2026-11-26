@@ -11,7 +11,7 @@ import { isSizeAvailableForColor, isVariantInStock, resolveVariant } from "@/lib
 import type { Product } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ShoppingBag } from "lucide-react";
-import Image from "next/image";
+import { ProductPhoto as Image } from "@/components/ui/product-photo";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";

@@ -14,7 +14,7 @@ import { getOrderTimeline } from "@/lib/orders/timeline";
 import { getClientIp, checkRateLimit } from "@/lib/security/rate-limit";
 import { getSetting } from "@/lib/settings";
 import type { ShippingAddressInput } from "@/lib/validation/schemas";
-import Image from "next/image";
+import { ProductPhoto as Image } from "@/components/ui/product-photo";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { headers } from "next/headers";

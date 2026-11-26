@@ -4,7 +4,7 @@ import { GenderModelToggle } from "@/components/mix-match/gender-model-toggle";
 import { cn } from "@/lib/utils";
 import type { TryOnGender } from "@/lib/outfit/types";
 import { RotateCcw } from "lucide-react";
-import Image from "next/image";
+import { ProductPhoto as Image } from "@/components/ui/product-photo";
 import { useRef, useState } from "react";
 
 function isDataUrl(src: string): boolean {

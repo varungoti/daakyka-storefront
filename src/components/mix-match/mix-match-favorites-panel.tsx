@@ -13,7 +13,7 @@ import type { WishlistProduct } from "@/lib/wishlist/live-products";
 import type { Product } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Heart, Shirt } from "lucide-react";
-import Image from "next/image";
+import { ProductPhoto as Image } from "@/components/ui/product-photo";
 
 interface MixMatchFavoritesPanelProps {
   onApplyProduct: (product: WishlistProduct) => void;

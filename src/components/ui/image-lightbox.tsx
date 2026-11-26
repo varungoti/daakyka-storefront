@@ -4,7 +4,7 @@ import { useFocusTrap } from "@/hooks/use-focus-trap";
 import { clampTranslate, panBy, startsOnControl } from "@/lib/ui/lightbox-gestures";
 import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
-import Image from "next/image";
+import { ProductPhoto as Image } from "@/components/ui/product-photo";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
 

@@ -8,7 +8,7 @@ import { loadSearchIndex, peekSearchIndex } from "@/lib/search/search-index";
 import type { SearchProduct } from "@/lib/products/public-search-product";
 import { cn } from "@/lib/utils";
 import { Search, X } from "lucide-react";
-import Image from "next/image";
+import { ProductPhoto as Image } from "@/components/ui/product-photo";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, m } from "framer-motion";
